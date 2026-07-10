@@ -13,13 +13,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/* Unicode box-drawing codepoints (present in terminus8x16) */
+/* Unicode box-drawing codepoints (present in terminus8x16).
+ * Frame language: ROUNDED single-line corners for passive info panels
+ * (ui_box), double-line squares (UI_D*) for tappable tiles (ui_tile). */
 #define UI_BOX_H   0x2500u  /* ─ */
 #define UI_BOX_V   0x2502u  /* │ */
-#define UI_BOX_TL  0x250Cu  /* ┌ */
-#define UI_BOX_TR  0x2510u  /* ┐ */
-#define UI_BOX_BL  0x2514u  /* └ */
-#define UI_BOX_BR  0x2518u  /* ┘ */
+#define UI_BOX_TL  0x256Du  /* ╭ */
+#define UI_BOX_TR  0x256Eu  /* ╮ */
+#define UI_BOX_BL  0x2570u  /* ╰ */
+#define UI_BOX_BR  0x256Fu  /* ╯ */
 #define UI_BOX_ML  0x251Cu  /* ├ */
 #define UI_BOX_MR  0x2524u  /* ┤ */
 
@@ -99,6 +101,12 @@ void ui_fill(int col, int row, int w, int h, uint8_t attrs);
 
 /** Box with border and title centered in the top rule. */
 void ui_box(int col, int row, int w, int h, const char *title);
+
+/** Chip: optional left cap, " text " INVERSE, optional right cap (0 = none),
+ *  all in the current pen. Caps draw non-INVERSE so they read as the chip
+ *  tapering into the background. Returns the column after the chip. */
+int ui_chip(int col, int row, uint16_t left_cp, const char *text,
+            uint16_t right_cp);
 
 /** Draw a finger-sized tile: filled + bordered block with a title line and an
  *  optional body line, inverted when selected. Text is truncated to fit. */

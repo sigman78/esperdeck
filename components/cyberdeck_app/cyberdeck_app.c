@@ -370,6 +370,35 @@ static void draw_titlebar(int x0, const char *text, uint32_t frame)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
+/* Footer strip shared by every full screen: a rule, then the hint riding a
+ * cyan powerline segment — ▶ hint ▶ — that tapers off with UI_PL_R (its
+ * first use). INVERSE puts the accent in the cell background, so the run
+ * reads as a solid bar with dark text.
+ * @p limit: first column the chip must stay clear of (a right-aligned toast
+ * lives there), or -1 for the full width. Clipping is internal so callers
+ * never depend on the chip geometry. */
+static void draw_footer_lim(const char *hint, int limit)
+{
+    int r = ui_rows() - 1;
+    draw_rule(ui_rows() - 2);
+    if (limit < 0) limit = ui_cols();
+    int avail = limit - 6;    /* lead-in(3) + trail space + taper + 1 gap */
+    if (avail <= 0) return;   /* no room: rule only, no orphaned chip stub */
+    char clip[96];
+    snprintf(clip, sizeof(clip), "%.*s", avail, hint);
+    ui_pen(OVERLAY_COL_CYAN);
+    ui_putch(0, r, ' ', OVERLAY_ATTR_INVERSE);
+    ui_putch(1, r, UI_PLAY, OVERLAY_ATTR_INVERSE);
+    ui_putch(2, r, ' ', OVERLAY_ATTR_INVERSE);
+    ui_puts(3, r, clip, OVERLAY_ATTR_INVERSE);
+    int end = 3 + (int)strlen(clip);
+    ui_putch(end,     r, ' ', OVERLAY_ATTR_INVERSE);
+    ui_putch(end + 1, r, UI_PL_R, 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
+static void draw_footer(const char *hint) { draw_footer_lim(hint, -1); }
+
 /* Free-RAM summary for the header. */
 static void ram_stats(char *buf, size_t sz)
 {
@@ -450,7 +479,9 @@ static void render_boot(uint64_t now)
     ui_pen(OVERLAY_COL_GREEN);
     char sub[24];
     snprintf(sub, sizeof(sub), "INITIALIZING%.*s", (int)(s.anim_frame % 4), "...");
-    ui_puts((ui_cols() - 15) / 2, y0 + GH + 2, sub, 0);
+    /* Fixed anchor: the full-dots form's width (dot count varies per frame). */
+    ui_puts((ui_cols() - (int)strlen("INITIALIZING...")) / 2,
+            y0 + GH + 2, sub, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     ui_no_cursor();
@@ -561,22 +592,22 @@ static void render_home(void)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    /* Footer strip. An active toast owns the right edge; clip the hint so
-     * the two never interleave mid-string on the shared row. */
-    draw_rule(ui_rows() - 2);
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_putch(2, ui_rows() - 1, UI_PLAY, 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    const char *hint = "tap to select, tap again to connect   hold = pair";
+    /* Footer: touch + keyboard legend (the B/R/W shortcuts were previously
+     * undiscoverable). Pairing hints only appear when the build has BLE —
+     * advertising a silent no-op reads as broken input. An active toast owns
+     * the right edge; draw_footer_lim clips the hint clear of it. */
+    const char *hint = s.cfg.ble
+        ? "tap\xB7tap = connect   hold = pair   kbd: arrows+Enter \xB7 "
+          "B pair \xB7 R reload \xB7 W wifi"
+        : "tap\xB7tap = connect   kbd: arrows+Enter \xB7 R reload \xB7 W wifi";
     if (s.toast[0]) {
         int tx = ui_cols() - ((int)strlen(s.toast) + 2) - 1;
-        if (tx - 6 > 0)
-            ui_printf(4, ui_rows() - 1, 0, "%-.*s", tx - 6, hint);
+        draw_footer_lim(hint, tx - 1);           /* -1: the taper cell */
         ui_pen(OVERLAY_COL_AMBER);
-        ui_printf(tx, ui_rows() - 1, OVERLAY_ATTR_INVERSE, " %s ", s.toast);
+        ui_chip(tx - 1, ui_rows() - 1, UI_PL_L, s.toast, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     } else {
-        ui_puts(4, ui_rows() - 1, hint, 0);
+        draw_footer(hint);
     }
 
     ui_no_cursor();
@@ -632,21 +663,17 @@ static void render_pairing(uint64_t now)
                 s.devs[i].addr_type ? "random addr" : "public addr",
                 i == s.pair_sel);
     }
-    ui_pen(s.pair_forget_armed ? OVERLAY_COL_RED : OVERLAY_COL_AMBER);
+    /* Color law: RED = destructive (Forget), DEFAULT = safe navigation
+     * (Cancel). Cancel used to be the red one — inverted semantics. */
+    ui_pen(OVERLAY_COL_RED);
     ui_tile(tile_x(&g, ndev), tile_y(&g, ndev), g.tw, g.th,
             s.pair_forget_armed ? "TAP AGAIN to forget" : "Forget bonds",
             "clear + re-pair", ndev == s.pair_sel);
-    ui_pen(OVERLAY_COL_RED);
+    ui_pen(OVERLAY_COL_DEFAULT);
     ui_tile(tile_x(&g, ndev + 1), tile_y(&g, ndev + 1), g.tw, g.th,
             "Cancel", "", (ndev + 1) == s.pair_sel);
-    ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_rule(ui_rows() - 2);
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_putch(2, ui_rows() - 1, UI_PLAY, 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(4, ui_rows() - 1,
-            "put the keyboard in pairing mode, then tap it   Esc = cancel", 0);
+    draw_footer("put the keyboard in pairing mode, then tap it   Esc = cancel");
     ui_no_cursor();
     ui_present();
 }
@@ -672,9 +699,9 @@ static void render_hostkey(void)
     const char *fp = ssh_client_get_fingerprint();
 
     if (s.fp_mismatch) {
-        /* Scrolling ╱╱╲╲ hazard tape above and below the content: the one
-         * screen that must not look like a calm dialog. Row 0 is empty and
-         * ui_rows()-3 sits between the button tiles and the footer hint. */
+        /* Scrolling ╱╱╲╲ hazard tape framing the screen: the one modal that
+         * must not look like a calm dialog. The titlebar chip below draws
+         * over the top run, so the tape flanks it on both sides. */
         ui_pen(OVERLAY_COL_AMBER);
         for (int x = 0; x < ui_cols(); x++) {
             uint16_t cp = (((x + s.anim_frame / 2) & 3) < 2) ? 0x2571 : 0x2572;
@@ -682,27 +709,35 @@ static void render_hostkey(void)
             ui_putch(x, ui_rows() - 3, cp, 0);
         }
         ui_pen(OVERLAY_COL_DEFAULT);
+    }
 
+    /* Standard screen chrome — the security modal was the only full screen
+     * without a title or rule, which made it read as a glitch, not a page. */
+    draw_titlebar(2, s.fp_mismatch ? "HOST KEY ALERT" : "NEW HOST KEY",
+                  s.anim_frame);
+    draw_rule(3);
+
+    if (s.fp_mismatch) {
         /* Blink via INVERSE (ui_puts emits Latin-1 bytes — no UTF-8 here). */
         uint8_t blink = ((s.anim_frame / 5) & 1) ? OVERLAY_ATTR_INVERSE : 0;
-        ui_puts(4, 2, "!  HOST KEY CHANGED - possible attack  !", blink);
-        ui_puts(4, 4, "The server's key DIFFERS from the pinned one.", 0);
-        ui_puts(4, 5, "Only replace it if you KNOW the server was rekeyed.", 0);
+        ui_puts(4, 5, "!  HOST KEY CHANGED - possible attack  !", blink);
+        ui_puts(4, 7, "The server's key DIFFERS from the pinned one.", 0);
+        ui_puts(4, 8, "Only replace it if you KNOW the server was rekeyed.", 0);
     } else {
-        ui_puts(4, 2, "Unknown host - first connection", 0);
-        ui_printf(4, 4, 0, "First connection to %s:%u.", p->host, (unsigned)p->port);
-        ui_puts(4, 5, "Verify the fingerprint before trusting it.", 0);
+        ui_puts(4, 5, "Unknown host - first connection", 0);
+        ui_printf(4, 7, 0, "First connection to %s:%u.", p->host, (unsigned)p->port);
+        ui_puts(4, 8, "Verify the fingerprint before trusting it.", 0);
     }
 
     /* SHA256 fingerprint in 4-hex groups inside a box, so it can be read
      * against `ssh-keygen -lf` output group by group. On entry the digits
      * decode out of braille noise left-to-right (~0.8 s), then hold. */
     int bx = (ui_cols() - 43) / 2;
-    ui_box(bx, 6, 43, 4, " SHA256 ");
+    ui_box(bx, 10, 43, 4, " SHA256 ");
     uint32_t shown = (s.anim_frame - s.hostkey_frame0) * 8;
     for (int i = 0; i < 64; i++) {
         int x = bx + 2 + (i % 32) + (i % 32) / 4;   /* 1-cell group gaps */
-        int y = 7 + i / 32;
+        int y = 11 + i / 32;
         if ((uint32_t)i < shown) {
             ui_pen(OVERLAY_COL_CYAN);
             ui_putch(x, y, (uint8_t)fp[i], 0);
@@ -722,14 +757,15 @@ static void render_hostkey(void)
     ui_tile(tile_x(&g, 0), tile_y(&g, 0), g.tw, g.th, trust,
             s.fp_mismatch ? "danger" : "",
             s.hostkey_sel == 0 || s.hostkey_armed);
-    ui_pen(s.fp_mismatch ? OVERLAY_COL_GREEN : OVERLAY_COL_DEFAULT);
+    /* Cancel is safe navigation — DEFAULT pen everywhere (it was RED in
+     * PAIRING and GREEN here, which inverted the color semantics). */
+    ui_pen(OVERLAY_COL_DEFAULT);
     ui_tile(tile_x(&g, 1), tile_y(&g, 1), g.tw, g.th, "Cancel", "",
             s.hostkey_sel == 1);
-    ui_pen(OVERLAY_COL_DEFAULT);
 
-    ui_puts(4, ui_rows() - 1, s.fp_mismatch
-            ? "keyboard: arrows + Enter   Y = replace   Esc = cancel"
-            : "keyboard: arrows + Enter = trust   Esc = cancel", 0);
+    draw_footer(s.fp_mismatch
+                ? "keyboard: arrows + Enter   Y = replace   Esc = cancel"
+                : "keyboard: arrows + Enter = trust   Esc = cancel");
     ui_no_cursor();
     ui_present();
 }
@@ -740,7 +776,7 @@ static void render_connecting(const char *msg, uint64_t now)
     ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
-    draw_titlebar(2, "CYBERDECK", s.anim_frame);
+    draw_titlebar(2, "CONNECTING", s.anim_frame);
     ui_pen(OVERLAY_COL_BLUE);
     ui_puts(ui_cols() - 12, 0, "// SSH DECK", 0);
     ui_pen(OVERLAY_COL_DEFAULT);
@@ -791,7 +827,7 @@ static void render_connecting(const char *msg, uint64_t now)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    ui_puts((ui_cols() - 20) / 2, ui_rows() - 1, "tap or Esc to cancel", 0);
+    draw_footer("tap or Esc to cancel");
     ui_no_cursor();
     ui_present();
 }
@@ -834,8 +870,13 @@ static void render_menu(void)
     g.y0 = (ui_rows() - (count * g.th + (count - 1) * g.gy)) / 2;
     s.grid = g;
 
+    /* Title as a magenta lozenge (▐ text ▌ half-block caps, both glyphs'
+     * first use), centered over the tile column instead of floating at its
+     * left edge over the dim scrim. */
+    const char *title = cfg ? "CONFIGURATION" : "MENU";
+    int tl = (int)strlen(title);
     ui_pen(OVERLAY_COL_MAGENTA);
-    ui_puts(g.x0, g.y0 - 2, cfg ? "CONFIGURATION" : "MENU", 0);
+    ui_chip(g.x0 + (g.tw - tl - 4) / 2, g.y0 - 2, UI_RHALF, title, UI_LHALF);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     for (int i = 0; i < count; i++) {
@@ -849,13 +890,23 @@ static void render_menu(void)
                 dim ? "(unavailable)" : "", i == s.menu_sel);
     }
 
-    if (cfg && s.menu_msg[0]) {
+    /* Esc legend + action result sit right under the tile column — the
+     * result used to float alone on the last screen row, easy to miss, and
+     * the Esc behavior (page- and origin-dependent) was documented nowhere. */
+    int ly = g.y0 + count * g.th + (count - 1) * g.gy + 1;
+    const char *legend = !cfg ? "Esc/F12 = resume \xB7 tap outside = close"
+                        : s.menu_from_home ? "Esc = back to home"
+                                           : "Esc = back to menu";
+    ui_pen(OVERLAY_COL_DEFAULT);   /* not the last tile's leftover accent */
+    ui_puts(g.x0 + (g.tw - (int)strlen(legend)) / 2, ly, legend, 0);
+
+    if (s.menu_msg[0]) {               /* action feedback, both pages */
+        int mx = g.x0 + (g.tw - ((int)strlen(s.menu_msg) + 2)) / 2;
         ui_pen(OVERLAY_COL_AMBER);
-        ui_puts((ui_cols() - (int)strlen(s.menu_msg)) / 2, ui_rows() - 1,
-                s.menu_msg, 0);
+        ui_putch(mx, ly + 1, UI_DIAMOND, 0);
+        ui_puts(mx + 2, ly + 1, s.menu_msg, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
-    ui_pen(OVERLAY_COL_DEFAULT);
     ui_no_cursor();
     ui_present();
 }
@@ -866,11 +917,15 @@ static void render_session_toast(uint64_t now)
         if (s.state == ST_SESSION) ui_hide();
         return;
     }
-    ui_colors(COLOR_BLACK, COLOR_YELLOW);
+    /* Amber chip with a powerline taper — the old hard black-on-yellow was
+     * the only element outside the shell palette. Same ui_chip as the HOME
+     * toast, so the one element shown on both screens renders identically. */
+    ui_colors(UI_FG, UI_BG);
     ui_clear();
-    int len = (int)strlen(s.toast) + 2;
-    int x = ui_cols() - len - 1;
-    ui_printf(x, 0, 0, " %s ", s.toast);
+    int x = ui_cols() - ((int)strlen(s.toast) + 2) - 1;
+    ui_pen(OVERLAY_COL_AMBER);
+    ui_chip(x - 1, 0, UI_PL_L, s.toast, 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
     ui_present();
 }
 
@@ -963,9 +1018,9 @@ static void render_wifiprov(void)
     if (st == WIFI_PROV_ST_FAILED) {
         ui_pen(OVERLAY_COL_RED);
         ui_putch(4, 6, UI_DIAMOND, 0);
-        ui_puts(6, 6, "Failed - wrong password or network not found.", 0);
+        ui_puts(6, 6, "failed - wrong password or network not found", 0);
         ui_pen(OVERLAY_COL_DEFAULT);
-        ui_puts(6, 8, "Retry from the app, or tap/Esc to cancel.", 0);
+        ui_puts(6, 8, "retry from the app, or tap/Esc to cancel", 0);
         ui_no_cursor();
         ui_present();
         return;
@@ -1015,7 +1070,8 @@ static void render_wifiprov(void)
             }
         }
         ui_pen(OVERLAY_COL_CYAN);
-        ui_puts(qx + (span - 13) / 2, qy + crows, "scan with app", 0);
+        const char *ql = "scan with app";
+        ui_puts(qx + (span - (int)strlen(ql)) / 2, qy + crows, ql, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
@@ -1034,13 +1090,8 @@ static void render_wifiprov(void)
     ui_printf(6, 17, 0, "RAM  %s", ram);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_rule(ui_rows() - 2);
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_putch(2, ui_rows() - 1, UI_PLAY, 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(4, ui_rows() - 1,
-            recv ? "testing - long-press or Esc to abort"
-                 : "tap or Esc to cancel", 0);
+    draw_footer(recv ? "testing - long-press or Esc to abort"
+                     : "tap or Esc to cancel");
     ui_no_cursor();
     ui_present();
 }
@@ -1061,6 +1112,18 @@ static void enter_wifiprov(uint64_t now)
 static void menu_open_config(void)
 {
     s.menu_page   = 1;
+    s.menu_sel    = 0;
+    s.menu_msg[0] = '\0';
+    s.menu_forget_armed = false;
+    render_menu();
+}
+
+/* Return to the main menu page. Every back path (Esc, tap-outside, the Back
+ * tile) funnels through here so config-page feedback — including an armed
+ * "activate again to confirm" — can never leak onto the main page. */
+static void menu_open_main(void)
+{
+    s.menu_page   = 0;
     s.menu_sel    = 0;
     s.menu_msg[0] = '\0';
     s.menu_forget_armed = false;
@@ -1095,7 +1158,13 @@ static void menu_activate(uint64_t now)
             menu_open_config();
             break;
         case 3:                                   /* pair keyboard (session lives on) */
-            if (s.cfg.ble) enter_pairing(now);
+            if (s.cfg.ble) {
+                enter_pairing(now);
+            } else {                              /* was a silent no-op */
+                snprintf(s.menu_msg, sizeof(s.menu_msg),
+                         "no BLE keyboard support");
+                render_menu();
+            }
             break;
         }
         return;
@@ -1126,14 +1195,15 @@ static void menu_activate(uint64_t now)
                 snprintf(s.menu_msg, sizeof(s.menu_msg),
                          "keyboard bonds cleared");
             }
+        } else {                                  /* was a silent no-op */
+            snprintf(s.menu_msg, sizeof(s.menu_msg),
+                     "no BLE keyboard support");
         }
         break;
     case CONFIG_COUNT - 1:                     /* Back */
         if (s.menu_from_home) { enter_home(now); return; }
-        s.menu_page   = 0;                    /* in-session: back to main menu */
-        s.menu_sel    = 0;
-        s.menu_msg[0] = '\0';
-        break;
+        menu_open_main();                      /* in-session: main menu */
+        return;
     }
     render_menu();
 }
@@ -1197,7 +1267,7 @@ static void enter_session(uint64_t now)
     ui_hide();
     /* The terminal was cleared inside ssh_client_connect() before the read
      * task spawned — doing it here would race that task inside vterm. */
-    toast(now, "connected - F12 for menu");
+    toast(now, "connected - F12 or long-press for menu");
     render_session_toast(now);
 }
 
@@ -1396,11 +1466,10 @@ void cyberdeck_app_tick(uint64_t now)
         break;
 
     case ST_HOSTKEY:
-        /* Animate while the fingerprint decode-reveal runs; a mismatch
-         * alert keeps ticking forever for the hazard tape + blink. */
-        if ((s.fp_mismatch ||
-             (s.anim_frame - s.hostkey_frame0) * 8 < 64 + 16) &&
-            now >= s.next_anim) {
+        /* Full animated screen like every other: titlebar spark, decode
+         * reveal, and (on mismatch) the hazard tape all stay alive.
+         * Stopping after the reveal froze the spark mid-shimmer. */
+        if (now >= s.next_anim) {
             s.next_anim = now + ANIM_PERIOD_MS;
             render_hostkey();
         }
@@ -1511,7 +1580,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                 s.sel = slot;
                 render_home();
             } else if (!wifi_manager_is_connected()) {
-                toast(now, "WiFi not connected yet");
+                toast(now, "wifi not connected yet");
                 render_home();
             } else {                                 /* second tap on same tile */
                 start_connect(slot, now, now, false);
@@ -1531,7 +1600,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                 home_open_config();
             } else if (s.profile_count > 0) {
                 if (!wifi_manager_is_connected()) {
-                    toast(now, "WiFi not connected yet");
+                    toast(now, "wifi not connected yet");
                     render_home();
                 } else {
                     start_connect(s.sel, now, now, false);
@@ -1674,7 +1743,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             if (s.menu_page == 1 && s.menu_from_home) {   /* config over HOME */
                 enter_home(now);
             } else if (s.menu_page == 1) {     /* config: step back to main menu */
-                s.menu_page = 0; s.menu_sel = 0; render_menu();
+                menu_open_main();
             } else {
                 s.state = ST_SESSION;
                 ui_hide();
@@ -1687,7 +1756,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                 if (s.menu_page == 1 && s.menu_from_home) {
                     enter_home(now);
                 } else if (s.menu_page == 1) { /* config: back to main menu */
-                    s.menu_page = 0; s.menu_sel = 0; render_menu();
+                    menu_open_main();
                 } else {                       /* main: resume session */
                     s.state = ST_SESSION;
                     ui_hide();

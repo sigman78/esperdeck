@@ -167,6 +167,19 @@ void ui_box(int col, int row, int w, int h, const char *title)
     }
 }
 
+int ui_chip(int col, int row, uint16_t left_cp, const char *text,
+            uint16_t right_cp)
+{
+    int x = col;
+    if (left_cp) ui_putch(x++, row, left_cp, 0);
+    ui_putch(x++, row, ' ', OVERLAY_ATTR_INVERSE);
+    ui_puts(x, row, text, OVERLAY_ATTR_INVERSE);
+    x += (int)strlen(text);
+    ui_putch(x++, row, ' ', OVERLAY_ATTR_INVERSE);
+    if (right_cp) ui_putch(x++, row, right_cp, 0);
+    return x;
+}
+
 void ui_tile(int col, int row, int w, int h,
              const char *title, const char *body, bool selected)
 {
