@@ -11,6 +11,7 @@
 #include "sdkconfig.h"
 #include "input_hal_internal.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 
 static const char *TAG = "uart_input";
 
@@ -48,10 +49,17 @@ esp_err_t input_uart_backend_init(void)
         return ret;
     }
 
-    BaseType_t rc = xTaskCreatePinnedToCore(
-        uart_input_task, "uart_input",
-        2048, NULL, 5, NULL, 0);
-    if (rc != pdPASS) {
+    /* Permanent task, PSRAM stack (driver reads only — no flash writes). */
+#define UART_TASK_STACK 2048
+    static StaticTask_t s_uart_tcb;
+    StackType_t *uart_stack = heap_caps_malloc(UART_TASK_STACK,
+                                               MALLOC_CAP_SPIRAM |
+                                               MALLOC_CAP_8BIT);
+    if (!uart_stack ||
+        xTaskCreateStaticPinnedToCore(
+            uart_input_task, "uart_input",
+            UART_TASK_STACK / sizeof(StackType_t),
+            NULL, 5, uart_stack, &s_uart_tcb, 0) == NULL) {
         ESP_LOGE(TAG, "failed to create uart_input task");
         return ESP_ERR_NO_MEM;
     }

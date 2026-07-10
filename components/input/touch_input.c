@@ -15,6 +15,7 @@
 
 #include "input_hal_internal.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "driver/i2c_master.h"
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
@@ -284,15 +285,26 @@ esp_err_t touch_input_backend_init(void)
         return ret;
     }
 
-    BaseType_t xret = xTaskCreatePinnedToCore(
-        touch_poll_task,
-        "touch_poll",
-        3072,
-        NULL,
-        4,
-        NULL,
-        0   /* core 0 */
-    );
+    /* Permanent task, PSRAM stack (I2C polling only — no flash writes):
+     * keeps 3 KB of internal DRAM for NimBLE/WiFi. */
+#define TOUCH_TASK_STACK 3072
+    static StaticTask_t s_touch_tcb;
+    StackType_t *touch_stack = heap_caps_malloc(TOUCH_TASK_STACK,
+                                                MALLOC_CAP_SPIRAM |
+                                                MALLOC_CAP_8BIT);
+    BaseType_t xret = pdFAIL;
+    if (touch_stack &&
+        xTaskCreateStaticPinnedToCore(
+            touch_poll_task,
+            "touch_poll",
+            TOUCH_TASK_STACK / sizeof(StackType_t),
+            NULL,
+            4,
+            touch_stack,
+            &s_touch_tcb,
+            0   /* core 0 */
+        ) != NULL)
+        xret = pdPASS;
     if (xret != pdPASS) {
         ESP_LOGE(TAG, "failed to create touch_poll_task");
         esp_lcd_touch_del(s_tp);

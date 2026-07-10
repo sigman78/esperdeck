@@ -11,6 +11,7 @@
 #include "esp_event.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/netdb.h"
@@ -85,13 +86,22 @@ static void ntp_task(void *arg)
 }
 
 /* Fire-and-forget; called from the event handler, so only task creation
- * happens here (never a blocking cross-thread call). */
+ * happens here (never a blocking cross-thread call). Stack lives in PSRAM
+ * (no flash writes on this task) so it costs zero scarce internal DRAM. */
+#define NTP_TASK_STACK 4096
+static StaticTask_t  s_ntp_tcb;
+static StackType_t  *s_ntp_stack;
+
 static void wifi_manager_kick_ntp(void)
 {
     if (s_ntp_offset_us != 0 || s_ntp_running) return;
+    if (!s_ntp_stack)
+        s_ntp_stack = heap_caps_malloc(NTP_TASK_STACK,
+                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_ntp_stack) return;          /* no PSRAM? just skip the clock */
     s_ntp_running = true;
-    if (xTaskCreate(ntp_task, "ntp", 4096, NULL, 3, NULL) != pdPASS)
-        s_ntp_running = false;
+    xTaskCreateStatic(ntp_task, "ntp", NTP_TASK_STACK / sizeof(StackType_t),
+                      NULL, 3, s_ntp_stack, &s_ntp_tcb);
 }
 
 time_t wifi_manager_time(void)

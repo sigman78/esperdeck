@@ -19,6 +19,7 @@
 #include "freertos/task.h"
 
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 #include "esp_hidh.h"
 #include "esp_timer.h"
 
@@ -41,6 +42,10 @@ static const char *TAG = "ble_kbd";
 
 static volatile ble_state_t s_state          = BLE_IDLE;
 static volatile bool        s_nimble_synced  = false;
+
+/* Consecutive failed opens drive exponential backoff (1s..30s): a persistent
+ * failure must not become a battery-burning 1 Hz scan->connect->fail loop. */
+static volatile uint8_t s_open_fail_count;
 
 /* Protects s_scan_results / s_scan_count between NimBLE task and app task */
 static portMUX_TYPE s_scan_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -248,6 +253,14 @@ void ble_keyboard_enter_pairing(void)
         ESP_LOGW(TAG, "enter_pairing: NimBLE not yet synced");
         return;
     }
+    if (s_state == BLE_CONNECTING) {
+        /* An open is in flight on hid_open_task; scanning now would fight
+         * it for the single GAP procedure slot and the state machine.
+         * The UI keeps showing "connecting..." — retry the menu after. */
+        ESP_LOGW(TAG, "enter_pairing: connect in flight, try again shortly");
+        return;
+    }
+    s_open_fail_count = 0;             /* fresh user action, fresh backoff */
     ESP_LOGI(TAG, "Entering pairing mode");
     ble_gap_disc_cancel();
     taskENTER_CRITICAL(&s_scan_mux);
@@ -290,6 +303,11 @@ void ble_keyboard_exit_pairing(void)
  * esp_hid_host example does. */
 typedef struct { uint8_t addr[6]; uint8_t addr_type; } hid_open_req_t;
 
+#define HID_OPEN_STACK 5120
+static StaticTask_t  s_hid_open_tcb;
+static StackType_t  *s_hid_open_stack;   /* PSRAM; no flash writes here */
+static volatile bool s_hid_open_live;
+
 static void hid_open_task(void *arg)
 {
     hid_open_req_t req = *(hid_open_req_t *)arg;
@@ -299,30 +317,52 @@ static void hid_open_task(void *arg)
                                             req.addr_type);
     if (!dev) {
         /* The NimBLE backend posts no OPEN event on failure — recover here so
-         * we don't get wedged in BLE_CONNECTING forever. */
-        ESP_LOGW(TAG, "connect failed; resuming scan");
+         * we don't get wedged in BLE_CONNECTING forever. Back off before
+         * rescanning: 1s, 2s, 4s ... capped at 30s. */
+        if (s_open_fail_count < 8) s_open_fail_count++;
+        uint32_t backoff_ms = 1000u << (s_open_fail_count - 1);
+        if (backoff_ms > 30000u) backoff_ms = 30000u;
+        ESP_LOGW(TAG, "connect failed (streak %u); rescan in %lu ms",
+                 (unsigned)s_open_fail_count, (unsigned long)backoff_ms);
+        vTaskDelay(pdMS_TO_TICKS(backoff_ms));
         s_state = (s_registry_count > 0) ? BLE_RECONNECT : BLE_IDLE;
         if (s_state == BLE_RECONNECT)
             start_scan(CONFIG_INPUT_BLE_SCAN_DURATION * 1000);
     }
+    s_hid_open_live = false;
     vTaskDelete(NULL);
 }
 
 static void open_device_async(const uint8_t addr[6], uint8_t addr_type)
 {
     if (s_state == BLE_CONNECTING) return;   /* one attempt at a time */
-    ble_gap_disc_cancel();
-    s_state = BLE_CONNECTING;
+    if (s_hid_open_live) return;             /* previous task still exiting */
 
+    /* All fallible steps BEFORE committing state — an early return must
+     * never leave the machine stuck in BLE_CONNECTING with no task alive. */
     hid_open_req_t *req = malloc(sizeof(*req));
     if (!req) { ESP_LOGE(TAG, "open req alloc failed"); return; }
     memcpy(req->addr, addr, 6);
     req->addr_type = addr_type;
-    if (xTaskCreate(hid_open_task, "hid_open", 5120, req, 6, NULL) != pdPASS) {
-        ESP_LOGE(TAG, "hid_open task create failed (low internal heap?)");
+
+    /* Static task with a PSRAM stack: the old 5 KB internal-heap alloc here
+     * failed exactly when internal DRAM was tightest (connect time, NimBLE
+     * buffers in flight) — one cause of "keyboard just stops connecting". */
+    if (!s_hid_open_stack)
+        s_hid_open_stack = heap_caps_malloc(HID_OPEN_STACK,
+                                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_hid_open_stack) {
+        ESP_LOGE(TAG, "hid_open stack alloc failed");
         free(req);
-        s_state = (s_registry_count > 0) ? BLE_RECONNECT : BLE_IDLE;
+        return;
     }
+
+    ble_gap_disc_cancel();
+    s_state         = BLE_CONNECTING;
+    s_hid_open_live = true;
+    xTaskCreateStatic(hid_open_task, "hid_open",
+                      HID_OPEN_STACK / sizeof(StackType_t),
+                      req, 6, s_hid_open_stack, &s_hid_open_tcb);
 }
 
 void ble_keyboard_select_device(const uint8_t addr[6], uint8_t addr_type)
@@ -534,6 +574,7 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
             start_scan(CONFIG_INPUT_BLE_SCAN_DURATION * 1000);
             break;
         }
+        s_open_fail_count = 0;         /* successful open resets the backoff */
         log_addr("Connected:", bda);
         memcpy(s_connected_bda, bda, 6);
         s_connected_dev = data->open.dev;
@@ -562,17 +603,27 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
             dev.addr_type = desc.peer_id_addr.type;
         }
 
+        /* Name priority: live GATT Device Name (authoritative, and the only
+         * source a boot-time reconnect has — also heals registry records
+         * poisoned with "Unknown HID" by older firmware) > pairing-scan ADV
+         * name > stored registry name > placeholder. */
+        const char *gatt_name = esp_hidh_dev_name_get(data->open.dev);
+        if (gatt_name && gatt_name[0])
+            snprintf(dev.name, sizeof(dev.name), "%s", gatt_name);
+
         bool found = false;
         for (int i = 0; i < s_scan_count && !found; i++) {
             if (memcmp(s_scan_results[i].addr, bda, 6) == 0) {
                 if (!have_desc) dev.addr_type = s_scan_results[i].addr_type;
-                memcpy(dev.name, s_scan_results[i].name, sizeof(dev.name));
+                if (dev.name[0] == '\0')
+                    memcpy(dev.name, s_scan_results[i].name, sizeof(dev.name));
                 found = true;
             }
         }
         for (int i = 0; i < s_registry_count && !found; i++) {
             if (memcmp(s_registry[i].addr, dev.addr, 6) == 0) {
-                memcpy(dev.name, s_registry[i].name, sizeof(dev.name));
+                if (dev.name[0] == '\0')
+                    memcpy(dev.name, s_registry[i].name, sizeof(dev.name));
                 if (!have_desc) dev.addr_type = s_registry[i].addr_type;
                 found = true;
             }

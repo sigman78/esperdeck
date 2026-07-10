@@ -675,16 +675,28 @@ static const vt_callbacks_t s_tsm_cb = {
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
 
+/* tsm's own grids are read/written ONLY from task context (tsm_feed on the
+ * SSH read task, the vterm dirty-row copy) — the display ISR reads vterm's
+ * separate internal bridge buffer, never these. So they live in PSRAM
+ * (SPIRAM-first, internal fallback): 2x24 KB of scarce internal DRAM back,
+ * and two fewer large contiguous carves fragmenting the heap. */
+static void *tsm_calloc(size_t n, size_t sz)
+{
+    void *p = heap_caps_calloc(n, sz, MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+    if (!p) p = heap_caps_calloc(n, sz, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    return p;
+}
+
 tsm_t *tsm_new(int cols, int rows)
 {
     if (cols <= 0 || rows <= 0) return NULL;
 
-    tsm_t *t = (tsm_t *)heap_caps_calloc(1, sizeof(tsm_t), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    tsm_t *t = (tsm_t *)tsm_calloc(1, sizeof(tsm_t));
     if (!t) return NULL;
 
-    t->cells     = (tsm_cell_t *)heap_caps_calloc((size_t)cols * (size_t)rows, sizeof(tsm_cell_t), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
-    t->alt_cells = (tsm_cell_t *)heap_caps_calloc((size_t)cols * (size_t)rows, sizeof(tsm_cell_t), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
-    t->dirty     = (tsm_row_dirty_t *)heap_caps_malloc((size_t)rows * sizeof(tsm_row_dirty_t), MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    t->cells     = (tsm_cell_t *)tsm_calloc((size_t)cols * (size_t)rows, sizeof(tsm_cell_t));
+    t->alt_cells = (tsm_cell_t *)tsm_calloc((size_t)cols * (size_t)rows, sizeof(tsm_cell_t));
+    t->dirty     = (tsm_row_dirty_t *)tsm_calloc((size_t)rows, sizeof(tsm_row_dirty_t));
 
     if (!t->cells || !t->alt_cells || !t->dirty) { tsm_free(t); return NULL; }
 
