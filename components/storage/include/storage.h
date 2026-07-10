@@ -165,6 +165,29 @@ esp_err_t storage_get_key(const char *key_id,
  */
 esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len);
 
+/**
+ * Delete <mount_point>/keys/<key_id>.pem (and its .pub, if any). Absent files
+ * are not an error.
+ */
+esp_err_t storage_delete_key(const char *key_id);
+
+/* -------------------------------------------------------------------------
+ * Bulk removal
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Delete known_hosts.ini (drops all TOFU host-key pins).
+ * @return ESP_OK if removed, ESP_ERR_NOT_FOUND if there was nothing to clear.
+ */
+esp_err_t storage_known_hosts_clear(void);
+
+/**
+ * Factory reset: delete profiles.ini, wifi.ini, known_hosts.ini,
+ * ble_devices.ini and every file under keys/. A reboot is advisable after,
+ * since in-RAM caches (BLE registry, wifi_manager) are untouched here.
+ */
+esp_err_t storage_factory_reset(void);
+
 /* -------------------------------------------------------------------------
  * Platform seam — implemented in storage_dev.c / storage_sim.c
  * ---------------------------------------------------------------------- */

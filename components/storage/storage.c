@@ -14,6 +14,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#ifndef _WIN32
+#include <dirent.h>          /* device (newlib) + POSIX sim; not msvcrt */
+#endif
 
 static const char *TAG = "storage";
 
@@ -508,5 +511,69 @@ esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
     }
 
     ESP_LOGI(TAG, "Wrote key '%s' (%zu bytes)", key_id, len);
+    return ESP_OK;
+}
+
+esp_err_t storage_delete_key(const char *key_id)
+{
+    if (!key_id || !key_id[0]) return ESP_ERR_INVALID_ARG;
+    char path[160];
+    key_path(key_id, path, sizeof(path));                     /* .pem */
+    remove(path);
+    snprintf(path, sizeof(path), "%s/keys/%s.pub",
+             storage_platform_mount_point(), key_id);         /* .pub, if any */
+    remove(path);
+    ESP_LOGI(TAG, "Deleted key '%s'", key_id);
+    return ESP_OK;
+}
+
+/* -------------------------------------------------------------------------
+ * Bulk removal
+ * ---------------------------------------------------------------------- */
+
+esp_err_t storage_known_hosts_clear(void)
+{
+    char path[160];
+    snprintf(path, sizeof(path), "%s/known_hosts.ini",
+             storage_platform_mount_point());
+    int r = remove(path);
+    ESP_LOGI(TAG, "Known hosts cleared (%s)", r == 0 ? "removed" : "was empty");
+    return r == 0 ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+/* Remove every regular file under keys/ (leaves the directory itself). The
+ * Windows simulator's CRT has no dirent.h; there the keys wipe is skipped (a
+ * host test convenience — the device path is the one that matters). */
+static void wipe_keys_dir(void)
+{
+#ifndef _WIN32
+    char dir[128];
+    snprintf(dir, sizeof(dir), "%s/keys", storage_platform_mount_point());
+    DIR *d = opendir(dir);
+    if (!d) return;
+    struct dirent *e;
+    char path[192];
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;                    /* skip . / .. */
+        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        remove(path);
+    }
+    closedir(d);
+#endif
+}
+
+esp_err_t storage_factory_reset(void)
+{
+    const char *mp = storage_platform_mount_point();
+    static const char *files[] = {
+        "profiles.ini", "wifi.ini", "known_hosts.ini", "ble_devices.ini",
+    };
+    char path[160];
+    for (int i = 0; i < (int)(sizeof(files) / sizeof(files[0])); i++) {
+        snprintf(path, sizeof(path), "%s/%s", mp, files[i]);
+        remove(path);
+    }
+    wipe_keys_dir();
+    ESP_LOGW(TAG, "Factory reset: all storage wiped");
     return ESP_OK;
 }

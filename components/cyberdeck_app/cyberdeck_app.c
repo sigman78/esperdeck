@@ -30,6 +30,7 @@
 #include "vterm.h"
 #include "wifi_manager.h"
 #include "wifi_provision.h"
+#include "ssh_import.h"
 
 #ifndef BUILD_SIMULATOR
 #include "esp_heap_caps.h"   /* free-RAM stats in the header */
@@ -49,16 +50,17 @@ typedef enum {
     ST_MENU,        /* in-session overlay menu                       */
     ST_WIFIPROV,    /* SoftAP WiFi onboarding (modal)                */
     ST_PROFILE,     /* on-device profile editor (modal)              */
+    ST_SSHIMPORT,   /* SoftAP + HTTP SSH-profile import (modal)      */
 } app_state_t;
 
 #define MAX_PROFILES     (8 + 1)          /* stored + synthesized fallback */
 
-/* HOME trailing tiles after the profile tiles: New profile, Pair keyboard,
- * Configuration (in that order). */
-#define HOME_EXTRA_TILES 3
-#define HOME_TILE_NEW(pc)   (pc)
-#define HOME_TILE_PAIR(pc)  ((pc) + 1)
-#define HOME_TILE_CONFIG(pc) ((pc) + 2)
+/* HOME trailing tiles after the profile tiles. "New profile" only appears as a
+ * first-run shortcut when nothing is stored yet (otherwise profiles are added
+ * from Config); "Pair keyboard" only when no keyboard is bonded. Configuration
+ * is always present and always last. Order is resolved by home_extras(). */
+typedef enum { HX_NEW, HX_PAIR, HX_CONFIG } home_extra_t;
+#define HOME_EXTRA_MAX 3
 #define PAIR_MAX         STORAGE_BLE_MAX
 #define PAIR_TIMEOUT_MS  30000
 #define PAIR_POLL_MS     250
@@ -92,6 +94,8 @@ static struct {
 
     conn_profile_t profiles[MAX_PROFILES];
     int  profile_count;
+    int  stored_count;              /* profiles actually on flash (excl. synth) */
+    bool kbd_bonded;                /* a keyboard is in the BLE registry */
     int  sel;                       /* HOME tile selection */
 
     /* Tile grid of the current screen, saved for touch hit-testing. */
@@ -124,15 +128,19 @@ static struct {
 
     /* menu */
     int  menu_sel;
-    int  menu_page;        /* 0 = main menu, 1 = config submenu */
+    int  menu_screen;      /* menu_screen_t: which page of the menu tree */
     bool menu_from_home;   /* config opened from HOME (no session) */
-    bool menu_forget_armed;/* "Forget keyboard" needs a 2nd activation */
+    bool menu_armed;       /* a destructive item needs a 2nd activation */
     char menu_msg[48];     /* last action result, shown under the tiles */
     uint64_t menu_msg_until; /* auto-clear time; 0 = sticky (armed confirm) */
     bool menu_msg_wifi;    /* live-track wifi_status_str() while shown */
 
     /* wifi provisioning */
     uint64_t prov_done_at; /* when to finish after CRED_SUCCESS (0 = not set) */
+
+    /* ssh-profile import over WiFi */
+    int      import_seen;  /* ssh_import_count() already acknowledged on screen */
+    char     import_last[32]; /* snapshot of the last imported name (stable) */
 
     /* toast (SESSION only; UI states draw status inline) */
     char     toast[64];
@@ -251,6 +259,7 @@ static void load_profiles(void)
     if (storage_load_profiles(s.profiles, &n, MAX_PROFILES - 1) != ESP_OK)
         n = 0;
     s.profile_count = n;
+    s.stored_count  = n;   /* real, on-flash profiles (before any synth below) */
 
     /* Synthesize "(default)" from the Kconfig fallback ONLY when profiles.ini
      * gave us nothing — otherwise a populated file gets padded with a
@@ -268,6 +277,27 @@ static void load_profiles(void)
                  s.cfg.fallback_password ? s.cfg.fallback_password : "");
     }
     if (s.sel >= s.profile_count) s.sel = s.profile_count ? s.profile_count - 1 : 0;
+}
+
+/* True if a keyboard is bonded (present in the BLE registry). */
+static bool ble_has_bond(void)
+{
+    if (!s.cfg.ble) return false;
+    ble_device_info_t d[STORAGE_BLE_MAX];
+    int n = 0;
+    storage_ble_list(d, STORAGE_BLE_MAX, &n);
+    return n > 0;
+}
+
+/* Resolve the trailing HOME tiles for the current state, in display order.
+ * Returns the count; @p out must hold at least HOME_EXTRA_MAX entries. */
+static int home_extras(home_extra_t *out)
+{
+    int n = 0;
+    if (s.stored_count == 0)            out[n++] = HX_NEW;   /* first-run help */
+    if (s.cfg.ble && !s.kbd_bonded)     out[n++] = HX_PAIR;  /* not yet bonded */
+    out[n++] = HX_CONFIG;                                    /* always, last   */
+    return n;
 }
 
 static void kick_wifi(void)
@@ -680,14 +710,17 @@ static void render_home(void)
 
     draw_rule_scan(3, s.anim_frame);
 
-    /* Tiles: one per profile, then trailing "new profile" + "pair keyboard"
-     * + "config" tiles (see the HOME_TILE_* helpers). */
-    tilegrid_t g = picker_grid(s.profile_count + HOME_EXTRA_TILES);
+    /* Tiles: one per profile, then a conditional trailing set (New profile only
+     * as a first-run shortcut, Pair keyboard only when none is bonded, and
+     * Configuration always). See home_extras(). */
+    home_extra_t xt[HOME_EXTRA_MAX];
+    int nx = home_extras(xt);
+    tilegrid_t g = picker_grid(s.profile_count + nx);
     s.grid = g;
     if (s.sel >= g.count) s.sel = g.count ? g.count - 1 : 0;
-    if (s.profile_count + HOME_EXTRA_TILES > g.ncols * g.nrows)
+    if (s.profile_count + nx > g.ncols * g.nrows)
         ESP_LOGW(TAG, "%d profiles exceed one page; showing first %d",
-                 s.profile_count, g.count - HOME_EXTRA_TILES);
+                 s.profile_count, g.count - nx);
 
     for (int i = 0; i < g.count; i++) {
         int cx = tile_x(&g, i), cy = tile_y(&g, i);
@@ -700,17 +733,23 @@ static void render_home(void)
                      p->auth == STORAGE_AUTH_KEY ? "  [key]" : "");
             ui_pen(prof_accent(p->name));   /* stable per-name identity */
             ui_tile(cx, cy, g.tw, g.th, p->name, body, sel);
-        } else if (i == HOME_TILE_NEW(s.profile_count)) {
-            ui_pen(OVERLAY_COL_GREEN);
-            ui_tile(cx, cy, g.tw, g.th, "+ New profile", "add SSH host", sel);
-        } else if (i == HOME_TILE_PAIR(s.profile_count)) {
-            ui_pen(OVERLAY_COL_CYAN);
-            ui_tile(cx, cy, g.tw, g.th, "+ Pair keyboard",
-                    s.cfg.ble ? "tap or long-press" : "(no BLE)", sel);
         } else {
-            ui_pen(OVERLAY_COL_BLUE);
-            ui_tile(cx, cy, g.tw, g.th, "Configuration",
-                    "wifi / keyboard", sel);
+            switch (xt[i - s.profile_count]) {
+            case HX_NEW:
+                ui_pen(OVERLAY_COL_GREEN);
+                ui_tile(cx, cy, g.tw, g.th, "+ New profile", "add SSH host", sel);
+                break;
+            case HX_PAIR:
+                ui_pen(OVERLAY_COL_CYAN);
+                ui_tile(cx, cy, g.tw, g.th, "+ Pair keyboard",
+                        "tap or long-press", sel);
+                break;
+            case HX_CONFIG:
+                ui_pen(OVERLAY_COL_BLUE);
+                ui_tile(cx, cy, g.tw, g.th, "Configuration",
+                        "wifi / profiles / more", sel);
+                break;
+            }
         }
     }
 
@@ -1135,54 +1174,147 @@ static void pf_focus(int field)
     }
 }
 
-/* Page 0 — the main in-session menu. */
-static const char    *main_items[] = {
-    "Resume session", "Disconnect", "Configuration >", "Pair keyboard",
-};
-static const uint8_t  main_cols[]  = {
-    OVERLAY_COL_GREEN, OVERLAY_COL_AMBER, OVERLAY_COL_BLUE, OVERLAY_COL_CYAN,
-};
-#define MAIN_COUNT ((int)(sizeof(main_items) / sizeof(main_items[0])))
+/* Menu is a shallow tree of tile pages: a root (MAIN in-session), a CONFIG hub,
+ * and topic submenus. HOME opens straight into CONFIG. Each page holds few
+ * enough big tiles to fit the screen without scrolling. */
+typedef enum {
+    MS_MAIN = 0,   /* in-session root: Resume / Disconnect / Configuration    */
+    MS_CONFIG,     /* hub: Profiles / WiFi / Keyboard / System / Back         */
+    MS_PROFILES,   /* Add / Import SoftAP / Import Web / Delete / Back        */
+    MS_WIFI,       /* Reconnect / Add network / Back                          */
+    MS_KEYBOARD,   /* Pair / Forget bonds / Back                             */
+    MS_SYSTEM,     /* Clear host keys / Factory reset / Back                  */
+    MS_DELPROFILE, /* dynamic: pick a stored profile to delete               */
+} menu_screen_t;
 
-/* Page 1 — the configuration submenu (reachable from HOME and in-session). */
-static const char    *config_items[] = {
-    "WiFi reconnect", "WiFi disconnect", "WiFi setup (phone)",
-    "Forget keyboard", "Back",
-};
-static const uint8_t  config_cols[]   = {
-    OVERLAY_COL_GREEN, OVERLAY_COL_AMBER, OVERLAY_COL_CYAN,
-    OVERLAY_COL_RED,   OVERLAY_COL_BLUE,
-};
-#define CONFIG_COUNT ((int)(sizeof(config_items) / sizeof(config_items[0])))
-#define CONFIG_WIFI_SETUP 2   /* index of "WiFi setup" */
-#define CONFIG_FORGET_KBD 3   /* index of "Forget keyboard" (needs BLE) */
+#define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
+static const char *main_items[]     = { "Resume session", "Disconnect", "Configuration >" };
+static const uint8_t main_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
+
+static const char *config_items[]   = { "Profiles >", "WiFi >", "Keyboard >", "System >", "Back" };
+static const uint8_t config_cols[]  = { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN,
+                                        OVERLAY_COL_MAGENTA, OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
+#define CFG_KEYBOARD 2   /* index of "Keyboard >" (needs BLE) */
+
+static const char *profiles_items[] = { "Add (type here)", "Import - SoftAP (phone)",
+                                        "Import - Web (PC)", "Delete profile", "Back" };
+static const uint8_t profiles_cols[]= { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN,
+                                        OVERLAY_COL_CYAN, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
+
+static const char *wifi_items[]     = { "Reconnect", "Add network (phone)", "Back" };
+static const uint8_t wifi_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
+
+static const char *kbd_items[]      = { "Pair keyboard", "Forget bonds", "Back" };
+static const uint8_t kbd_cols[]     = { OVERLAY_COL_GREEN, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
+
+static const char *system_items[]   = { "Clear host keys", "Factory reset", "Back" };
+static const uint8_t system_cols[]  = { OVERLAY_COL_AMBER, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
+
+typedef struct {
+    const char        *title;
+    const char *const *items;
+    const uint8_t     *cols;
+    int                count;
+} menu_def_t;
+
+/* Static definition for a screen; MS_DELPROFILE is built dynamically. */
+static menu_def_t menu_def(int sc)
+{
+    switch (sc) {
+    case MS_MAIN:     return (menu_def_t){ "MENU",          main_items,     main_cols,     NELEM(main_items) };
+    case MS_CONFIG:   return (menu_def_t){ "CONFIGURATION", config_items,   config_cols,   NELEM(config_items) };
+    case MS_PROFILES: return (menu_def_t){ "PROFILES",      profiles_items, profiles_cols, NELEM(profiles_items) };
+    case MS_WIFI:     return (menu_def_t){ "WIFI",          wifi_items,     wifi_cols,     NELEM(wifi_items) };
+    case MS_KEYBOARD: return (menu_def_t){ "KEYBOARD",      kbd_items,      kbd_cols,      NELEM(kbd_items) };
+    case MS_SYSTEM:   return (menu_def_t){ "SYSTEM",        system_items,   system_cols,   NELEM(system_items) };
+    default:          return (menu_def_t){ "", NULL, NULL, 0 };
+    }
+}
+
+/* CONFIRM label if (sc,sel) is a destructive 2-step action, else NULL. In the
+ * delete picker every profile tile (sel < stored_count) is destructive. */
+static const char *menu_confirm(int sc, int sel)
+{
+    if (sc == MS_KEYBOARD   && sel == 1) return "CONFIRM forget bonds?";
+    if (sc == MS_SYSTEM     && sel == 0) return "CONFIRM clear host keys?";
+    if (sc == MS_SYSTEM     && sel == 1) return "CONFIRM FACTORY RESET?";
+    if (sc == MS_DELPROFILE && sel < s.stored_count) return "CONFIRM delete?";
+    return NULL;
+}
+
+/* Is (sc,sel) unavailable because BLE support is absent? */
+static bool menu_item_dim(int sc, int sel)
+{
+    if (s.cfg.ble) return false;
+    return (sc == MS_CONFIG && sel == CFG_KEYBOARD) || (sc == MS_KEYBOARD);
+}
+
+/* Build the delete-profile picker's item list from the stored profiles plus a
+ * trailing "Back". Names point into s.profiles, valid for the frame. */
+static int delpicker_items(const char *out[], int cap)
+{
+    int n = 0;
+    for (int i = 0; i < s.stored_count && n < cap - 1; i++)
+        out[n++] = s.profiles[i].name;
+    if (n < cap) out[n++] = "Back";
+    return n;
+}
 
 static void render_menu(void)
 {
     ui_colors(UI_FG, UI_BG);
     ui_dim();   /* dim the live session behind the menu so it pops */
 
-    const bool     cfg   = s.menu_page == 1;
-    const char   **items = cfg ? config_items : main_items;
-    const uint8_t *cols  = cfg ? config_cols  : main_cols;
-    const int      count = cfg ? CONFIG_COUNT  : MAIN_COUNT;
+    const int sc = s.menu_screen;
+    const bool root = (sc == MS_MAIN);
 
-    tilegrid_t g = { .tw = 40, .th = 4, .gx = 0, .gy = 1,
-                     .ncols = 1, .nrows = count, .count = count };
-    g.x0 = (ui_cols() - g.tw) / 2;
-    g.y0 = (ui_rows() - (count * g.th + (count - 1) * g.gy)) / 2;
+    /* Resolve the page: static def, or the dynamic delete picker. */
+    const char *dyn[MAX_PROFILES + 1];
+    const char *title;
+    const char *const *items;
+    const uint8_t *cols;
+    int count;
+    if (sc == MS_DELPROFILE) {
+        title = "DELETE PROFILE";
+        count = delpicker_items(dyn, NELEM(dyn));
+        items = dyn;
+        cols  = NULL;                       /* colored per-tile below */
+    } else {
+        menu_def_t d = menu_def(sc);
+        title = d.title; items = d.items; cols = d.cols; count = d.count;
+    }
+
+    /* The delete picker can hold up to 8 profiles + Back — too many for one
+     * centered column (it would run off-screen), so lay it out on the same
+     * multi-column grid HOME uses. Everything below is grid-agnostic (tile_x/
+     * tile_y/tile_nav/tile_hit). */
+    const bool picker = (sc == MS_DELPROFILE);
+    tilegrid_t g;
+    int title_row, ly, chrome_x;
+    if (picker) {
+        g = picker_grid(count);
+        title_row = 2;
+        ly        = ui_rows() - 3;
+        chrome_x  = (ui_cols() - 40) / 2;   /* center chrome over the screen */
+    } else {
+        g = (tilegrid_t){ .tw = 40, .th = 4, .gx = 0, .gy = 1,
+                          .ncols = 1, .nrows = count, .count = count };
+        g.x0 = (ui_cols() - g.tw) / 2;
+        g.y0 = (ui_rows() - (count * g.th + (count - 1) * g.gy)) / 2;
+        title_row = g.y0 - 2;
+        ly        = g.y0 + count * g.th + (count - 1) * g.gy + 1;
+        chrome_x  = g.x0;
+    }
     s.grid = g;
+    if (s.menu_sel >= g.count) s.menu_sel = g.count ? g.count - 1 : 0;
 
-    /* Title as a magenta lozenge (▐ text ▌ half-block caps, both glyphs'
-     * first use), centered over the tile column instead of floating at its
-     * left edge over the dim scrim. */
-    const char *title = cfg ? "CONFIGURATION" : "MENU";
+    /* Title as a magenta lozenge, centered over the chrome column. */
     int tl = (int)strlen(title);
     ui_pen(OVERLAY_COL_MAGENTA);
-    ui_chip(g.x0 + (g.tw - tl - 4) / 2, g.y0 - 2, UI_RHALF, title, UI_LHALF);
+    ui_chip(chrome_x + (40 - tl - 4) / 2, title_row, UI_RHALF, title, UI_LHALF);
 
-    /* Wall clock in the screen's top-right corner, over the dim scrim
-     * (the menu re-renders every frame, so it ticks live). */
+    /* Wall clock, top-right, ticking live (menu re-renders every frame). */
     char clk[8];
     if (clock_str(clk, sizeof(clk))) {
         ui_pen(OVERLAY_COL_BLUE);
@@ -1190,64 +1322,59 @@ static void render_menu(void)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    for (int i = 0; i < count; i++) {
-        /* "Pair/Forget keyboard" need BLE; grey them out when absent. */
-        bool dim = !s.cfg.ble &&
-                   ((!cfg && i == 3) || (cfg && i == CONFIG_FORGET_KBD));
-        bool armed = cfg && i == CONFIG_FORGET_KBD && s.menu_forget_armed;
-        ui_pen(armed ? OVERLAY_COL_RED : cols[i]);
+    for (int i = 0; i < g.count; i++) {
+        bool dim   = menu_item_dim(sc, i);
+        const char *confirm = menu_confirm(sc, i);
+        bool armed = (i == s.menu_sel) && s.menu_armed && confirm;
+        uint8_t col = armed ? OVERLAY_COL_RED
+                    : sc == MS_DELPROFILE
+                        ? (i < s.stored_count ? OVERLAY_COL_AMBER : OVERLAY_COL_BLUE)
+                        : cols[i];
+        ui_pen(col);
         ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th,
-                armed ? "CONFIRM forget keyboard?" : items[i],
+                armed ? confirm : items[i],
                 dim ? "(unavailable)" : "", i == s.menu_sel);
         if (i == s.menu_sel) {
-            /* Pulsing selection marker over ui_tile's static ▶ — the menu
-             * ticks at 10 fps now, so a still marker reads as a freeze.
-             * (UI_ARROW ► is byte-identical to ▶ in Terminus; ◆ is not.) */
             static const uint16_t pulse[3] = { UI_PLAY, UI_DIAMOND, UI_VBAR };
             ui_putch(tile_x(&g, i) + 1, tile_y(&g, i) + 1,
                      pulse[(s.anim_frame / 3) % 3], OVERLAY_ATTR_INVERSE);
         }
     }
 
-    /* Esc legend + action result sit right under the tile column — the
-     * result used to float alone on the last screen row, easy to miss, and
-     * the Esc behavior (page- and origin-dependent) was documented nowhere. */
-    int ly = g.y0 + count * g.th + (count - 1) * g.gy + 1;
-    const char *legend = !cfg ? "Esc/F12 = resume \xB7 tap outside = close"
-                        : s.menu_from_home ? "Esc = back to home"
-                                           : "Esc = back to menu";
-    ui_pen(OVERLAY_COL_DEFAULT);   /* not the last tile's leftover accent */
-    ui_puts(g.x0 + (g.tw - (int)strlen(legend)) / 2, ly, legend, 0);
+    /* Esc legend + action result under the tile area. */
+    const char *legend = root ? "Esc/F12 = resume \xB7 tap outside = close"
+                       : sc == MS_CONFIG
+                           ? (s.menu_from_home ? "Esc = back to home"
+                                               : "Esc = back to menu")
+                           : "Esc = back";
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_puts(chrome_x + (40 - (int)strlen(legend)) / 2, ly, legend, 0);
 
-    if (s.menu_msg[0]) {               /* action feedback, both pages */
-        int mx = g.x0 + (g.tw - ((int)strlen(s.menu_msg) + 2)) / 2;
+    /* Empty-picker hint, just above the (Back-only) grid. */
+    if (picker && s.stored_count == 0) {
+        const char *m = "no stored profiles";
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_puts(chrome_x + (40 - (int)strlen(m)) / 2, title_row + 1, m, 0);
+    }
+
+    if (s.menu_msg[0]) {               /* action feedback */
+        int mx = chrome_x + (40 - ((int)strlen(s.menu_msg) + 2)) / 2;
         ui_pen(OVERLAY_COL_AMBER);
         ui_putch(mx, ly + 1, UI_DIAMOND, 0);
         ui_puts(mx + 2, ly + 1, s.menu_msg, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    if (!cfg) {
-        /* Mainframe flex: deck uptime, and link time when a session is
-         * behind the menu. anim_frame is ms-since-boot / 100, so the clock
-         * ticks live now that the menu re-renders every frame. */
+    if (root) {
+        /* Mainframe flex: deck uptime + link time behind the menu. */
         uint64_t up = (uint64_t)s.anim_frame * ANIM_PERIOD_MS / 1000;
         char flex[48];
-        if (s.menu_from_home) {
-            snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u",
-                     (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
-                     (unsigned)(up % 60));
-        } else {
-            /* anim_frame*100 floors the tick time and can lag session_start
-             * by a frame right after connect — clamp, don't underflow. */
-            uint64_t now_ms = (uint64_t)s.anim_frame * ANIM_PERIOD_MS;
-            uint64_t lk = now_ms > s.session_start
-                        ? (now_ms - s.session_start) / 1000 : 0;
-            snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u   LINK %02u:%02u",
-                     (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
-                     (unsigned)(up % 60),
-                     (unsigned)(lk / 60), (unsigned)(lk % 60));
-        }
+        uint64_t now_ms = (uint64_t)s.anim_frame * ANIM_PERIOD_MS;
+        uint64_t lk = now_ms > s.session_start
+                    ? (now_ms - s.session_start) / 1000 : 0;
+        snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u   LINK %02u:%02u",
+                 (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
+                 (unsigned)(up % 60), (unsigned)(lk / 60), (unsigned)(lk % 60));
         ui_pen(OVERLAY_COL_BLUE);
         ui_puts(g.x0 + (g.tw - (int)strlen(flex)) / 2, ly + 2, flex, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
@@ -1340,6 +1467,7 @@ static void render_saver(void)
 static void enter_home(uint64_t now)
 {
     s.state = ST_HOME;
+    s.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
     s.next_home_refresh = 0;
     /* Arriving on HOME counts as activity: a session drop or provisioning
      * result must show its toast for the full lifetime — the rain waiting
@@ -1528,6 +1656,166 @@ static void enter_wifiprov(uint64_t now)
     render_wifiprov(now);
 }
 
+/* Draw the QR (right side) with a caption. Two QR rows per half-block cell. */
+static void draw_import_qr(const char *caption)
+{
+    int qsz = ssh_import_qr_size();
+    if (qsz <= 0) return;
+    const int QZ = 2;
+    int span  = qsz + 2 * QZ;
+    int crows = (span + 1) / 2;
+    int qx = ui_cols() - span - 2;
+    int qy = 6;
+    ui_pen(OVERLAY_COL_WHITE);
+    for (int cr = 0; cr < crows; cr++) {
+        for (int cc = 0; cc < span; cc++) {
+            bool top = ssh_import_qr_module(cc - QZ, 2 * cr - QZ);
+            bool bot = ssh_import_qr_module(cc - QZ, 2 * cr - QZ + 1);
+            uint16_t g = (top && bot) ? UI_BLOCK
+                       : top ? 0x2580u
+                       : bot ? 0x2584u
+                       : ' ';
+            ui_putch(qx + cc, qy + cr, g, OVERLAY_ATTR_INVERSE);
+        }
+    }
+    ui_pen(OVERLAY_COL_CYAN);
+    ui_puts(qx + (span - (int)strlen(caption)) / 2, qy + crows, caption, 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
+/* Full-screen HTTP SSH-profile import modal (SoftAP or Web transport). */
+static void render_sshimport(uint64_t now)
+{
+    (void)now;
+    bool web = (ssh_import_mode() == SSH_IMPORT_WEB);
+    ui_colors(UI_FG, UI_BG);
+    ui_clear();
+    ui_fill(0, 0, ui_cols(), ui_rows(), 0);
+
+    draw_titlebar(2, "SSH IMPORT", s.anim_frame);
+    ui_pen(OVERLAY_COL_BLUE);
+    ui_puts(ui_cols() - 10, 0, web ? "// Web/PC" : "// SoftAP", 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    draw_rule_scan(3, s.anim_frame);
+
+    if (web) {
+        /* On the existing LAN — the PC opens the deck's IP directly. */
+        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 6, "1", 0);
+        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 6, "On your PC browser, open:", 0);
+        ui_pen(OVERLAY_COL_WHITE);
+        ui_printf(32, 6, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_url());
+        ui_pen(OVERLAY_COL_DEFAULT);
+
+        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 8, "2", 0);
+        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 8, "Type this proof code in the form:", 0);
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_printf(40, 8, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_pop());
+        ui_pen(OVERLAY_COL_DEFAULT);
+
+        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 10, "3", 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_puts(6, 10, "Fill the form + Save. Repeat for more.", 0);
+
+        /* Honest caveat: plain HTTP over the LAN (no WPA2 wrapping our link). */
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_putch(4, 12, UI_DIAMOND, 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_puts(6, 12, "LAN only - use on a network you trust.", 0);
+
+        draw_import_qr("scan to open");
+    } else {
+        /* SoftAP — the phone joins the deck's own WPA2 network. */
+        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 6, "1", 0);
+        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 6, "Join this WiFi network:", 0);
+        ui_pen(OVERLAY_COL_GREEN);
+        ui_printf(30, 6, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_service_name());
+        ui_pen(OVERLAY_COL_DEFAULT);
+
+        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 8, "2", 0);
+        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 8, "WiFi password / proof code:", 0);
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_printf(34, 8, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_pop());
+        ui_pen(OVERLAY_COL_DEFAULT);
+
+        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 10, "3", 0);
+        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 10, "Open in a browser:", 0);
+        ui_pen(OVERLAY_COL_WHITE);
+        ui_printf(25, 10, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_url());
+        ui_pen(OVERLAY_COL_DEFAULT);
+
+        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 12, "4", 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_puts(6, 12, "Fill the form + Save. Repeat for more.", 0);
+
+        draw_import_qr("scan to join");
+    }
+
+    /* Status: running import count / last name, or a waiting spinner. */
+    int cnt = ssh_import_count();
+    const char *err = ssh_import_err();
+    if (err && err[0]) {
+        ui_pen(OVERLAY_COL_RED);
+        ui_putch(4, 15, UI_DIAMOND, 0);
+        ui_printf(6, 15, 0, "rejected: %s", err);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    } else if (cnt > 0) {
+        ui_pen(OVERLAY_COL_GREEN);
+        ui_putch(4, 15, UI_LED_ON, 0);
+        ui_printf(6, 15, 0, "imported '%s'  (%d saved)", s.import_last, cnt);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    } else {
+        ui_pen(OVERLAY_COL_GREEN);
+        ui_putch(4, 15, spinner_glyph(s.anim_frame), 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_puts(6, 15, "waiting for a browser...", 0);
+    }
+
+    /* Live RAM readout — watch internal DRAM while the server runs. */
+    char ram[48];
+    ram_stats(ram, sizeof(ram));
+    ui_pen(OVERLAY_COL_BLUE);
+    ui_putch(4, 17, UI_DIAMOND, 0);
+    ui_printf(6, 17, 0, "RAM  %s", ram);
+    ui_pen(OVERLAY_COL_DEFAULT);
+
+    draw_footer(cnt > 0 ? "tap or Esc when done - profiles are saved"
+                        : "tap or Esc to cancel");
+    ui_no_cursor();
+    ui_present();
+}
+
+static void enter_sshimport(uint64_t now, ssh_import_mode_t mode)
+{
+    esp_err_t e = ssh_import_start(mode);
+    if (e != ESP_OK) {
+        if (mode == SSH_IMPORT_WEB && e == ESP_ERR_INVALID_STATE)
+            toast(now, "connect WiFi first");
+        else
+            toast(now, "import unavailable");
+        enter_home(now);
+        return;
+    }
+    s.import_seen = 0;
+    s.import_last[0] = '\0';
+    s.next_anim   = 0;
+    s.state       = ST_SSHIMPORT;
+    render_sshimport(now);
+}
+
+/* Tear down the import server, refresh the profile list, go home. Only SoftAP
+ * parked wifi_manager, so only that mode needs to un-park it. */
+static void exit_sshimport(uint64_t now)
+{
+    int cnt = ssh_import_count();
+    bool softap = (ssh_import_mode() == SSH_IMPORT_SOFTAP);
+    ssh_import_stop();
+    if (softap) kick_wifi();   /* resume STA auto-reconnect (web never parked) */
+    load_profiles();           /* surface freshly imported profiles on HOME */
+    if (cnt > 0) toast(now, "imported %d profile(s)", cnt);
+    else         toast(now, "import cancelled");
+    enter_home(now);
+}
+
 /* Post an action-feedback line under the menu tiles.
  * @p ms: lifetime; 0 = sticky (lives until explicitly cleared).
  * @p live_wifi: keep rewriting it from wifi_status_str() while shown. */
@@ -1546,101 +1834,199 @@ static void menu_clear_note(void)
     s.menu_msg_wifi  = false;
 }
 
-static void menu_open_config(void)
+/* Switch to menu screen @p sc, resetting selection/arm/note. */
+static void menu_goto(int sc)
 {
-    s.menu_page   = 1;
+    s.menu_screen = sc;
     s.menu_sel    = 0;
-    s.menu_forget_armed = false;
+    s.menu_armed  = false;
     menu_clear_note();
     render_menu();
 }
 
-/* Return to the main menu page. Every back path (Esc, tap-outside, the Back
- * tile) funnels through here so config-page feedback — including an armed
- * "activate again to confirm" — can never leak onto the main page. */
-static void menu_open_main(void)
-{
-    s.menu_page   = 0;
-    s.menu_sel    = 0;
-    s.menu_forget_armed = false;
-    menu_clear_note();
-    render_menu();
-}
-
-/* Open the config submenu directly from HOME (no session behind it). */
+/* Open the config hub directly from HOME (no session behind it). */
 static void home_open_config(void)
 {
     s.menu_from_home = true;
     s.state          = ST_MENU;
-    menu_open_config();
+    menu_goto(MS_CONFIG);
+}
+
+/* If HOME tile @p slot is a trailing extra, return its home_extra_t, else -1. */
+static int home_extra_kind(int slot)
+{
+    if (slot < s.profile_count) return -1;
+    home_extra_t xt[HOME_EXTRA_MAX];
+    int nx = home_extras(xt);
+    int xi = slot - s.profile_count;
+    return (xi >= 0 && xi < nx) ? (int)xt[xi] : -1;
+}
+
+/* Act on a trailing HOME extra tile; returns true if @p slot was one. */
+static bool home_activate_extra(int slot, uint64_t now)
+{
+    switch (home_extra_kind(slot)) {
+    case HX_NEW:    enter_profile(now);                return true;
+    case HX_PAIR:   if (s.cfg.ble) enter_pairing(now); return true;
+    case HX_CONFIG: home_open_config();                return true;
+    default:        return false;
+    }
+}
+
+/* Back one level. Every back path (Esc, tap-outside, Back tile) funnels here so
+ * an armed confirm can never leak across pages. */
+static void menu_back(uint64_t now)
+{
+    switch (s.menu_screen) {
+    case MS_MAIN:                              /* resume the live session */
+        s.menu_armed = false;
+        s.state = ST_SESSION;
+        ui_hide();
+        break;
+    case MS_CONFIG:
+        if (s.menu_from_home) enter_home(now);
+        else                  menu_goto(MS_MAIN);
+        break;
+    case MS_DELPROFILE:
+        menu_goto(MS_PROFILES);
+        break;
+    default:                                   /* PROFILES/WIFI/KEYBOARD/SYSTEM */
+        menu_goto(MS_CONFIG);
+        break;
+    }
+}
+
+/* Delete the stored profile at index @p idx, plus its key files if no other
+ * profile still references them. Reloads the in-RAM list. */
+static void delete_profile_at(int idx)
+{
+    if (idx < 0 || idx >= s.stored_count) return;
+    conn_profile_t doomed = s.profiles[idx];
+
+    conn_profile_t set[MAX_PROFILES];
+    int n = 0;
+    for (int i = 0; i < s.stored_count && n < MAX_PROFILES; i++)
+        if (i != idx) set[n++] = s.profiles[i];
+    storage_save_profiles(set, n);
+
+    if (doomed.auth == STORAGE_AUTH_KEY && doomed.key_id[0]) {
+        bool shared = false;
+        for (int i = 0; i < n; i++)
+            if (set[i].auth == STORAGE_AUTH_KEY &&
+                strcmp(set[i].key_id, doomed.key_id) == 0) { shared = true; break; }
+        if (!shared) storage_delete_key(doomed.key_id);
+    }
+    load_profiles();
 }
 
 static void menu_activate(uint64_t now)
 {
-    /* Activating anything but the armed "Forget keyboard" backs it down. */
-    if (s.menu_page != 1 || s.menu_sel != CONFIG_FORGET_KBD)
-        s.menu_forget_armed = false;
+    const int sc  = s.menu_screen;
+    const int sel = s.menu_sel;
+    const bool was_armed = s.menu_armed;
+    s.menu_armed = false;   /* destructive branches re-arm on the first hit */
 
-    if (s.menu_page == 0) {                   /* ---- main menu ---- */
-        switch (s.menu_sel) {
-        case 0:                                   /* resume session */
-            s.state = ST_SESSION;
-            ui_hide();
-            break;
-        case 1:                                   /* disconnect */
-            ssh_client_disconnect();
-            enter_home(now);
-            break;
-        case 2:                                   /* open config submenu */
-            menu_open_config();
-            break;
-        case 3:                                   /* pair keyboard (session lives on) */
-            if (s.cfg.ble) {
-                enter_pairing(now);
-            } else {                              /* was a silent no-op */
-                menu_note(now, MENU_MSG_MS, false, "no BLE keyboard support");
-                render_menu();
-            }
-            break;
+    switch (sc) {
+    case MS_MAIN:
+        switch (sel) {
+        case 0: s.state = ST_SESSION; ui_hide();          return;  /* resume  */
+        case 1: ssh_client_disconnect(); enter_home(now); return;  /* discon. */
+        case 2: menu_goto(MS_CONFIG);                     return;
         }
         return;
-    }
 
-    /* ---- configuration submenu (stays open; shows a result line) ---- */
-    switch (s.menu_sel) {
-    case 0:                                   /* WiFi reconnect */
-        kick_wifi();
-        /* Live note: the tick rewrites it from wifi_status_str() each
-         * frame (one wording source) and extends its life while the
-         * reconnect is still in flight. */
-        menu_note(now, MENU_MSG_MS, true, "wifi: ...");
+    case MS_CONFIG:
+        switch (sel) {
+        case 0: menu_goto(MS_PROFILES); return;
+        case 1: menu_goto(MS_WIFI);     return;
+        case CFG_KEYBOARD:
+            if (!s.cfg.ble) { menu_note(now, MENU_MSG_MS, false,
+                                        "no BLE keyboard support"); break; }
+            menu_goto(MS_KEYBOARD); return;
+        case 3: menu_goto(MS_SYSTEM);   return;
+        case 4: menu_back(now);         return;   /* Back */
+        }
         break;
-    case 1:                                   /* WiFi disconnect */
-        wifi_manager_disconnect();
-        menu_note(now, MENU_MSG_MS, false, "wifi disconnected");
+
+    case MS_PROFILES:
+        switch (sel) {
+        case 0: enter_profile(now);                       return;  /* editor  */
+        case 1: enter_sshimport(now, SSH_IMPORT_SOFTAP);  return;
+        case 2: enter_sshimport(now, SSH_IMPORT_WEB);     return;
+        case 3: menu_goto(MS_DELPROFILE);                 return;
+        case 4: menu_back(now);                           return;  /* Back    */
+        }
         break;
-    case CONFIG_WIFI_SETUP:                    /* WiFi onboarding via phone */
-        enter_wifiprov(now);
-        return;                                /* leaves the menu entirely */
-    case CONFIG_FORGET_KBD:                   /* Forget keyboard (2-step) */
-        if (s.cfg.ble && s.cfg.ble->forget) {
-            if (!s.menu_forget_armed) {
-                s.menu_forget_armed = true;
-                /* Sticky (ms=0): the message IS the armed state. */
-                menu_note(now, 0, false, "activate again to confirm");
+
+    case MS_WIFI:
+        switch (sel) {
+        case 0:                                   /* reconnect (live note) */
+            kick_wifi();
+            menu_note(now, MENU_MSG_MS, true, "wifi: ...");
+            break;
+        case 1: enter_wifiprov(now); return;      /* add network via phone */
+        case 2: menu_back(now);      return;      /* Back */
+        }
+        break;
+
+    case MS_KEYBOARD:
+        if (!s.cfg.ble) { menu_note(now, MENU_MSG_MS, false,
+                                    "no BLE keyboard support"); break; }
+        switch (sel) {
+        case 0: enter_pairing(now); return;       /* pair */
+        case 1:                                   /* forget bonds (2-step) */
+            if (!s.cfg.ble->forget) {
+                menu_note(now, MENU_MSG_MS, false, "forget unavailable");
+            } else if (!was_armed) {
+                s.menu_armed = true;
+                menu_note(now, 0, false, "activate again to forget");
             } else {
-                s.menu_forget_armed = false;
                 s.cfg.ble->forget();
                 menu_note(now, MENU_MSG_MS, false, "keyboard bonds cleared");
             }
-        } else {                                  /* was a silent no-op */
-            menu_note(now, MENU_MSG_MS, false, "no BLE keyboard support");
+            break;
+        case 2: menu_back(now); return;           /* Back */
         }
         break;
-    case CONFIG_COUNT - 1:                     /* Back */
-        if (s.menu_from_home) { enter_home(now); return; }
-        menu_open_main();                      /* in-session: main menu */
-        return;
+
+    case MS_SYSTEM:
+        switch (sel) {
+        case 0:                                   /* clear host keys (2-step) */
+            if (!was_armed) {
+                s.menu_armed = true;
+                menu_note(now, 0, false, "activate again to clear");
+            } else {
+                esp_err_t e = storage_known_hosts_clear();
+                menu_note(now, MENU_MSG_MS, false,
+                          e == ESP_OK ? "host keys cleared" : "nothing to clear");
+            }
+            break;
+        case 1:                                   /* factory reset (2-step) */
+            if (!was_armed) {
+                s.menu_armed = true;
+                menu_note(now, 0, false, "activate again to WIPE ALL");
+            } else {
+                storage_factory_reset();
+                if (s.cfg.ble && s.cfg.ble->forget) s.cfg.ble->forget();
+                load_profiles();
+                menu_note(now, MENU_MSG_MS, false, "wiped - reboot advised");
+            }
+            break;
+        case 2: menu_back(now); return;           /* Back */
+        }
+        break;
+
+    case MS_DELPROFILE:
+        if (sel >= s.stored_count) { menu_back(now); return; }   /* Back tile */
+        if (!was_armed) {
+            s.menu_armed = true;
+            menu_note(now, 0, false, "activate again to delete");
+        } else {
+            delete_profile_at(sel);
+            if (s.menu_sel >= s.stored_count && s.menu_sel > 0) s.menu_sel--;
+            menu_note(now, MENU_MSG_MS, false, "profile deleted");
+        }
+        break;
     }
     render_menu();
 }
@@ -2014,6 +2400,22 @@ void cyberdeck_app_tick(uint64_t now)
         }
         break;
 
+    case ST_SSHIMPORT:
+        /* A submission lands on the httpd task; re-render on its count bump so
+         * the confirmation appears immediately, plus the usual anim tick.
+         * Snapshot the name under the module's lock (via the getter) once per
+         * bump so the render never samples a half-written string. */
+        if (ssh_import_count() != s.import_seen) {
+            s.import_seen = ssh_import_count();
+            snprintf(s.import_last, sizeof(s.import_last), "%s", ssh_import_last());
+            s.next_anim   = now + ANIM_PERIOD_MS;
+            render_sshimport(now);
+        } else if (now >= s.next_anim) {
+            s.next_anim = now + ANIM_PERIOD_MS;
+            render_sshimport(now);
+        }
+        break;
+
     default:
         break;
     }
@@ -2043,9 +2445,9 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         if (ev->type == CYBERDECK_INPUT_LONG_PRESS ||
             (ev->type == CYBERDECK_INPUT_KEY && is_f12(ev))) {
             s.menu_sel       = 0;
-            s.menu_page      = 0;
+            s.menu_screen    = MS_MAIN;
             s.menu_from_home = false;
-            s.menu_forget_armed = false;
+            s.menu_armed     = false;
             menu_clear_note();
             s.state = ST_MENU;
             render_menu();
@@ -2079,12 +2481,8 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         if (ev->type == CYBERDECK_INPUT_TAP) {
             int slot = tile_hit(&s.grid, ev->x, ev->y);
             if (slot < 0) break;                     /* gutter/margin: ignore */
-            if (slot == HOME_TILE_NEW(s.profile_count)) {   /* "new profile" */
-                enter_profile(now);
-            } else if (slot == HOME_TILE_PAIR(s.profile_count)) {  /* pair kbd */
-                if (s.cfg.ble) enter_pairing(now);
-            } else if (slot == HOME_TILE_CONFIG(s.profile_count)) {/* config  */
-                home_open_config();
+            if (home_activate_extra(slot, now)) {    /* New / Pair / Config */
+                /* handled */
             } else if (s.sel != slot) {              /* first tap: select + show */
                 s.sel = slot;
                 render_home();
@@ -2119,12 +2517,8 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             break;
         }
         case K_ENTER:
-            if (s.sel == HOME_TILE_NEW(s.profile_count)) {       /* new prof */
-                enter_profile(now);
-            } else if (s.sel == HOME_TILE_PAIR(s.profile_count)) {/* pair kbd */
-                if (s.cfg.ble) enter_pairing(now);
-            } else if (s.sel == HOME_TILE_CONFIG(s.profile_count)) {/* config */
-                home_open_config();
+            if (home_activate_extra(s.sel, now)) {               /* New/Pair/Config */
+                /* handled */
             } else if (s.profile_count > 0) {
                 if (!wifi_manager_is_connected()) {
                     toast(now, "wifi not connected yet");
@@ -2267,32 +2661,24 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         break;
 
     case ST_MENU:
+        /* Esc / F12 / tap-outside all step back one level (menu_back knows how
+         * far: submenu -> config -> main/home -> resume). */
         if (k == K_ESC || (ev->type == CYBERDECK_INPUT_KEY && is_f12(ev))) {
-            if (s.menu_page == 1 && s.menu_from_home) {   /* config over HOME */
-                enter_home(now);
-            } else if (s.menu_page == 1) {     /* config: step back to main menu */
-                menu_open_main();
-            } else {
-                s.state = ST_SESSION;
-                ui_hide();
-            }
+            menu_back(now);
             break;
         }
         if (ev->type == CYBERDECK_INPUT_TAP) {
             int slot = tile_hit(&s.grid, ev->x, ev->y);
-            if (slot < 0) {                    /* tap outside the menu */
-                if (s.menu_page == 1 && s.menu_from_home) {
-                    enter_home(now);
-                } else if (s.menu_page == 1) { /* config: back to main menu */
-                    menu_open_main();
-                } else {                       /* main: resume session */
-                    s.state = ST_SESSION;
-                    ui_hide();
-                }
-            } else {
-                s.menu_sel = slot;
-                menu_activate(now);            /* same as pressing Enter */
+            if (slot < 0) { menu_back(now); break; }   /* tap outside: back */
+            /* Tapping a DIFFERENT tile than the armed one must disarm first, or
+             * the stale arm fires this tile's destructive action unconfirmed
+             * (the keyboard-nav path already disarms on move). */
+            if (slot != s.menu_sel && s.menu_armed) {
+                s.menu_armed = false;
+                menu_clear_note();
             }
+            s.menu_sel = slot;
+            menu_activate(now);                        /* == Enter */
             break;
         }
         switch (k) {
@@ -2300,8 +2686,8 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             int ns = tile_nav(&s.grid, s.menu_sel, k);
             if (ns != s.menu_sel) {
                 s.menu_sel = ns;
-                if (s.menu_forget_armed) {     /* moving away backs down */
-                    s.menu_forget_armed = false;
+                if (s.menu_armed) {            /* moving away backs the arm down */
+                    s.menu_armed = false;
                     menu_clear_note();
                 }
                 render_menu();
@@ -2334,6 +2720,15 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         }
         break;
     }
+
+    case ST_SSHIMPORT:
+        /* Esc / tap / long-press finishes the session (any imports are already
+         * on flash). There is no destructive in-flight state to protect. */
+        if (k == K_ESC || ev->type == CYBERDECK_INPUT_TAP ||
+            ev->type == CYBERDECK_INPUT_LONG_PRESS) {
+            exit_sshimport(now);
+        }
+        break;
 
     case ST_PROFILE: {
         if (k == K_ESC) { enter_home(now); break; }
