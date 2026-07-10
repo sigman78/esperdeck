@@ -204,3 +204,12 @@ wifi_mgr_state_t wifi_manager_get_state(void) { return s_state; }
 bool wifi_manager_is_connected(void) { return s_state == WIFI_MGR_CONNECTED; }
 const char *wifi_manager_get_ip(void)   { return s_ip; }
 const char *wifi_manager_get_ssid(void) { return s_ssid; }
+
+int wifi_manager_get_rssi(void)
+{
+    wifi_ap_record_t ap;
+    if (s_state == WIFI_MGR_CONNECTED &&
+        esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+        return ap.rssi;
+    return 0;
+}

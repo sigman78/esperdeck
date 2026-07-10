@@ -54,7 +54,8 @@ typedef enum {
 #define PAIR_POLL_MS     250
 #define HOME_REFRESH_MS  500
 #define ANIM_PERIOD_MS   100          /* ~10 fps subtle UI animation */
-#define TOAST_MS         3000
+#define TOAST_MS         3000         /* status trivia */
+#define ERR_TOAST_MS     7000         /* errors the user must actually read */
 
 /* Shell palette — VGA phosphor green on black. Per-cell accents (OVERLAY_COL_*)
  * layer the rest of the classic 16-color set on top. */
@@ -89,12 +90,16 @@ static struct {
     bool     connecting;            /* async connect worker is running    */
     bool     connect_cancelled;     /* user aborted the in-flight connect */
     uint64_t connect_at;            /* not before (auto-reconnect delay)  */
+    uint64_t connect_started;       /* when the in-flight attempt began   */
+    int      connect_attempt;       /* 0 = user-initiated, >0 = auto-retry # */
     char     pinned_fp[65];         /* fp to pass as expected_fp, "" = none */
 
     /* hostkey prompt */
     bool     fp_mismatch;
     bool     hostkey_armed;         /* mismatch REPLACE needs a 2nd tap   */
+    uint8_t  hostkey_arm_src;       /* what armed it: 1 = tap, 2 = Enter  */
     uint32_t hostkey_frame0;        /* anim_frame at entry (decode reveal) */
+    int      hostkey_sel;           /* 0 = trust/replace, 1 = cancel      */
 
     /* pairing */
     ble_device_info_t devs[PAIR_MAX];
@@ -260,14 +265,18 @@ static void kick_wifi(void)
 
 /* -------------------------------------------------------------- toasts */
 
-static void toast(uint64_t now, const char *fmt, ...)
+static void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(s.toast, sizeof(s.toast), fmt, ap);
     va_end(ap);
-    s.toast_until = now + TOAST_MS;
+    s.toast_until = now + ms;
 }
+
+/* Status trivia keeps the short default; errors the user must actually read
+ * (auth failures, drop reasons) call toast_for() with ERR_TOAST_MS. */
+#define toast(now, ...)  toast_for(now, TOAST_MS, __VA_ARGS__)
 
 /* ------------------------------------------------------------ rendering */
 
@@ -374,13 +383,16 @@ static void ram_stats(char *buf, size_t sz)
 #endif
 }
 
-/* Little ● / ○ LED then a label + value, cyberpunk status line. */
-static void draw_status_led(int row, bool on, const char *label, const char *value)
+/* Little ● / ○ LED then a label + value, cyberpunk status line.
+ * Returns the column just past the value text (the "%-4s " puts the value
+ * at column 9), so callers can append glyphs without layout knowledge. */
+static int draw_status_led(int row, bool on, const char *label, const char *value)
 {
     ui_pen(on ? OVERLAY_COL_GREEN : OVERLAY_COL_RED);
     ui_putch(2, row, on ? UI_LED_ON : UI_LED_OFF, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
     ui_printf(4, row, 0, "%-4s %s", label, value);
+    return 9 + (int)strlen(value);
 }
 
 /* 5x5 block glyphs for the boot logo (row-major, '#' = filled). */
@@ -452,11 +464,38 @@ static void render_home(void)
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     /* ── Status HUD on the LEFT (rows 0-2) ─────────────────────────── */
+    /* RSSI changes over seconds; don't hit the WiFi driver lock at the
+     * 10 fps render cadence — refresh the cached value about once a second. */
+    static bool     rssi_fresh = false;
+    static uint32_t rssi_frame = 0;
+    static int      rssi       = 0;
+    if (!rssi_fresh || s.anim_frame - rssi_frame >= 10) {
+        rssi_fresh = true;
+        rssi_frame = s.anim_frame;
+        rssi       = wifi_manager_get_rssi();
+    }
+
+    /* SSID clamped to its 16-cell field so the dBm suffix always fits the
+     * buffer (16 + 1 + 17 status + 8 suffix = 42 < 48). */
     char net[48];
-    snprintf(net, sizeof(net), "%-16s %s",
+    snprintf(net, sizeof(net), "%-16.16s %s",
              wifi_manager_get_ssid()[0] ? wifi_manager_get_ssid() : "-",
              wifi_status_str());
-    draw_status_led(0, wifi_manager_is_connected(), "NET", net);
+    if (rssi < 0) {
+        size_t nl = strlen(net);
+        snprintf(net + nl, sizeof(net) - nl, "  %ddBm", rssi);
+    }
+    int netend = draw_status_led(0, wifi_manager_is_connected(), "NET", net);
+    if (rssi < 0) {
+        /* 4-step signal bar after the text (glyphs can't ride in the
+         * Latin-1 string); pen color tracks link quality. */
+        uint16_t bar = rssi > -55 ? UI_BLOCK : rssi > -67 ? 0x2586
+                     : rssi > -78 ? 0x2584  : 0x2582;
+        ui_pen(rssi > -67 ? OVERLAY_COL_GREEN
+             : rssi > -78 ? OVERLAY_COL_AMBER : OVERLAY_COL_RED);
+        ui_putch(netend + 1, 0, bar, 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
 
     bool kbd = s.cfg.ble && s.cfg.ble->get_state && s.cfg.ble->get_state() == 4;
     const char *kn = (kbd && s.cfg.ble->get_name) ? s.cfg.ble->get_name() : "";
@@ -551,7 +590,7 @@ static int pairing_ndev(const tilegrid_t *g)
     return g->count - 2;   /* last two tiles are "Forget bonds" + "Cancel" */
 }
 
-static void render_pairing(void)
+static void render_pairing(uint64_t now)
 {
     ui_colors(UI_FG, UI_BG);
     ui_clear();
@@ -561,8 +600,20 @@ static void render_pairing(void)
     ui_pen(s.ndevs ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER);
     ui_putch(2, 1, s.ndevs ? UI_LED_ON : spinner_glyph(s.anim_frame), 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(4, 1, s.ndevs ? "select your keyboard below"
-                          : "scanning for keyboards...", 0);
+    if (s.ndevs)
+        ui_printf(4, 1, 0, "%d found - select your keyboard", s.ndevs);
+    else
+        ui_puts(4, 1, "scanning for keyboards...", 0);
+
+    /* The scan self-dismisses after PAIR_TIMEOUT_MS of inactivity; give the
+     * last 10 s a visible countdown instead of vanishing without warning. */
+    uint64_t idle = now - s.pair_last_activity;
+    if (idle > PAIR_TIMEOUT_MS - 10000) {
+        uint32_t left = (uint32_t)((PAIR_TIMEOUT_MS - idle + 999) / 1000);
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_printf(ui_cols() - 15, 1, 0, "closing in %2us", left);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
     draw_rule_scan(3, s.anim_frame);
 
     /* Devices, then a "Forget bonds" tile and a Cancel tile (always last two).
@@ -594,7 +645,8 @@ static void render_pairing(void)
     ui_pen(OVERLAY_COL_CYAN);
     ui_putch(2, ui_rows() - 1, UI_PLAY, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(4, ui_rows() - 1, "put the keyboard in pairing mode, then tap it", 0);
+    ui_puts(4, ui_rows() - 1,
+            "put the keyboard in pairing mode, then tap it   Esc = cancel", 0);
     ui_no_cursor();
     ui_present();
 }
@@ -668,14 +720,16 @@ static void render_hostkey(void)
         : "Trust & Connect";
     ui_pen(s.fp_mismatch ? OVERLAY_COL_AMBER : OVERLAY_COL_GREEN);
     ui_tile(tile_x(&g, 0), tile_y(&g, 0), g.tw, g.th, trust,
-            s.fp_mismatch ? "danger" : "", s.hostkey_armed);
+            s.fp_mismatch ? "danger" : "",
+            s.hostkey_sel == 0 || s.hostkey_armed);
     ui_pen(s.fp_mismatch ? OVERLAY_COL_GREEN : OVERLAY_COL_DEFAULT);
-    ui_tile(tile_x(&g, 1), tile_y(&g, 1), g.tw, g.th, "Cancel", "", false);
+    ui_tile(tile_x(&g, 1), tile_y(&g, 1), g.tw, g.th, "Cancel", "",
+            s.hostkey_sel == 1);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     ui_puts(4, ui_rows() - 1, s.fp_mismatch
-            ? "keyboard: Y = replace   Esc = cancel"
-            : "keyboard: Enter = trust   Esc = cancel", 0);
+            ? "keyboard: arrows + Enter   Y = replace   Esc = cancel"
+            : "keyboard: arrows + Enter = trust   Esc = cancel", 0);
     ui_no_cursor();
     ui_present();
 }
@@ -696,8 +750,11 @@ static void render_connecting(const char *msg, uint64_t now)
     int cy = ui_rows() / 2;
 
     char line[96];
-    snprintf(line, sizeof(line), "%s  %s@%s:%u", msg, p->user, p->host,
-             (unsigned)p->port);
+    size_t ll = (size_t)snprintf(line, sizeof(line), "%s  %s@%s:%u",
+                                 msg, p->user, p->host, (unsigned)p->port);
+    if (s.connect_attempt > 0 && ll < sizeof(line))
+        snprintf(line + ll, sizeof(line) - ll, "  (attempt %d)",
+                 s.connect_attempt);
     int lx = (ui_cols() - (int)strlen(line)) / 2;
     ui_pen(OVERLAY_COL_CYAN);
     ui_putch(lx - 2, cy - 1, UI_DIAMOND, 0);
@@ -724,6 +781,13 @@ static void render_connecting(const char *msg, uint64_t now)
         ui_pen(s.connect_cancelled ? OVERLAY_COL_AMBER : OVERLAY_COL_CYAN);
         for (int i = 0; i < bw; i++)
             ui_putch(bx + i, cy + 1, grad[(i + s.anim_frame) % 7], 0);
+        if (s.connecting) {
+            /* Elapsed seconds right of the bar: a stalled handshake at 40 s
+             * should look different from one that just started. */
+            ui_pen(OVERLAY_COL_BLUE);
+            ui_printf(bx + bw + 2, cy + 1, 0, "%2us",
+                      (unsigned)((now - s.connect_started) / 1000));
+        }
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
@@ -830,7 +894,7 @@ static void enter_pairing(uint64_t now)
     s.pair_last_poll = 0;
     s.pair_last_activity = now;
     s.pair_forget_armed = false;
-    render_pairing();
+    render_pairing(now);
 }
 
 /* Leave pairing: back to the live session if one exists, else HOME. */
@@ -859,7 +923,7 @@ static void pairing_select(int slot, uint64_t now)
          * re-pair, so arm on the first activation like hostkey REPLACE. */
         if (!s.pair_forget_armed) {
             s.pair_forget_armed = true;
-            render_pairing();
+            render_pairing(now);
         } else if (s.cfg.ble && s.cfg.ble->forget) {
             s.cfg.ble->forget();
             toast(now, "bonds cleared - re-scanning");
@@ -974,7 +1038,9 @@ static void render_wifiprov(void)
     ui_pen(OVERLAY_COL_CYAN);
     ui_putch(2, ui_rows() - 1, UI_PLAY, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(4, ui_rows() - 1, "tap or Esc to cancel", 0);
+    ui_puts(4, ui_rows() - 1,
+            recv ? "testing - long-press or Esc to abort"
+                 : "tap or Esc to cancel", 0);
     ui_no_cursor();
     ui_present();
 }
@@ -1072,9 +1138,12 @@ static void menu_activate(uint64_t now)
     render_menu();
 }
 
-/* Arm a connect to profile idx: one frame of "Connecting", then do it. */
-static void start_connect(int idx, uint64_t not_before, uint64_t now)
+/* Arm a connect to profile idx: one frame of "Connecting", then do it.
+ * @p retry: an automatic re-attempt (advances the visible attempt counter);
+ * user-initiated connects reset it. */
+static void start_connect(int idx, uint64_t not_before, uint64_t now, bool retry)
 {
+    s.connect_attempt = retry ? s.connect_attempt + 1 : 0;
     s.connect_idx   = idx;
     s.connect_at    = not_before;
     s.connect_armed = true;
@@ -1097,16 +1166,34 @@ static void hostkey_trust_and_connect(uint64_t now)
     const conn_profile_t *p = &s.profiles[s.connect_idx];
     storage_known_host_set(p->host, p->port, ssh_client_get_fingerprint());
     snprintf(s.pinned_fp, sizeof(s.pinned_fp), "%s", ssh_client_get_fingerprint());
+    s.connect_attempt = 0;             /* explicit user action, not a retry */
     s.connect_armed = true;
     s.connect_at    = now;
     s.state         = ST_CONNECTING;
     render_connecting("Connecting to", now);
 }
 
+/* Session died and we are NOT auto-reconnecting: the classic modem death
+ * rattle, with link time and the drop reason ssh_client recorded ("" on a
+ * clean EOF — a plain logout stays calm and short). */
+static void session_dropped(uint64_t now)
+{
+    uint32_t dur = (uint32_t)((now - s.session_start) / 1000);
+    const char *why = ssh_client_last_error();
+    display_bell();
+    if (why[0])
+        toast_for(now, ERR_TOAST_MS, "NO CARRIER (%02u:%02u) - %.36s",
+                  dur / 60, dur % 60, why);
+    else
+        toast(now, "NO CARRIER (%02u:%02u)", dur / 60, dur % 60);
+    enter_home(now);
+}
+
 static void enter_session(uint64_t now)
 {
     s.state = ST_SESSION;
-    s.session_start = now;
+    s.session_start   = now;
+    s.connect_attempt = 0;   /* a future drop counts retries from 1 again */
     ui_hide();
     /* The terminal was cleared inside ssh_client_connect() before the read
      * task spawned — doing it here would race that task inside vterm. */
@@ -1148,6 +1235,7 @@ static void do_connect_start(uint64_t now)
     }
     s.connecting        = true;
     s.connect_cancelled = false;
+    s.connect_started   = now;
     s.next_anim         = 0;
     render_connecting("Connecting to", now);
 }
@@ -1170,6 +1258,8 @@ static void do_connect_finish(uint64_t now, esp_err_t err)
     case SSH_ERR_HOSTKEY_UNKNOWN:
         s.fp_mismatch    = false;
         s.hostkey_armed  = false;
+        s.hostkey_arm_src = 0;
+        s.hostkey_sel    = 0;              /* Enter = trust, as documented */
         s.hostkey_frame0 = s.anim_frame;   /* start the decode reveal */
         s.next_anim      = 0;
         s.state = ST_HOSTKEY;
@@ -1179,6 +1269,8 @@ static void do_connect_finish(uint64_t now, esp_err_t err)
     case SSH_ERR_HOSTKEY_MISMATCH:
         s.fp_mismatch    = true;
         s.hostkey_armed  = false;
+        s.hostkey_arm_src = 0;
+        s.hostkey_sel    = 1;              /* possible MITM: default = Cancel */
         s.hostkey_frame0 = s.anim_frame;
         s.next_anim      = 0;
         s.state = ST_HOSTKEY;
@@ -1186,16 +1278,19 @@ static void do_connect_finish(uint64_t now, esp_err_t err)
         break;
 
     case SSH_ERR_AUTH:
-        toast(now, "auth failed: %.40s", ssh_client_last_error());
+        toast_for(now, ERR_TOAST_MS, "auth failed: %.40s",
+                  ssh_client_last_error());
         enter_home(now);
         break;
 
     default:
         if (s.cfg.auto_reconnect) {
             toast(now, "connect failed - retrying");
-            start_connect(s.connect_idx, now + s.cfg.ssh_retry_delay_ms, now);
+            start_connect(s.connect_idx, now + s.cfg.ssh_retry_delay_ms,
+                          now, true);
         } else {
-            toast(now, "failed: %.44s", ssh_client_last_error());
+            toast_for(now, ERR_TOAST_MS, "failed: %.44s",
+                      ssh_client_last_error());
             enter_home(now);
         }
         break;
@@ -1256,12 +1351,13 @@ void cyberdeck_app_tick(uint64_t now)
 
     case ST_PAIRING:
         if (now - s.pair_last_activity > PAIR_TIMEOUT_MS) {
+            toast(now, "pairing timed out");
             exit_pairing(now);
             break;
         }
         if (now >= s.next_anim) {          /* advance spinner / comet */
             s.next_anim = now + ANIM_PERIOD_MS;
-            render_pairing();
+            render_pairing(now);
         }
         if (now - s.pair_last_poll >= PAIR_POLL_MS && s.cfg.ble) {
             s.pair_last_poll = now;
@@ -1273,7 +1369,7 @@ void cyberdeck_app_tick(uint64_t now)
                 s.ndevs = n;
                 if (s.pair_sel >= n) s.pair_sel = n ? n - 1 : 0;
                 s.pair_last_activity = now;   /* results still arriving */
-                render_pairing();
+                render_pairing(now);
             }
         }
         break;
@@ -1315,13 +1411,9 @@ void cyberdeck_app_tick(uint64_t now)
             if (s.cfg.auto_reconnect) {
                 toast(now, "session dropped - reconnecting");
                 start_connect(s.connect_idx,
-                              now + s.cfg.ssh_retry_delay_ms, now);
+                              now + s.cfg.ssh_retry_delay_ms, now, true);
             } else {
-                /* The classic modem death rattle, with the link time. */
-                uint32_t dur = (uint32_t)((now - s.session_start) / 1000);
-                display_bell();
-                toast(now, "NO CARRIER (%02u:%02u)", dur / 60, dur % 60);
-                enter_home(now);
+                session_dropped(now);
             }
             break;
         }
@@ -1331,10 +1423,7 @@ void cyberdeck_app_tick(uint64_t now)
     case ST_MENU:
         /* A menu opened from HOME has no session to monitor. */
         if (!s.menu_from_home && !ssh_client_is_connected()) {
-            uint32_t dur = (uint32_t)((now - s.session_start) / 1000);
-            display_bell();
-            toast(now, "NO CARRIER (%02u:%02u)", dur / 60, dur % 60);
-            enter_home(now);
+            session_dropped(now);
         }
         break;
 
@@ -1425,7 +1514,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                 toast(now, "WiFi not connected yet");
                 render_home();
             } else {                                 /* second tap on same tile */
-                start_connect(slot, now, now);
+                start_connect(slot, now, now, false);
             }
             break;
         }
@@ -1445,7 +1534,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                     toast(now, "WiFi not connected yet");
                     render_home();
                 } else {
-                    start_connect(s.sel, now, now);
+                    start_connect(s.sel, now, now, false);
                 }
             }
             break;
@@ -1472,7 +1561,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             if (ns != s.pair_sel) {
                 s.pair_sel = ns;
                 s.pair_forget_armed = false;   /* moving away backs down */
-                render_pairing();
+                render_pairing(now);
             }
             break;
         }
@@ -1490,26 +1579,77 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
     case ST_HOSTKEY:
         if (ev->type == CYBERDECK_INPUT_TAP) {
             int slot = tile_hit(&s.grid, ev->x, ev->y);
-            if (slot == 1) {                         /* Cancel tile */
+            if (slot < 0) {                          /* tap outside: back down */
+                if (s.hostkey_armed) {
+                    s.hostkey_armed   = false;
+                    s.hostkey_arm_src = 0;
+                    render_hostkey();
+                }
+            } else if (slot == 1) {                  /* Cancel tile */
                 enter_home(now);
-            } else if (slot == 0) {                  /* Trust / Replace tile */
-                if (!s.fp_mismatch || s.hostkey_armed)
+            } else {                                 /* Trust / Replace tile */
+                s.hostkey_sel = 0;
+                if (!s.fp_mismatch) {
                     hostkey_trust_and_connect(now);
-                else { s.hostkey_armed = true; render_hostkey(); }  /* arm 2-tap */
+                } else if (s.hostkey_armed && s.hostkey_arm_src == 1) {
+                    hostkey_trust_and_connect(now);  /* 2nd tap fires */
+                } else {
+                    /* First tap arms. Arming is modality-matched: a tap can
+                     * only be fired by a second TAP — never by Enter — so an
+                     * accidental tap + habitual Enter cannot re-pin. */
+                    s.hostkey_armed   = true;
+                    s.hostkey_arm_src = 1;
+                    render_hostkey();
+                }
             }
             break;
         }
+        if (k == K_LEFT || k == K_RIGHT || k == K_UP || k == K_DOWN) {
+            int ns = tile_nav(&s.grid, s.hostkey_sel, k);
+            bool redraw = ns != s.hostkey_sel;
+            s.hostkey_sel = ns;
+            if (s.hostkey_armed) {                   /* any arrow backs down */
+                s.hostkey_armed   = false;
+                s.hostkey_arm_src = 0;
+                redraw = true;
+            }
+            if (redraw) render_hostkey();
+            break;
+        }
+        if (k == K_ESC) { enter_home(now); break; }
         if (!s.fp_mismatch) {
-            /* First contact (TOFU): a single Enter pins the key and connects. */
-            if (k == K_ENTER)     hostkey_trust_and_connect(now);
-            else if (k == K_ESC)  enter_home(now);
+            /* First contact (TOFU): Enter activates the selected tile
+             * (default = Trust, so a single Enter still pins + connects). */
+            if (k == K_ENTER) {
+                if (s.hostkey_sel == 0) hostkey_trust_and_connect(now);
+                else                    enter_home(now);
+            }
         } else {
-            /* The pinned key CHANGED — possible MITM. Never let a stray Enter
-             * silently overwrite a trusted pin; demand an explicit 'Y'. */
-            if (k == K_CHAR && (ch == 'y' || ch == 'Y'))
+            /* The pinned key CHANGED — possible MITM. 'Y' always replaces.
+             * Enter follows the selection (default = Cancel) with two-step
+             * arming that only Enter itself can fire (modality-matched, see
+             * the tap branch). Every other input backs the arming down. */
+            if (k == K_CHAR && (ch == 'y' || ch == 'Y')) {
                 hostkey_trust_and_connect(now);
-            else if (k == K_ESC || k == K_ENTER)
-                enter_home(now);
+            } else if (k == K_ENTER) {
+                if (s.hostkey_sel != 0) {
+                    enter_home(now);
+                } else if (s.hostkey_armed && s.hostkey_arm_src == 2) {
+                    hostkey_trust_and_connect(now);
+                } else if (s.hostkey_armed) {        /* tap-armed: back down */
+                    s.hostkey_armed   = false;
+                    s.hostkey_arm_src = 0;
+                    render_hostkey();
+                } else {
+                    s.hostkey_armed   = true;
+                    s.hostkey_arm_src = 2;
+                    render_hostkey();
+                }
+            } else if (s.hostkey_armed) {            /* anything else backs down */
+                s.hostkey_armed   = false;
+                s.hostkey_arm_src = 0;
+                render_hostkey();
+            }
         }
         break;
 
@@ -1579,17 +1719,24 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         }
         break;
 
-    case ST_WIFIPROV:
-        /* Esc or any tap cancels (unless already finishing after success). */
-        if ((k == K_ESC || ev->type == CYBERDECK_INPUT_TAP ||
-             ev->type == CYBERDECK_INPUT_LONG_PRESS) &&
-            wifi_provision_state() != WIFI_PROV_ST_SUCCESS) {
+    case ST_WIFIPROV: {
+        /* Esc or any tap cancels — except while the phone's credentials are
+         * being tested (RECEIVED): killing the AP then leaves the phone app
+         * hanging mid-handshake, so a stray screen touch must not do it.
+         * Esc / long-press remain as the deliberate abort. */
+        int pst = wifi_provision_state();
+        bool deliberate = (k == K_ESC ||
+                           ev->type == CYBERDECK_INPUT_LONG_PRESS);
+        bool tap = (ev->type == CYBERDECK_INPUT_TAP);
+        if (pst != WIFI_PROV_ST_SUCCESS &&
+            (deliberate || (tap && pst != WIFI_PROV_ST_RECEIVED))) {
             wifi_provision_stop();
             kick_wifi();                       /* un-park wifi_manager */
             toast(now, "wifi setup cancelled");
             enter_home(now);
         }
         break;
+    }
 
     default:
         break;

@@ -50,5 +50,7 @@ bool             wifi_manager_is_connected(void);
 const char      *wifi_manager_get_ip(void);
 /** SSID of the connected (or currently attempted) profile, "" if none. */
 const char      *wifi_manager_get_ssid(void);
+/** RSSI of the current AP in dBm (negative), 0 when not connected. */
+int              wifi_manager_get_rssi(void);
 
 #endif // WIFI_MANAGER_H

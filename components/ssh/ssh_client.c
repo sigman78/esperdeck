@@ -250,8 +250,18 @@ static void ssh_read_task(void *arg)
             int next_ka = 0;
             libssh2_keepalive_send(s_session, &next_ka);
 #endif
+        } else if (n == 0) {
+            /* Zero-length read: orderly EOF if the channel says so (remote
+             * `exit`), else just an idle cycle. NOT an error — leaving the
+             * stale libssh2 message in last_error made every clean logout
+             * look like a failure to the shell. */
+            if (libssh2_channel_eof(s_channel)) {
+                ESP_LOGI(TAG, "ssh_read_task: read EOF");
+                set_last_error("");
+                s_connected = false;
+            }
         } else {
-            /* EOF or unrecoverable error */
+            /* Unrecoverable error */
             log_last_error("channel_read");
             s_connected = false;
         }
