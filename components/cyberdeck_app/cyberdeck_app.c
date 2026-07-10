@@ -20,6 +20,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -47,9 +48,17 @@ typedef enum {
     ST_SESSION,     /* bytes flow to/from SSH                        */
     ST_MENU,        /* in-session overlay menu                       */
     ST_WIFIPROV,    /* SoftAP WiFi onboarding (modal)                */
+    ST_PROFILE,     /* on-device profile editor (modal)              */
 } app_state_t;
 
 #define MAX_PROFILES     (8 + 1)          /* stored + synthesized fallback */
+
+/* HOME trailing tiles after the profile tiles: New profile, Pair keyboard,
+ * Configuration (in that order). */
+#define HOME_EXTRA_TILES 3
+#define HOME_TILE_NEW(pc)   (pc)
+#define HOME_TILE_PAIR(pc)  ((pc) + 1)
+#define HOME_TILE_CONFIG(pc) ((pc) + 2)
 #define PAIR_MAX         STORAGE_BLE_MAX
 #define PAIR_TIMEOUT_MS  30000
 #define PAIR_POLL_MS     250
@@ -136,6 +145,13 @@ static struct {
     uint64_t saver_since;           /* when the rain went up (wake grace)    */
     uint8_t  kon_idx;               /* Konami sequence progress (HOME)       */
 
+    /* on-device profile editor */
+    conn_profile_t pf_draft;        /* profile being entered           */
+    char     pf_port[6];            /* port as text (parsed on save)   */
+    int      pf_field;              /* focused field (see pf_field_t)   */
+    int      pf_cursor;             /* caret within the focused field   */
+    char     pf_err[40];            /* inline validation error, "" = ok */
+
     uint64_t boot_until;
     uint64_t next_home_refresh;
     uint32_t anim_frame;            /* advances ~10 fps for subtle animation */
@@ -147,7 +163,7 @@ static struct {
 
 typedef enum {
     K_NONE = 0, K_UP, K_DOWN, K_LEFT, K_RIGHT,
-    K_ENTER, K_ESC, K_F12, K_CHAR,
+    K_ENTER, K_ESC, K_F12, K_CHAR, K_BACKSPACE, K_TAB,
 } ui_key_t;
 
 static ui_key_t decode_key(const cyberdeck_input_t *ev, char *ch)
@@ -158,6 +174,8 @@ static ui_key_t decode_key(const cyberdeck_input_t *ev, char *ch)
     if (len == 1) {
         if (b[0] == 0x1B) return K_ESC;
         if (b[0] == '\r' || b[0] == '\n') return K_ENTER;
+        if (b[0] == 0x08 || b[0] == 0x7F) return K_BACKSPACE;
+        if (b[0] == 0x09) return K_TAB;
         if (b[0] >= 0x20 && b[0] < 0x7F) { if (ch) *ch = (char)b[0]; return K_CHAR; }
         return K_NONE;
     }
@@ -436,6 +454,17 @@ static void draw_footer_lim(const char *hint, int limit)
 
 static void draw_footer(const char *hint) { draw_footer_lim(hint, -1); }
 
+/* Standard modal header: animated titlebar chip, a right-aligned "// tag"
+ * in blue, and the comet rule on row 3. Shared by CONNECTING / NEW PROFILE. */
+static void draw_screen_header(const char *title, const char *tag)
+{
+    draw_titlebar(2, title, s.anim_frame);
+    ui_pen(OVERLAY_COL_BLUE);
+    ui_puts(ui_cols() - (int)strlen(tag) - 1, 0, tag, 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    draw_rule_scan(3, s.anim_frame);
+}
+
 /* Free-RAM summary for the header. */
 static void ram_stats(char *buf, size_t sz)
 {
@@ -651,13 +680,14 @@ static void render_home(void)
 
     draw_rule_scan(3, s.anim_frame);
 
-    /* Tiles: one per profile, then trailing "pair keyboard" + "config" tiles. */
-    tilegrid_t g = picker_grid(s.profile_count + 2);
+    /* Tiles: one per profile, then trailing "new profile" + "pair keyboard"
+     * + "config" tiles (see the HOME_TILE_* helpers). */
+    tilegrid_t g = picker_grid(s.profile_count + HOME_EXTRA_TILES);
     s.grid = g;
     if (s.sel >= g.count) s.sel = g.count ? g.count - 1 : 0;
-    if (s.profile_count + 2 > g.ncols * g.nrows)
+    if (s.profile_count + HOME_EXTRA_TILES > g.ncols * g.nrows)
         ESP_LOGW(TAG, "%d profiles exceed one page; showing first %d",
-                 s.profile_count, g.count - 2);
+                 s.profile_count, g.count - HOME_EXTRA_TILES);
 
     for (int i = 0; i < g.count; i++) {
         int cx = tile_x(&g, i), cy = tile_y(&g, i);
@@ -670,7 +700,10 @@ static void render_home(void)
                      p->auth == STORAGE_AUTH_KEY ? "  [key]" : "");
             ui_pen(prof_accent(p->name));   /* stable per-name identity */
             ui_tile(cx, cy, g.tw, g.th, p->name, body, sel);
-        } else if (i == s.profile_count) {
+        } else if (i == HOME_TILE_NEW(s.profile_count)) {
+            ui_pen(OVERLAY_COL_GREEN);
+            ui_tile(cx, cy, g.tw, g.th, "+ New profile", "add SSH host", sel);
+        } else if (i == HOME_TILE_PAIR(s.profile_count)) {
             ui_pen(OVERLAY_COL_CYAN);
             ui_tile(cx, cy, g.tw, g.th, "+ Pair keyboard",
                     s.cfg.ble ? "tap or long-press" : "(no BLE)", sel);
@@ -911,11 +944,7 @@ static void render_connecting(const char *msg, uint64_t now)
     ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
-    draw_titlebar(2, "CONNECTING", s.anim_frame);
-    ui_pen(OVERLAY_COL_BLUE);
-    ui_puts(ui_cols() - 12, 0, "// SSH DECK", 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    draw_rule_scan(3, s.anim_frame);
+    draw_screen_header("CONNECTING", "// SSH DECK");
 
     const conn_profile_t *p = &s.profiles[s.connect_idx];
     int cy = ui_rows() / 2;
@@ -965,6 +994,145 @@ static void render_connecting(const char *msg, uint64_t now)
     draw_footer("tap or Esc to cancel");
     ui_no_cursor();
     ui_present();
+}
+
+/* ---------------------------------------------------- profile editor */
+
+/* Field order in the on-device editor. The first PF_SAVE entries are text
+ * fields; PF_SAVE/PF_CANCEL are buttons in the same up/down focus ring. */
+typedef enum {
+    PF_NAME = 0, PF_HOST, PF_PORT, PF_USER, PF_PASS,
+    PF_SAVE, PF_CANCEL, PF_COUNT,
+} pf_field_t;
+#define PF_TEXT_COUNT  PF_SAVE
+
+/* Resolve a text field's label, buffer, max length and flags. */
+static char *pf_buf(int i, const char **label, int *max,
+                    bool *numeric, bool *mask)
+{
+    *numeric = false; *mask = false;
+    switch (i) {
+    case PF_NAME: *label = "Name"; *max = sizeof(s.pf_draft.name) - 1;
+                  return s.pf_draft.name;
+    case PF_HOST: *label = "Host"; *max = sizeof(s.pf_draft.host) - 1;
+                  return s.pf_draft.host;
+    case PF_PORT: *label = "Port"; *max = 5; *numeric = true;
+                  return s.pf_port;
+    case PF_USER: *label = "User"; *max = sizeof(s.pf_draft.user) - 1;
+                  return s.pf_draft.user;
+    case PF_PASS: *label = "Pass"; *max = sizeof(s.pf_draft.password) - 1;
+                  *mask = true; return s.pf_draft.password;
+    }
+    *label = ""; *max = 0; return NULL;
+}
+
+#define PF_X0   26            /* form left edge  */
+#define PF_FX   34            /* field left edge */
+#define PF_FW   40            /* field width     */
+#define PF_Y0   6             /* first field row */
+
+static void render_profile(void)
+{
+    ui_colors(UI_FG, UI_BG);
+    ui_clear();
+    ui_fill(0, 0, ui_cols(), ui_rows(), 0);
+
+    draw_screen_header("NEW PROFILE", "// SSH DECK");
+
+    for (int i = 0; i < PF_TEXT_COUNT; i++) {
+        const char *label; int max; bool numeric, mask;
+        char *buf = pf_buf(i, &label, &max, &numeric, &mask);
+        int row = PF_Y0 + i * 2;
+        bool focused = (s.pf_field == i);
+        ui_pen(focused ? OVERLAY_COL_CYAN : OVERLAY_COL_DEFAULT);
+        ui_puts(PF_X0, row, label, 0);
+        /* Only the focused field's caret drives scrolling (ui_field ignores
+         * the caret when unfocused); pass 0 for the rest to be explicit. */
+        ui_field(PF_FX, row, PF_FW, buf, focused ? s.pf_cursor : 0,
+                 focused, mask);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_puts(PF_X0, PF_Y0 + PF_TEXT_COUNT * 2,
+            "auth: password (key setup coming soon)", 0);
+
+    /* Inline validation error — a modal has no toast strip, so a failed
+     * Save must report here or it looks dead. Persists until the next edit. */
+    if (s.pf_err[0]) {
+        ui_pen(OVERLAY_COL_RED);
+        ui_puts(PF_X0, PF_Y0 + PF_TEXT_COUNT * 2 + 1, s.pf_err, 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
+
+    /* Save / Cancel buttons — a 2-wide tile grid stashed for touch. */
+    tilegrid_t bg = { .y0 = PF_Y0 + PF_TEXT_COUNT * 2 + 2, .tw = 20, .th = 3,
+                      .gx = 4, .gy = 0, .ncols = 2, .nrows = 1, .count = 2 };
+    bg.x0 = (ui_cols() - (bg.tw * 2 + bg.gx)) / 2;
+    s.grid = bg;
+    ui_pen(OVERLAY_COL_GREEN);
+    ui_tile(tile_x(&bg, 0), tile_y(&bg, 0), bg.tw, bg.th, "Save", "",
+            s.pf_field == PF_SAVE);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_tile(tile_x(&bg, 1), tile_y(&bg, 1), bg.tw, bg.th, "Cancel", "",
+            s.pf_field == PF_CANCEL);
+    ui_pen(OVERLAY_COL_DEFAULT);
+
+    draw_footer("type to edit   Tab/arrows = move   Enter = next   Esc = cancel");
+    ui_no_cursor();
+    ui_present();
+}
+
+static void enter_profile(uint64_t now)
+{
+    memset(&s.pf_draft, 0, sizeof(s.pf_draft));
+    snprintf(s.pf_port, sizeof(s.pf_port), "22");
+    s.pf_field  = PF_NAME;
+    s.pf_cursor = 0;
+    s.pf_err[0] = '\0';
+    s.state     = ST_PROFILE;
+    (void)now;
+    render_profile();
+}
+
+/* Validate the draft and append it to profiles.ini. Returns "" on success or
+ * a short reason to show inline on failure. */
+static const char *profile_commit(void)
+{
+    if (s.pf_draft.name[0] == '\0') return "name required";
+    /* A '[' or ']' in the name breaks the INI section header on save and
+     * silently corrupts the file on reload (the malformed section is skipped
+     * and the next profile's keys clobber the prior one). Reject them. */
+    if (strpbrk(s.pf_draft.name, "[]")) return "name: no [ or ]";
+    if (s.pf_draft.host[0] == '\0') return "host required";
+    if (s.pf_draft.user[0] == '\0') return "user required";
+    long port = strtol(s.pf_port, NULL, 10);
+    if (port < 1 || port > 65535)   return "bad port";
+
+    s.pf_draft.port = (uint16_t)port;
+    s.pf_draft.auth = STORAGE_AUTH_PASSWORD;
+
+    /* Load the authoritative on-flash set (s.profiles may hold the synthesized
+     * "(default)" fallback, which is NOT on flash), append, and persist. This
+     * capacity check is the only one — s.profile_count is not authoritative. */
+    conn_profile_t set[MAX_PROFILES];
+    int n = 0;
+    if (storage_load_profiles(set, &n, MAX_PROFILES - 1) != ESP_OK) n = 0;
+    if (n >= MAX_PROFILES - 1) return "profile list full";
+    set[n++] = s.pf_draft;
+    if (storage_save_profiles(set, n) != ESP_OK) return "save failed";
+    return "";
+}
+
+/* Focus a different field; reset the caret to the end of its text. */
+static void pf_focus(int field)
+{
+    if (field < 0) field = PF_COUNT - 1;
+    if (field >= PF_COUNT) field = 0;
+    s.pf_field = field;
+    if (field < PF_TEXT_COUNT) {
+        const char *label; int max; bool numeric, mask;
+        char *buf = pf_buf(field, &label, &max, &numeric, &mask);
+        s.pf_cursor = (int)strlen(buf);
+    }
 }
 
 /* Page 0 — the main in-session menu. */
@@ -1839,6 +2007,13 @@ void cyberdeck_app_tick(uint64_t now)
         }
         break;
 
+    case ST_PROFILE:
+        if (now >= s.next_anim) {   /* titlebar spark + comet + caret life */
+            s.next_anim = now + ANIM_PERIOD_MS;
+            render_profile();
+        }
+        break;
+
     default:
         break;
     }
@@ -1904,9 +2079,11 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         if (ev->type == CYBERDECK_INPUT_TAP) {
             int slot = tile_hit(&s.grid, ev->x, ev->y);
             if (slot < 0) break;                     /* gutter/margin: ignore */
-            if (slot == s.profile_count) {           /* "pair keyboard" tile */
+            if (slot == HOME_TILE_NEW(s.profile_count)) {   /* "new profile" */
+                enter_profile(now);
+            } else if (slot == HOME_TILE_PAIR(s.profile_count)) {  /* pair kbd */
                 if (s.cfg.ble) enter_pairing(now);
-            } else if (slot == s.profile_count + 1) {/* "configuration" tile */
+            } else if (slot == HOME_TILE_CONFIG(s.profile_count)) {/* config  */
                 home_open_config();
             } else if (s.sel != slot) {              /* first tap: select + show */
                 s.sel = slot;
@@ -1942,9 +2119,11 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             break;
         }
         case K_ENTER:
-            if (s.sel == s.profile_count) {          /* pair tile focused */
+            if (s.sel == HOME_TILE_NEW(s.profile_count)) {       /* new prof */
+                enter_profile(now);
+            } else if (s.sel == HOME_TILE_PAIR(s.profile_count)) {/* pair kbd */
                 if (s.cfg.ble) enter_pairing(now);
-            } else if (s.sel == s.profile_count + 1) {/* config tile focused */
+            } else if (s.sel == HOME_TILE_CONFIG(s.profile_count)) {/* config */
                 home_open_config();
             } else if (s.profile_count > 0) {
                 if (!wifi_manager_is_connected()) {
@@ -1957,6 +2136,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             break;
         case K_CHAR:
             if (ch == 'b' || ch == 'B') enter_pairing(now);
+            else if (ch == 'n' || ch == 'N') enter_profile(now);
             else if (ch == 'r' || ch == 'R') { load_profiles(); render_home(); }
             else if (ch == 'w' || ch == 'W') { kick_wifi(); render_home(); }
             break;
@@ -2151,6 +2331,83 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             kick_wifi();                       /* un-park wifi_manager */
             toast(now, "wifi setup cancelled");
             enter_home(now);
+        }
+        break;
+    }
+
+    case ST_PROFILE: {
+        if (k == K_ESC) { enter_home(now); break; }
+
+        if (ev->type == CYBERDECK_INPUT_TAP) {
+            int slot = tile_hit(&s.grid, ev->x, ev->y);   /* Save/Cancel tiles */
+            if (slot == 0)      pf_focus(PF_SAVE);
+            else if (slot == 1) { enter_home(now); break; }
+            else break;
+            /* fall through into Save activation below via K_ENTER path */
+            k = K_ENTER;
+        }
+
+        /* ---- button focus (Save / Cancel) ---- */
+        if (s.pf_field >= PF_TEXT_COUNT) {
+            switch (k) {
+            case K_LEFT:  pf_focus(PF_SAVE);   render_profile(); break;
+            case K_RIGHT: pf_focus(PF_CANCEL); render_profile(); break;
+            case K_UP:                              /* backward through ring */
+                pf_focus(s.pf_field - 1); render_profile(); break;
+            case K_DOWN: case K_TAB:                /* forward (Cancel wraps) */
+                pf_focus(s.pf_field + 1); render_profile(); break;
+            case K_ENTER:
+                if (s.pf_field == PF_CANCEL) { enter_home(now); break; }
+                else {
+                    const char *err = profile_commit();
+                    if (err[0]) {   /* inline — a modal has no toast strip */
+                        snprintf(s.pf_err, sizeof(s.pf_err), "%s", err);
+                        render_profile();
+                    } else {
+                        load_profiles();
+                        toast(now, "profile saved");
+                        enter_home(now);
+                    }
+                }
+                break;
+            default: break;
+            }
+            break;
+        }
+
+        /* ---- text field editing ---- */
+        const char *label; int max; bool numeric, mask;
+        char *buf = pf_buf(s.pf_field, &label, &max, &numeric, &mask);
+        int len = (int)strlen(buf);
+        switch (k) {
+        case K_CHAR:
+            if (numeric && !(ch >= '0' && ch <= '9')) break;
+            /* Section-header metacharacters can't go in the name (they
+             * corrupt profiles.ini on reload); block them at the source. */
+            if (s.pf_field == PF_NAME && (ch == '[' || ch == ']')) break;
+            if (len < max) {
+                memmove(buf + s.pf_cursor + 1, buf + s.pf_cursor,
+                        len - s.pf_cursor + 1);
+                buf[s.pf_cursor++] = ch;
+                s.pf_err[0] = '\0';              /* an edit clears the error */
+                render_profile();
+            }
+            break;
+        case K_BACKSPACE:
+            if (s.pf_cursor > 0) {
+                memmove(buf + s.pf_cursor - 1, buf + s.pf_cursor,
+                        len - s.pf_cursor + 1);
+                s.pf_cursor--;
+                s.pf_err[0] = '\0';
+                render_profile();
+            }
+            break;
+        case K_LEFT:  if (s.pf_cursor > 0)   { s.pf_cursor--; render_profile(); } break;
+        case K_RIGHT: if (s.pf_cursor < len) { s.pf_cursor++; render_profile(); } break;
+        case K_UP:    pf_focus(s.pf_field - 1); render_profile(); break;
+        case K_DOWN: case K_TAB:
+        case K_ENTER: pf_focus(s.pf_field + 1); render_profile(); break;
+        default: break;
         }
         break;
     }

@@ -223,3 +223,31 @@ void ui_tile(int col, int row, int w, int h,
         ui_puts(tx, row + 2, t, a);
     }
 }
+
+void ui_field(int col, int row, int width, const char *text,
+              int cursor, bool focused, bool mask)
+{
+    if (width < 3) return;
+    int inner = width - 2;                 /* space between the [ ] brackets */
+    int len   = (int)strlen(text);
+    if (cursor < 0)   cursor = 0;
+    if (cursor > len) cursor = len;
+
+    /* Scroll so the caret stays visible — but ONLY for the focused field.
+     * An unfocused field always shows from its start, else every repaint
+     * scrolls it by the (focused) field's caret and hides its head. */
+    int start = 0;
+    if (focused && cursor > inner - 1) start = cursor - (inner - 1);
+
+    uint8_t in = focused ? OVERLAY_ATTR_INVERSE : 0;
+    ui_putch(col, row, '[', 0);
+    ui_putch(col + width - 1, row, ']', 0);
+    for (int i = 0; i < inner; i++) {
+        int idx = start + i;
+        uint16_t cp = ' ';
+        if (idx < len) cp = mask ? '*' : (uint8_t)text[idx];
+        /* Block cursor on the focused field's caret cell. */
+        uint8_t a = (focused && idx == cursor) ? (in ^ OVERLAY_ATTR_INVERSE) : in;
+        ui_putch(col + 1 + i, row, cp, a);
+    }
+}

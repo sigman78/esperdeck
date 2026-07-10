@@ -112,3 +112,11 @@ int ui_chip(int col, int row, uint16_t left_cp, const char *text,
  *  optional body line, inverted when selected. Text is truncated to fit. */
 void ui_tile(int col, int row, int w, int h,
              const char *title, const char *body, bool selected);
+
+/** Single-line text-entry field: a bracketed box @p width cells wide showing
+ *  @p text with a block cursor at @p cursor when @p focused. Horizontally
+ *  scrolls to keep the cursor in view for text longer than the box. When
+ *  @p mask, every character renders as '*' (passwords). Uses the current pen
+ *  for the frame; focused fields invert the interior. */
+void ui_field(int col, int row, int width, const char *text,
+              int cursor, bool focused, bool mask);
