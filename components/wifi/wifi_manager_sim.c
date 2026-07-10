@@ -63,3 +63,4 @@ bool wifi_manager_is_connected(void) { return s_state == WIFI_MGR_CONNECTED; }
 const char *wifi_manager_get_ip(void)   { return "127.0.0.1"; }
 const char *wifi_manager_get_ssid(void) { return s_ssid; }
 int wifi_manager_get_rssi(void) { return s_state == WIFI_MGR_CONNECTED ? -55 : 0; }
+time_t wifi_manager_time(void) { return time(NULL); }   /* host clock */

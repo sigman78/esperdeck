@@ -11,6 +11,10 @@
 #include "esp_event.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lwip/netdb.h"
+#include "lwip/sockets.h"
 #include <string.h>
 
 static const char *TAG = "wifi_manager";
@@ -31,6 +35,70 @@ static char s_ip[16]   = "";
 static char s_ssid[33] = "";
 
 static esp_timer_handle_t s_retry_timer = NULL;
+
+/* ---- wall clock: one-shot NTP, system clock deliberately untouched ----
+ * Stepping the system clock decades forward mid-session corrupts libssh2's
+ * blocking-timeout arithmetic (elapsed = difftime(time(NULL), start)), so
+ * we keep the epoch as a private offset against the monotonic esp_timer. */
+static volatile int64_t s_ntp_offset_us = 0;   /* epoch_us - esp_timer_us */
+static volatile bool    s_ntp_running   = false;
+
+static void ntp_task(void *arg)
+{
+    (void)arg;
+    for (int attempt = 0; attempt < 6 && s_ntp_offset_us == 0; attempt++) {
+        if (attempt) vTaskDelay(pdMS_TO_TICKS(5000));
+
+        struct addrinfo hints = { .ai_family   = AF_INET,
+                                  .ai_socktype = SOCK_DGRAM };
+        struct addrinfo *res = NULL;
+        if (getaddrinfo(CONFIG_CYBERDECK_NTP_SERVER, "123",
+                        &hints, &res) != 0 || !res)
+            continue;
+
+        int sock = socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDP);
+        if (sock >= 0) {
+            struct timeval tv = { .tv_sec = 3 };
+            setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            uint8_t pkt[48] = { 0x1B };        /* LI=0 VN=3 Mode=3 client */
+            if (sendto(sock, pkt, sizeof(pkt), 0,
+                       res->ai_addr, res->ai_addrlen) == sizeof(pkt) &&
+                recv(sock, pkt, sizeof(pkt), 0) == (int)sizeof(pkt)) {
+                /* Transmit timestamp: seconds since 1900 at offset 40. */
+                uint32_t secs = ((uint32_t)pkt[40] << 24) |
+                                ((uint32_t)pkt[41] << 16) |
+                                ((uint32_t)pkt[42] << 8)  | pkt[43];
+                if (secs > 2208988800u) {      /* sanity: past 1970 */
+                    s_ntp_offset_us =
+                        (int64_t)(secs - 2208988800u) * 1000000LL
+                        - esp_timer_get_time();
+                    ESP_LOGI(TAG, "NTP synced via %s",
+                             CONFIG_CYBERDECK_NTP_SERVER);
+                }
+            }
+            close(sock);
+        }
+        freeaddrinfo(res);
+    }
+    s_ntp_running = false;
+    vTaskDelete(NULL);
+}
+
+/* Fire-and-forget; called from the event handler, so only task creation
+ * happens here (never a blocking cross-thread call). */
+static void wifi_manager_kick_ntp(void)
+{
+    if (s_ntp_offset_us != 0 || s_ntp_running) return;
+    s_ntp_running = true;
+    if (xTaskCreate(ntp_task, "ntp", 4096, NULL, 3, NULL) != pdPASS)
+        s_ntp_running = false;
+}
+
+time_t wifi_manager_time(void)
+{
+    if (s_ntp_offset_us == 0) return 0;
+    return (time_t)((s_ntp_offset_us + esp_timer_get_time()) / 1000000LL);
+}
 
 /* Apply s_profiles[s_profile_idx] and (re)connect. Event-loop task ctx. */
 static void try_current_profile(void)
@@ -112,6 +180,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         s_cycle_fails = 0;
         s_state = WIFI_MGR_CONNECTED;   /* publish after strings are ready */
         ESP_LOGI(TAG, "Connected to '%s', IP %s", s_ssid, s_ip);
+
+        /* First link-up: fetch wall time once, on a task of its own —
+         * never a blocking call from inside this event handler. */
+        wifi_manager_kick_ntp();
     }
 }
 

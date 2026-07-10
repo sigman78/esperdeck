@@ -6,7 +6,9 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -67,6 +69,9 @@ static void init_network(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+    /* Timezone for the on-screen clock; SNTP itself starts on link-up. */
+    setenv("TZ", CONFIG_CYBERDECK_TZ, 1);
+    tzset();
 }
 
 /* -------------------------------------------------------------------------
@@ -171,16 +176,16 @@ void app_main(void)
     ESP_ERROR_CHECK(cyberdeck_app_init(&app_cfg, now_ms()));
 
     /* The shell writes profiles/known-hosts to flash from this task, so its
-     * stack must be internal DRAM (flash ops forbid external-RAM stacks). */
+     * stack must be internal DRAM (flash ops forbid external-RAM stacks).
+     * Static (.bss) rather than heap: by this point NimBLE + WiFi + the
+     * 2x12 KB overlay have fragmented internal DRAM, and the 12 KB
+     * contiguous heap_caps_malloc here failed intermittently — boot then
+     * halted on the splash screen with everything else still running.
+     * Same RAM cost, zero fragmentation risk, and the heap keeps a big
+     * block free for NimBLE's connect-time allocations. */
 #define MAIN_TASK_STACK 12288
     static StaticTask_t s_main_task_tcb;
-    StackType_t *task_stack = heap_caps_malloc(MAIN_TASK_STACK,
-                                               MALLOC_CAP_INTERNAL |
-                                               MALLOC_CAP_8BIT);
-    if (!task_stack) {
-        ESP_LOGE(TAG, "Cannot allocate main task stack — halting");
-        for (;;) vTaskDelay(portMAX_DELAY);
-    }
+    static StackType_t  s_main_task_stack[MAIN_TASK_STACK / sizeof(StackType_t)];
 
     xTaskCreateStaticPinnedToCore(
         main_task,
@@ -188,7 +193,7 @@ void app_main(void)
         MAIN_TASK_STACK / sizeof(StackType_t),
         NULL,
         5,
-        task_stack,
+        s_main_task_stack,
         &s_main_task_tcb,
         1
     );

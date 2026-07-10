@@ -15,6 +15,7 @@
 #include "esp_err.h"
 #include "storage.h"    /* wifi_profile_t */
 #include <stdbool.h>
+#include <time.h>
 
 typedef enum {
     WIFI_MGR_IDLE = 0,      /* no connect requested (or intentionally down) */
@@ -52,5 +53,11 @@ const char      *wifi_manager_get_ip(void);
 const char      *wifi_manager_get_ssid(void);
 /** RSSI of the current AP in dBm (negative), 0 when not connected. */
 int              wifi_manager_get_rssi(void);
+
+/** Wall-clock epoch seconds from a one-shot NTP fetch (started at first
+ *  link-up), 0 until synced. The SYSTEM clock is deliberately never set:
+ *  stepping it decades forward mid-handshake corrupts libssh2's blocking-
+ *  timeout arithmetic (elapsed = difftime(time(NULL), start)). */
+time_t           wifi_manager_time(void);
 
 #endif // WIFI_MANAGER_H

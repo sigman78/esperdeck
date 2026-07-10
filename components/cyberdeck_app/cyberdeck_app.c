@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include "esp_log.h"
 #include "ssh_client.h"
@@ -56,6 +57,9 @@ typedef enum {
 #define ANIM_PERIOD_MS   100          /* ~10 fps subtle UI animation */
 #define TOAST_MS         3000         /* status trivia */
 #define ERR_TOAST_MS     7000         /* errors the user must actually read */
+#define MENU_MSG_MS      5000         /* menu action feedback lifetime */
+#define SAVER_IDLE_MS    (3 * 60 * 1000)  /* HOME idle before the rain */
+#define PROV_ACK_HOLD_MS 2500         /* wifiprov success hold (phone ack) */
 
 /* Shell palette — VGA phosphor green on black. Per-cell accents (OVERLAY_COL_*)
  * layer the rest of the classic 16-color set on top. */
@@ -114,7 +118,9 @@ static struct {
     int  menu_page;        /* 0 = main menu, 1 = config submenu */
     bool menu_from_home;   /* config opened from HOME (no session) */
     bool menu_forget_armed;/* "Forget keyboard" needs a 2nd activation */
-    char menu_msg[48];     /* last config action result, shown in the submenu */
+    char menu_msg[48];     /* last action result, shown under the tiles */
+    uint64_t menu_msg_until; /* auto-clear time; 0 = sticky (armed confirm) */
+    bool menu_msg_wifi;    /* live-track wifi_status_str() while shown */
 
     /* wifi provisioning */
     uint64_t prov_done_at; /* when to finish after CRED_SUCCESS (0 = not set) */
@@ -122,8 +128,13 @@ static struct {
     /* toast (SESSION only; UI states draw status inline) */
     char     toast[64];
     uint64_t toast_until;
+    bool     toast_ok;     /* success toast: spinner-to-checkmark garnish */
 
     uint64_t session_start;         /* enter_session() time, for NO CARRIER */
+    uint64_t last_input;            /* any key/touch; drives the screensaver */
+    bool     saver_on;              /* rain actually on screen (not derived) */
+    uint64_t saver_since;           /* when the rain went up (wake grace)    */
+    uint8_t  kon_idx;               /* Konami sequence progress (HOME)       */
 
     uint64_t boot_until;
     uint64_t next_home_refresh;
@@ -272,6 +283,7 @@ static void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
     vsnprintf(s.toast, sizeof(s.toast), fmt, ap);
     va_end(ap);
     s.toast_until = now + ms;
+    s.toast_ok    = false;   /* only enter_session() garnishes with a ✓ */
 }
 
 /* Status trivia keeps the short default; errors the user must actually read
@@ -343,6 +355,31 @@ static uint16_t spinner_glyph(uint32_t frame)
         0x280B, 0x2819, 0x2839, 0x2838, 0x283C, 0x2834, 0x2826, 0x2827
     };
     return sp[frame % 8];
+}
+
+/* Braille "noise" glyph from a hash — the shared recipe for every static/
+ * rain/decode effect. Skips the blank U+2800 pattern so a speck can never
+ * be invisible. */
+static uint16_t braille_noise(uint32_t h)
+{
+    return (uint16_t)(0x2801 + h % 255u);
+}
+
+/* Wall-clock "HH:MM" once real time exists: wifi_manager's one-shot NTP
+ * fetch on device (0 until synced — no RTC battery), host clock in the
+ * simulator. TZ comes from CONFIG_CYBERDECK_TZ via localtime. */
+static bool clock_str(char *buf, size_t sz)
+{
+    time_t t = wifi_manager_time();
+    if (t == 0) return false;
+    struct tm tm;
+#ifdef _WIN32
+    if (localtime_s(&tm, &t) != 0) return false;  /* UCRT: no localtime_r */
+#else
+    if (!localtime_r(&t, &tm)) return false;
+#endif
+    snprintf(buf, sz, "%02d:%02d", tm.tm_hour, tm.tm_min);
+    return true;
 }
 
 /* Title chip framed by a shade gradient: ░▒▓█ TEXT █▓▒░, drawn at cell x0 on
@@ -417,11 +454,31 @@ static void ram_stats(char *buf, size_t sz)
  * at column 9), so callers can append glyphs without layout knowledge. */
 static int draw_status_led(int row, bool on, const char *label, const char *value)
 {
+    /* A live link gets a heartbeat: the dot contracts to ∙ (U+2219, a
+     * genuinely smaller bitmap — U+2022 is byte-identical to ● in this
+     * font!) twice per ~1.6 s cycle. Off stays a steady hollow ○. */
+    uint32_t ph = s.anim_frame & 15;
+    uint16_t cp = !on ? UI_LED_OFF
+                : (ph == 0 || ph == 2) ? 0x2219 : UI_LED_ON;
     ui_pen(on ? OVERLAY_COL_GREEN : OVERLAY_COL_RED);
-    ui_putch(2, row, on ? UI_LED_ON : UI_LED_OFF, 0);
+    ui_putch(2, row, cp, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
     ui_printf(4, row, 0, "%-4s %s", label, value);
     return 9 + (int)strlen(value);
+}
+
+/* Stable per-profile accent from a djb2 hash of the name — profiles get a
+ * visual identity on HOME and CONNECTING. RED (destructive) and WHITE are
+ * deliberately excluded. */
+static uint8_t prof_accent(const char *name)
+{
+    static const uint8_t pal[] = {
+        OVERLAY_COL_GREEN, OVERLAY_COL_CYAN, OVERLAY_COL_MAGENTA,
+        OVERLAY_COL_AMBER, OVERLAY_COL_BLUE,
+    };
+    uint32_t h = 5381;
+    while (*name) h = h * 33 + (uint8_t)*name++;
+    return pal[h % (sizeof(pal) / sizeof(pal[0]))];
 }
 
 /* 5x5 block glyphs for the boot logo (row-major, '#' = filled). */
@@ -436,9 +493,30 @@ static const char *boot_glyph(char c)
     case 'D': return "#### " "#   #" "#   #" "#   #" "#### ";
     case 'K': return "#   #" "#  # " "###  " "#  # " "#   #";
     case '*': return "  #  " "# # #" " ### " "# # #" "  #  ";
+    case '+': return "# # #" " ### " "#####" " ### " "# # #";  /* twinkle */
     default:  return "     " "     " "     " "     " "     ";
     }
 }
+
+/* Boot counter in RTC memory: survives soft resets and starts random at
+ * power-on, so successive boots walk through the taglines without needing
+ * NVS or an RNG this early. (Plain static in the simulator.) */
+#ifndef BUILD_SIMULATOR
+static RTC_NOINIT_ATTR uint32_t s_boot_seq;
+#else
+static uint32_t s_boot_seq;
+#endif
+
+/* One tagline per boot, stable for the whole splash. */
+static const char *const BOOT_TAGLINES[] = {
+    "SPINNING UP THE ICE",
+    "WAKING THE WETWARE",
+    "COLD BOOT, WARM HEART",
+    "DIALING THE GRID",
+    "CHECKING FOR BLACK ICE",
+    "INITIALIZING",
+};
+#define TAGLINE_COUNT (sizeof(BOOT_TAGLINES) / sizeof(BOOT_TAGLINES[0]))
 
 /* Boot splash: a big CYBER*DECK block logo that wipes in left→right over ~80%
  * of the boot delay (a bright white scan edge leads the reveal), then holds.
@@ -462,26 +540,34 @@ static void render_boot(uint64_t now)
     ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
+    bool done = (reveal == total_w);
     for (int i = 0; i < n; i++) {
-        const char *g = boot_glyph(LOGO[i]);
+        char ch = LOGO[i];
+        /* Once the wipe lands, the * twinkles: it swaps between the star
+         * and an X-burst every ~0.8 s, flashing white on the swap frame. */
+        bool star = (ch == '*');
+        if (star && done && ((s.anim_frame >> 3) & 1)) ch = '+';
+        bool flash = star && done && (s.anim_frame & 7) == 0;
+        const char *g = boot_glyph(ch);
         int gx = x0 + i * (GW + GAP);
-        uint8_t base = (LOGO[i] == '*') ? OVERLAY_COL_MAGENTA : OVERLAY_COL_CYAN;
+        uint8_t base = star ? (flash ? OVERLAY_COL_WHITE : OVERLAY_COL_MAGENTA)
+                            : OVERLAY_COL_CYAN;
         for (int r = 0; r < GH; r++)
             for (int c = 0; c < GW; c++) {
                 int col_abs = gx + c - x0;
                 if (col_abs >= reveal || g[r * GW + c] != '#') continue;
-                bool edge = (col_abs >= reveal - 2);   /* glowing scan front */
+                bool edge = !done && (col_abs >= reveal - 2); /* scan front */
                 ui_pen(edge ? OVERLAY_COL_WHITE : base);
                 ui_putch(gx + c, y0 + r, UI_BLOCK, 0);
             }
     }
 
     ui_pen(OVERLAY_COL_GREEN);
-    char sub[24];
-    snprintf(sub, sizeof(sub), "INITIALIZING%.*s", (int)(s.anim_frame % 4), "...");
+    const char *tag = BOOT_TAGLINES[s_boot_seq % TAGLINE_COUNT];
+    char sub[40];
+    snprintf(sub, sizeof(sub), "%s%.*s", tag, (int)(s.anim_frame % 4), "...");
     /* Fixed anchor: the full-dots form's width (dot count varies per frame). */
-    ui_puts((ui_cols() - (int)strlen("INITIALIZING...")) / 2,
-            y0 + GH + 2, sub, 0);
+    ui_puts((ui_cols() - ((int)strlen(tag) + 3)) / 2, y0 + GH + 2, sub, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     ui_no_cursor();
@@ -534,6 +620,14 @@ static void render_home(void)
     snprintf(kbdinfo, sizeof(kbdinfo), "%-11s %s", ble_status_str(), kn);
     draw_status_led(1, kbd, "KBD", kbdinfo);
 
+    /* All systems go: a small amber ☺ in the margin when net + keyboard
+     * are both up. Blink-and-you-miss-it personality, zero clutter. */
+    if (wifi_manager_is_connected() && kbd) {
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_putch(0, 1, 0x263A, 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
+
     char ram[48];
     ram_stats(ram, sizeof(ram));
     ui_pen(OVERLAY_COL_BLUE);
@@ -548,6 +642,11 @@ static void render_home(void)
     snprintf(ver, sizeof(ver), "// %s", s.cfg.version ? s.cfg.version : "?");
     ui_pen(OVERLAY_COL_BLUE);
     ui_puts(ui_cols() - (int)strlen(ver) - 1, 1, ver, 0);
+
+    /* Wall clock under the version once SNTP delivers real time. */
+    char clk[8];
+    if (clock_str(clk, sizeof(clk)))
+        ui_puts(ui_cols() - (int)strlen(clk) - 1, 2, clk, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_rule_scan(3, s.anim_frame);
@@ -569,7 +668,7 @@ static void render_home(void)
             snprintf(body, sizeof(body), "%s@%s:%u%s",
                      p->user, p->host, (unsigned)p->port,
                      p->auth == STORAGE_AUTH_KEY ? "  [key]" : "");
-            ui_pen(OVERLAY_COL_GREEN);
+            ui_pen(prof_accent(p->name));   /* stable per-name identity */
             ui_tile(cx, cy, g.tw, g.th, p->name, body, sel);
         } else if (i == s.profile_count) {
             ui_pen(OVERLAY_COL_CYAN);
@@ -579,6 +678,20 @@ static void render_home(void)
             ui_pen(OVERLAY_COL_BLUE);
             ui_tile(cx, cy, g.tw, g.th, "Configuration",
                     "wifi / keyboard", sel);
+        }
+    }
+
+    /* Vacant tile sockets get a whisper of CRT static: a few dim braille
+     * specks per empty slot, re-hashed every ~0.8 s — unpowered bays on a
+     * deck that is very much alive. */
+    ui_pen(OVERLAY_COL_BLUE);
+    for (int i = g.count; i < g.ncols * g.nrows; i++) {
+        for (int k = 0; k < 5; k++) {
+            uint32_t h = (uint32_t)i * 97u + (uint32_t)k * 61u
+                       + (s.anim_frame >> 3) * 31u;
+            ui_putch(tile_x(&g, i) + (int)(h % (uint32_t)g.tw),
+                     tile_y(&g, i) + (int)((h / 7u) % (uint32_t)g.th),
+                     braille_noise(h), 0);
         }
     }
     ui_pen(OVERLAY_COL_DEFAULT);
@@ -655,6 +768,27 @@ static void render_pairing(uint64_t now)
     g.count  = ndev + 2;
     s.grid   = g;
     if (s.pair_sel >= g.count) s.pair_sel = g.count - 1;
+
+    if (ndev == 0) {
+        /* Nothing found yet: a cyan radar beam sweeps the empty tile field
+         * with a fading trail, and faint braille "contacts" blip in and out
+         * behind it — 30 s of scan reads as a search, not a hang. The
+         * Forget/Cancel tiles overdraw whatever the beam leaves behind. */
+        int y0 = 4, y1 = ui_rows() - 3;
+        int bx = (int)((s.anim_frame * 2u) % (uint32_t)ui_cols());
+        for (int y = y0; y <= y1; y++) {
+            ui_pen(OVERLAY_COL_BLUE);
+            uint32_t h = (uint32_t)y * 41u + (s.anim_frame >> 2) * 13u;
+            if ((h & 7) == 0)
+                ui_putch((int)(h % (uint32_t)ui_cols()), y,
+                         braille_noise(h), 0);
+            ui_pen(OVERLAY_COL_CYAN);
+            ui_putch(bx, y, UI_SHADE3, 0);
+            if (bx >= 1) ui_putch(bx - 1, y, UI_SHADE2, 0);
+            if (bx >= 2) ui_putch(bx - 2, y, UI_SHADE1, 0);
+        }
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
 
     ui_pen(OVERLAY_COL_GREEN);
     for (int i = 0; i < ndev; i++) {
@@ -743,7 +877,8 @@ static void render_hostkey(void)
             ui_putch(x, y, (uint8_t)fp[i], 0);
         } else {
             ui_pen(OVERLAY_COL_GREEN);
-            ui_putch(x, y, 0x2800 | ((i * 37 + s.anim_frame * 51) & 0xFF), 0);
+            ui_putch(x, y, braille_noise((uint32_t)i * 37u
+                                         + s.anim_frame * 51u), 0);
         }
     }
     ui_pen(OVERLAY_COL_DEFAULT);
@@ -792,7 +927,7 @@ static void render_connecting(const char *msg, uint64_t now)
         snprintf(line + ll, sizeof(line) - ll, "  (attempt %d)",
                  s.connect_attempt);
     int lx = (ui_cols() - (int)strlen(line)) / 2;
-    ui_pen(OVERLAY_COL_CYAN);
+    ui_pen(prof_accent(p->name));   /* carries the tile's identity color */
     ui_putch(lx - 2, cy - 1, UI_DIAMOND, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
     ui_puts(lx, cy - 1, line, 0);
@@ -814,7 +949,7 @@ static void render_connecting(const char *msg, uint64_t now)
             UI_SHADE1, UI_SHADE2, UI_SHADE3, UI_BLOCK,
             UI_SHADE3, UI_SHADE2, UI_SHADE1
         };
-        ui_pen(s.connect_cancelled ? OVERLAY_COL_AMBER : OVERLAY_COL_CYAN);
+        ui_pen(s.connect_cancelled ? OVERLAY_COL_AMBER : prof_accent(p->name));
         for (int i = 0; i < bw; i++)
             ui_putch(bx + i, cy + 1, grad[(i + s.anim_frame) % 7], 0);
         if (s.connecting) {
@@ -877,6 +1012,14 @@ static void render_menu(void)
     int tl = (int)strlen(title);
     ui_pen(OVERLAY_COL_MAGENTA);
     ui_chip(g.x0 + (g.tw - tl - 4) / 2, g.y0 - 2, UI_RHALF, title, UI_LHALF);
+
+    /* Wall clock in the screen's top-right corner, over the dim scrim
+     * (the menu re-renders every frame, so it ticks live). */
+    char clk[8];
+    if (clock_str(clk, sizeof(clk))) {
+        ui_pen(OVERLAY_COL_BLUE);
+        ui_puts(ui_cols() - (int)strlen(clk) - 1, 0, clk, 0);
+    }
     ui_pen(OVERLAY_COL_DEFAULT);
 
     for (int i = 0; i < count; i++) {
@@ -888,6 +1031,14 @@ static void render_menu(void)
         ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th,
                 armed ? "CONFIRM forget keyboard?" : items[i],
                 dim ? "(unavailable)" : "", i == s.menu_sel);
+        if (i == s.menu_sel) {
+            /* Pulsing selection marker over ui_tile's static ▶ — the menu
+             * ticks at 10 fps now, so a still marker reads as a freeze.
+             * (UI_ARROW ► is byte-identical to ▶ in Terminus; ◆ is not.) */
+            static const uint16_t pulse[3] = { UI_PLAY, UI_DIAMOND, UI_VBAR };
+            ui_putch(tile_x(&g, i) + 1, tile_y(&g, i) + 1,
+                     pulse[(s.anim_frame / 3) % 3], OVERLAY_ATTR_INVERSE);
+        }
     }
 
     /* Esc legend + action result sit right under the tile column — the
@@ -907,6 +1058,32 @@ static void render_menu(void)
         ui_puts(mx + 2, ly + 1, s.menu_msg, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
+
+    if (!cfg) {
+        /* Mainframe flex: deck uptime, and link time when a session is
+         * behind the menu. anim_frame is ms-since-boot / 100, so the clock
+         * ticks live now that the menu re-renders every frame. */
+        uint64_t up = (uint64_t)s.anim_frame * ANIM_PERIOD_MS / 1000;
+        char flex[48];
+        if (s.menu_from_home) {
+            snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u",
+                     (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
+                     (unsigned)(up % 60));
+        } else {
+            /* anim_frame*100 floors the tick time and can lag session_start
+             * by a frame right after connect — clamp, don't underflow. */
+            uint64_t now_ms = (uint64_t)s.anim_frame * ANIM_PERIOD_MS;
+            uint64_t lk = now_ms > s.session_start
+                        ? (now_ms - s.session_start) / 1000 : 0;
+            snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u   LINK %02u:%02u",
+                     (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
+                     (unsigned)(up % 60),
+                     (unsigned)(lk / 60), (unsigned)(lk % 60));
+        }
+        ui_pen(OVERLAY_COL_BLUE);
+        ui_puts(g.x0 + (g.tw - (int)strlen(flex)) / 2, ly + 2, flex, 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
     ui_no_cursor();
     ui_present();
 }
@@ -924,8 +1101,69 @@ static void render_session_toast(uint64_t now)
     ui_clear();
     int x = ui_cols() - ((int)strlen(s.toast) + 2) - 1;
     ui_pen(OVERLAY_COL_AMBER);
-    ui_chip(x - 1, 0, UI_PL_L, s.toast, 0);
+    if (s.toast_ok) {
+        /* Success garnish: the braille spinner works for ~0.8 s, then snaps
+         * to a checkmark — the connect toast "completes" in front of you.
+         * ST_SESSION re-renders this every tick, so the animation is free.
+         * Two pad cells lead the text; the first holds the glyph. */
+        uint32_t el = (uint32_t)(TOAST_MS - (s.toast_until - now));
+        char pad[68];
+        snprintf(pad, sizeof(pad), "  %s", s.toast);
+        ui_chip(x - 3, 0, UI_PL_L, pad, 0);
+        ui_putch(x - 1, 0, el < 800 ? spinner_glyph(s.anim_frame) : 0x2713,
+                 OVERLAY_ATTR_INVERSE);
+    } else {
+        ui_chip(x - 1, 0, UI_PL_L, s.toast, 0);
+    }
     ui_pen(OVERLAY_COL_DEFAULT);
+    ui_present();
+}
+
+/* Idle screensaver: braille digital rain. Every column drops a bright head
+ * with a fading noise trail at one of three speeds; any input wakes HOME.
+ * Cost: one 100-byte static row table, zero heap — and the LCD never holds
+ * a static image while the deck idles on a shelf. */
+static void render_saver(void)
+{
+    static uint8_t head[100];    /* per-column head row (grid is 100 wide) */
+    static bool    seeded = false;
+    int W = ui_cols() > 100 ? 100 : ui_cols();
+    int H = ui_rows();
+    if (!seeded) {
+        seeded = true;
+        for (int c = 0; c < W; c++)
+            head[c] = (uint8_t)((c * 37u + 11u) % (unsigned)H);
+    }
+
+    ui_colors(UI_FG, UI_BG);
+    ui_clear();
+    ui_fill(0, 0, ui_cols(), ui_rows(), 0);
+
+    for (int c = 0; c < W; c++) {
+        if (s.anim_frame % ((c % 3) + 1) == 0)       /* three fall speeds */
+            head[c] = (uint8_t)((head[c] + 1) % (unsigned)H);
+        for (int k = 0; k < 6; k++) {                /* head + 5-cell trail */
+            int y = (head[c] - k + H) % H;
+            ui_pen(k == 0 ? OVERLAY_COL_WHITE
+                 : k <= 2 ? OVERLAY_COL_GREEN : OVERLAY_COL_BLUE);
+            ui_putch(c, y, braille_noise((uint32_t)c * 31u
+                                         + (uint32_t)y * 17u
+                                         + (s.anim_frame >> 1)), 0);
+        }
+    }
+
+    /* The time floats through the rain, hopping to a fresh spot every 10 s
+     * — useful at a glance, and no fixed pixels for the LCD to memorize. */
+    char clk[8];
+    if (clock_str(clk, sizeof(clk))) {
+        uint32_t h = (s.anim_frame / 100) * 2654435761u;
+        int cx = 2 + (int)(h % (uint32_t)(ui_cols() - 12));
+        int cy = 1 + (int)((h >> 10) % (uint32_t)(ui_rows() - 2));
+        ui_pen(OVERLAY_COL_WHITE);
+        ui_chip(cx, cy, 0, clk, 0);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_no_cursor();
     ui_present();
 }
 
@@ -935,7 +1173,11 @@ static void enter_home(uint64_t now)
 {
     s.state = ST_HOME;
     s.next_home_refresh = 0;
-    (void)now;
+    /* Arriving on HOME counts as activity: a session drop or provisioning
+     * result must show its toast for the full lifetime — the rain waiting
+     * out a stale idle timer would paint over it on the next tick. */
+    s.last_input = now;
+    s.saver_on   = false;
     render_home();
 }
 
@@ -991,7 +1233,7 @@ static void pairing_select(int slot, uint64_t now)
 
 /* Run the in-session menu action for the current selection. */
 /* Full-screen SoftAP onboarding modal. */
-static void render_wifiprov(void)
+static void render_wifiprov(uint64_t now)
 {
     ui_colors(UI_FG, UI_BG);
     ui_clear();
@@ -1009,8 +1251,17 @@ static void render_wifiprov(void)
         ui_pen(OVERLAY_COL_GREEN);
         ui_putch(4, 6, UI_LED_ON, 0);
         ui_printf(6, 6, 0, "Connected to '%s' - saved!", wifi_provision_ssid());
+        ui_puts(6, 8, "returning home", 0);
+        /* Departure bar: ✓s fill toward the moment we head home, so the
+         * 2.5 s ack hold reads as a countdown instead of a freeze. */
+        if (s.prov_done_at) {
+            const int BW = 20;
+            uint64_t left = s.prov_done_at > now ? s.prov_done_at - now : 0;
+            int fill = BW - (int)(left * BW / PROV_ACK_HOLD_MS);
+            for (int i = 0; i < fill && i < BW; i++)
+                ui_putch(22 + i, 8, 0x2713, 0);
+        }
         ui_pen(OVERLAY_COL_DEFAULT);
-        ui_puts(6, 8, "returning home...", 0);
         ui_no_cursor();
         ui_present();
         return;
@@ -1106,15 +1357,33 @@ static void enter_wifiprov(uint64_t now)
     s.prov_done_at = 0;
     s.next_anim    = 0;
     s.state        = ST_WIFIPROV;
-    render_wifiprov();
+    render_wifiprov(now);
+}
+
+/* Post an action-feedback line under the menu tiles.
+ * @p ms: lifetime; 0 = sticky (lives until explicitly cleared).
+ * @p live_wifi: keep rewriting it from wifi_status_str() while shown. */
+static void menu_note(uint64_t now, uint32_t ms, bool live_wifi,
+                      const char *text)
+{
+    snprintf(s.menu_msg, sizeof(s.menu_msg), "%s", text);
+    s.menu_msg_until = ms ? now + ms : 0;
+    s.menu_msg_wifi  = live_wifi;
+}
+
+static void menu_clear_note(void)
+{
+    s.menu_msg[0]    = '\0';
+    s.menu_msg_until = 0;
+    s.menu_msg_wifi  = false;
 }
 
 static void menu_open_config(void)
 {
     s.menu_page   = 1;
     s.menu_sel    = 0;
-    s.menu_msg[0] = '\0';
     s.menu_forget_armed = false;
+    menu_clear_note();
     render_menu();
 }
 
@@ -1125,8 +1394,8 @@ static void menu_open_main(void)
 {
     s.menu_page   = 0;
     s.menu_sel    = 0;
-    s.menu_msg[0] = '\0';
     s.menu_forget_armed = false;
+    menu_clear_note();
     render_menu();
 }
 
@@ -1161,8 +1430,7 @@ static void menu_activate(uint64_t now)
             if (s.cfg.ble) {
                 enter_pairing(now);
             } else {                              /* was a silent no-op */
-                snprintf(s.menu_msg, sizeof(s.menu_msg),
-                         "no BLE keyboard support");
+                menu_note(now, MENU_MSG_MS, false, "no BLE keyboard support");
                 render_menu();
             }
             break;
@@ -1174,11 +1442,14 @@ static void menu_activate(uint64_t now)
     switch (s.menu_sel) {
     case 0:                                   /* WiFi reconnect */
         kick_wifi();
-        snprintf(s.menu_msg, sizeof(s.menu_msg), "wifi reconnecting...");
+        /* Live note: the tick rewrites it from wifi_status_str() each
+         * frame (one wording source) and extends its life while the
+         * reconnect is still in flight. */
+        menu_note(now, MENU_MSG_MS, true, "wifi: ...");
         break;
     case 1:                                   /* WiFi disconnect */
         wifi_manager_disconnect();
-        snprintf(s.menu_msg, sizeof(s.menu_msg), "wifi disconnected");
+        menu_note(now, MENU_MSG_MS, false, "wifi disconnected");
         break;
     case CONFIG_WIFI_SETUP:                    /* WiFi onboarding via phone */
         enter_wifiprov(now);
@@ -1187,17 +1458,15 @@ static void menu_activate(uint64_t now)
         if (s.cfg.ble && s.cfg.ble->forget) {
             if (!s.menu_forget_armed) {
                 s.menu_forget_armed = true;
-                snprintf(s.menu_msg, sizeof(s.menu_msg),
-                         "activate again to confirm");
+                /* Sticky (ms=0): the message IS the armed state. */
+                menu_note(now, 0, false, "activate again to confirm");
             } else {
                 s.menu_forget_armed = false;
                 s.cfg.ble->forget();
-                snprintf(s.menu_msg, sizeof(s.menu_msg),
-                         "keyboard bonds cleared");
+                menu_note(now, MENU_MSG_MS, false, "keyboard bonds cleared");
             }
         } else {                                  /* was a silent no-op */
-            snprintf(s.menu_msg, sizeof(s.menu_msg),
-                     "no BLE keyboard support");
+            menu_note(now, MENU_MSG_MS, false, "no BLE keyboard support");
         }
         break;
     case CONFIG_COUNT - 1:                     /* Back */
@@ -1267,7 +1536,13 @@ static void enter_session(uint64_t now)
     ui_hide();
     /* The terminal was cleared inside ssh_client_connect() before the read
      * task spawned — doing it here would race that task inside vterm. */
-    toast(now, "connected - F12 or long-press for menu");
+    static const char *const HELLO[] = {
+        "jacked in", "link up", "uplink established",
+        "handshake clean", "you're in",
+    };
+    toast(now, "%s - F12 or long-press for menu",
+          HELLO[s.anim_frame % (sizeof(HELLO) / sizeof(HELLO[0]))]);
+    s.toast_ok = true;       /* garnish with the spinner-to-checkmark */
     render_session_toast(now);
 }
 
@@ -1377,6 +1652,8 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     s.cfg = *cfg;
     s.state = ST_BOOT;
     s.boot_until = now_ms + cfg->boot_delay_ms;
+    s.last_input = now_ms;   /* idle timer starts at boot */
+    s_boot_seq++;            /* next tagline (RTC-resident, see decl) */
 
     esp_err_t err = ui_init();
     if (err != ESP_OK) return err;
@@ -1412,9 +1689,24 @@ void cyberdeck_app_tick(uint64_t now)
         break;
 
     case ST_HOME:
+        /* Expire toasts regardless of the saver, so a wake never flashes
+         * a long-dead message. */
+        if (s.toast[0] && now >= s.toast_until) s.toast[0] = '\0';
+        if (now - s.last_input > SAVER_IDLE_MS) {
+            if (now >= s.next_anim) {          /* idle: let it rain */
+                s.next_anim = now + ANIM_PERIOD_MS;
+                if (!s.saver_on) {
+                    s.saver_on    = true;      /* input handling keys off
+                                                * what is actually on screen */
+                    s.saver_since = now;
+                }
+                render_saver();
+            }
+            break;
+        }
+        s.saver_on = false;
         if (now >= s.next_home_refresh) {
             s.next_home_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
-            if (s.toast[0] && now >= s.toast_until) s.toast[0] = '\0';
             render_home();   /* live wifi/ble status + comet sweep */
         }
         break;
@@ -1493,14 +1785,39 @@ void cyberdeck_app_tick(uint64_t now)
         /* A menu opened from HOME has no session to monitor. */
         if (!s.menu_from_home && !ssh_client_is_connected()) {
             session_dropped(now);
+            break;
+        }
+        /* Live feedback (inside the 10 fps gate — its output is only ever
+         * seen by render_menu): wifi-tracking notes rewrite themselves from
+         * the real state, expired notes clear, the marker pulses and the
+         * UP/LINK clocks tick. */
+        if (now >= s.next_anim) {
+            s.next_anim = now + ANIM_PERIOD_MS;
+            if (s.menu_msg[0] && s.menu_msg_wifi) {
+                snprintf(s.menu_msg, sizeof(s.menu_msg), "wifi: %s",
+                         wifi_status_str());
+                /* Still in flight? Keep the note alive — expiring mid-
+                 * reconnect reads as the action silently dying. */
+                wifi_mgr_state_t ws = wifi_manager_get_state();
+                if (ws == WIFI_MGR_CONNECTING || ws == WIFI_MGR_LOST)
+                    s.menu_msg_until = now + MENU_MSG_MS;
+            }
+            if (s.menu_msg[0] && s.menu_msg_until && now >= s.menu_msg_until)
+                menu_clear_note();
+            render_menu();
         }
         break;
 
     case ST_WIFIPROV:
         if (wifi_provision_state() == WIFI_PROV_ST_SUCCESS) {
             if (s.prov_done_at == 0) {
-                s.prov_done_at = now + 2500;   /* let the phone read the ack  */
-                render_wifiprov();
+                s.prov_done_at = now + PROV_ACK_HOLD_MS; /* phone reads the ack */
+                render_wifiprov(now);
+            } else if (now < s.prov_done_at) { /* keep the ✓ bar filling */
+                if (now >= s.next_anim) {
+                    s.next_anim = now + ANIM_PERIOD_MS;
+                    render_wifiprov(now);
+                }
             } else if (now >= s.prov_done_at) {
                 char ssid[33];
                 snprintf(ssid, sizeof(ssid), "%s", wifi_provision_ssid());
@@ -1518,7 +1835,7 @@ void cyberdeck_app_tick(uint64_t now)
             }
         } else if (now >= s.next_anim) {
             s.next_anim = now + ANIM_PERIOD_MS;
-            render_wifiprov();
+            render_wifiprov(now);
         }
         break;
 
@@ -1531,6 +1848,21 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
 {
     if (!ev || s.halted) return;
 
+    /* Any input feeds the idle timer. Only input arriving while the rain
+     * is ACTUALLY on screen is swallowed as a wake — and only once the
+     * rain has been up for a moment: the main loop ticks before it drains
+     * input, so a keypress aimed at a HOME that was visible milliseconds
+     * ago must still act, not vanish into a wake. */
+    s.last_input = now;
+    if (s.saver_on) {
+        s.saver_on = false;
+        if (s.toast[0] && now >= s.toast_until) s.toast[0] = '\0';
+        render_home();
+        if (now - s.saver_since >= 1000)
+            return;                    /* true wake: swallow the input */
+        /* else: rain just went up — fall through and act on the event */
+    }
+
     /* ---- SESSION: forward everything except the menu triggers ---- */
     if (s.state == ST_SESSION) {
         if (ev->type == CYBERDECK_INPUT_LONG_PRESS ||
@@ -1539,7 +1871,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             s.menu_page      = 0;
             s.menu_from_home = false;
             s.menu_forget_armed = false;
-            s.menu_msg[0]    = '\0';
+            menu_clear_note();
             s.state = ST_MENU;
             render_menu();
             return;
@@ -1589,8 +1921,24 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         }
         switch (k) {
         case K_UP: case K_DOWN: case K_LEFT: case K_RIGHT: {
+            /* Konami progress rides along invisibly; EVERY arrow still
+             * navigates, including the one that completes the sequence.
+             * On mismatch, fall back honoring the overlapping ↑↑ prefix
+             * (an extra leading UP must not break the code). */
+            static const ui_key_t KONAMI[8] = {
+                K_UP, K_UP, K_DOWN, K_DOWN, K_LEFT, K_RIGHT, K_LEFT, K_RIGHT,
+            };
+            if (k == KONAMI[s.kon_idx])   s.kon_idx++;
+            else if (k == K_UP)           s.kon_idx = (s.kon_idx == 2) ? 2 : 1;
+            else                          s.kon_idx = 0;
+            if (s.kon_idx == 8) {
+                s.kon_idx = 0;
+                display_bell();
+                toast(now, "CHEAT ACCEPTED - RAM +30K (not really)");
+            }
             int ns = tile_nav(&s.grid, s.sel, k);
-            if (ns != s.sel) { s.sel = ns; render_home(); }
+            if (ns != s.sel) s.sel = ns;
+            render_home();
             break;
         }
         case K_ENTER:
@@ -1774,7 +2122,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                 s.menu_sel = ns;
                 if (s.menu_forget_armed) {     /* moving away backs down */
                     s.menu_forget_armed = false;
-                    s.menu_msg[0] = '\0';
+                    menu_clear_note();
                 }
                 render_menu();
             }

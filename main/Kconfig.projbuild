@@ -94,6 +94,22 @@ menu "Cyberdeck Configuration"
             a session ends or drops.  When disabled, it halts in STATE_ERROR
             so the disconnect is visible and must be reset manually.
 
+    config CYBERDECK_TZ
+        string "POSIX timezone for the on-screen clock"
+        default "UTC0"
+        help
+            POSIX TZ string applied at boot; the clock shows local time
+            once NTP syncs (fetched once at first WiFi link-up).
+            Examples: "UTC0", "MSK-3", "CET-1CEST,M3.5.0,M10.5.0/3",
+            "EST5EDT,M3.2.0,M11.1.0".
+
+    config CYBERDECK_NTP_SERVER
+        string "NTP server for the on-screen clock"
+        default "pool.ntp.org"
+        help
+            Hostname queried once (UDP port 123) after the first WiFi
+            link-up. Point at a local server on isolated networks.
+
     config SSH_RECV_WINDOW
         int "SSH receive window size (bytes)"
         default 32768
