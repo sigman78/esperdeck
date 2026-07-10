@@ -1,0 +1,15 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "sim-windows",
+      "displayName": "Simulator (Windows / SDL2)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-sim",
+      "cacheVariables": {
+        "BUILD_SIMULATOR": "ON"
+      }
+    }
+  ]
+}

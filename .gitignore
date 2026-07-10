@@ -1,0 +1,61 @@
+# ESP-IDF build artifacts
+build/
+sdkconfig
+sdkconfig.old
+*.pyc
+__pycache__/
+
+# Dependencies
+dependencies.lock
+managed_components/
+
+# IDE files
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/c_cpp_properties.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# Python
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test files
+test_output/
+*.test
+
+# Private config (if any)
+private/
+secrets/
+*.key
+*.pem
+/build-sim
+
+/sim_storage
+.vs
+.cache
+
+# Git worktrees
+.worktrees/

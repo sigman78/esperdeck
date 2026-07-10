@@ -1,0 +1,23 @@
+idf_component_register(
+    SRCS
+        "input_hal.c"
+        "hid_keymap.c"
+        "ble_keyboard.c"
+        "input_uart.c"
+        "touch_input.c"
+    INCLUDE_DIRS
+        "include"
+    PRIV_INCLUDE_DIRS
+        "."                         # input_hal_internal.h, hid_keymap.h
+    REQUIRES
+        bt
+        esp_hid
+        nvs_flash
+        driver
+        esp_lcd
+        esp_timer
+        freertos
+        esp_event
+        vterm
+        storage
+)

@@ -1,0 +1,48 @@
+# Cyberdeck — ESP32-S3 build defaults (Waveshare ESP32-S3-Touch-LCD-7).
+# A fresh clone builds from these; the gitignored sdkconfig holds local
+# overrides (real WiFi/SSH credentials go there or into sim_storage/).
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# ---- flash / partitions -------------------------------------------------
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ---- CPU / PSRAM --------------------------------------------------------
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# Task stacks may live in PSRAM — but NOT for tasks doing flash I/O; the
+# shell's main task allocates its stack from internal DRAM explicitly.
+CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
+CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
+# Deliberately NOT setting CONFIG_SPIRAM_USE_MALLOC: plain malloc() must
+# stay internal-DRAM — the display ISR reads app buffers allocated with it.
+
+# ---- display ------------------------------------------------------------
+# Keep the RGB bounce-buffer ISR alive during flash writes (NVS bond
+# persist while pairing, littlefs profile saves) — the whole render path
+# (ISR wrapper, render core, font, cell buffers) is IRAM/DRAM resident.
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+CONFIG_GDMA_CTRL_FUNC_IN_IRAM=y
+CONFIG_GDMA_ISR_HANDLER_IN_IRAM=y
+
+# ---- BLE keyboard (NimBLE HID host) --------------------------------------
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_MEM_ALLOC_MODE_EXTERNAL=y
+CONFIG_BT_NIMBLE_PINNED_TO_CORE_0=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+CONFIG_BT_NIMBLE_MAX_BONDS=3
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+# For keyboards that rotate resolvable private addresses (e.g. Apple),
+# host-based privacy lets the reconnect scan match them:
+# CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=y
+
+# ---- SSH ------------------------------------------------------------------
+CONFIG_SSH_KEEPALIVE_INTERVAL=30
+CONFIG_SSH_RECV_WINDOW=32768
+CONFIG_SSH_AUTO_RECONNECT=y

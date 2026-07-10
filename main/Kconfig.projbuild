@@ -1,0 +1,108 @@
+menu "Cyberdeck Configuration"
+
+    config TERMINAL_WIDTH
+        int "Terminal width (columns)"
+        default 100
+        range 80 133
+        help
+            Number of character columns in the terminal display.
+            Default 100 allows 8-pixel wide fonts on 800-pixel display.
+
+    config TERMINAL_HEIGHT
+        int "Terminal height (rows)"
+        default 30
+        range 24 60
+        help
+            Number of character rows in the terminal display.
+            Default 30 allows 16-pixel tall fonts on 480-pixel display.
+
+    config SCROLLBACK_LINES
+        int "Scrollback buffer (lines)"
+        default 1000
+        range 0 10000
+        help
+            Number of lines to keep in scrollback buffer.
+            Requires additional PSRAM. Set to 0 to disable.
+
+    config DEFAULT_FG_COLOR
+        int "Default foreground color (0-255)"
+        default 7
+        range 0 255
+        help
+            Default text foreground color (ANSI 256-color palette).
+            7 = white/light gray
+
+    config DEFAULT_BG_COLOR
+        int "Default background color (0-255)"
+        default 0
+        range 0 255
+        help
+            Default text background color (ANSI 256-color palette).
+            0 = black
+
+    config SSH_KEEPALIVE_INTERVAL
+        int "SSH keep-alive interval (seconds)"
+        default 60
+        range 0 300
+        help
+            Send SSH keep-alive packets every N seconds.
+            Set to 0 to disable keep-alive.
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "myssid"
+        help
+            SSID (network name) for the WiFi connection.
+
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "mypassword"
+        help
+            WiFi password (WPA or WPA2).
+
+    config SSH_DEFAULT_HOST
+        string "Default SSH host"
+        default "192.168.1.100"
+        help
+            Default SSH server hostname or IP address.
+
+    config SSH_DEFAULT_PORT
+        int "Default SSH port"
+        default 22
+        range 1 65535
+        help
+            Default SSH server port.
+
+    config SSH_DEFAULT_USER
+        string "Default SSH username"
+        default "user"
+        help
+            Default SSH username for authentication.
+
+    config SSH_DEFAULT_PASSWORD
+        string "Default SSH password"
+        default ""
+        help
+            Default SSH password. Leave empty if using key-based auth or
+            if the server uses keyboard-interactive with a different password.
+
+    config SSH_AUTO_RECONNECT
+        bool "Automatically reconnect on SSH session drop"
+        default n
+        help
+            When enabled, the main task transitions back to SSH_CONNECT after
+            a session ends or drops.  When disabled, it halts in STATE_ERROR
+            so the disconnect is visible and must be reset manually.
+
+    config SSH_RECV_WINDOW
+        int "SSH receive window size (bytes)"
+        default 32768
+        range 4096 262144
+        help
+            Advertised SSH channel receive window. The server will not send more
+            than this many bytes before waiting for our acknowledgment.
+            Smaller values reduce libssh2 heap (packet brigade) at the cost of
+            more round-trips for bulk output. 32768 (32 KB) covers any terminal
+            screen refresh.
+
+endmenu

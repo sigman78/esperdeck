@@ -1,0 +1,64 @@
+menu "Input HAL"
+
+    choice INPUT_BACKEND
+        prompt "Input backend"
+        default INPUT_AUTO
+        help
+            Select which input backend(s) to compile and initialise.
+            AUTO enables both BLE HID and USB-Serial-JTAG simultaneously.
+
+        config INPUT_AUTO
+            bool "AUTO (BLE HID + USB-Serial-JTAG)"
+
+        config INPUT_BLE
+            bool "BLE HID only"
+
+        config INPUT_UART
+            bool "USB-Serial-JTAG only"
+    endchoice
+
+    config INPUT_BLE_SCAN_DURATION
+        int "BLE scan duration (seconds)"
+        depends on INPUT_BLE || INPUT_AUTO
+        default 10
+        range 1 60
+        help
+            How long each scan window lasts before giving up and waiting
+            for the next reconnect attempt.
+
+    config INPUT_TOUCH
+        bool "Enable GT911 touch input backend"
+        default y
+
+    config INPUT_TOUCH_I2C_PORT
+        int "I2C port number for GT911"
+        default 0
+        depends on INPUT_TOUCH
+
+    config INPUT_TOUCH_SDA_PIN
+        int "SDA GPIO pin for GT911"
+        default 8
+        depends on INPUT_TOUCH
+
+    config INPUT_TOUCH_SCL_PIN
+        int "SCL GPIO pin for GT911"
+        default 9
+        depends on INPUT_TOUCH
+
+    config INPUT_TOUCH_WAVESHARE_RESET
+        bool "Enable Waveshare Touch-LCD-7 hardware reset sequence"
+        depends on INPUT_TOUCH
+        default y
+        help
+            The Waveshare ESP32-S3-Touch-LCD-7 routes GT911 RST and INT
+            through I2C IO expanders (0x24 and 0x38).  Enable to run the
+            required reset sequence at startup.  Disable only when using
+            a bare GT911 with direct GPIO wiring.
+
+    config INPUT_TOUCH_RESET_GPIO
+        int "Board enable GPIO pin for GT911 reset"
+        depends on INPUT_TOUCH && INPUT_TOUCH_WAVESHARE_RESET
+        default 4
+        range 0 48
+
+endmenu

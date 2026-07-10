@@ -1,0 +1,57 @@
+diff --git i/src/libssh2_priv.h w/src/libssh2_priv.h
+index b803d080..4460cc95 100644
+--- i/src/libssh2_priv.h
++++ w/src/libssh2_priv.h
+@@ -605,6 +605,12 @@ typedef struct _libssh2_endpoint_data
+     char *lang_prefs;
+ } libssh2_endpoint_data;
+ 
++/* Send buffer.  A terminal client never sends packets larger than a few KB
++ * (KEXINIT algorithm list is the largest, ~1.5 KB with default prefs).
++ * Shrinking this from MAX_SSH_PACKET_LEN (35 KB) saves ~30 KB from the
++ * session struct without affecting receive capacity. */
++#define LIBSSH2_OUTBUF_LEN 4096
++
+ #define PACKETBUFSIZE MAX_SSH_PACKET_LEN
+ 
+ struct transportpacket
+@@ -634,7 +640,7 @@ struct transportpacket
+                                are currently writing decrypted data */
+ 
+     /* ------------- for outgoing data --------------- */
+-    unsigned char outbuf[MAX_SSH_PACKET_LEN]; /* area for the outgoing data */
++    unsigned char outbuf[LIBSSH2_OUTBUF_LEN]; /* area for the outgoing data */
+ 
+     ssize_t ototal_num;     /* size of outbuf in number of bytes */
+     const unsigned char *odata; /* original pointer to the data */
+@@ -791,7 +797,7 @@ struct _LIBSSH2_SESSION
+ 
+     /* State variables used in libssh2_banner_send() */
+     libssh2_nonblocking_states banner_TxRx_state;
+-    char banner_TxRx_banner[8192];
++    char banner_TxRx_banner[512]; /* SSH banners are rarely > 100 bytes */
+     ssize_t banner_TxRx_total_send;
+ 
+     /* State variables used in libssh2_kexinit() */
+diff --git i/src/transport.c w/src/transport.c
+index dd10fcf8..197f9e89 100644
+--- i/src/transport.c
++++ w/src/transport.c
+@@ -1069,7 +1069,7 @@ int _libssh2_transport_send(LIBSSH2_SESSION *session,
+         /* the idea here is that these function must fail if the output gets
+            larger than what fits in the assigned buffer so thus they don't
+            check the input size as we don't know how much it compresses */
+-        size_t dest_len = MAX_SSH_PACKET_LEN-5-256;
++        size_t dest_len = LIBSSH2_OUTBUF_LEN-5-256;
+         size_t dest2_len = dest_len;
+ 
+         /* compress directly to the target buffer */
+@@ -1099,7 +1099,7 @@ int _libssh2_transport_send(LIBSSH2_SESSION *session,
+         data_len = dest_len + dest2_len; /* use the combined length */
+     }
+     else {
+-        if((data_len + data2_len) >= (MAX_SSH_PACKET_LEN-0x100))
++        if((data_len + data2_len) >= (LIBSSH2_OUTBUF_LEN-0x100))
+             /* too large packet, return error for this until we make this
+                function split it up and send multiple SSH packets */
+             return LIBSSH2_ERROR_INVAL;

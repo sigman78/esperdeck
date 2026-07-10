@@ -1,0 +1,11 @@
+menu "vterm"
+
+    config VTERM_BENCH
+        bool "Enable performance instrumentation"
+        default n
+        help
+            Accumulates cycle counts and byte statistics across flush calls.
+            Call vterm_bench_report() to log a summary.
+            Zero overhead when disabled.
+
+endmenu

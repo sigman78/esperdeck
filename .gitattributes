@@ -1,0 +1,5 @@
+# Shell scripts and patches must stay LF so they work on Unix even when the repo
+# is cloned/authored on Windows (a CRLF shebang breaks /usr/bin/env; CRLF context
+# lines break `git apply`).
+*.sh    text eol=lf
+*.patch text eol=lf

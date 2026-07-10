@@ -1,0 +1,10 @@
+## Managed dependencies for the storage component (device build).
+##
+## LittleFS backend. This is joltwallet's esp_littlefs, published on the ESP
+## Component Registry as "joltwallet/littlefs" (NOT "joltwallet/esp_littlefs").
+## It provides esp_vfs_littlefs_register() and the littlefs_create_partition_image()
+## CMake helper used in CMakeLists.txt. The manager auto-adds it to this
+## component's requirements — no explicit REQUIRES entry needed. Fetched into
+## managed_components/ at build time; the simulator build uses the host FS.
+dependencies:
+  joltwallet/littlefs: "==1.22.2"
