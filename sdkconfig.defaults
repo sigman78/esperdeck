@@ -58,3 +58,7 @@ CONFIG_CYBERDECK_TZ="PST8PDT,M3.2.0,M11.1.0"
 # SRAM diet: bookkeeping heaps to PSRAM
 CONFIG_NVS_ALLOCATE_CACHE_IN_SPIRAM=y
 CONFIG_LITTLEFS_MALLOC_STRATEGY_SPIRAM_PREFER=y
+
+# DEV (temporary): web-import page carries the proof code hidden — no code
+# entry needed; the page is open to anyone on the LAN. Flip to n for release.
+CONFIG_SSH_IMPORT_POP_DISABLED=y

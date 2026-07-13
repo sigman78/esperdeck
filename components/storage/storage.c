@@ -9,12 +9,15 @@
 
 #include "storage.h"
 #include "esp_log.h"
+#include "esp_heap_caps.h"
 
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
-#ifndef _WIN32
+#ifdef _WIN32
+#include <io.h>              /* _findfirst/_findnext for the host sim */
+#else
 #include <dirent.h>          /* device (newlib) + POSIX sim; not msvcrt */
 #endif
 
@@ -84,8 +87,8 @@ static int parse_kv(const char *line, char *key, size_t keysz,
 
 typedef struct {
     FILE *f;
-    char  tmp[144];
-    char  dst[136];
+    char  tmp[168];
+    char  dst[160];          /* holds key paths too (see storage_set_key) */
 } atomic_file_t;
 
 static FILE *atomic_open(atomic_file_t *af, const char *path)
@@ -347,6 +350,20 @@ esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count)
 
 #define KNOWN_HOSTS_MAX 16
 
+/* In-RAM copy of known_hosts.ini for read-modify-write. ~3.6 KB — heap, not
+ * stack: known_host_set/delete are reachable from the 6 KB httpd worker task
+ * (web profile manager), which a stack copy of this size would overflow. */
+typedef struct {
+    char keys[KNOWN_HOSTS_MAX][96];
+    char vals[KNOWN_HOSTS_MAX][128];
+} known_hosts_t;
+
+static known_hosts_t *known_hosts_alloc(void)
+{
+    return heap_caps_malloc(sizeof(known_hosts_t),
+                            MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
 static void known_hosts_path(char *buf, size_t bufsz)
 {
     snprintf(buf, bufsz, "%s/known_hosts.ini", storage_platform_mount_point());
@@ -390,17 +407,17 @@ esp_err_t storage_known_host_set(const char *host, uint16_t port,
     known_hosts_path(path, sizeof(path));
 
     /* Read existing entries so we can replace in place */
-    char keys[KNOWN_HOSTS_MAX][96];
-    char vals[KNOWN_HOSTS_MAX][128];
-    int  n = 0;
+    known_hosts_t *kh = known_hosts_alloc();
+    if (!kh) return ESP_ERR_NO_MEM;
+    int n = 0;
 
     FILE *f = fopen(path, "r");
     if (f) {
         char line[256];
         while (fgets(line, sizeof(line), f) && n < KNOWN_HOSTS_MAX) {
             rtrim(line);
-            if (!parse_kv(line, keys[n], sizeof(keys[n]),
-                          vals[n], sizeof(vals[n]))) continue;
+            if (!parse_kv(line, kh->keys[n], sizeof(kh->keys[n]),
+                          kh->vals[n], sizeof(kh->vals[n]))) continue;
             n++;
         }
         fclose(f);
@@ -411,28 +428,80 @@ esp_err_t storage_known_host_set(const char *host, uint16_t port,
 
     int idx = -1;
     for (int i = 0; i < n; i++) {
-        if (strcmp(keys[i], want) == 0) { idx = i; break; }
+        if (strcmp(kh->keys[i], want) == 0) { idx = i; break; }
     }
     if (idx < 0) {
         if (n >= KNOWN_HOSTS_MAX) {
             /* Drop the first (oldest) entry */
-            memmove(keys[0], keys[1], sizeof(keys[0]) * (KNOWN_HOSTS_MAX - 1));
-            memmove(vals[0], vals[1], sizeof(vals[0]) * (KNOWN_HOSTS_MAX - 1));
+            memmove(kh->keys[0], kh->keys[1],
+                    sizeof(kh->keys[0]) * (KNOWN_HOSTS_MAX - 1));
+            memmove(kh->vals[0], kh->vals[1],
+                    sizeof(kh->vals[0]) * (KNOWN_HOSTS_MAX - 1));
             n = KNOWN_HOSTS_MAX - 1;
         }
         idx = n++;
     }
-    snprintf(keys[idx], sizeof(keys[idx]), "%s", want);
-    snprintf(vals[idx], sizeof(vals[idx]), "%s", fp_hex);
+    snprintf(kh->keys[idx], sizeof(kh->keys[idx]), "%s", want);
+    snprintf(kh->vals[idx], sizeof(kh->vals[idx]), "%s", fp_hex);
 
     atomic_file_t af;
     f = atomic_open(&af, path);
-    if (!f) return ESP_FAIL;
+    if (!f) { free(kh); return ESP_FAIL; }
     for (int i = 0; i < n; i++)
-        fprintf(f, "%s=%s\n", keys[i], vals[i]);
+        fprintf(f, "%s=%s\n", kh->keys[i], kh->vals[i]);
+    free(kh);
     if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
 
     ESP_LOGI(TAG, "Pinned host key for %s", want);
+    return ESP_OK;
+}
+
+esp_err_t storage_known_host_delete(const char *host, uint16_t port)
+{
+    if (!host) return ESP_ERR_INVALID_ARG;
+
+    char path[128];
+    known_hosts_path(path, sizeof(path));
+
+    FILE *f = fopen(path, "r");
+    if (!f) return ESP_ERR_NOT_FOUND;
+
+    known_hosts_t *kh = known_hosts_alloc();
+    if (!kh) { fclose(f); return ESP_ERR_NO_MEM; }
+    int n = 0;
+
+    char line[256];
+    while (fgets(line, sizeof(line), f) && n < KNOWN_HOSTS_MAX) {
+        rtrim(line);
+        if (!parse_kv(line, kh->keys[n], sizeof(kh->keys[n]),
+                      kh->vals[n], sizeof(kh->vals[n]))) continue;
+        n++;
+    }
+    fclose(f);
+
+    char want[96];
+    snprintf(want, sizeof(want), "%s:%u", host, (unsigned)port);
+
+    int w = 0;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(kh->keys[i], want) == 0) continue;
+        if (w != i) {
+            memcpy(kh->keys[w], kh->keys[i], sizeof(kh->keys[0]));
+            memcpy(kh->vals[w], kh->vals[i], sizeof(kh->vals[0]));
+        }
+        w++;
+    }
+    if (w == n) { free(kh); return ESP_ERR_NOT_FOUND; }
+
+    atomic_file_t af;
+    f = atomic_open(&af, path);
+    if (!f) { free(kh); return ESP_FAIL; }
+    for (int i = 0; i < w; i++)
+        fprintf(f, "%s=%s\n", kh->keys[i], kh->vals[i]);
+    free(kh);
+    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+
+    ESP_LOGI(TAG, "Unpinned host key for %s", want);
     return ESP_OK;
 }
 
@@ -500,20 +569,21 @@ esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
     char path[160];
     key_path(key_id, path, sizeof(path));
 
-    FILE *f = fopen(path, "w");
-    if (!f) {
-        ESP_LOGE(TAG, "Cannot open '%s' for write: errno=%d", path, errno);
-        return ESP_FAIL;
-    }
+    /* tmp+rename like the INI writers: a power cut mid-write must never turn
+     * an existing, working key into a truncated one. */
+    atomic_file_t af;
+    FILE *f = atomic_open(&af, path);
+    if (!f) return ESP_FAIL;
 
     size_t n = fwrite(pem, 1, len, f);
-    fclose(f);
-
     if (n != len) {
         ESP_LOGE(TAG, "Short write: %zu of %zu bytes for key '%s'",
                  n, len, key_id);
+        fclose(f);
+        remove(af.tmp);
         return ESP_FAIL;
     }
+    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
 
     ESP_LOGI(TAG, "Wrote key '%s' (%zu bytes)", key_id, len);
     return ESP_OK;
@@ -533,6 +603,104 @@ esp_err_t storage_delete_key(const char *key_id)
 }
 
 /* -------------------------------------------------------------------------
+ * Key enumeration + metadata
+ * ---------------------------------------------------------------------- */
+
+static int cmp_key_id(const void *a, const void *b)
+{
+    return strcmp((const char *)a, (const char *)b);
+}
+
+esp_err_t storage_list_keys(char (*out)[STORAGE_KEY_ID_LEN], int max,
+                            int *count)
+{
+    if (!out || !count || max <= 0) return ESP_ERR_INVALID_ARG;
+    *count = 0;
+
+    char dir[128];
+    snprintf(dir, sizeof(dir), "%s/keys", storage_platform_mount_point());
+
+#ifdef _WIN32
+    char pat[160];
+    snprintf(pat, sizeof(pat), "%s/*.pem", dir);
+    struct _finddata_t fd;
+    intptr_t h = _findfirst(pat, &fd);
+    if (h != -1) {
+        do {
+            size_t nl = strlen(fd.name);          /* pattern guarantees .pem */
+            if (nl <= 4 || nl - 4 >= STORAGE_KEY_ID_LEN) continue;
+            if (*count >= max) break;
+            snprintf(out[*count], STORAGE_KEY_ID_LEN, "%.*s",
+                     (int)(nl - 4), fd.name);
+            (*count)++;
+        } while (_findnext(h, &fd) == 0);
+        _findclose(h);
+    }
+#else
+    DIR *d = opendir(dir);
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            const char *nm = e->d_name;
+            size_t nl = strlen(nm);
+            if (nl <= 4 || strcmp(nm + nl - 4, ".pem") != 0) continue;
+            if (nl - 4 >= STORAGE_KEY_ID_LEN) continue;   /* stem too long */
+            if (*count >= max) break;
+            snprintf(out[*count], STORAGE_KEY_ID_LEN, "%.*s",
+                     (int)(nl - 4), nm);
+            (*count)++;
+        }
+        closedir(d);
+    }
+#endif
+
+    qsort(out, (size_t)*count, STORAGE_KEY_ID_LEN, cmp_key_id);
+    return ESP_OK;
+}
+
+esp_err_t storage_key_info(const char *key_id,
+                           char *type, size_t type_len,
+                           char *comment, size_t comment_len)
+{
+    if (type && type_len)       type[0] = '\0';
+    if (comment && comment_len) comment[0] = '\0';
+    if (!key_id || !key_id[0]) return ESP_ERR_INVALID_ARG;
+
+    char path[160];
+    snprintf(path, sizeof(path), "%s/keys/%s.pub",
+             storage_platform_mount_point(), key_id);
+    FILE *f = fopen(path, "r");
+    if (!f) return ESP_ERR_NOT_FOUND;
+
+    /* Heap, not stack (httpd task calls this), and big enough that a
+     * 4096-bit RSA base64 blob (~730 chars) can't swallow the comment. */
+    enum { PUB_LINE_MAX = 2048 };
+    char *line = heap_caps_malloc(PUB_LINE_MAX,
+                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!line) { fclose(f); return ESP_ERR_NO_MEM; }
+    char *got = fgets(line, PUB_LINE_MAX, f);
+    fclose(f);
+    if (!got) { free(line); return ESP_ERR_NOT_FOUND; }
+    rtrim(line);
+
+    /* "<type> <base64> [comment...]" — tolerate runs of spaces. */
+    char *sp = strchr(line, ' ');
+    if (sp) *sp = '\0';
+    if (type && type_len) snprintf(type, type_len, "%s", line);
+    if (sp && comment && comment_len) {
+        char *b64 = sp + 1;
+        while (*b64 == ' ') b64++;
+        char *sp2 = strchr(b64, ' ');
+        if (sp2) {
+            while (*sp2 == ' ') sp2++;
+            snprintf(comment, comment_len, "%s", sp2);
+        }
+    }
+    free(line);
+    return ESP_OK;
+}
+
+/* -------------------------------------------------------------------------
  * Bulk removal
  * ---------------------------------------------------------------------- */
 
@@ -546,18 +714,28 @@ esp_err_t storage_known_hosts_clear(void)
     return r == 0 ? ESP_OK : ESP_ERR_NOT_FOUND;
 }
 
-/* Remove every regular file under keys/ (leaves the directory itself). The
- * Windows simulator's CRT has no dirent.h; there the keys wipe is skipped (a
- * host test convenience — the device path is the one that matters). */
+/* Remove every regular file under keys/ (leaves the directory itself). */
 static void wipe_keys_dir(void)
 {
-#ifndef _WIN32
     char dir[128];
     snprintf(dir, sizeof(dir), "%s/keys", storage_platform_mount_point());
+    char path[192];
+#ifdef _WIN32
+    char pat[160];
+    snprintf(pat, sizeof(pat), "%s/*", dir);
+    struct _finddata_t fd;
+    intptr_t h = _findfirst(pat, &fd);
+    if (h == -1) return;
+    do {
+        if (fd.name[0] == '.') continue;                      /* skip . / .. */
+        snprintf(path, sizeof(path), "%s/%s", dir, fd.name);
+        remove(path);
+    } while (_findnext(h, &fd) == 0);
+    _findclose(h);
+#else
     DIR *d = opendir(dir);
     if (!d) return;
     struct dirent *e;
-    char path[192];
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.') continue;                    /* skip . / .. */
         snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);

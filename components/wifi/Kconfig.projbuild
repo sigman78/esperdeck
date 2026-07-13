@@ -1,0 +1,18 @@
+menu "SSH import / web manager"
+
+    config SSH_IMPORT_POP_DISABLED
+        bool "DEV: disable the web-mode proof code (auto-fill it in the page)"
+        default n
+        help
+            Development convenience for WEB (LAN) import mode: the served
+            page embeds the session proof code as a hidden prefilled field,
+            so no code entry is needed and the stored-profile list loads
+            automatically. ANYONE who can open the page can then read,
+            add, edit and delete profiles on the deck.
+
+            SoftAP mode is unaffected (there the code is the WPA2
+            passphrase and is still needed to join the AP).
+
+            Never ship a build with this enabled.
+
+endmenu

@@ -51,7 +51,7 @@ typedef enum {
     ST_SSHIMPORT,   /* SoftAP + HTTP SSH-profile import (modal)      */
 } app_state_t;
 
-#define MAX_PROFILES     (8 + 1)          /* stored + synthesized fallback */
+#define MAX_PROFILES     (STORAGE_MAX_PROFILES + 1)   /* stored + synth fallback */
 
 /* HOME trailing tiles after the profile tiles. "New profile" only appears as a
  * first-run shortcut when nothing is stored yet (otherwise profiles are added
@@ -100,7 +100,11 @@ static struct {
     tilegrid_t grid;
 
     /* connecting */
-    int      connect_idx;           /* profile being connected            */
+    conn_profile_t active;          /* snapshot of the profile being
+                                     * connected/connected: list mutations
+                                     * (edit/delete/reorder) must never
+                                     * redirect a live session            */
+    int      connect_idx;           /* HOME slot the connect started from */
     bool     connect_armed;         /* render one frame, then connect     */
     bool     connecting;            /* async connect worker is running    */
     bool     connect_cancelled;     /* user aborted the in-flight connect */
@@ -157,6 +161,17 @@ static struct {
     int      pf_field;              /* focused field (see pf_field_t)   */
     int      pf_cursor;             /* caret within the focused field   */
     char     pf_err[40];            /* inline validation error, "" = ok */
+    int      pf_edit_idx;           /* stored index being edited, -1 = new */
+    char     pf_orig_name[32];      /* name at edit entry (slot re-found
+                                     * by name at save time)            */
+    bool     pf_return_menu;        /* editor was entered from the menu */
+    char   (*pf_keys)[STORAGE_KEY_ID_LEN];  /* SPIRAM, PF_KEY_MAX entries */
+    int      pf_nkeys;
+    int      pf_key_sel;            /* index into pf_keys, -1 = none    */
+    char     pf_key_type[24];       /* cached type of the selected key  */
+
+    /* reorder picker */
+    int      reorder_grab;          /* grabbed stored index, -1 = none  */
 
     uint64_t boot_until;
     uint64_t next_home_refresh;
@@ -335,6 +350,12 @@ static void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
 /* Status trivia keeps the short default; errors the user must actually read
  * (auth failures, drop reasons) call toast_for() with ERR_TOAST_MS. */
 #define toast(now, ...)  toast_for(now, TOAST_MS, __VA_ARGS__)
+
+/* Forward decls: the profile editor exits into HOME or back into the menu. */
+static void enter_home(uint64_t now);
+static void menu_goto(int sc);
+static void menu_note(uint64_t now, uint32_t ms, bool live_wifi,
+                      const char *text);
 
 /* ------------------------------------------------------------ rendering */
 
@@ -899,7 +920,7 @@ static void render_hostkey(void)
     ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
-    const conn_profile_t *p = &s.profiles[s.connect_idx];
+    const conn_profile_t *p = &s.active;
     const char *fp = ssh_client_get_fingerprint();
 
     if (s.fp_mismatch) {
@@ -983,7 +1004,7 @@ static void render_connecting(const char *msg, uint64_t now)
 
     draw_screen_header("CONNECTING", "// SSH DECK");
 
-    const conn_profile_t *p = &s.profiles[s.connect_idx];
+    const conn_profile_t *p = &s.active;
     int cy = ui_rows() / 2;
 
     char line[96];
@@ -1035,13 +1056,27 @@ static void render_connecting(const char *msg, uint64_t now)
 
 /* ---------------------------------------------------- profile editor */
 
-/* Field order in the on-device editor. The first PF_SAVE entries are text
- * fields; PF_SAVE/PF_CANCEL are buttons in the same up/down focus ring. */
+/* Field order in the on-device editor: text fields, then the two selector
+ * rows (auth toggle + key picker), then the Save/Cancel buttons — all one
+ * up/down focus ring. The key row only exists while auth == key. */
 typedef enum {
-    PF_NAME = 0, PF_HOST, PF_PORT, PF_USER, PF_PASS,
+    PF_NAME = 0, PF_HOST, PF_PORT, PF_USER, PF_AUTH, PF_PASS, PF_KEY,
     PF_SAVE, PF_CANCEL, PF_COUNT,
 } pf_field_t;
-#define PF_TEXT_COUNT  PF_SAVE
+#define PF_ROWS  PF_SAVE          /* form rows drawn above the buttons */
+
+#define PF_KEY_MAX 8              /* key ids offered by the picker */
+
+static bool pf_is_text(int f)
+{
+    return f <= PF_USER || f == PF_PASS;
+}
+
+/* Is @p f part of the focus ring under the current auth mode? */
+static bool pf_field_present(int f)
+{
+    return f != PF_KEY || s.pf_draft.auth == STORAGE_AUTH_KEY;
+}
 
 /* Resolve a text field's label, buffer, max length and flags. */
 static char *pf_buf(int i, const char **label, int *max,
@@ -1057,10 +1092,67 @@ static char *pf_buf(int i, const char **label, int *max,
                   return s.pf_port;
     case PF_USER: *label = "User"; *max = sizeof(s.pf_draft.user) - 1;
                   return s.pf_draft.user;
-    case PF_PASS: *label = "Pass"; *max = sizeof(s.pf_draft.password) - 1;
+    case PF_PASS: /* doubles as the key passphrase under key auth */
+                  *label = s.pf_draft.auth == STORAGE_AUTH_KEY
+                           ? "Phrase" : "Pass";
+                  *max = sizeof(s.pf_draft.password) - 1;
                   *mask = true; return s.pf_draft.password;
     }
     *label = ""; *max = 0; return NULL;
+}
+
+/* (Re)load the key picker's id list and cached type of the selection. */
+static void pf_key_refresh_info(void)
+{
+    s.pf_key_type[0] = '\0';
+    if (s.pf_key_sel >= 0 && s.pf_key_sel < s.pf_nkeys)
+        storage_key_info(s.pf_keys[s.pf_key_sel],
+                         s.pf_key_type, sizeof(s.pf_key_type), NULL, 0);
+}
+
+static void pf_load_keys(void)
+{
+    if (!s.pf_keys)
+        s.pf_keys = heap_caps_malloc(PF_KEY_MAX * STORAGE_KEY_ID_LEN,
+                                     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    s.pf_nkeys = 0;
+    if (s.pf_keys)
+        storage_list_keys(s.pf_keys, PF_KEY_MAX, &s.pf_nkeys);
+
+    /* Preselect the draft's key when editing; a draft without one starts on
+     * the first stored key (adopted only when auth is toggled to key). */
+    s.pf_key_sel = -1;
+    for (int i = 0; i < s.pf_nkeys; i++)
+        if (strcmp(s.pf_keys[i], s.pf_draft.key_id) == 0) {
+            s.pf_key_sel = i;
+            break;
+        }
+    if (s.pf_key_sel < 0 && !s.pf_draft.key_id[0] && s.pf_nkeys > 0)
+        s.pf_key_sel = 0;
+    pf_key_refresh_info();
+}
+
+static void pf_auth_toggle(void)
+{
+    if (s.pf_draft.auth == STORAGE_AUTH_KEY) {
+        s.pf_draft.auth = STORAGE_AUTH_PASSWORD;
+    } else {
+        s.pf_draft.auth = STORAGE_AUTH_KEY;
+        if (s.pf_key_sel >= 0 && s.pf_key_sel < s.pf_nkeys)
+            snprintf(s.pf_draft.key_id, sizeof(s.pf_draft.key_id), "%s",
+                     s.pf_keys[s.pf_key_sel]);
+    }
+}
+
+static void pf_key_cycle(int dir)
+{
+    if (s.pf_nkeys <= 0) return;
+    s.pf_key_sel = (s.pf_key_sel < 0)
+                   ? (dir > 0 ? 0 : s.pf_nkeys - 1)
+                   : (s.pf_key_sel + dir + s.pf_nkeys) % s.pf_nkeys;
+    snprintf(s.pf_draft.key_id, sizeof(s.pf_draft.key_id), "%s",
+             s.pf_keys[s.pf_key_sel]);
+    pf_key_refresh_info();
 }
 
 #define PF_X0   26            /* form left edge  */
@@ -1068,40 +1160,68 @@ static char *pf_buf(int i, const char **label, int *max,
 #define PF_FW   40            /* field width     */
 #define PF_Y0   6             /* first field row */
 
+/* A selector row: '<' value '>' rendered as a solid bar, inverted when
+ * focused — left/right (or space/tap) cycles it. */
+static void pf_draw_selector(int row, bool focused, const char *value)
+{
+    char bar[PF_FW + 1];
+    snprintf(bar, sizeof(bar), "< %-*.*s >", PF_FW - 4, PF_FW - 4, value);
+    ui_puts(PF_FX, row, bar, focused ? OVERLAY_ATTR_INVERSE : 0);
+}
+
 static void render_profile(void)
 {
     ui_colors(UI_FG, UI_BG);
     ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
-    draw_screen_header("NEW PROFILE", "// SSH DECK");
+    draw_screen_header(s.pf_edit_idx >= 0 ? "EDIT PROFILE" : "NEW PROFILE",
+                       "// SSH DECK");
 
-    for (int i = 0; i < PF_TEXT_COUNT; i++) {
-        const char *label; int max; bool numeric, mask;
-        char *buf = pf_buf(i, &label, &max, &numeric, &mask);
+    for (int i = 0; i < PF_ROWS; i++) {
         int row = PF_Y0 + i * 2;
         bool focused = (s.pf_field == i);
-        ui_pen(focused ? OVERLAY_COL_CYAN : OVERLAY_COL_DEFAULT);
-        ui_puts(PF_X0, row, label, 0);
-        /* Only the focused field's caret drives scrolling (ui_field ignores
-         * the caret when unfocused); pass 0 for the rest to be explicit. */
-        ui_field(PF_FX, row, PF_FW, buf, focused ? s.pf_cursor : 0,
-                 focused, mask);
+        if (pf_is_text(i)) {
+            const char *label; int max; bool numeric, mask;
+            char *buf = pf_buf(i, &label, &max, &numeric, &mask);
+            ui_pen(focused ? OVERLAY_COL_CYAN : OVERLAY_COL_DEFAULT);
+            ui_puts(PF_X0, row, label, 0);
+            /* Only the focused field's caret drives scrolling (ui_field
+             * ignores the caret when unfocused); pass 0 to be explicit. */
+            ui_field(PF_FX, row, PF_FW, buf, focused ? s.pf_cursor : 0,
+                     focused, mask);
+        } else if (i == PF_AUTH) {
+            ui_pen(focused ? OVERLAY_COL_CYAN : OVERLAY_COL_DEFAULT);
+            ui_puts(PF_X0, row, "Auth", 0);
+            pf_draw_selector(row, focused,
+                             s.pf_draft.auth == STORAGE_AUTH_KEY
+                             ? "key" : "password");
+        } else if (i == PF_KEY && s.pf_draft.auth == STORAGE_AUTH_KEY) {
+            ui_pen(focused ? OVERLAY_COL_CYAN : OVERLAY_COL_DEFAULT);
+            ui_puts(PF_X0, row, "Key", 0);
+            char v[64];
+            if (s.pf_key_sel >= 0 && s.pf_key_sel < s.pf_nkeys)
+                snprintf(v, sizeof(v), "%s%s%s", s.pf_keys[s.pf_key_sel],
+                         s.pf_key_type[0] ? "  " : "", s.pf_key_type);
+            else if (s.pf_draft.key_id[0])
+                snprintf(v, sizeof(v), "%s (missing)", s.pf_draft.key_id);
+            else
+                snprintf(v, sizeof(v), "(no keys - use Import)");
+            pf_draw_selector(row, focused, v);
+        }
     }
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(PF_X0, PF_Y0 + PF_TEXT_COUNT * 2,
-            "auth: password (key setup coming soon)", 0);
 
     /* Inline validation error — a modal has no toast strip, so a failed
      * Save must report here or it looks dead. Persists until the next edit. */
     if (s.pf_err[0]) {
         ui_pen(OVERLAY_COL_RED);
-        ui_puts(PF_X0, PF_Y0 + PF_TEXT_COUNT * 2 + 1, s.pf_err, 0);
+        ui_puts(PF_X0, PF_Y0 + PF_ROWS * 2, s.pf_err, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
     /* Save / Cancel buttons — a 2-wide tile grid stashed for touch. */
-    tilegrid_t bg = { .y0 = PF_Y0 + PF_TEXT_COUNT * 2 + 2, .tw = 20, .th = 3,
+    tilegrid_t bg = { .y0 = PF_Y0 + PF_ROWS * 2 + 1, .tw = 20, .th = 3,
                       .gx = 4, .gy = 0, .ncols = 2, .nrows = 1, .count = 2 };
     bg.x0 = (ui_cols() - (bg.tw * 2 + bg.gx)) / 2;
     s.grid = bg;
@@ -1118,20 +1238,36 @@ static void render_profile(void)
     ui_present();
 }
 
-static void enter_profile(uint64_t now)
+/* Open the editor: @p edit_idx = stored profile to edit, or -1 for a new
+ * one. Remembers whether it was entered from the menu (to return there). */
+static void enter_profile(uint64_t now, int edit_idx)
 {
     memset(&s.pf_draft, 0, sizeof(s.pf_draft));
-    snprintf(s.pf_port, sizeof(s.pf_port), "22");
+    s.pf_return_menu  = (s.state == ST_MENU);
+    s.pf_edit_idx     = (edit_idx >= 0 && edit_idx < s.stored_count)
+                        ? edit_idx : -1;
+    s.pf_orig_name[0] = '\0';
+    if (s.pf_edit_idx >= 0) {
+        s.pf_draft = s.profiles[s.pf_edit_idx];
+        snprintf(s.pf_orig_name, sizeof(s.pf_orig_name), "%s",
+                 s.pf_draft.name);
+        snprintf(s.pf_port, sizeof(s.pf_port), "%u",
+                 (unsigned)s.pf_draft.port);
+    } else {
+        snprintf(s.pf_port, sizeof(s.pf_port), "22");
+    }
+    pf_load_keys();
     s.pf_field  = PF_NAME;
-    s.pf_cursor = 0;
+    s.pf_cursor = (int)strlen(s.pf_draft.name);
     s.pf_err[0] = '\0';
     s.state     = ST_PROFILE;
     (void)now;
     render_profile();
 }
 
-/* Validate the draft and append it to profiles.ini. Returns "" on success or
- * a short reason to show inline on failure. */
+/* Validate the draft and persist it: append for a new profile, replace the
+ * original (found by its entry-time name) for an edit. Returns "" on success
+ * or a short reason to show inline on failure. */
 static const char *profile_commit(void)
 {
     if (s.pf_draft.name[0] == '\0') return "name required";
@@ -1145,31 +1281,76 @@ static const char *profile_commit(void)
     if (port < 1 || port > 65535)   return "bad port";
 
     s.pf_draft.port = (uint16_t)port;
-    s.pf_draft.auth = STORAGE_AUTH_PASSWORD;
+    if (s.pf_draft.auth == STORAGE_AUTH_KEY) {
+        if (!s.pf_draft.key_id[0]) return "no key - Import adds keys";
+    } else {
+        s.pf_draft.key_id[0] = '\0';
+    }
 
     /* Load the authoritative on-flash set (s.profiles may hold the synthesized
-     * "(default)" fallback, which is NOT on flash), append, and persist. This
+     * "(default)" fallback, which is NOT on flash), mutate, and persist. This
      * capacity check is the only one — s.profile_count is not authoritative. */
     conn_profile_t set[MAX_PROFILES];
     int n = 0;
     if (storage_load_profiles(set, &n, MAX_PROFILES - 1) != ESP_OK) n = 0;
-    if (n >= MAX_PROFILES - 1) return "profile list full";
-    set[n++] = s.pf_draft;
+
+    int slot = -1;                        /* slot being replaced (edit) */
+    if (s.pf_edit_idx >= 0) {
+        for (int i = 0; i < n; i++)
+            if (strcmp(set[i].name, s.pf_orig_name) == 0) { slot = i; break; }
+        if (slot < 0) return "original profile is gone";
+    }
+    /* Names are the profile identity everywhere (find/replace/import) —
+     * a duplicate would be ambiguous to connect to and to delete. */
+    for (int i = 0; i < n; i++)
+        if (i != slot && strcmp(set[i].name, s.pf_draft.name) == 0)
+            return "name already in use";
+
+    conn_profile_t old = { 0 };
+    if (slot < 0) {
+        if (n >= MAX_PROFILES - 1) return "profile list full";
+        slot = n++;
+    } else {
+        old = set[slot];
+    }
+    set[slot] = s.pf_draft;
     if (storage_save_profiles(set, n) != ESP_OK) return "save failed";
+
+    /* The edit dropped or swapped a key reference: GC the old .pem when
+     * nothing references it anymore (mirrors delete_profile_at). */
+    if (old.auth == STORAGE_AUTH_KEY && old.key_id[0]) {
+        bool shared = false;
+        for (int i = 0; i < n; i++)
+            if (set[i].auth == STORAGE_AUTH_KEY &&
+                strcmp(set[i].key_id, old.key_id) == 0) { shared = true; break; }
+        if (!shared) storage_delete_key(old.key_id);
+    }
     return "";
 }
 
-/* Focus a different field; reset the caret to the end of its text. */
+/* Focus a field directly (must be present); caret goes to its text's end. */
 static void pf_focus(int field)
 {
     if (field < 0) field = PF_COUNT - 1;
     if (field >= PF_COUNT) field = 0;
     s.pf_field = field;
-    if (field < PF_TEXT_COUNT) {
+    if (pf_is_text(field)) {
         const char *label; int max; bool numeric, mask;
         char *buf = pf_buf(field, &label, &max, &numeric, &mask);
         s.pf_cursor = (int)strlen(buf);
     }
+}
+
+/* Step the focus ring by @p dir, skipping fields the auth mode hides. */
+static void pf_focus_step(int dir)
+{
+    int f = s.pf_field;
+    do {
+        f += dir;
+        if (f < 0) f = PF_COUNT - 1;
+        if (f >= PF_COUNT) f = 0;
+    } while (!pf_field_present(f));
+    pf_focus(f);
 }
 
 /* Menu is a shallow tree of tile pages: a root (MAIN in-session), a CONFIG hub,
@@ -1178,11 +1359,14 @@ static void pf_focus(int field)
 typedef enum {
     MS_MAIN = 0,   /* in-session root: Resume / Disconnect / Configuration    */
     MS_CONFIG,     /* hub: Profiles / WiFi / Keyboard / System / Back         */
-    MS_PROFILES,   /* Add / Import SoftAP / Import Web / Delete / Back        */
+    MS_PROFILES,   /* Add / Edit / Reorder / Delete / Import > / Back         */
+    MS_IMPORT,     /* SoftAP (phone) / Web (PC) / Back                        */
     MS_WIFI,       /* Reconnect / Add network / Back                          */
     MS_KEYBOARD,   /* Pair / Forget bonds / Back                             */
     MS_SYSTEM,     /* Clear host keys / Factory reset / Back                  */
     MS_DELPROFILE, /* dynamic: pick a stored profile to delete               */
+    MS_EDITPROFILE,/* dynamic: pick a stored profile to edit                 */
+    MS_REORDER,    /* dynamic: grab a profile, move it, drop it              */
 } menu_screen_t;
 
 #define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
@@ -1195,10 +1379,14 @@ static const uint8_t config_cols[]  = { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN,
                                         OVERLAY_COL_MAGENTA, OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
 #define CFG_KEYBOARD 2   /* index of "Keyboard >" (needs BLE) */
 
-static const char *profiles_items[] = { "Add (type here)", "Import - SoftAP (phone)",
-                                        "Import - Web (PC)", "Delete profile", "Back" };
+static const char *profiles_items[] = { "Add (type here)", "Edit", "Reorder",
+                                        "Delete", "Import >", "Back" };
 static const uint8_t profiles_cols[]= { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN,
-                                        OVERLAY_COL_CYAN, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
+                                        OVERLAY_COL_MAGENTA, OVERLAY_COL_RED,
+                                        OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
+
+static const char *import_items[]   = { "SoftAP (phone)", "Web (PC)", "Back" };
+static const uint8_t import_cols[]  = { OVERLAY_COL_CYAN, OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
 
 static const char *wifi_items[]     = { "Reconnect", "Add network (phone)", "Back" };
 static const uint8_t wifi_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
@@ -1216,18 +1404,25 @@ typedef struct {
     int                count;
 } menu_def_t;
 
-/* Static definition for a screen; MS_DELPROFILE is built dynamically. */
+/* Static definition for a screen; the profile pickers are built dynamically. */
 static menu_def_t menu_def(int sc)
 {
     switch (sc) {
     case MS_MAIN:     return (menu_def_t){ "MENU",          main_items,     main_cols,     NELEM(main_items) };
     case MS_CONFIG:   return (menu_def_t){ "CONFIGURATION", config_items,   config_cols,   NELEM(config_items) };
     case MS_PROFILES: return (menu_def_t){ "PROFILES",      profiles_items, profiles_cols, NELEM(profiles_items) };
+    case MS_IMPORT:   return (menu_def_t){ "IMPORT",        import_items,   import_cols,   NELEM(import_items) };
     case MS_WIFI:     return (menu_def_t){ "WIFI",          wifi_items,     wifi_cols,     NELEM(wifi_items) };
     case MS_KEYBOARD: return (menu_def_t){ "KEYBOARD",      kbd_items,      kbd_cols,      NELEM(kbd_items) };
     case MS_SYSTEM:   return (menu_def_t){ "SYSTEM",        system_items,   system_cols,   NELEM(system_items) };
     default:          return (menu_def_t){ "", NULL, NULL, 0 };
     }
+}
+
+/* True for the dynamically built stored-profile pickers. */
+static bool menu_is_picker(int sc)
+{
+    return sc == MS_DELPROFILE || sc == MS_EDITPROFILE || sc == MS_REORDER;
 }
 
 /* CONFIRM label if (sc,sel) is a destructive 2-step action, else NULL. In the
@@ -1248,14 +1443,20 @@ static bool menu_item_dim(int sc, int sel)
     return (sc == MS_CONFIG && sel == CFG_KEYBOARD) || (sc == MS_KEYBOARD);
 }
 
-/* Build the delete-profile picker's item list from the stored profiles plus a
- * trailing "Back". Names point into s.profiles, valid for the frame. */
-static int delpicker_items(const char *out[], int cap)
+/* Build a stored-profile picker's tiles plus a trailing "Back". Titles are
+ * the profile names; bodies "user@host" keep same-named entries tellable.
+ * Names point into s.profiles, bodies into @p bodybuf — frame-local. */
+static int picker_items(const char *out[], const char *bodies[],
+                        char (*bodybuf)[28], int cap)
 {
     int n = 0;
-    for (int i = 0; i < s.stored_count && n < cap - 1; i++)
-        out[n++] = s.profiles[i].name;
-    if (n < cap) out[n++] = "Back";
+    for (int i = 0; i < s.stored_count && n < cap - 1; i++) {
+        snprintf(bodybuf[i], sizeof(bodybuf[i]), "%s@%s",
+                 s.profiles[i].user, s.profiles[i].host);
+        bodies[n] = bodybuf[i];
+        out[n++]  = s.profiles[i].name;
+    }
+    if (n < cap) { bodies[n] = ""; out[n++] = "Back"; }
     return n;
 }
 
@@ -1267,27 +1468,33 @@ static void render_menu(void)
     const int sc = s.menu_screen;
     const bool root = (sc == MS_MAIN);
 
-    /* Resolve the page: static def, or the dynamic delete picker. */
+    /* Resolve the page: static def, or a dynamic stored-profile picker. */
     const char *dyn[MAX_PROFILES + 1];
+    const char *dynb[MAX_PROFILES + 1];
+    char bodybuf[MAX_PROFILES][28];
     const char *title;
     const char *const *items;
+    const char *const *bodies = NULL;
     const uint8_t *cols;
     int count;
-    if (sc == MS_DELPROFILE) {
-        title = "DELETE PROFILE";
-        count = delpicker_items(dyn, NELEM(dyn));
-        items = dyn;
-        cols  = NULL;                       /* colored per-tile below */
+    const bool picker = menu_is_picker(sc);
+    if (picker) {
+        title = sc == MS_DELPROFILE  ? "DELETE PROFILE"
+              : sc == MS_EDITPROFILE ? "EDIT PROFILE"
+                                     : "REORDER PROFILES";
+        count  = picker_items(dyn, dynb, bodybuf, NELEM(dyn));
+        items  = dyn;
+        bodies = dynb;
+        cols   = NULL;                      /* colored per-tile below */
     } else {
         menu_def_t d = menu_def(sc);
         title = d.title; items = d.items; cols = d.cols; count = d.count;
     }
 
-    /* The delete picker can hold up to 8 profiles + Back — too many for one
-     * centered column (it would run off-screen), so lay it out on the same
+    /* A picker can hold up to 8 profiles + Back — too many for one centered
+     * column (it would run off-screen), so lay it out on the same
      * multi-column grid HOME uses. Everything below is grid-agnostic (tile_x/
      * tile_y/tile_nav/tile_hit). */
-    const bool picker = (sc == MS_DELPROFILE);
     tilegrid_t g;
     int title_row, ly, chrome_x;
     if (picker) {
@@ -1296,7 +1503,9 @@ static void render_menu(void)
         ly        = ui_rows() - 3;
         chrome_x  = (ui_cols() - 40) / 2;   /* center chrome over the screen */
     } else {
-        g = (tilegrid_t){ .tw = 40, .th = 4, .gx = 0, .gy = 1,
+        /* 6 tiles at th=4 would overflow the 30-row screen; shrink them. */
+        int th = count >= 6 ? 3 : 4;
+        g = (tilegrid_t){ .tw = 40, .th = th, .gx = 0, .gy = 1,
                           .ncols = 1, .nrows = count, .count = count };
         g.x0 = (ui_cols() - g.tw) / 2;
         g.y0 = (ui_rows() - (count * g.th + (count - 1) * g.gy)) / 2;
@@ -1323,20 +1532,29 @@ static void render_menu(void)
     for (int i = 0; i < g.count; i++) {
         bool dim   = menu_item_dim(sc, i);
         const char *confirm = menu_confirm(sc, i);
-        bool armed = (i == s.menu_sel) && s.menu_armed && confirm;
-        uint8_t col = armed ? OVERLAY_COL_RED
-                    : sc == MS_DELPROFILE
-                        ? (i < s.stored_count ? OVERLAY_COL_AMBER : OVERLAY_COL_BLUE)
-                        : cols[i];
+        bool armed   = (i == s.menu_sel) && s.menu_armed && confirm;
+        bool grabbed = (sc == MS_REORDER) && (i == s.reorder_grab);
+        uint8_t col;
+        if (armed)        col = OVERLAY_COL_RED;
+        else if (picker)  col = i >= s.stored_count ? OVERLAY_COL_BLUE
+                              : sc == MS_DELPROFILE ? OVERLAY_COL_AMBER
+                              : grabbed             ? OVERLAY_COL_GREEN
+                              : sc == MS_REORDER    ? OVERLAY_COL_MAGENTA
+                                                    : OVERLAY_COL_CYAN;
+        else              col = cols[i];
         ui_pen(col);
         ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th,
                 armed ? confirm : items[i],
-                dim ? "(unavailable)" : "", i == s.menu_sel);
+                picker ? bodies[i] : dim ? "(unavailable)" : "",
+                i == s.menu_sel || grabbed);
         if (i == s.menu_sel) {
             static const uint16_t pulse[3] = { UI_PLAY, UI_DIAMOND, UI_VBAR };
             ui_putch(tile_x(&g, i) + 1, tile_y(&g, i) + 1,
                      pulse[(s.anim_frame / 3) % 3], OVERLAY_ATTR_INVERSE);
         }
+        if (grabbed)      /* the grabbed tile carries a visible handle */
+            ui_putch(tile_x(&g, i) + 1, tile_y(&g, i) + 1, UI_DIAMOND,
+                     OVERLAY_ATTR_INVERSE);
     }
 
     /* Esc legend + action result under the tile area. */
@@ -1847,11 +2065,18 @@ static void render_sshimport(uint64_t now)
         ui_printf(32, 6, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_url());
         ui_pen(OVERLAY_COL_DEFAULT);
 
-        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 8, "2", 0);
-        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 8, "Type this proof code in the form:", 0);
-        ui_pen(OVERLAY_COL_AMBER);
-        ui_printf(40, 8, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_pop());
-        ui_pen(OVERLAY_COL_DEFAULT);
+        if (ssh_import_pop_required()) {
+            ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 8, "2", 0);
+            ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 8, "Type this proof code in the form:", 0);
+            ui_pen(OVERLAY_COL_AMBER);
+            ui_printf(40, 8, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_pop());
+            ui_pen(OVERLAY_COL_DEFAULT);
+        } else {
+            ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 8, "2", 0);
+            ui_pen(OVERLAY_COL_AMBER);
+            ui_puts(6, 8, "Proof code OFF (dev build) - page is open.", 0);
+            ui_pen(OVERLAY_COL_DEFAULT);
+        }
 
         ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 10, "3", 0);
         ui_pen(OVERLAY_COL_DEFAULT);
@@ -1891,18 +2116,27 @@ static void render_sshimport(uint64_t now)
         draw_import_qr("scan to join");
     }
 
-    /* Status: running import count / last name, or a waiting spinner. */
+    /* Status: running import/delete tally + last name, or a waiting spinner. */
     int cnt = ssh_import_count();
+    int del = ssh_import_deleted();
     const char *err = ssh_import_err();
     if (err && err[0]) {
         ui_pen(OVERLAY_COL_RED);
         ui_putch(4, 15, UI_DIAMOND, 0);
         ui_printf(6, 15, 0, "rejected: %s", err);
         ui_pen(OVERLAY_COL_DEFAULT);
-    } else if (cnt > 0) {
+    } else if (cnt > 0 || del > 0) {
         ui_pen(OVERLAY_COL_GREEN);
         ui_putch(4, 15, UI_LED_ON, 0);
-        ui_printf(6, 15, 0, "imported '%s'  (%d saved)", s.import_last, cnt);
+        if (del > 0 && cnt > 0)
+            ui_printf(6, 15, 0, "last: '%s'  (%d saved, %d removed)",
+                      s.import_last, cnt, del);
+        else if (del > 0)
+            ui_printf(6, 15, 0, "removed '%s'  (%d removed)",
+                      s.import_last, del);
+        else
+            ui_printf(6, 15, 0, "imported '%s'  (%d saved)",
+                      s.import_last, cnt);
         ui_pen(OVERLAY_COL_DEFAULT);
     } else {
         ui_pen(OVERLAY_COL_GREEN);
@@ -1919,8 +2153,8 @@ static void render_sshimport(uint64_t now)
     ui_printf(6, 17, 0, "RAM  %s", ram);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer(cnt > 0 ? "tap or Esc when done - profiles are saved"
-                        : "tap or Esc to cancel");
+    draw_footer(cnt > 0 || del > 0 ? "tap or Esc when done - changes are saved"
+                                   : "tap or Esc to cancel");
     ui_no_cursor();
     ui_present();
 }
@@ -1948,12 +2182,15 @@ static void enter_sshimport(uint64_t now, ssh_import_mode_t mode)
 static void exit_sshimport(uint64_t now)
 {
     int cnt = ssh_import_count();
+    int del = ssh_import_deleted();
     bool softap = (ssh_import_mode() == SSH_IMPORT_SOFTAP);
     ssh_import_stop();
     if (softap) kick_wifi();   /* resume STA auto-reconnect (web never parked) */
     load_profiles();           /* surface freshly imported profiles on HOME */
-    if (cnt > 0) toast(now, "imported %d profile(s)", cnt);
-    else         toast(now, "import cancelled");
+    if (cnt > 0 && del > 0) toast(now, "%d imported, %d removed", cnt, del);
+    else if (cnt > 0)       toast(now, "imported %d profile(s)", cnt);
+    else if (del > 0)       toast(now, "removed %d profile(s)", del);
+    else                    toast(now, "import cancelled");
     enter_home(now);
 }
 
@@ -1985,6 +2222,19 @@ static void menu_goto(int sc)
     render_menu();
 }
 
+/* Leave the profile editor for wherever it was entered from. */
+static void exit_profile(uint64_t now, bool saved)
+{
+    if (s.pf_return_menu) {
+        s.state = ST_MENU;
+        menu_goto(MS_PROFILES);
+        if (saved) menu_note(now, MENU_MSG_MS, false, "profile saved");
+    } else {
+        if (saved) toast(now, "profile saved");
+        enter_home(now);
+    }
+}
+
 /* Open the config hub directly from HOME (no session behind it). */
 static void home_open_config(void)
 {
@@ -2007,7 +2257,7 @@ static int home_extra_kind(int slot)
 static bool home_activate_extra(int slot, uint64_t now)
 {
     switch (home_extra_kind(slot)) {
-    case HX_NEW:    enter_profile(now);                return true;
+    case HX_NEW:    enter_profile(now, -1);            return true;
     case HX_PAIR:   if (s.cfg.ble) enter_pairing(now); return true;
     case HX_CONFIG: home_open_config();                return true;
     default:        return false;
@@ -2018,6 +2268,15 @@ static bool home_activate_extra(int slot, uint64_t now)
  * an armed confirm can never leak across pages. */
 static void menu_back(uint64_t now)
 {
+    /* Backing out of a grabbed-but-not-dropped reorder discards the pending
+     * moves (they only live in s.profiles until the drop saves them). */
+    if (s.menu_screen == MS_REORDER && s.reorder_grab >= 0) {
+        s.reorder_grab = -1;
+        load_profiles();
+        menu_clear_note();
+        render_menu();
+        return;
+    }
     switch (s.menu_screen) {
     case MS_MAIN:                              /* resume the live session */
         s.menu_armed = false;
@@ -2029,6 +2288,9 @@ static void menu_back(uint64_t now)
         else                  menu_goto(MS_MAIN);
         break;
     case MS_DELPROFILE:
+    case MS_EDITPROFILE:
+    case MS_REORDER:
+    case MS_IMPORT:
         menu_goto(MS_PROFILES);
         break;
     default:                                   /* PROFILES/WIFI/KEYBOARD/SYSTEM */
@@ -2037,8 +2299,9 @@ static void menu_back(uint64_t now)
     }
 }
 
-/* Delete the stored profile at index @p idx, plus its key files if no other
- * profile still references them. Reloads the in-RAM list. */
+/* Delete the stored profile at index @p idx, plus its key files and TOFU
+ * host pin if no other profile still references them. Reloads the in-RAM
+ * list. A live session is untouched: it runs on the s.active snapshot. */
 static void delete_profile_at(int idx)
 {
     if (idx < 0 || idx >= s.stored_count) return;
@@ -2057,6 +2320,27 @@ static void delete_profile_at(int idx)
                 strcmp(set[i].key_id, doomed.key_id) == 0) { shared = true; break; }
         if (!shared) storage_delete_key(doomed.key_id);
     }
+
+    /* Drop the host's pin too when no surviving profile targets it — a
+     * re-added profile then gets a fresh TOFU prompt instead of silently
+     * trusting a pin the user may have forgotten about. */
+    bool host_shared = false;
+    for (int i = 0; i < n; i++)
+        if (set[i].port == doomed.port &&
+            strcmp(set[i].host, doomed.host) == 0) { host_shared = true; break; }
+    if (!host_shared) storage_known_host_delete(doomed.host, doomed.port);
+
+    load_profiles();
+}
+
+/* Persist the reorder picker's current in-RAM order and release the grab. */
+static void commit_reorder(uint64_t now)
+{
+    s.reorder_grab = -1;
+    if (storage_save_profiles(s.profiles, s.stored_count) == ESP_OK)
+        menu_note(now, MENU_MSG_MS, false, "order saved");
+    else
+        menu_note(now, MENU_MSG_MS, false, "save failed");
     load_profiles();
 }
 
@@ -2091,11 +2375,39 @@ static void menu_activate(uint64_t now)
 
     case MS_PROFILES:
         switch (sel) {
-        case 0: enter_profile(now);                       return;  /* editor  */
-        case 1: enter_sshimport(now, SSH_IMPORT_SOFTAP);  return;
-        case 2: enter_sshimport(now, SSH_IMPORT_WEB);     return;
+        case 0:                                           /* add     */
+            if (s.stored_count >= MAX_PROFILES - 1) {
+                menu_note(now, MENU_MSG_MS, false, "profile list full");
+                break;
+            }
+            enter_profile(now, -1);
+            return;
+        case 1:                                           /* edit    */
+            if (s.stored_count == 0) {
+                menu_note(now, MENU_MSG_MS, false, "no stored profiles");
+                break;
+            }
+            menu_goto(MS_EDITPROFILE);
+            return;
+        case 2:                                           /* reorder */
+            if (s.stored_count < 2) {
+                menu_note(now, MENU_MSG_MS, false, "nothing to reorder");
+                break;
+            }
+            s.reorder_grab = -1;
+            menu_goto(MS_REORDER);
+            return;
         case 3: menu_goto(MS_DELPROFILE);                 return;
-        case 4: menu_back(now);                           return;  /* Back    */
+        case 4: menu_goto(MS_IMPORT);                     return;
+        case 5: menu_back(now);                           return;  /* Back    */
+        }
+        break;
+
+    case MS_IMPORT:
+        switch (sel) {
+        case 0: enter_sshimport(now, SSH_IMPORT_SOFTAP);  return;
+        case 1: enter_sshimport(now, SSH_IMPORT_WEB);     return;
+        case 2: menu_back(now);                           return;  /* Back    */
         }
         break;
 
@@ -2168,24 +2480,61 @@ static void menu_activate(uint64_t now)
             menu_note(now, MENU_MSG_MS, false, "profile deleted");
         }
         break;
+
+    case MS_EDITPROFILE:
+        if (sel >= s.stored_count) { menu_back(now); return; }   /* Back tile */
+        enter_profile(now, sel);
+        return;
+
+    case MS_REORDER:
+        if (sel >= s.stored_count) { menu_back(now); return; }   /* Back tile */
+        if (s.reorder_grab < 0) {                                /* grab      */
+            s.reorder_grab = sel;
+            menu_note(now, 0, false, "arrows/tap move it - Enter drops");
+        } else {                                                 /* drop      */
+            if (sel != s.reorder_grab) {
+                conn_profile_t t         = s.profiles[sel];
+                s.profiles[sel]          = s.profiles[s.reorder_grab];
+                s.profiles[s.reorder_grab] = t;
+                s.menu_sel = sel;
+            }
+            commit_reorder(now);
+        }
+        break;
     }
     render_menu();
 }
 
 /* Arm a connect to profile idx: one frame of "Connecting", then do it.
- * @p retry: an automatic re-attempt (advances the visible attempt counter);
- * user-initiated connects reset it. */
-static void start_connect(int idx, uint64_t not_before, uint64_t now, bool retry)
+ * Snapshots the profile into s.active — every later connect/session path
+ * reads the snapshot, so list mutations can't redirect a live session. */
+static void start_connect(int idx, uint64_t not_before, uint64_t now)
 {
-    s.connect_attempt = retry ? s.connect_attempt + 1 : 0;
+    s.connect_attempt = 0;
     s.connect_idx   = idx;
+    s.active        = s.profiles[idx];
     s.connect_at    = not_before;
     s.connect_armed = true;
     s.state         = ST_CONNECTING;
 
     /* Pinned fingerprint, if we have one for this host. */
-    const conn_profile_t *p = &s.profiles[idx];
-    if (storage_known_host_get(p->host, p->port,
+    if (storage_known_host_get(s.active.host, s.active.port,
+                               s.pinned_fp, sizeof(s.pinned_fp)) != ESP_OK)
+        s.pinned_fp[0] = '\0';
+
+    render_connecting(now < not_before ? "Retrying" : "Connecting to", now);
+}
+
+/* Re-arm an automatic reconnect to the ACTIVE profile snapshot (advances the
+ * visible attempt counter; survives edits/deletes of the stored list). */
+static void start_reconnect(uint64_t not_before, uint64_t now)
+{
+    s.connect_attempt++;
+    s.connect_at    = not_before;
+    s.connect_armed = true;
+    s.state         = ST_CONNECTING;
+
+    if (storage_known_host_get(s.active.host, s.active.port,
                                s.pinned_fp, sizeof(s.pinned_fp)) != ESP_OK)
         s.pinned_fp[0] = '\0';
 
@@ -2197,7 +2546,7 @@ static void start_connect(int idx, uint64_t not_before, uint64_t now, bool retry
  * host, but only an explicit 'Y' for a CHANGED key (possible MITM). */
 static void hostkey_trust_and_connect(uint64_t now)
 {
-    const conn_profile_t *p = &s.profiles[s.connect_idx];
+    const conn_profile_t *p = &s.active;
     storage_known_host_set(p->host, p->port, ssh_client_get_fingerprint());
     snprintf(s.pinned_fp, sizeof(s.pinned_fp), "%s", ssh_client_get_fingerprint());
     s.connect_attempt = 0;             /* explicit user action, not a retry */
@@ -2212,6 +2561,13 @@ static void hostkey_trust_and_connect(uint64_t now)
  * clean EOF — a plain logout stays calm and short). */
 static void session_dropped(uint64_t now)
 {
+    /* A drop can yank the user out of ANY in-session menu screen — including
+     * a mid-drag reorder. Discard the uncommitted in-RAM permutation now, or
+     * a later delete_profile_at() would silently persist it. */
+    if (s.menu_screen == MS_REORDER && s.reorder_grab >= 0) {
+        s.reorder_grab = -1;
+        load_profiles();
+    }
     uint32_t dur = (uint32_t)((now - s.session_start) / 1000);
     const char *why = ssh_client_last_error();
     display_bell();
@@ -2252,7 +2608,7 @@ static void do_connect_start(uint64_t now)
     enum { KEY_PEM_MAX = 8192, PUB_PEM_MAX = 2048 };
     static char *key_pem = NULL;
     static char *pub_pem = NULL;
-    const conn_profile_t *p = &s.profiles[s.connect_idx];
+    const conn_profile_t *p = &s.active;
 
     ssh_config_t cfg = {
         .host        = p->host,
@@ -2344,8 +2700,7 @@ static void do_connect_finish(uint64_t now, esp_err_t err)
     default:
         if (s.cfg.auto_reconnect) {
             toast(now, "connect failed - retrying");
-            start_connect(s.connect_idx, now + s.cfg.ssh_retry_delay_ms,
-                          now, true);
+            start_reconnect(now + s.cfg.ssh_retry_delay_ms, now);
         } else {
             toast_for(now, ERR_TOAST_MS, "failed: %.44s",
                       ssh_client_last_error());
@@ -2363,6 +2718,9 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 
     memset(&s, 0, sizeof(s));
     s.cfg = *cfg;
+    s.pf_edit_idx  = -1;
+    s.pf_key_sel   = -1;
+    s.reorder_grab = -1;
     s.state = ST_BOOT;
     s.boot_until = now_ms + cfg->boot_delay_ms;
     s.last_input = now_ms;   /* idle timer starts at boot */
@@ -2484,8 +2842,7 @@ void cyberdeck_app_tick(uint64_t now)
         if (!ssh_client_is_connected()) {
             if (s.cfg.auto_reconnect) {
                 toast(now, "session dropped - reconnecting");
-                start_connect(s.connect_idx,
-                              now + s.cfg.ssh_retry_delay_ms, now, true);
+                start_reconnect(now + s.cfg.ssh_retry_delay_ms, now);
             } else {
                 session_dropped(now);
             }
@@ -2560,12 +2917,13 @@ void cyberdeck_app_tick(uint64_t now)
         break;
 
     case ST_SSHIMPORT:
-        /* A submission lands on the httpd task; re-render on its count bump so
-         * the confirmation appears immediately, plus the usual anim tick.
-         * Snapshot the name under the module's lock (via the getter) once per
-         * bump so the render never samples a half-written string. */
-        if (ssh_import_count() != s.import_seen) {
-            s.import_seen = ssh_import_count();
+        /* A submission lands on the httpd task; re-render on its activity
+         * bump (imports + web deletes) so the confirmation appears at once,
+         * plus the usual anim tick. Snapshot the name under the module's
+         * lock (via the getter) once per bump so the render never samples a
+         * half-written string. */
+        if (ssh_import_count() + ssh_import_deleted() != s.import_seen) {
+            s.import_seen = ssh_import_count() + ssh_import_deleted();
             snprintf(s.import_last, sizeof(s.import_last), "%s", ssh_import_last());
             s.next_anim   = now + ANIM_PERIOD_MS;
             render_sshimport(now);
@@ -2649,7 +3007,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                 toast(now, "wifi not connected yet");
                 render_home();
             } else {                                 /* second tap on same tile */
-                start_connect(slot, now, now, false);
+                start_connect(slot, now, now);
             }
             break;
         }
@@ -2683,13 +3041,20 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                     toast(now, "wifi not connected yet");
                     render_home();
                 } else {
-                    start_connect(s.sel, now, now, false);
+                    start_connect(s.sel, now, now);
                 }
             }
             break;
         case K_CHAR:
             if (ch == 'b' || ch == 'B') enter_pairing(now);
-            else if (ch == 'n' || ch == 'N') enter_profile(now);
+            else if (ch == 'n' || ch == 'N') {
+                if (s.stored_count >= MAX_PROFILES - 1) {
+                    toast(now, "profile list full");
+                    render_home();
+                } else {
+                    enter_profile(now, -1);
+                }
+            }
             else if (ch == 'r' || ch == 'R') { load_profiles(); render_home(); }
             else if (ch == 'w' || ch == 'W') { kick_wifi(); render_home(); }
             break;
@@ -2843,6 +3208,20 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         switch (k) {
         case K_UP: case K_DOWN: case K_LEFT: case K_RIGHT: {
             int ns = tile_nav(&s.grid, s.menu_sel, k);
+            /* A grabbed reorder tile rides the arrows: each step swaps it
+             * with the neighbour (never with the trailing Back tile). */
+            if (s.menu_screen == MS_REORDER && s.reorder_grab >= 0) {
+                if (ns != s.menu_sel && ns < s.stored_count &&
+                    s.menu_sel < s.stored_count) {
+                    conn_profile_t t     = s.profiles[ns];
+                    s.profiles[ns]       = s.profiles[s.menu_sel];
+                    s.profiles[s.menu_sel] = t;
+                    s.reorder_grab = ns;
+                    s.menu_sel     = ns;
+                    render_menu();
+                }
+                break;
+            }
             if (ns != s.menu_sel) {
                 s.menu_sel = ns;
                 if (s.menu_armed) {            /* moving away backs the arm down */
@@ -2890,28 +3269,45 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         break;
 
     case ST_PROFILE: {
-        if (k == K_ESC) { enter_home(now); break; }
+        if (k == K_ESC) { exit_profile(now, false); break; }
 
         if (ev->type == CYBERDECK_INPUT_TAP) {
             int slot = tile_hit(&s.grid, ev->x, ev->y);   /* Save/Cancel tiles */
-            if (slot == 0)      pf_focus(PF_SAVE);
-            else if (slot == 1) { enter_home(now); break; }
-            else break;
-            /* fall through into Save activation below via K_ENTER path */
-            k = K_ENTER;
+            if (slot == 0) {
+                pf_focus(PF_SAVE);
+                k = K_ENTER;   /* fall through into Save activation below */
+            } else if (slot == 1) {
+                exit_profile(now, false);
+                break;
+            } else {
+                /* Tap on a form row: focus it (selectors also step). */
+                int row = ev->y / 16, cc = ev->x / 8;
+                int f = -1;
+                if (cc >= PF_X0 - 1 && cc <= PF_FX + PF_FW &&
+                    row >= PF_Y0 && row < PF_Y0 + PF_ROWS * 2 &&
+                    (row - PF_Y0) % 2 == 0)
+                    f = (row - PF_Y0) / 2;
+                if (f < 0 || f >= PF_ROWS || !pf_field_present(f)) break;
+                if (f == PF_AUTH)     pf_auth_toggle();
+                else if (f == PF_KEY) pf_key_cycle(+1);
+                s.pf_err[0] = '\0';
+                pf_focus(f);
+                render_profile();
+                break;
+            }
         }
 
         /* ---- button focus (Save / Cancel) ---- */
-        if (s.pf_field >= PF_TEXT_COUNT) {
+        if (s.pf_field >= PF_SAVE) {
             switch (k) {
             case K_LEFT:  pf_focus(PF_SAVE);   render_profile(); break;
             case K_RIGHT: pf_focus(PF_CANCEL); render_profile(); break;
             case K_UP:                              /* backward through ring */
-                pf_focus(s.pf_field - 1); render_profile(); break;
+                pf_focus_step(-1); render_profile(); break;
             case K_DOWN: case K_TAB:                /* forward (Cancel wraps) */
-                pf_focus(s.pf_field + 1); render_profile(); break;
+                pf_focus_step(+1); render_profile(); break;
             case K_ENTER:
-                if (s.pf_field == PF_CANCEL) { enter_home(now); break; }
+                if (s.pf_field == PF_CANCEL) { exit_profile(now, false); break; }
                 else {
                     const char *err = profile_commit();
                     if (err[0]) {   /* inline — a modal has no toast strip */
@@ -2919,11 +3315,34 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                         render_profile();
                     } else {
                         load_profiles();
-                        toast(now, "profile saved");
-                        enter_home(now);
+                        exit_profile(now, true);
                     }
                 }
                 break;
+            default: break;
+            }
+            break;
+        }
+
+        /* ---- selector rows (auth toggle / key picker) ---- */
+        if (s.pf_field == PF_AUTH || s.pf_field == PF_KEY) {
+            switch (k) {
+            case K_LEFT: case K_RIGHT:
+                if (s.pf_field == PF_AUTH) pf_auth_toggle();
+                else pf_key_cycle(k == K_RIGHT ? +1 : -1);
+                s.pf_err[0] = '\0';
+                render_profile();
+                break;
+            case K_CHAR:
+                if (ch != ' ') break;               /* space also steps it */
+                if (s.pf_field == PF_AUTH) pf_auth_toggle();
+                else pf_key_cycle(+1);
+                s.pf_err[0] = '\0';
+                render_profile();
+                break;
+            case K_UP:    pf_focus_step(-1); render_profile(); break;
+            case K_DOWN: case K_TAB:
+            case K_ENTER: pf_focus_step(+1); render_profile(); break;
             default: break;
             }
             break;
@@ -2958,9 +3377,9 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
             break;
         case K_LEFT:  if (s.pf_cursor > 0)   { s.pf_cursor--; render_profile(); } break;
         case K_RIGHT: if (s.pf_cursor < len) { s.pf_cursor++; render_profile(); } break;
-        case K_UP:    pf_focus(s.pf_field - 1); render_profile(); break;
+        case K_UP:    pf_focus_step(-1); render_profile(); break;
         case K_DOWN: case K_TAB:
-        case K_ENTER: pf_focus(s.pf_field + 1); render_profile(); break;
+        case K_ENTER: pf_focus_step(+1); render_profile(); break;
         default: break;
         }
         break;

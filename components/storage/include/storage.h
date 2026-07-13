@@ -33,6 +33,10 @@ typedef enum {
     STORAGE_AUTH_KEY,
 } storage_auth_t;
 
+/* Single source of truth for the stored-profile cap. Raising it needs a UI
+ * pass first: the HOME/picker tile grids hold 12 tiles with no scrolling. */
+#define STORAGE_MAX_PROFILES 8
+
 typedef struct {
     char            name[32];       /* Profile name, e.g. "default"  */
     char            host[64];       /* Hostname or IP                 */
@@ -137,6 +141,12 @@ esp_err_t storage_known_host_get(const char *host, uint16_t port,
 esp_err_t storage_known_host_set(const char *host, uint16_t port,
                                  const char *fp_hex);
 
+/**
+ * Remove the pinned fingerprint for host:port.
+ * @return ESP_OK if removed, ESP_ERR_NOT_FOUND if the host was not pinned.
+ */
+esp_err_t storage_known_host_delete(const char *host, uint16_t port);
+
 /* -------------------------------------------------------------------------
  * SSH key blobs
  * ---------------------------------------------------------------------- */
@@ -170,6 +180,31 @@ esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len);
  * are not an error.
  */
 esp_err_t storage_delete_key(const char *key_id);
+
+#define STORAGE_KEY_ID_LEN 32   /* matches conn_profile_t.key_id */
+
+/**
+ * List stored key ids (the <key_id> stems of keys/<key_id>.pem), sorted
+ * alphabetically. Stems that don't fit STORAGE_KEY_ID_LEN are skipped.
+ *
+ * @param out   Caller-allocated array of at least @p max entries.
+ * @param max   Capacity of @p out.
+ * @param count Set to the number of ids written.
+ * @return ESP_OK (an absent or empty keys/ dir yields *count = 0).
+ */
+esp_err_t storage_list_keys(char (*out)[STORAGE_KEY_ID_LEN], int max,
+                            int *count);
+
+/**
+ * Best-effort key metadata from keys/<key_id>.pub, whose first line is
+ * "<type> <base64> [comment]". Either output may be NULL; both are set to ""
+ * before parsing.
+ *
+ * @return ESP_OK if a .pub line was parsed, ESP_ERR_NOT_FOUND otherwise.
+ */
+esp_err_t storage_key_info(const char *key_id,
+                           char *type, size_t type_len,
+                           char *comment, size_t comment_len);
 
 /* -------------------------------------------------------------------------
  * Bulk removal

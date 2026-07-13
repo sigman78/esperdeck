@@ -57,13 +57,21 @@ const char *ssh_import_service_name(void);
 /** Proof code shown on the device (SoftAP passphrase / form gate). */
 const char *ssh_import_pop(void);
 
+/** True when the browser user must TYPE the proof code (WEB mode with the
+ *  code enabled). False in SoftAP mode and under the DEV
+ *  SSH_IMPORT_POP_DISABLED Kconfig toggle (page carries it hidden). */
+bool ssh_import_pop_required(void);
+
 /** URL to open (e.g. "http://192.168.4.1" or "http://<lan-ip>"). */
 const char *ssh_import_url(void);
 
 /** Number of profiles imported since ssh_import_start(). */
 int ssh_import_count(void);
 
-/** Name of the most recently imported profile ("" until the first). */
+/** Number of profiles deleted via the web manager since ssh_import_start(). */
+int ssh_import_deleted(void);
+
+/** Name of the most recently imported OR deleted profile ("" until one). */
 const char *ssh_import_last(void);
 
 /** Last rejection reason ("" if none / cleared by a later success). */

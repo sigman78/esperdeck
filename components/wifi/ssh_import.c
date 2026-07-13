@@ -20,9 +20,11 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 #include "qrcode.h"
 
+#include <stdarg.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,7 +43,9 @@ static char s_pop[16]     = "";
 static char s_url[40]     = "";
 static char s_last[32]    = "";
 static char s_err[64]     = "";
-static volatile int s_count = 0;
+static volatile int s_count   = 0;
+static volatile int s_deleted = 0;
+static volatile int s_pop_fails = 0;
 
 static httpd_handle_t  s_httpd    = NULL;
 static esp_netif_t    *s_ap_netif = NULL;
@@ -111,13 +115,19 @@ static const char FORM_HEAD[] =
     "padding:14px;font:inherit;font-weight:bold;cursor:pointer}"
     ".hint{color:#686;font-size:13px;margin-top:4px}"
     ".hide{display:none}"
+    ".pr{display:flex;gap:8px;align-items:center;margin:8px 0;"
+    "border:1px solid #2a2;border-radius:6px;padding:8px}"
+    ".pr span{flex:1;word-break:break-all}"
+    "button.sm{width:auto;margin:0;padding:8px 10px;font-weight:normal}"
+    "button.rd{background:#f66}"
     "</style></head><body><div class=c>"
     "<h1>&#9654; ADD SSH PROFILE</h1>"
     "<form method=post action=/save accept-charset=utf-8>";
 
 static const char FORM_POP_WEB[] =
     "<label>Proof code <span class=hint>(shown on the deck)</span></label>"
-    "<input name=pop required maxlength=8 autocomplete=off placeholder=\"8 hex\">";
+    "<input name=pop required maxlength=8 autocomplete=off placeholder=\"8 hex\" "
+    "oninput=\"if(this.value.length==8)load()\">";
 
 static const char FORM_TAIL[] =
     "<label>Profile name</label><input name=name maxlength=31 required "
@@ -132,25 +142,67 @@ static const char FORM_TAIL[] =
     "<label><input type=radio name=auth value=password checked onclick=am()><span>Password</span></label>"
     "<label><input type=radio name=auth value=key onclick=am()><span>Private key</span></label>"
     "</div>"
-    "<div id=pw><label>Password</label><input name=password type=password></div>"
+    "<div id=pw><label>Password</label><input name=password type=password>"
+    "<div class=hint>updating a stored profile? blank keeps its password</div></div>"
     "<div id=kb class=hide>"
+    "<label>Key</label>"
+    "<select name=keyid id=ks onchange=ku()>"
+    "<option value=\"\">(paste a new key below)</option></select>"
+    "<div id=kn>"
     "<label>Private key (PEM)</label>"
     "<textarea name=key placeholder=\"-----BEGIN OPENSSH PRIVATE KEY-----\"></textarea>"
     "<input type=file onchange=lf(this,'key') class=hint>"
     "<label>Public key <span class=hint>(needed for ed25519/ecdsa)</span></label>"
     "<textarea name=pubkey placeholder=\"ssh-ed25519 AAAA...\" style=height:60px></textarea>"
     "<input type=file onchange=lf(this,'pubkey') class=hint>"
+    "</div>"
     "<label>Key passphrase <span class=hint>(if encrypted)</span></label>"
     "<input name=passphrase type=password>"
     "</div>"
     "<button type=submit>SAVE TO DECK</button>"
-    "</form></div><script>"
+    "</form>"
+    "<h1 style=margin-top:28px>&#9654; ON THE DECK</h1>"
+    "<div id=pl class=hint>enter the proof code above to list stored profiles</div>"
+    "</div><script>"
     "function am(){var k=document.querySelector('[name=auth]:checked').value=='key';"
     "document.getElementById('kb').className=k?'':'hide';"
     "document.getElementById('pw').className=k?'hide':''}"
     "function lf(i,n){var f=i.files[0];if(!f)return;var r=new FileReader();"
     "r.onload=function(){document.querySelector('[name='+n+']').value=r.result};"
     "r.readAsText(f)}"
+    "function ku(){document.getElementById('kn').className="
+    "document.getElementById('ks').value?'hide':''}"
+    "function pop(){var p=document.querySelector('[name=pop]');return p?p.value:''}"
+    "function post(u,b){return fetch(u,{method:'POST',"
+    "headers:{'Content-Type':'application/x-www-form-urlencoded'},body:b})}"
+    "function load(){if(pop().length<8)return;"
+    "post('/list','pop='+encodeURIComponent(pop()))"
+    ".then(function(r){return r.ok?r.json():null})"
+    ".then(function(d){if(d)render(d)})}"
+    "function render(d){"
+    "var ks=document.getElementById('ks');while(ks.options.length>1)ks.remove(1);"
+    "d.keys.forEach(function(k){var o=document.createElement('option');"
+    "o.value=k.id;o.textContent=k.id+(k.type?' ('+k.type+')':'');ks.add(o)});"
+    "var pl=document.getElementById('pl');pl.textContent='';pl.className='';"
+    "d.profiles.forEach(function(p){"
+    "var r=document.createElement('div');r.className='pr';"
+    "var t=document.createElement('span');"
+    "t.textContent=p.name+' \\u2014 '+p.user+'@'+p.host+':'+p.port+' ['+p.auth+']';"
+    "var be=document.createElement('button');be.type='button';be.className='sm';"
+    "be.textContent='EDIT';be.onclick=function(){fill(p)};"
+    "var bd=document.createElement('button');bd.type='button';bd.className='sm rd';"
+    "bd.textContent='DEL';bd.onclick=function(){del(p.name)};"
+    "r.appendChild(t);r.appendChild(be);r.appendChild(bd);pl.appendChild(r)});"
+    "if(!d.profiles.length){pl.textContent='no stored profiles';pl.className='hint'}}"
+    "function fill(p){var f=document.forms[0];"
+    "f.name.value=p.name;f.host.value=p.host;f.port.value=p.port;f.user.value=p.user;"
+    "f.auth.value=p.auth;am();"
+    "if(p.auth=='key'){document.getElementById('ks').value=p.key_id||'';ku()}"
+    "f.password.value='';f.passphrase.value='';window.scrollTo(0,0)}"
+    "function del(n){if(!confirm('Delete profile \"'+n+'\" from the deck?'))return;"
+    "post('/delete','pop='+encodeURIComponent(pop())+'&name='+encodeURIComponent(n))"
+    ".then(function(){load()})}"
+    "window.addEventListener('load',load);"
     "</script></body></html>";
 
 static esp_err_t ok_page(httpd_req_t *req, const char *msg, const char *sub)
@@ -253,6 +305,32 @@ static void set_err(const char *msg)
     ESP_LOGW(TAG, "reject: %s", msg);
 }
 
+/* Gate every mutating/reading endpoint on the session code. The code is
+ * only 32 bits, so misses back off linearly and POP_FAIL_LOCKOUT misses
+ * brick the session (even a correct code is refused) until the user
+ * reopens the import modal for a fresh code. Compare is constant-time-ish
+ * so timing doesn't leak a prefix match. */
+#define POP_FAIL_LOCKOUT 8
+
+static bool check_pop(const char *pop)
+{
+    if (s_pop_fails >= POP_FAIL_LOCKOUT) {
+        ESP_LOGW(TAG, "pop locked out (%d misses)", (int)s_pop_fails);
+        return false;
+    }
+    size_t lp = strlen(pop), ls = strlen(s_pop);
+    unsigned diff = (unsigned)(lp ^ ls);
+    for (size_t i = 0; i < ls; i++)
+        diff |= (unsigned)((i < lp ? pop[i] : 0) ^ s_pop[i]);
+    if (diff) {
+        s_pop_fails++;
+        vTaskDelay(pdMS_TO_TICKS(250u * (unsigned)s_pop_fails));
+        return false;
+    }
+    s_pop_fails = 0;
+    return true;
+}
+
 /* Write keys/<id>.pub directly (storage_set_key only handles .pem). */
 static void write_pubkey(const char *key_id, const char *pub, int len)
 {
@@ -265,7 +343,8 @@ static void write_pubkey(const char *key_id, const char *pub, int len)
     fclose(f);
 }
 
-#define IMPORT_PROFILE_MAX 8
+#define IMPORT_PROFILE_MAX STORAGE_MAX_PROFILES
+#define IMPORT_KEY_LIST_MAX 16   /* ids surfaced to the page (incl. orphans) */
 
 /* Ensure @p key_id does not collide with a DIFFERENT profile's key (a
  * many-to-one sanitize would otherwise overwrite an unrelated .pem). Appends a
@@ -287,38 +366,80 @@ static void unique_key_id(const conn_profile_t *list, int n, const char *name,
     }
 }
 
-/* Append (or replace by name) @p pf in profiles.ini. Returns ESP_ERR_NOT_FINISHED
- * when the list is already at capacity and @p pf is a new name. */
-static esp_err_t append_profile(const conn_profile_t *pf)
+/* Load the current profile set into a fresh SPIRAM array (freed by caller). */
+static conn_profile_t *load_profile_set(int *n)
 {
     conn_profile_t *list = heap_caps_malloc(sizeof(conn_profile_t) *
                                             (IMPORT_PROFILE_MAX + 1),
                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!list) return ESP_ERR_NO_MEM;
-    int n = 0;
-    storage_load_profiles(list, &n, IMPORT_PROFILE_MAX);
+    *n = 0;
+    if (list) storage_load_profiles(list, n, IMPORT_PROFILE_MAX);
+    return list;
+}
 
-    int slot = -1;
-    for (int i = 0; i < n; i++)
-        if (strcmp(list[i].name, pf->name) == 0) { slot = i; break; }
-
-    if (slot < 0) {
-        if (n >= IMPORT_PROFILE_MAX) { free(list); return ESP_ERR_NOT_FINISHED; }
-        slot = n++;
+/* Escape @p src into a JSON string-literal body (quotes NOT added). All
+ * stored fields are already control-char-free (has_ctrl gates every write),
+ * so this mostly guards '"' and '\\'. */
+static void json_escape(const char *src, char *dst, int cap)
+{
+    int o = 0;
+    for (int i = 0; src[i] && o < cap - 7; i++) {
+        unsigned char c = (unsigned char)src[i];
+        if (c == '"' || c == '\\') { dst[o++] = '\\'; dst[o++] = (char)c; }
+        else if (c < 0x20) o += snprintf(dst + o, (size_t)(cap - o),
+                                         "\\u%04x", c);
+        else dst[o++] = (char)c;
     }
-    list[slot] = *pf;
-    esp_err_t e = storage_save_profiles(list, n);
-    free(list);
-    return e;
+    dst[o] = '\0';
+}
+
+/* Append into out[cap] at offset o, SATURATING at cap-1: snprintf returns
+ * the would-be length, so a raw "o += snprintf(...)" can push o past cap
+ * and turn the next call's (cap - o) into a huge size_t. Saturation keeps
+ * every call in bounds and the final overflow check catches truncation. */
+static int json_append(char *out, int cap, int o, const char *fmt, ...)
+{
+    if (o >= cap - 1) return cap - 1;
+    va_list ap;
+    va_start(ap, fmt);
+    int r = vsnprintf(out + o, (size_t)(cap - o), fmt, ap);
+    va_end(ap);
+    if (r < 0) return cap - 1;
+    o += r;
+    return o > cap - 1 ? cap - 1 : o;
+}
+
+static esp_err_t json_reply(httpd_req_t *req, const char *status,
+                            const char *json)
+{
+    httpd_resp_set_status(req, status);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, json);
+}
+
+/* Read a small POST body into @p buf. Returns false (nothing sent yet) on
+ * empty/oversized/failed reads — caller answers. */
+static bool read_small_body(httpd_req_t *req, char *buf, int cap)
+{
+    int total = req->content_len;
+    if (total <= 0 || total >= cap) return false;
+    int got = 0;
+    while (got < total) {
+        int r = httpd_req_recv(req, buf + got, total - got);
+        if (r <= 0) return false;
+        got += r;
+    }
+    buf[got] = '\0';
+    return true;
 }
 
 static esp_err_t handle_save(httpd_req_t *req, char *body)
 {
     char pop[16], name[40], host[80], user[40], port[8], auth[16];
-    char password[128], passphrase[128];
+    char password[128], passphrase[128], keyid[STORAGE_KEY_ID_LEN];
 
     form_field(body, "pop", pop, sizeof(pop));
-    if (strcmp(pop, s_pop) != 0) {
+    if (!check_pop(pop)) {
         set_err("bad proof code");
         httpd_resp_set_status(req, "403 Forbidden");
         return ok_page(req, "&#10007; Rejected", "Proof code did not match.");
@@ -331,6 +452,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body)
     form_field(body, "auth", auth, sizeof(auth));
     form_field(body, "password",   password,   sizeof(password));
     form_field(body, "passphrase", passphrase, sizeof(passphrase));
+    form_field(body, "keyid",      keyid,      sizeof(keyid));
 
     if (!name[0] || !host[0] || !user[0]) {
         set_err("name, host and user are required");
@@ -341,7 +463,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body)
     /* INI-safety: no control chars (would forge a line) in any INI field, and
      * no [ ] in the name (would forge a section header). */
     if (has_ctrl(name) || has_ctrl(host) || has_ctrl(user) ||
-        has_ctrl(password) || has_ctrl(passphrase)) {
+        has_ctrl(password) || has_ctrl(passphrase) || has_ctrl(keyid)) {
         set_err("control characters not allowed");
         httpd_resp_set_status(req, "400 Bad Request");
         return ok_page(req, "&#10007; Bad input",
@@ -359,6 +481,30 @@ static esp_err_t handle_save(httpd_req_t *req, char *body)
         return ok_page(req, "&#10007; Bad port", "Port must be 1-65535.");
     }
 
+    /* Load the set once: same-name slot lookup (replace semantics + inherit
+     * rules), capacity check, and key-id collision resolution all use it. */
+    int n = 0;
+    conn_profile_t *list = load_profile_set(&n);
+    if (!list) {
+        set_err("out of memory");
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        return ok_page(req, "&#10007; Out of memory", "The deck is low on RAM.");
+    }
+    int slot = -1;
+    for (int i = 0; i < n; i++)
+        if (strcmp(list[i].name, name) == 0) { slot = i; break; }
+    conn_profile_t old = { 0 };
+    if (slot >= 0) old = list[slot];
+
+    /* A brand-new name at capacity fails BEFORE any key is written. */
+    if (slot < 0 && n >= IMPORT_PROFILE_MAX) {
+        free(list);
+        set_err("profile list full");
+        httpd_resp_set_status(req, "507 Insufficient Storage");
+        return ok_page(req, "&#10007; List full",
+                       "The deck already holds the maximum profiles.");
+    }
+
     conn_profile_t pf = { 0 };
     snprintf(pf.name, sizeof(pf.name), "%s", name);
     snprintf(pf.host, sizeof(pf.host), "%s", host);
@@ -367,10 +513,17 @@ static esp_err_t handle_save(httpd_req_t *req, char *body)
 
     bool want_key = (strcmp(auth, "key") == 0);
     if (want_key) {
+        pf.auth = STORAGE_AUTH_KEY;
+        /* password field doubles as the key passphrase (see cyberdeck_app);
+         * on a same-name update a blank passphrase keeps the stored one. */
+        snprintf(pf.password, sizeof(pf.password), "%s", passphrase);
+        if (!pf.password[0] && old.auth == STORAGE_AUTH_KEY)
+            snprintf(pf.password, sizeof(pf.password), "%s", old.password);
+
         char *key    = heap_caps_malloc(BODY_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         char *pubkey = heap_caps_malloc(4096,     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!key || !pubkey) {
-            free(key); free(pubkey);
+            free(key); free(pubkey); free(list);
             set_err("out of memory for key");
             httpd_resp_set_status(req, "500 Internal Server Error");
             return ok_page(req, "&#10007; Out of memory", "Try a smaller key.");
@@ -378,73 +531,109 @@ static esp_err_t handle_save(httpd_req_t *req, char *body)
         int kr = form_field(body, "key",    key,    BODY_MAX);
         int pr = form_field(body, "pubkey", pubkey, 4096);
         if (kr < 0 || pr < 0) {          /* decoded value hit the buffer cap */
-            free(key); free(pubkey);
+            free(key); free(pubkey); free(list);
             set_err("key too large");
             httpd_resp_set_status(req, "413 Payload Too Large");
             return ok_page(req, "&#10007; Key too large", "The key did not fit.");
         }
 
-        if (!strstr(key, "PRIVATE KEY")) {
+        if (keyid[0]) {
+            /* Reference an already-stored key. The dropdown hides the paste
+             * box, so a stale pasted blob must not win over the selection.
+             * (ids on the heap — the httpd worker stack is only 6144 B.) */
+            char (*ids)[STORAGE_KEY_ID_LEN] =
+                heap_caps_malloc(IMPORT_KEY_LIST_MAX * STORAGE_KEY_ID_LEN,
+                                 MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            bool known = false;
+            if (ids) {
+                int nk = 0;
+                storage_list_keys(ids, IMPORT_KEY_LIST_MAX, &nk);
+                for (int i = 0; i < nk; i++)
+                    if (strcmp(ids[i], keyid) == 0) { known = true; break; }
+                free(ids);
+            }
             free(key); free(pubkey);
-            set_err("not a PEM private key");
-            httpd_resp_set_status(req, "400 Bad Request");
-            return ok_page(req, "&#10007; Bad key",
-                           "Paste a PEM private key (BEGIN ... PRIVATE KEY).");
-        }
+            if (!known) {
+                free(list);
+                set_err("unknown key id");
+                httpd_resp_set_status(req, "400 Bad Request");
+                return ok_page(req, "&#10007; Unknown key",
+                               "That stored key no longer exists - reload.");
+            }
+            snprintf(pf.key_id, sizeof(pf.key_id), "%s", keyid);
+        } else if (key[0]) {
+            /* Upload a new key blob. */
+            if (!strstr(key, "PRIVATE KEY")) {
+                free(key); free(pubkey); free(list);
+                set_err("not a PEM private key");
+                httpd_resp_set_status(req, "400 Bad Request");
+                return ok_page(req, "&#10007; Bad key",
+                               "Paste a PEM private key (BEGIN ... PRIVATE KEY).");
+            }
+            char key_id[32];
+            sanitize_key_id(name, key_id, sizeof(key_id));
+            if (!key_id[0]) {
+                free(key); free(pubkey); free(list);
+                set_err("name has no usable characters");
+                httpd_resp_set_status(req, "400 Bad Request");
+                return ok_page(req, "&#10007; Bad name",
+                               "Name needs a letter or digit.");
+            }
+            /* Resolve key-id collisions against OTHER profiles before writing. */
+            unique_key_id(list, n, name, key_id, sizeof(key_id));
 
-        char key_id[32];
-        sanitize_key_id(name, key_id, sizeof(key_id));
-        if (!key_id[0]) {
+            esp_err_t e = storage_set_key(key_id, key, strlen(key));
+            if (e == ESP_OK && pubkey[0])
+                write_pubkey(key_id, pubkey, (int)strlen(pubkey));
             free(key); free(pubkey);
-            set_err("name has no usable characters");
-            httpd_resp_set_status(req, "400 Bad Request");
-            return ok_page(req, "&#10007; Bad name", "Name needs a letter or digit.");
+            if (e != ESP_OK) {
+                free(list);
+                set_err("failed to store key");
+                httpd_resp_set_status(req, "500 Internal Server Error");
+                return ok_page(req, "&#10007; Store failed",
+                               "Could not write the key.");
+            }
+            snprintf(pf.key_id, sizeof(pf.key_id), "%s", key_id);
+        } else {
+            /* No key material at all: an update may keep the stored key. */
+            free(key); free(pubkey);
+            if (old.auth != STORAGE_AUTH_KEY || !old.key_id[0]) {
+                free(list);
+                set_err("key required");
+                httpd_resp_set_status(req, "400 Bad Request");
+                return ok_page(req, "&#10007; Key required",
+                               "Pick a stored key or paste a new one.");
+            }
+            snprintf(pf.key_id, sizeof(pf.key_id), "%s", old.key_id);
         }
-
-        /* Resolve key-id collisions against OTHER profiles before writing. */
-        conn_profile_t *set = heap_caps_malloc(sizeof(conn_profile_t) *
-                                               (IMPORT_PROFILE_MAX + 1),
-                                               MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (set) {
-            int sn = 0;
-            storage_load_profiles(set, &sn, IMPORT_PROFILE_MAX);
-            unique_key_id(set, sn, name, key_id, sizeof(key_id));
-            free(set);
-        }
-
-        esp_err_t e = storage_set_key(key_id, key, strlen(key));
-        if (e == ESP_OK && pubkey[0]) write_pubkey(key_id, pubkey, (int)strlen(pubkey));
-        free(key); free(pubkey);
-        if (e != ESP_OK) {
-            set_err("failed to store key");
-            httpd_resp_set_status(req, "500 Internal Server Error");
-            return ok_page(req, "&#10007; Store failed", "Could not write the key.");
-        }
-        pf.auth = STORAGE_AUTH_KEY;
-        snprintf(pf.key_id, sizeof(pf.key_id), "%s", key_id);
-        /* password field doubles as the key passphrase (see cyberdeck_app). */
-        snprintf(pf.password, sizeof(pf.password), "%s", passphrase);
     } else {
         pf.auth = STORAGE_AUTH_PASSWORD;
         snprintf(pf.password, sizeof(pf.password), "%s", password);
+        /* Same-name update with a blank password keeps the stored one. */
+        if (!pf.password[0] && old.auth == STORAGE_AUTH_PASSWORD)
+            snprintf(pf.password, sizeof(pf.password), "%s", old.password);
     }
 
-    esp_err_t ae = append_profile(&pf);
-    if (ae == ESP_ERR_NOT_FINISHED) {
-        /* List full => this was a brand-new name, so the key we just wrote has
-         * no referencing profile. Reclaim it (a same-name REPLACE can't hit the
-         * capacity cap, so we never delete a key an existing profile still uses). */
-        if (want_key && pf.key_id[0]) storage_delete_key(pf.key_id);
-        set_err("profile list full");
-        httpd_resp_set_status(req, "507 Insufficient Storage");
-        return ok_page(req, "&#10007; List full",
-                       "The deck already holds the maximum profiles.");
-    }
+    if (slot < 0) slot = n++;
+    list[slot] = pf;
+    esp_err_t ae = storage_save_profiles(list, n);
     if (ae != ESP_OK) {
+        free(list);
         set_err("failed to save profile");
         httpd_resp_set_status(req, "500 Internal Server Error");
         return ok_page(req, "&#10007; Save failed", "Could not write profiles.");
     }
+
+    /* The update dropped or swapped this profile's key: GC the orphan .pem
+     * when no profile references it anymore (mirrors the on-device editor). */
+    if (old.auth == STORAGE_AUTH_KEY && old.key_id[0]) {
+        bool shared = false;
+        for (int i = 0; i < n; i++)
+            if (list[i].auth == STORAGE_AUTH_KEY &&
+                strcmp(list[i].key_id, old.key_id) == 0) { shared = true; break; }
+        if (!shared) storage_delete_key(old.key_id);
+    }
+    free(list);
 
     if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY);
     s_err[0] = '\0';
@@ -458,17 +647,163 @@ static esp_err_t handle_save(httpd_req_t *req, char *body)
     return ok_page(req, "&#10003; Saved", sub);
 }
 
+/* POST /list — pop-gated JSON of stored profiles + key ids (no secrets:
+ * passwords, passphrases and key material never leave the deck). */
+static esp_err_t post_list(httpd_req_t *req)
+{
+    char body[64];
+    if (!read_small_body(req, body, sizeof(body)))
+        return json_reply(req, "400 Bad Request", "{\"ok\":false}");
+    char pop[16];
+    form_field(body, "pop", pop, sizeof(pop));
+    if (!check_pop(pop))
+        return json_reply(req, "403 Forbidden", "{\"ok\":false}");
+
+    enum { OUT_CAP = 8192 };
+    int n = 0;
+    conn_profile_t *list = load_profile_set(&n);
+    char *out = heap_caps_malloc(OUT_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    char (*ids)[STORAGE_KEY_ID_LEN] =
+        heap_caps_malloc(IMPORT_KEY_LIST_MAX * STORAGE_KEY_ID_LEN,
+                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!list || !out || !ids) {
+        free(list); free(out); free(ids);
+        return json_reply(req, "500 Internal Server Error", "{\"ok\":false}");
+    }
+
+    int o = 0;
+    o = json_append(out, OUT_CAP, o, "{\"max\":%d,\"profiles\":[",
+                    IMPORT_PROFILE_MAX);
+    char e1[80], e2[160];
+    for (int i = 0; i < n && o < OUT_CAP - 2; i++) {
+        json_escape(list[i].name, e1, sizeof(e1));
+        json_escape(list[i].host, e2, sizeof(e2));
+        o = json_append(out, OUT_CAP, o,
+                        "%s{\"name\":\"%s\",\"host\":\"%s\",\"port\":%u",
+                        i ? "," : "", e1, e2, (unsigned)list[i].port);
+        json_escape(list[i].user, e1, sizeof(e1));
+        json_escape(list[i].key_id, e2, sizeof(e2));
+        o = json_append(out, OUT_CAP, o,
+                        ",\"user\":\"%s\",\"auth\":\"%s\",\"key_id\":\"%s\"}",
+                        e1, list[i].auth == STORAGE_AUTH_KEY ? "key" : "password",
+                        list[i].auth == STORAGE_AUTH_KEY ? e2 : "");
+    }
+    free(list);
+
+    o = json_append(out, OUT_CAP, o, "],\"keys\":[");
+    int nk = 0;
+    storage_list_keys(ids, IMPORT_KEY_LIST_MAX, &nk);
+    for (int i = 0; i < nk && o < OUT_CAP - 2; i++) {
+        char type[24], comment[64];
+        storage_key_info(ids[i], type, sizeof(type), comment, sizeof(comment));
+        json_escape(ids[i], e1, sizeof(e1));
+        o = json_append(out, OUT_CAP, o, "%s{\"id\":\"%s\"", i ? "," : "", e1);
+        json_escape(type, e1, sizeof(e1));
+        json_escape(comment, e2, sizeof(e2));
+        o = json_append(out, OUT_CAP, o,
+                        ",\"type\":\"%s\",\"comment\":\"%s\"}", e1, e2);
+    }
+    free(ids);
+    o = json_append(out, OUT_CAP, o, "]}");
+
+    esp_err_t e;
+    if (o >= OUT_CAP - 2) {           /* truncated mid-structure: bail out */
+        e = json_reply(req, "500 Internal Server Error", "{\"ok\":false}");
+    } else {
+        httpd_resp_set_type(req, "application/json");
+        e = httpd_resp_sendstr(req, out);
+    }
+    free(out);
+    return e;
+}
+
+/* POST /delete — pop-gated removal by profile name; reclaims the key files
+ * and the TOFU host pin when no surviving profile references them. */
+static esp_err_t post_delete(httpd_req_t *req)
+{
+    char body[256];
+    if (!read_small_body(req, body, sizeof(body)))
+        return json_reply(req, "400 Bad Request", "{\"ok\":false}");
+    char pop[16], name[40];
+    form_field(body, "pop", pop, sizeof(pop));
+    if (!check_pop(pop)) {
+        set_err("bad proof code");
+        return json_reply(req, "403 Forbidden", "{\"ok\":false}");
+    }
+    form_field(body, "name", name, sizeof(name));
+    if (!name[0])
+        return json_reply(req, "400 Bad Request", "{\"ok\":false}");
+
+    int n = 0;
+    conn_profile_t *list = load_profile_set(&n);
+    if (!list)
+        return json_reply(req, "500 Internal Server Error", "{\"ok\":false}");
+
+    int idx = -1;
+    for (int i = 0; i < n; i++)
+        if (strcmp(list[i].name, name) == 0) { idx = i; break; }
+    if (idx < 0) {
+        free(list);
+        return json_reply(req, "404 Not Found", "{\"ok\":false}");
+    }
+    conn_profile_t doomed = list[idx];
+    for (int i = idx; i < n - 1; i++) list[i] = list[i + 1];
+    n--;
+
+    esp_err_t e = storage_save_profiles(list, n);
+    if (e == ESP_OK) {
+        if (doomed.auth == STORAGE_AUTH_KEY && doomed.key_id[0]) {
+            bool shared = false;
+            for (int i = 0; i < n; i++)
+                if (list[i].auth == STORAGE_AUTH_KEY &&
+                    strcmp(list[i].key_id, doomed.key_id) == 0) { shared = true; break; }
+            if (!shared) storage_delete_key(doomed.key_id);
+        }
+        bool host_shared = false;
+        for (int i = 0; i < n; i++)
+            if (list[i].port == doomed.port &&
+                strcmp(list[i].host, doomed.host) == 0) { host_shared = true; break; }
+        if (!host_shared) storage_known_host_delete(doomed.host, doomed.port);
+    }
+    free(list);
+
+    if (e != ESP_OK) {
+        set_err("failed to save profiles");
+        return json_reply(req, "500 Internal Server Error", "{\"ok\":false}");
+    }
+    if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY);
+    s_err[0] = '\0';
+    snprintf(s_last, sizeof(s_last), "%s", name);
+    if (s_lock) xSemaphoreGive(s_lock);
+    s_deleted++;                                 /* publish after s_last is set */
+    ESP_LOGI(TAG, "deleted profile '%s' via web", name);
+    return json_reply(req, "200 OK", "{\"ok\":true}");
+}
+
 /* ------------------------------------------------------------- HTTP handlers */
+
+/* Must the browser user type the proof code? WEB mode only — in SoftAP the
+ * WPA2 join is the proof and the field is hidden+prefilled. The DEV Kconfig
+ * toggle prefills it in WEB mode too (the page then carries the code, so
+ * the gate is effectively off for anyone who can load the page). */
+bool ssh_import_pop_required(void)
+{
+#ifdef CONFIG_SSH_IMPORT_POP_DISABLED
+    return false;
+#else
+    return s_mode == SSH_IMPORT_WEB;
+#endif
+}
 
 static esp_err_t get_form(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html");
     httpd_resp_sendstr_chunk(req, FORM_HEAD);
-    if (s_mode == SSH_IMPORT_WEB) {
+    if (ssh_import_pop_required()) {
         httpd_resp_sendstr_chunk(req, FORM_POP_WEB);    /* visible, user types it */
     } else {
         httpd_resp_sendstr_chunk(req, "<input type=hidden name=pop value=\"");
-        httpd_resp_sendstr_chunk(req, s_pop);           /* prefilled: WPA2 gated */
+        httpd_resp_sendstr_chunk(req, s_pop);           /* prefilled */
         httpd_resp_sendstr_chunk(req, "\">");
     }
     httpd_resp_sendstr_chunk(req, FORM_TAIL);
@@ -514,7 +849,7 @@ static esp_err_t post_save(httpd_req_t *req)
 static esp_err_t start_httpd(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 4;
+    cfg.max_uri_handlers = 6;
     cfg.lru_purge_enable = true;
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
     cfg.stack_size       = 6144;
@@ -522,9 +857,13 @@ static esp_err_t start_httpd(void)
     esp_err_t e = httpd_start(&s_httpd, &cfg);
     if (e != ESP_OK) { s_httpd = NULL; return e; }
 
-    httpd_uri_t save = { .uri = "/save", .method = HTTP_POST, .handler = post_save };
-    httpd_uri_t form = { .uri = "/*",    .method = HTTP_GET,  .handler = get_form };
+    httpd_uri_t save = { .uri = "/save",   .method = HTTP_POST, .handler = post_save };
+    httpd_uri_t list = { .uri = "/list",   .method = HTTP_POST, .handler = post_list };
+    httpd_uri_t del  = { .uri = "/delete", .method = HTTP_POST, .handler = post_delete };
+    httpd_uri_t form = { .uri = "/*",      .method = HTTP_GET,  .handler = get_form };
     httpd_register_uri_handler(s_httpd, &save);
+    httpd_register_uri_handler(s_httpd, &list);
+    httpd_register_uri_handler(s_httpd, &del);
     httpd_register_uri_handler(s_httpd, &form);
     return ESP_OK;
 }
@@ -595,7 +934,9 @@ esp_err_t ssh_import_start(ssh_import_mode_t mode)
 
     s_mode = mode;
     s_last[0] = s_err[0] = '\0';
-    s_count = 0;
+    s_count     = 0;
+    s_deleted   = 0;
+    s_pop_fails = 0;
     gen_code();
 
     esp_err_t e = (mode == SSH_IMPORT_WEB) ? start_web() : start_softap();
@@ -638,6 +979,7 @@ const char *ssh_import_service_name(void) { return s_service; }
 const char *ssh_import_pop(void)          { return s_pop; }
 const char *ssh_import_url(void)          { return s_url; }
 int         ssh_import_count(void)        { return s_count; }
+int         ssh_import_deleted(void)      { return s_deleted; }
 
 /* Status strings are written by the httpd task under s_lock; copy under the
  * same lock into a small static so the render task never reads a torn string. */
