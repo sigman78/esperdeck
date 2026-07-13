@@ -404,6 +404,11 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
         return ESP_FAIL;
     }
     libssh2_session_set_blocking(s_session, 1);
+    /* Inner errors (userauth masks them with "Callback returned error")
+     * land on stderr → UART console. No-op stub unless the libssh2_esp
+     * component was built with CONFIG_LIBSSH2_DEBUG_ENABLE. */
+    libssh2_trace(s_session, LIBSSH2_TRACE_ERROR | LIBSSH2_TRACE_AUTH |
+                             LIBSSH2_TRACE_PUBLICKEY);
     /* Never let the blocking handshake/auth hang forever on a dead link
      * (do_connect runs synchronously on the shell task). */
     libssh2_session_set_timeout(s_session, SSH_BLOCKING_TIMEOUT_MS);
@@ -475,7 +480,7 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
 
     rc = LIBSSH2_ERROR_AUTHENTICATION_FAILED;
 
-    if (config->private_key) {
+    if (config->private_key_pem) {
         /* Key profile: public-key auth ONLY. The passphrase decrypts the key
          * (mbedTLS derives the public key from the private one), it is NOT a
          * login password — so never fall through to password auth with it. */
@@ -485,11 +490,15 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
             ssh_cleanup();
             return SSH_ERR_AUTH;
         }
-        ESP_LOGI(TAG, "Public-key auth with %s", config->private_key);
-        rc = libssh2_userauth_publickey_fromfile(s_session, config->username,
-                                                 config->public_key,
-                                                 config->private_key,
-                                                 config->passphrase);
+        ESP_LOGI(TAG, "Public-key auth (%u-byte PEM in memory)",
+                 (unsigned)strlen(config->private_key_pem));
+        rc = libssh2_userauth_publickey_frommemory(
+                 s_session,
+                 config->username, strlen(config->username),
+                 config->public_key_pem,
+                 config->public_key_pem ? strlen(config->public_key_pem) : 0,
+                 config->private_key_pem, strlen(config->private_key_pem),
+                 config->passphrase);
         if (rc == 0) goto auth_done;
         log_last_error("publickey");
         ssh_cleanup();

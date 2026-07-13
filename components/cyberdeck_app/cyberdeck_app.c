@@ -32,9 +32,7 @@
 #include "wifi_provision.h"
 #include "ssh_import.h"
 
-#ifndef BUILD_SIMULATOR
-#include "esp_heap_caps.h"   /* free-RAM stats in the header */
-#endif
+#include "esp_heap_caps.h"   /* free-RAM stats; key-PEM buffers (idfsim stubs it) */
 
 static const char *TAG = "cyberdeck_app";
 
@@ -2247,8 +2245,13 @@ static void enter_session(uint64_t now)
  * ticking — the "Connecting" bar animates and a tap/ESC can cancel. */
 static void do_connect_start(uint64_t now)
 {
-    static char key_path[160];   /* referenced by the worker's cfg copy — must */
-    static char pub_path[160];   /* outlive the connect; function-static is ok */
+    /* Key PEMs are read HERE, on the shell task: the connect worker has a
+     * PSRAM stack and must not touch littlefs (flash I/O asserts there).
+     * Buffers are PSRAM data (fine to read from any task), allocated once
+     * and reused; they must outlive the connect, so no free on finish. */
+    enum { KEY_PEM_MAX = 8192, PUB_PEM_MAX = 2048 };
+    static char *key_pem = NULL;
+    static char *pub_pem = NULL;
     const conn_profile_t *p = &s.profiles[s.connect_idx];
 
     ssh_config_t cfg = {
@@ -2258,14 +2261,27 @@ static void do_connect_start(uint64_t now)
         .expected_fp = s.pinned_fp[0] ? s.pinned_fp : NULL,
     };
     if (p->auth == STORAGE_AUTH_KEY) {
-        snprintf(key_path, sizeof(key_path), "%s/keys/%s.pem",
-                 storage_platform_mount_point(), p->key_id);
-        cfg.private_key = key_path;
-        cfg.passphrase  = p->password[0] ? p->password : NULL;
+        if (!key_pem) key_pem = heap_caps_malloc(KEY_PEM_MAX, MALLOC_CAP_SPIRAM);
+        if (!pub_pem) pub_pem = heap_caps_malloc(PUB_PEM_MAX, MALLOC_CAP_SPIRAM);
+        size_t klen = 0;
+        if (!key_pem || !pub_pem ||
+            storage_get_key(p->key_id, key_pem, KEY_PEM_MAX, &klen) != ESP_OK) {
+            toast(now, "key '%s' unreadable", p->key_id);
+            enter_home(now);
+            return;
+        }
+        cfg.private_key_pem = key_pem;
+        cfg.passphrase      = p->password[0] ? p->password : NULL;
+
+        char pub_path[160];   /* optional .pub beside the key */
         snprintf(pub_path, sizeof(pub_path), "%s/keys/%s.pub",
                  storage_platform_mount_point(), p->key_id);
         FILE *pf = fopen(pub_path, "r");
-        if (pf) { fclose(pf); cfg.public_key = pub_path; }
+        if (pf) {
+            size_t n = fread(pub_pem, 1, PUB_PEM_MAX - 1, pf);
+            fclose(pf);
+            if (n > 0) { pub_pem[n] = '\0'; cfg.public_key_pem = pub_pem; }
+        }
     } else {
         cfg.password = p->password;
     }

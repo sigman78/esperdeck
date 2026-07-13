@@ -43,6 +43,11 @@ CONFIG_BT_NIMBLE_NVS_PERSIST=y
 # CONFIG_BT_NIMBLE_HOST_BASED_PRIVACY=y
 
 # ---- SSH ------------------------------------------------------------------
+# Import-over-WiFi web form: desktop browsers send ~1 KB of request headers
+# (sec-ch-ua, Sec-Fetch-*, Origin…); the 512 B default makes httpd reject
+# form POSTs with 431. Scratch buffer is per-request and transient.
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
+
 CONFIG_SSH_KEEPALIVE_INTERVAL=30
 CONFIG_SSH_RECV_WINDOW=32768
 CONFIG_SSH_AUTO_RECONNECT=y

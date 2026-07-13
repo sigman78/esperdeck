@@ -21,11 +21,18 @@ typedef struct {
     const char *host;
     uint16_t port;
     const char *username;
-    const char *password;     // Password auth (when private_key is NULL)
-    const char *private_key;  // Path to a PEM private key → public-key auth
-    const char *public_key;   // Optional .pub; needed for ECDSA (the mbedTLS
-                              // backend can only derive an RSA pubkey from priv)
-    const char *passphrase;   // Optional: decrypts an encrypted private_key
+    const char *password;     // Password auth (when private_key_pem is NULL)
+    /*
+     * Key auth passes PEM CONTENTS, not file paths: the connect worker runs
+     * on a PSRAM stack, and any flash I/O (littlefs fopen included) from a
+     * PSRAM-stack task asserts in spi_flash_disable_interrupts_caches_and_
+     * other_cpu(). The caller (shell task, internal stack) reads the files.
+     */
+    const char *private_key_pem;  // NUL-terminated PEM key → public-key auth
+    const char *public_key_pem;   // Optional pubkey contents; needed for ECDSA
+                                  // (the mbedTLS backend derives the pubkey
+                                  // from priv only for RSA and ed25519 keys)
+    const char *passphrase;   // Optional: decrypts an encrypted private key
     /*
      * Pinned host-key fingerprint (lowercase hex SHA256, 64 chars) from a
      * previous session.  NULL = unknown host: the connect stops after the

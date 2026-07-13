@@ -5,6 +5,10 @@
 # so there are no git submodules and no manual patch step. See cmake/apply_patch.cmake
 # and patches/. To bump libssh2, change GIT_TAG below and regenerate the patch:
 #   git -C <fetched-src> diff > patches/libssh2-ram-diet.patch
+#
+# We build from the sigman78/libssh2 fork (feature/mbedtls-ed25519): upstream
+# master + vendored Monocypher 4.0.2 giving the mbedTLS backend ed25519
+# hostkey/auth and curve25519-sha256 KEX.
 
 # ESP-IDF processes each component's CMakeLists twice: once in a restricted
 # "early expansion" (script) pass to collect REQUIRES, then in the real
@@ -19,8 +23,8 @@ endif()
 include(FetchContent)
 
 FetchContent_Declare(libssh2_src
-    GIT_REPOSITORY https://github.com/libssh2/libssh2.git
-    GIT_TAG        455f062236fdd5deba9abb909dbe3b86463a23d8  # pinned; the patch matches this SHA
+    GIT_REPOSITORY https://github.com/sigman78/libssh2.git
+    GIT_TAG        e26a46862e432704904732a6c274bed1709d29c5  # feature/mbedtls-ed25519 head; the patch matches this SHA
     GIT_PROGRESS   TRUE
     PATCH_COMMAND  ${CMAKE_COMMAND}
                    -DREPO=<SOURCE_DIR>
@@ -50,7 +54,10 @@ if(BUILD_SIMULATOR)
 
     add_library(libssh2_esp STATIC ${_srcs})
     target_compile_definitions(libssh2_esp PRIVATE
-        LIBSSH2_WINCNG)   # no HAVE_CONFIG_H → libssh2_setup.h uses its _WIN32 branch
+        LIBSSH2_WINCNG    # no HAVE_CONFIG_H → libssh2_setup.h uses its _WIN32 branch
+        LIBSSH2_ECDSA_WINCNG)  # ECDSA hostkeys + ecdh-sha2-nistp* KEX; without it
+                               # WinCNG only has classic DH, which hardened servers
+                               # (kex: curve25519/ecdh only) no longer offer
     target_include_directories(libssh2_esp PUBLIC
         ${LIBSSH2_DIR}/src
         ${LIBSSH2_DIR}/include
@@ -63,9 +70,9 @@ if(BUILD_SIMULATOR)
     return()
 endif()
 
-# ── ESP-IDF: mbedTLS crypto ─────────────────────────────────────────────────
+# ── ESP-IDF: mbedTLS crypto (+ vendored Monocypher for ed25519/x25519) ──────
 set(_srcs "")
-foreach(u ${_libssh2_units} mbedtls)
+foreach(u ${_libssh2_units} mbedtls monocypher monocypher-ed25519)
     list(APPEND _srcs ${LIBSSH2_DIR}/src/${u}.c)
 endforeach()
 

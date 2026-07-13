@@ -229,10 +229,15 @@ esp_err_t storage_save_profiles(const conn_profile_t *profiles, int count)
         fprintf(f, "user=%s\n", p->user);
         fprintf(f, "auth=%s\n",
                 p->auth == STORAGE_AUTH_KEY ? "key" : "password");
-        if (p->auth == STORAGE_AUTH_KEY)
+        if (p->auth == STORAGE_AUTH_KEY) {
             fprintf(f, "key_id=%s\n", p->key_id);
-        else
+            /* password doubles as the key passphrase — dropping it here
+             * silently breaks auth with encrypted keys on next boot. */
+            if (p->password[0])
+                fprintf(f, "password=%s\n", p->password);
+        } else {
             fprintf(f, "password=%s\n", p->password);
+        }
         fprintf(f, "\n");
     }
 
