@@ -110,4 +110,21 @@ void display_toggle_scale(void)
     SDL_SetWindowPosition(s_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 }
 
+void display_window_to_fb(int wx, int wy, uint16_t *fx, uint16_t *fy)
+{
+    /* RenderCopy stretches the texture over the whole window (NULL dst rect),
+     * so the mapping is a straight rescale by the current window size. */
+    int win_w = DISPLAY_WIDTH, win_h = DISPLAY_HEIGHT;
+    SDL_GetWindowSize(s_window, &win_w, &win_h);
+    if (win_w <= 0) win_w = DISPLAY_WIDTH;
+    if (win_h <= 0) win_h = DISPLAY_HEIGHT;
+
+    int x = wx * DISPLAY_WIDTH  / win_w;
+    int y = wy * DISPLAY_HEIGHT / win_h;
+    if (x < 0) x = 0; else if (x >= DISPLAY_WIDTH)  x = DISPLAY_WIDTH  - 1;
+    if (y < 0) y = 0; else if (y >= DISPLAY_HEIGHT) y = DISPLAY_HEIGHT - 1;
+    *fx = (uint16_t)x;
+    *fy = (uint16_t)y;
+}
+
 #endif /* BUILD_SIMULATOR */

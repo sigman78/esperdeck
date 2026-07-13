@@ -170,6 +170,14 @@ void display_render_frame(void);
  * SDL scales it to fill the window.
  */
 void display_toggle_scale(void);
+
+/**
+ * Map window coordinates (SDL mouse events) to framebuffer coordinates
+ * (simulator only). Needed because the framebuffer texture is stretched to
+ * the current window size (scale toggle / manual resize). Results are
+ * clamped to the framebuffer bounds.
+ */
+void display_window_to_fb(int wx, int wy, uint16_t *fx, uint16_t *fy);
 #endif /* BUILD_SIMULATOR */
 
 #endif // DISPLAY_H

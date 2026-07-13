@@ -99,6 +99,7 @@ static LIBSSH2_CHANNEL  *s_channel    = NULL;
 static int               s_sock       = -1;
 static TaskHandle_t      s_read_task  = NULL;
 static volatile bool     s_connected  = false;
+static volatile bool     s_clean_eof  = false;      /* remote closed channel (exit) */
 static volatile bool     s_read_task_done = true;   /* read task has exited */
 static bool              s_libssh2_initialized = false;
 
@@ -295,6 +296,7 @@ static void ssh_read_task(void *arg)
                 if (libssh2_channel_eof(s_channel)) {
                     ESP_LOGI(TAG, "ssh_read_task: read EOF");
                     set_last_error("");
+                    s_clean_eof = true;
                     s_connected = false;
                 }
             } else {
@@ -309,6 +311,8 @@ static void ssh_read_task(void *arg)
 
             if (s_connected && libssh2_channel_eof(s_channel)) {
                 ESP_LOGI(TAG, "ssh_read_task: channel EOF");
+                set_last_error("");
+                s_clean_eof = true;
                 s_connected = false;
             }
             xSemaphoreGive(s_session_lock);
@@ -395,6 +399,7 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
      * call ssh_cleanup() — that must happen here before we allocate new  *
      * libssh2 objects, otherwise session_init() fails with OOM.         */
     ssh_client_disconnect();
+    s_clean_eof = false;
 
     /* ── 1. TCP connect ─────────────────────────────────────────────── */
     char port_str[6];
@@ -783,6 +788,11 @@ int ssh_client_send(const uint8_t *data, size_t len)
 bool ssh_client_is_connected(void)
 {
     return s_connected;
+}
+
+bool ssh_client_session_eof(void)
+{
+    return s_clean_eof;
 }
 
 const char *ssh_client_get_fingerprint(void)

@@ -7,7 +7,8 @@
  * the SDL keyboard stands in for the BLE keyboard.
  *
  * Controls: F12 = in-session menu, Alt+Enter = window scale,
- *           right-click = touch long-press, left-click = tap.
+ *           left-click = touch (tap on release < 300 ms, long-press when
+ *           held >= 500 ms — GT911 timing), right-click = instant long-press.
  */
 
 #include <SDL2/SDL.h>
@@ -15,6 +16,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include "cyberdeck_app.h"
 #include "display.h"
@@ -88,6 +92,65 @@ static void send_key_bytes(const char *seq, size_t len, uint64_t now)
     cyberdeck_app_handle_input(&ev, now);
 }
 
+/*
+ * Mouse → touch emulation, mirroring the GT911 state machine in
+ * touch_input.c: tap = press + release within TAP_MAX_MS, long-press fires
+ * while still held at LONG_PRESS_MS, a release in between lands in the dead
+ * zone and posts nothing. Events carry the press-down position, mapped from
+ * window to framebuffer space (the window may be scaled or resized).
+ * Right-click skips the hold and posts a long-press immediately.
+ */
+#define TOUCH_TAP_MAX_MS    300
+#define TOUCH_LONG_PRESS_MS 500
+
+typedef enum { TOUCH_IDLE, TOUCH_TOUCHING, TOUCH_WAITING_LIFT } touch_state_t;
+
+static touch_state_t touch_state = TOUCH_IDLE;
+static uint64_t      touch_start;
+static uint16_t      touch_x, touch_y;
+
+static void send_touch(uint8_t type, uint16_t x, uint16_t y, uint64_t now)
+{
+    cyberdeck_input_t ev = { .type = type, .x = x, .y = y };
+    cyberdeck_app_handle_input(&ev, now);
+}
+
+static void touch_mouse_down(const SDL_MouseButtonEvent *b, uint64_t now)
+{
+    uint16_t x, y;
+    display_window_to_fb(b->x, b->y, &x, &y);
+
+    if (b->button == SDL_BUTTON_RIGHT) {
+        send_touch(CYBERDECK_INPUT_LONG_PRESS, x, y, now);
+        return;
+    }
+    if (b->button != SDL_BUTTON_LEFT || touch_state != TOUCH_IDLE) return;
+
+    SDL_CaptureMouse(SDL_TRUE);  /* see the release even outside the window */
+    touch_x     = x;
+    touch_y     = y;
+    touch_start = now;
+    touch_state = TOUCH_TOUCHING;
+}
+
+static void touch_mouse_up(const SDL_MouseButtonEvent *b, uint64_t now)
+{
+    if (b->button != SDL_BUTTON_LEFT || touch_state == TOUCH_IDLE) return;
+    SDL_CaptureMouse(SDL_FALSE);
+    if (touch_state == TOUCH_TOUCHING && now - touch_start < TOUCH_TAP_MAX_MS)
+        send_touch(CYBERDECK_INPUT_TAP, touch_x, touch_y, now);
+    touch_state = TOUCH_IDLE;
+}
+
+static void touch_tick(uint64_t now)
+{
+    if (touch_state == TOUCH_TOUCHING &&
+        now - touch_start >= TOUCH_LONG_PRESS_MS) {
+        send_touch(CYBERDECK_INPUT_LONG_PRESS, touch_x, touch_y, now);
+        touch_state = TOUCH_WAITING_LIFT;
+    }
+}
+
 int main(int argc, char *argv[])
 {
     /* Optional argv override: host [port [user [password]]] becomes the
@@ -96,6 +159,12 @@ int main(int argc, char *argv[])
     int         port = (argc > 2) ? atoi(argv[2]) : 22;
     const char *user = (argc > 3) ? argv[3] : "user";
     const char *pass = (argc > 4) ? argv[4] : "";
+
+#ifdef _WIN32
+    /* Log strings are UTF-8 (em dashes etc.); the console default is the
+     * OEM codepage, which renders them as mojibake ("ΓÇö"). */
+    SetConsoleOutputCP(CP_UTF8);
+#endif
 
     if (storage_init() != ESP_OK) {
         fprintf(stderr, "storage_init() failed\n");
@@ -165,25 +234,24 @@ int main(int argc, char *argv[])
                 got_input = true;
                 break;
 
-            case SDL_MOUSEBUTTONDOWN: {
-                cyberdeck_input_t tev = {
-                    .type = (ev.button.button == SDL_BUTTON_RIGHT)
-                            ? CYBERDECK_INPUT_LONG_PRESS
-                            : CYBERDECK_INPUT_TAP,
-                    .x = (uint16_t)ev.button.x,
-                    .y = (uint16_t)ev.button.y,
-                };
-                cyberdeck_app_handle_input(&tev, now);
+            case SDL_MOUSEBUTTONDOWN:
+                touch_mouse_down(&ev.button, now);
                 got_input = true;
                 break;
-            }
+
+            case SDL_MOUSEBUTTONUP:
+                touch_mouse_up(&ev.button, now);
+                got_input = true;
+                break;
 
             default:
                 break;
             }
         }
 
-        cyberdeck_app_tick(SDL_GetTicks64());
+        uint64_t tick = SDL_GetTicks64();
+        touch_tick(tick);
+        cyberdeck_app_tick(tick);
         display_render_frame();
 
         SDL_Delay(got_input ? 1 : 16);

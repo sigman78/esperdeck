@@ -2840,7 +2840,12 @@ void cyberdeck_app_tick(uint64_t now)
 
     case ST_SESSION:
         if (!ssh_client_is_connected()) {
-            if (s.cfg.auto_reconnect) {
+            if (ssh_client_session_eof()) {
+                /* Remote closed the channel cleanly (exit/logout): a
+                 * deliberate end, not a drop — never auto-reconnect. */
+                ssh_client_disconnect();
+                session_dropped(now);
+            } else if (s.cfg.auto_reconnect) {
                 toast(now, "session dropped - reconnecting");
                 start_reconnect(now + s.cfg.ssh_retry_delay_ms, now);
             } else {

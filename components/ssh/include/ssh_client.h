@@ -100,6 +100,14 @@ int ssh_client_send(const uint8_t *data, size_t len);
 bool ssh_client_is_connected(void);
 
 /**
+ * True when the last session ended because the remote closed the channel
+ * cleanly (orderly EOF — e.g. `exit` at the remote shell), as opposed to a
+ * transport error. Valid once ssh_client_is_connected() has gone false;
+ * reset on the next connect attempt.
+ */
+bool ssh_client_session_eof(void);
+
+/**
  * SHA256 host-key fingerprint (64 hex chars) observed during the most
  * recent connect attempt — valid after ESP_OK, SSH_ERR_HOSTKEY_UNKNOWN
  * and SSH_ERR_HOSTKEY_MISMATCH. Empty string otherwise.
