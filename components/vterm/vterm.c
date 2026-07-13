@@ -2,9 +2,14 @@
  * vterm -- VT/ANSI terminal emulator backed by tsm.
  *
  * tsm_feed() parses the byte stream into tsm's own cell grid.
- * After each feed, dirty rows are copied from tsm's cell grid into
- * s_buffer (terminal_cell_t[]) which is registered with display_set_text_buffer().
+ * On flush, dirty rows are copied from tsm's cell grid into s_buffer
+ * (terminal_cell_t[]) which is registered with display_set_text_buffer().
  * The display ISR reads s_buffer on every frame.
+ *
+ * Two feeding modes:
+ *   vterm_write()          — feed + present (legacy, one-shot writes)
+ *   vterm_feed()/_flush()  — batch: the SSH drain loop feeds many chunks,
+ *                            then presents once per wake (docs/speedup-render.md)
  */
 
 #include "vterm.h"
@@ -123,7 +128,7 @@ esp_err_t vterm_init(int cols, int rows)
     return ESP_OK;
 }
 
-void vterm_write(const char *data, size_t len)
+void vterm_feed(const char *data, size_t len)
 {
     if (!s_initialized) return;
 
@@ -141,10 +146,24 @@ void vterm_write(const char *data, size_t len)
     uint32_t t1 = esp_cpu_get_cycle_count();
     s_bench.tsm_cycles += (t1 - t0);
     s_bench.bytes_fed  += len;
+#endif
+}
+
+void vterm_flush(void)
+{
+    if (!s_initialized) return;
+    /* ?2026 synchronized update open — hold the frame until ESU. */
+    if (tsm_sync_update(s_tsm)) return;
+#ifdef CONFIG_VTERM_BENCH
     s_bench.flush_count++;
 #endif
-    if (!tsm_sync_update(s_tsm))
-        refresh_display();
+    refresh_display();
+}
+
+void vterm_write(const char *data, size_t len)
+{
+    vterm_feed(data, len);
+    vterm_flush();
 }
 
 void vterm_set_response_cb(vterm_response_cb_t cb, void *user)

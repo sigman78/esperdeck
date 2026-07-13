@@ -121,4 +121,17 @@ menu "Cyberdeck Configuration"
             more round-trips for bulk output. 32768 (32 KB) covers any terminal
             screen refresh.
 
+    config SSH_WIFI_PS_NONE
+        bool "Disable WiFi power-save while an SSH session is open"
+        default y
+        help
+            The IDF default (WIFI_PS_MIN_MODEM) gates receive wakeups on the
+            AP's DTIM beacon, adding tens of ms to every round-trip — that
+            caps redraw throughput (TCP window / RTT) and delays each key
+            echo. When enabled, the client switches to WIFI_PS_NONE for the
+            lifetime of each SSH session and restores WIFI_PS_MIN_MODEM on
+            disconnect. Costs radio power while a session is open. With the
+            BLE keyboard connected, WiFi/BT coexistence still time-slices
+            the radio, so the gain is real but smaller than on WiFi alone.
+
 endmenu

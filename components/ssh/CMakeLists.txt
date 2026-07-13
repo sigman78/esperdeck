@@ -4,5 +4,5 @@ cyberdeck_component_register(
     INCLUDE_DIRS include
     REQUIRES     vterm
     REQUIRES_SIM libssh2_esp
-    REQUIRES_DEV libssh2_esp lwip mbedtls freertos
+    REQUIRES_DEV libssh2_esp lwip mbedtls freertos esp_wifi esp_timer
 )

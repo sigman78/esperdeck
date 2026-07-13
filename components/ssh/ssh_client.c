@@ -29,6 +29,16 @@
 #include <string.h>
 #include <stdio.h>
 
+#ifdef ESP_PLATFORM
+#include "esp_timer.h"
+#define drain_now_us()  esp_timer_get_time()
+#if CONFIG_SSH_WIFI_PS_NONE
+#include "esp_wifi.h"
+#endif
+#else
+#define drain_now_us()  0   /* simulator: byte budget only bounds the drain */
+#endif
+
 #ifndef SHUT_RDWR          /* Winsock spells it SD_BOTH; both are 2 */
 #define SHUT_RDWR 2
 #endif
@@ -101,6 +111,17 @@ static bool              s_libssh2_initialized = false;
 #define SSH_READ_STACK_BYTES 8192
 static StaticTask_t      s_read_task_tcb;
 static StackType_t      *s_read_task_stack = NULL;
+
+/* Drain-loop tuning (docs/speedup-render.md #1). Chunks land in a PSRAM
+ * buffer — only this task touches it (sockets + crypto, no flash I/O), and
+ * 2 KB of internal DRAM is too precious. Reused across sessions. The budget
+ * bounds core-0 CPU per wake so IDLE0 (task WDT) and the same-core input
+ * tasks (touch prio 4, uart prio 5 — which this task, prio 6, preempts
+ * outright) always get to run. 8 KB per 10 ms tick ≈ 800 KB/s ceiling. */
+#define SSH_READ_CHUNK       2048
+#define SSH_DRAIN_BUDGET     8192      /* bytes per wake */
+#define SSH_DRAIN_BUDGET_US  5000      /* time bound per wake */
+static char             *s_read_buf = NULL;
 
 /* Async connect worker — runs the blocking ssh_client_connect() off the UI
  * task so the shell stays responsive. PSRAM stack (crypto handshake is heavy;
@@ -223,58 +244,83 @@ static void log_last_error(const char *context)
 /* -------------------------------------------------------------------------
  * ssh_read_task — pinned to core 0, feeds remote output into vterm.
  *
- * The task MUST call vTaskDelay() on every iteration — not just on EAGAIN.
- * libssh2_channel_read() can return data continuously (e.g. streaming ASCII
- * art) and never block.  Without a yield, IDLE0 is starved and the task
- * watchdog fires.  One tick per iteration caps throughput at ~51 KB/s which
- * is far above any terminal's practical limit.
+ * Each wake drains the channel until EAGAIN or the per-wake budget is spent
+ * (SSH_DRAIN_BUDGET bytes / SSH_DRAIN_BUDGET_US), presents the batch once,
+ * then ALWAYS yields at least one tick — libssh2_channel_read() can return
+ * data continuously and never block; without the yield IDLE0 is starved and
+ * the task watchdog fires. One 512 B read per tick used to cap ingest at
+ * ~51 KB/s, which made every fullscreen redraw crawl (docs/speedup-render.md).
+ *
+ * The session lock is given back between chunks so ssh_client_send (shell
+ * task, core 1) interleaves mid-batch — key echo waits one chunk, not a
+ * whole drain.
  *
  * Keepalive packets are sent via libssh2_keepalive_send() which internally
- * tracks timing; we call it on every EAGAIN idle cycle.
+ * tracks timing; we call it on every EAGAIN idle cycle. Do not move that
+ * call: keepalive.c sends from a stack-local buffer and a blocked send is
+ * only reissued correctly from the same call path.
  * ---------------------------------------------------------------------- */
 static void ssh_read_task(void *arg)
 {
-    char buf[512];
     TickType_t last_stat = xTaskGetTickCount();
 
     while (s_connected) {
-        xSemaphoreTake(s_session_lock, portMAX_DELAY);
-        /* vterm_write below may re-enter libssh2 via the response callback —
-         * that is safe: same task, lock already held, cb does not re-take. */
-        int n = libssh2_channel_read(s_channel, buf, sizeof(buf));
-        if (n > 0) {
-            vterm_write(buf, (size_t)n);   /* may buffer replies via the cb */
-        } else if (n == LIBSSH2_ERROR_EAGAIN) {
-            /* No data — good time to send a keepalive if one is due. */
+        size_t  drained = 0;
+        int64_t wake_t0 = drain_now_us();
+        int     n;
+
+        do {
+            xSemaphoreTake(s_session_lock, portMAX_DELAY);
+            /* vterm_feed below may re-enter libssh2 via the response cb —
+             * that is safe: same task, lock already held, cb does not
+             * re-take. */
+            n = libssh2_channel_read(s_channel, s_read_buf, SSH_READ_CHUNK);
+            if (n > 0) {
+                vterm_feed(s_read_buf, (size_t)n);  /* parse only; present below */
+                drained += (size_t)n;
+            } else if (n == LIBSSH2_ERROR_EAGAIN) {
+                /* No data — good time to send a keepalive if one is due.
+                 * NOTE: EAGAIN can also mean "data queued but the outbound
+                 * WINDOW_ADJUST would block"; the staged adjust flushes on
+                 * the next wake, so treat EAGAIN strictly as end-of-wake. */
 #if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
-            int next_ka = 0;
-            libssh2_keepalive_send(s_session, &next_ka);
+                int next_ka = 0;
+                libssh2_keepalive_send(s_session, &next_ka);
 #endif
-        } else if (n == 0) {
-            /* Zero-length read: orderly EOF if the channel says so (remote
-             * `exit`), else just an idle cycle. NOT an error — leaving the
-             * stale libssh2 message in last_error made every clean logout
-             * look like a failure to the shell. */
-            if (libssh2_channel_eof(s_channel)) {
-                ESP_LOGI(TAG, "ssh_read_task: read EOF");
-                set_last_error("");
+            } else if (n == 0) {
+                /* Zero-length read: orderly EOF if the channel says so
+                 * (remote `exit`), else just an idle cycle. NOT an error —
+                 * leaving the stale libssh2 message in last_error made every
+                 * clean logout look like a failure to the shell. */
+                if (libssh2_channel_eof(s_channel)) {
+                    ESP_LOGI(TAG, "ssh_read_task: read EOF");
+                    set_last_error("");
+                    s_connected = false;
+                }
+            } else {
+                /* Unrecoverable error */
+                log_last_error("channel_read");
                 s_connected = false;
             }
-        } else {
-            /* Unrecoverable error */
-            log_last_error("channel_read");
-            s_connected = false;
-        }
 
-        /* Push out any terminal responses tsm queued above (non-blocking, so
-         * this never parks the task while holding the lock). */
-        if (s_connected) drain_responses();
+            /* Push out any terminal responses tsm queued above (non-blocking,
+             * so this never parks the task while holding the lock). */
+            if (s_connected) drain_responses();
 
-        if (s_connected && libssh2_channel_eof(s_channel)) {
-            ESP_LOGI(TAG, "ssh_read_task: channel EOF");
-            s_connected = false;
-        }
-        xSemaphoreGive(s_session_lock);
+            if (s_connected && libssh2_channel_eof(s_channel)) {
+                ESP_LOGI(TAG, "ssh_read_task: channel EOF");
+                s_connected = false;
+            }
+            xSemaphoreGive(s_session_lock);
+        } while (s_connected && n > 0 &&
+                 drained < SSH_DRAIN_BUDGET &&
+                 (drain_now_us() - wake_t0) < SSH_DRAIN_BUDGET_US);
+
+        /* Present the whole batch once (no-op while a ?2026 synchronized
+         * update is open — btop frames land atomically). Present even if the
+         * session just dropped so the tail of the output reaches the glass. */
+        if (drained > 0)
+            vterm_flush();
 
         if (!s_connected) break;
 
@@ -285,10 +331,10 @@ static void ssh_read_task(void *arg)
             last_stat = now;
         }
 
-        /* Yield every iteration so IDLE0 can run and reset the task WDT.
+        /* Yield every wake so IDLE0 can run and reset the task WDT.
          * vTaskDelay(1) blocks for exactly one FreeRTOS tick regardless of
-         * tick rate; use pdMS_TO_TICKS(10) on EAGAIN for a longer sleep. */
-        vTaskDelay(n > 0 ? 1 : pdMS_TO_TICKS(10));
+         * tick rate; sleep longer only when the link is idle. */
+        vTaskDelay(drained > 0 ? 1 : pdMS_TO_TICKS(10));
     }
 
     s_read_task_done = true;   /* disconnect() polls this before cleanup */
@@ -582,8 +628,11 @@ auth_done:
     if (!s_read_task_stack)
         s_read_task_stack = heap_caps_malloc(SSH_READ_STACK_BYTES,
                                              MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!s_read_task_stack) {
-        ESP_LOGE(TAG, "No PSRAM for ssh_read stack");
+    if (!s_read_buf)
+        s_read_buf = heap_caps_malloc(SSH_READ_CHUNK,
+                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_read_task_stack || !s_read_buf) {
+        ESP_LOGE(TAG, "No PSRAM for ssh_read stack/buffer");
         s_connected = false;
         s_read_task_done = true;
         ssh_cleanup();
@@ -600,6 +649,15 @@ auth_done:
         ssh_cleanup();
         return ESP_FAIL;
     }
+
+#if CONFIG_SSH_WIFI_PS_NONE
+    /* Full radio wakefulness for the session: the default modem-sleep gates
+     * receive on the AP's DTIM beacon (tens of ms RTT), which caps the
+     * window-bound throughput and every key echo. Restored on disconnect.
+     * (With the BLE keyboard connected, coexistence still time-slices the
+     * radio, so this removes only the DTIM-gated part of the latency.) */
+    esp_wifi_set_ps(WIFI_PS_NONE);
+#endif
 
     ESP_LOGI(TAG, "SSH session ready — libssh2 heap: %zu B", s_alloc_bytes);
     return ESP_OK;
@@ -682,6 +740,11 @@ esp_err_t ssh_client_disconnect(void)
 
     vterm_set_response_cb(NULL, NULL);
     ssh_cleanup();
+
+#if CONFIG_SSH_WIFI_PS_NONE
+    /* Session over — give the radio its power budget back. */
+    esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+#endif
     return ESP_OK;
 }
 

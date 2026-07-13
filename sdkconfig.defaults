@@ -51,6 +51,16 @@ CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_SSH_KEEPALIVE_INTERVAL=30
 CONFIG_SSH_RECV_WINDOW=32768
 CONFIG_SSH_AUTO_RECONNECT=y
+# Kill DTIM-gated RX latency while a session is open (docs/speedup-render.md #2)
+CONFIG_SSH_WIFI_PS_NONE=y
+
+# Render speedup #3 (docs/speedup-render.md): TCP window 4xMSS -> 8xMSS so the
+# post-drain-loop throughput isn't window/RTT-bound. RX pbufs are SPIRAM-first
+# (SPIRAM_TRY_ALLOCATE_WIFI_LWIP above) so this costs no internal DRAM.
+# RECVMBOX rule: TCP_WND/MSS + 2.
+CONFIG_LWIP_TCP_WND_DEFAULT=11520
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=11520
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 
 # On-screen clock: US Pacific with DST (PST/PDT)
 CONFIG_CYBERDECK_TZ="PST8PDT,M3.2.0,M11.1.0"

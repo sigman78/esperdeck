@@ -32,6 +32,20 @@ esp_err_t vterm_init(int cols, int rows);
 void vterm_write(const char *data, size_t len);
 
 /**
+ * Feed raw bytes WITHOUT refreshing the display cell buffer.
+ * Used by the SSH drain loop to parse a batch of chunks and present
+ * once via vterm_flush() — see docs/speedup-render.md.
+ */
+void vterm_feed(const char *data, size_t len);
+
+/**
+ * Copy dirty rows to the display cell buffer and update the cursor.
+ * No-op while a ?2026 synchronized-output update is in progress
+ * (the frame is presented when the remote sends ESU).
+ */
+void vterm_flush(void);
+
+/**
  * Register a callback for bytes the terminal state machine needs to
  * send back to the remote (cursor-position reports, DA1 responses, ...).
  * Pass NULL to disable.
