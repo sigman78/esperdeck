@@ -130,10 +130,17 @@ esp_lcd_panel_handle_t display_get_panel(void);
  * washed 50% toward white, so a focused accent bar "lights up" to a pastel
  * of its own hue while the dark label gains contrast. Applied after INVERSE
  * (meant for bars; on a non-inverse cell it whitens the cell background).
+ *
+ * OVERLAY_ATTR_BOLD renders the cell with the real bold face when the font
+ * carries one for that codepoint (sparse subset A — ASCII, Latin-1/Ext-A,
+ * Cyrillic); outside the subset, or with bold glyphs compiled out, it
+ * silently falls back to the normal glyph. Purely a glyph swap: colors and
+ * the bold-pop terminal effect are untouched.
  */
 #define OVERLAY_ATTR_INVERSE  (1 << 0)
 #define OVERLAY_ATTR_DIM      (1 << 1)
 #define OVERLAY_ATTR_BRIGHT   (1 << 2)
+#define OVERLAY_ATTR_BOLD     (1 << 3)
 
 /* Per-cell accent color: index into the overlay palette. 0 = use the screen's
  * default overlay fg (set via display_set_overlay_colors); 1..N pick a fixed

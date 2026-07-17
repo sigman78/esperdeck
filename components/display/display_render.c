@@ -356,6 +356,13 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
             if (ov_attrs & OVERLAY_ATTR_BRIGHT)
                 bg = (color_t)(((bg >> 1) & 0x7BEF) + 0x7BEF);
             glyph = font_get_glyph(ov_cp);
+            if (ov_attrs & OVERLAY_ATTR_BOLD) {
+                /* Real bold face when stored; misses keep the normal glyph.
+                 * The `bold` local stays 0 — bold-pop is a terminal effect
+                 * and must not recolor overlay chrome. */
+                const font_row_t *ob = font_get_glyph_bold(ov_cp);
+                if (ob) glyph = ob;
+            }
         } else {
             const terminal_cell_t *cell = &row_cells[c];
             fg = cell->fg_color;

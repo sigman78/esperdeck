@@ -467,7 +467,7 @@ static void draw_titlebar(int x0, const char *text, uint32_t frame)
     }
     ui_pen(OVERLAY_COL_CYAN);
     ui_putch(x++, 0, ' ', OVERLAY_ATTR_INVERSE);
-    ui_puts (x, 0, text, OVERLAY_ATTR_INVERSE);
+    ui_puts (x, 0, text, OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD);
     x += (int)strlen(text);
     ui_putch(x++, 0, ' ', OVERLAY_ATTR_INVERSE);
     static const uint16_t rg[4] = { UI_BLOCK, UI_SHADE3, UI_SHADE2, UI_SHADE1 };
@@ -544,7 +544,8 @@ static int draw_status_led(int row, bool on, const char *label, const char *valu
     ui_pen(on ? OVERLAY_COL_GREEN : OVERLAY_COL_RED);
     ui_putch(2, row, cp, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_printf(4, row, 0, "%-4s %s", label, value);
+    ui_puts(4, row, label, OVERLAY_ATTR_BOLD);   /* bold key, regular value */
+    ui_puts(9, row, value, 0);
     return 9 + (int)strlen(value);
 }
 
@@ -716,7 +717,8 @@ static void render_home(void)
     ui_pen(OVERLAY_COL_BLUE);
     ui_putch(2, 2, UI_DIAMOND, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_printf(4, 2, 0, "RAM  %s", ram);
+    ui_puts(4, 2, "RAM", OVERLAY_ATTR_BOLD);
+    ui_puts(9, 2, ram, 0);
 
     /* ── Title + version on the RIGHT (rows 0-1) ────────────────────── */
     int tw = (int)strlen("CYBERDECK") + 10;
@@ -812,7 +814,7 @@ static void render_home(void)
         int tx = ui_cols() - ((int)strlen(s.toast) + 2) - 1;
         draw_footer_lim(hint, tx - 1);           /* -1: the taper cell */
         ui_pen(OVERLAY_COL_AMBER);
-        ui_chip(tx - 1, ui_rows() - 1, UI_PL_L, s.toast, 0);
+        ui_chip(tx - 1, ui_rows() - 1, UI_PL_L, s.toast, 0, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     } else {
         draw_footer(hint);
@@ -1678,7 +1680,8 @@ static void render_menu(void)
     /* Title as a magenta lozenge, centered over the chrome column. */
     int tl = (int)strlen(title);
     ui_pen(OVERLAY_COL_MAGENTA);
-    ui_chip(chrome_x + (40 - tl - 4) / 2, title_row, UI_RHALF, title, UI_LHALF);
+    ui_chip(chrome_x + (40 - tl - 4) / 2, title_row, UI_RHALF, title, UI_LHALF,
+            OVERLAY_ATTR_BOLD);
 
     /* Wall clock, top-right, ticking live (menu re-renders every frame). */
     char clk[8];
@@ -1709,17 +1712,18 @@ static void render_menu(void)
          * aligned on the title line, settings-table style. */
         const char *title = armed ? confirm : items[i];
         const char *body  = bodies ? bodies[i] : dim ? "(unavailable)" : "";
-        char fxline[44];
+        bool sel = i == s.menu_sel || grabbed;
         if (fxpage && body[0] && !armed) {
-            int iw  = g.tw - 4;
-            int pad = iw - (int)strlen(body) - 1;   /* ≥1-space gap */
-            if (pad < 1) pad = 1;
-            snprintf(fxline, sizeof(fxline), "%-*.*s %s", pad, pad, title, body);
-            title = fxline;
-            body  = "";
+            /* EFFECTS: value right-aligned on the title row, settings-table
+             * style. Overdrawn after the tile in regular weight, so the bold
+             * name carries the emphasis and the value reads as data. */
+            ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, title, "", sel);
+            ui_puts(tile_x(&g, i) + g.tw - 2 - (int)strlen(body),
+                    tile_y(&g, i) + (g.th - 1) / 2, body,
+                    OVERLAY_ATTR_INVERSE | (sel ? OVERLAY_ATTR_BRIGHT : 0));
+        } else {
+            ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, title, body, sel);
         }
-        ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, title, body,
-                i == s.menu_sel || grabbed);
     }
 
     /* Esc legend under the tile area — quiet blue, centered on the column. */
@@ -1785,11 +1789,11 @@ static void render_session_toast(uint64_t now)
         uint32_t el = (uint32_t)(TOAST_MS - (s.toast_until - now));
         char pad[68];
         snprintf(pad, sizeof(pad), "  %s", s.toast);
-        ui_chip(x - 3, 0, UI_PL_L, pad, 0);
+        ui_chip(x - 3, 0, UI_PL_L, pad, 0, 0);
         ui_putch(x - 1, 0, el < 800 ? spinner_glyph(s.anim_frame) : 0x2713,
                  OVERLAY_ATTR_INVERSE);
     } else {
-        ui_chip(x - 1, 0, UI_PL_L, s.toast, 0);
+        ui_chip(x - 1, 0, UI_PL_L, s.toast, 0, 0);
     }
     ui_pen(OVERLAY_COL_DEFAULT);
     ui_present();
@@ -1979,7 +1983,7 @@ static void render_saver(void)
         int cx = 2 + (int)(h % (uint32_t)(ui_cols() - 12));
         int cy = 1 + (int)((h >> 10) % (uint32_t)(ui_rows() - 2));
         ui_pen(OVERLAY_COL_WHITE);
-        ui_chip(cx, cy, 0, clk, 0);
+        ui_chip(cx, cy, 0, clk, 0, 0);
     }
     ui_pen(OVERLAY_COL_DEFAULT);
     ui_no_cursor();
@@ -2193,7 +2197,8 @@ static void render_wifiprov(uint64_t now)
         ram_stats(ram, sizeof(ram));
         ui_pen(OVERLAY_COL_BLUE);
         ui_putch(4, y + 2, UI_DIAMOND, 0);
-        ui_printf(6, y + 2, 0, "RAM  %s", ram);
+        ui_puts(6, y + 2, "RAM", OVERLAY_ATTR_BOLD);
+        ui_puts(11, y + 2, ram, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
@@ -2316,7 +2321,8 @@ static void render_sshimport(uint64_t now)
         ram_stats(ram, sizeof(ram));
         ui_pen(OVERLAY_COL_BLUE);
         ui_putch(4, y + 2, UI_DIAMOND, 0);
-        ui_printf(6, y + 2, 0, "RAM  %s", ram);
+        ui_puts(6, y + 2, "RAM", OVERLAY_ATTR_BOLD);
+        ui_puts(11, y + 2, ram, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
@@ -2951,6 +2957,7 @@ void cyberdeck_app_tick(uint64_t now)
     if (s.halted) return;
 
     s.anim_frame = (uint32_t)(now / ANIM_PERIOD_MS);
+    ui_frame(s.anim_frame);   /* marquee clock for ui_tile */
 
     switch (s.state) {
     case ST_BOOT:

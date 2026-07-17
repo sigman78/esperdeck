@@ -104,16 +104,24 @@ void ui_box(int col, int row, int w, int h, const char *title);
 
 /** Chip: optional left cap, " text " INVERSE, optional right cap (0 = none),
  *  all in the current pen. Caps draw non-INVERSE so they read as the chip
- *  tapering into the background. Returns the column after the chip. */
+ *  tapering into the background. @p attrs is OR-ed into the text cells
+ *  (OVERLAY_ATTR_BOLD for title chips; 0 for plain). Returns the column
+ *  after the chip. */
 int ui_chip(int col, int row, uint16_t left_cp, const char *text,
-            uint16_t right_cp);
+            uint16_t right_cp, uint8_t attrs);
 
 /** Draw a finger-sized tile: a solid bar in the current pen color (DOS-style
- *  button — always a colored background) with a title line and an optional
- *  body line, vertically centered. Selection washes the bar toward white
- *  (OVERLAY_ATTR_BRIGHT pastel glow); text stays dark. Truncated to fit. */
+ *  button — always a colored background) with a bold title line and an
+ *  optional regular-weight body line, vertically centered. Selection washes
+ *  the bar toward white (OVERLAY_ATTR_BRIGHT pastel glow); text stays dark.
+ *  Titles truncate; a too-long body bounce-scrolls per character while the
+ *  tile is selected (driven by the ui_frame() clock). */
 void ui_tile(int col, int row, int w, int h,
              const char *title, const char *body, bool selected);
+
+/** Feed the shell's ~10 fps animation frame counter (drives the selected-tile
+ *  body marquee). Call once per tick before rendering. */
+void ui_frame(uint32_t frame);
 
 /** Single-line text-entry field: a bracketed box @p width cells wide showing
  *  @p text with a block cursor at @p cursor when @p focused. Horizontally

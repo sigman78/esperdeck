@@ -25,6 +25,46 @@ static int  s_rows    = 0;
 static bool s_visible = false;
 static uint8_t s_pen  = OVERLAY_COL_DEFAULT;   /* current accent color */
 
+/* Shell animation clock (~10 fps), fed each tick via ui_frame(). Drives the
+ * selected-tile body marquee; time-based, so it keeps counting even while a
+ * screen skips renders. */
+static uint32_t s_frame = 0;
+
+void ui_frame(uint32_t frame) { s_frame = frame; }
+
+/* Bounce marquee for a body line longer than its tile: park at the head,
+ * crawl one character at a time to the tail, park, crawl back. State is a
+ * single owner slot keyed by tile origin — at most one tile is selected per
+ * screen, and the epoch resets whenever a different tile (or the same tile
+ * after a gap: reselection or a screen change) takes the marquee, so a fresh
+ * selection always starts reading from the head. */
+#define MQ_STEP_FRAMES 3   /* frames per character step (~3 cells/s) */
+#define MQ_DWELL_STEPS 5   /* extra steps parked at each end (~1.5 s) */
+
+static int      s_mq_col = -1, s_mq_row = -1;  /* owner tile origin */
+static uint32_t s_mq_zero = 0;                 /* owner's epoch frame */
+static uint32_t s_mq_seen = 0;                 /* owner last drawn at */
+
+static int marquee_offset(int col, int row, int overflow)
+{
+    if (col != s_mq_col || row != s_mq_row ||
+            s_frame - s_mq_seen > MQ_STEP_FRAMES) {
+        s_mq_col  = col;
+        s_mq_row  = row;
+        s_mq_zero = s_frame;
+    }
+    s_mq_seen = s_frame;
+
+    uint32_t ph = ((s_frame - s_mq_zero) / MQ_STEP_FRAMES)
+                  % (2u * (uint32_t)(overflow + MQ_DWELL_STEPS));
+    if (ph < MQ_DWELL_STEPS) return 0;                 /* head dwell */
+    ph -= MQ_DWELL_STEPS;
+    if (ph < (uint32_t)overflow) return (int)ph + 1;   /* crawl to tail */
+    ph -= (uint32_t)overflow;
+    if (ph < MQ_DWELL_STEPS) return overflow;          /* tail dwell */
+    return overflow - 1 - (int)(ph - MQ_DWELL_STEPS);  /* crawl back */
+}
+
 esp_err_t ui_init(void)
 {
     display_get_text_size(&s_cols, &s_rows);
@@ -168,12 +208,12 @@ void ui_box(int col, int row, int w, int h, const char *title)
 }
 
 int ui_chip(int col, int row, uint16_t left_cp, const char *text,
-            uint16_t right_cp)
+            uint16_t right_cp, uint8_t attrs)
 {
     int x = col;
     if (left_cp) ui_putch(x++, row, left_cp, 0);
     ui_putch(x++, row, ' ', OVERLAY_ATTR_INVERSE);
-    ui_puts(x, row, text, OVERLAY_ATTR_INVERSE);
+    ui_puts(x, row, text, OVERLAY_ATTR_INVERSE | attrs);
     x += (int)strlen(text);
     ui_putch(x++, row, ' ', OVERLAY_ATTR_INVERSE);
     if (right_cp) ui_putch(x++, row, right_cp, 0);
@@ -204,7 +244,8 @@ void ui_tile(int col, int row, int w, int h,
     }
 
     /* Title (+ optional body) vertically centered, left-padded 2 cells,
-     * truncated to the tile width. */
+     * truncated to the tile width. Titles carry the real bold face; the
+     * body stays regular so the pair reads as heading + detail. */
     int tx    = col + 2;
     int inner = w - 3;
     if (inner < 1) return;
@@ -213,10 +254,16 @@ void ui_tile(int col, int row, int w, int h,
     int ty    = row + (h - lines) / 2;
     if (title && *title) {
         snprintf(t, sizeof(t), "%-.*s", inner, title);
-        ui_puts(tx, ty, t, a);
+        ui_puts(tx, ty, t, a | OVERLAY_ATTR_BOLD);
     }
     if (lines == 2) {
-        snprintf(t, sizeof(t), "%-.*s", inner, body);
+        /* A body longer than the tile bounce-scrolls while selected (one
+         * character per step, dwelling at each end); unselected tiles show
+         * the truncated head. */
+        int off = 0, blen = (int)strlen(body);
+        if (selected && blen > inner)
+            off = marquee_offset(col, row, blen - inner);
+        snprintf(t, sizeof(t), "%-.*s", inner, body + off);
         ui_puts(tx, ty + 1, t, a);
     }
 }
