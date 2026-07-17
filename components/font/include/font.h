@@ -38,6 +38,17 @@ typedef uint8_t  font_row_t;
 typedef uint16_t font_row_t;
 #endif
 
+/*
+ * Real bold glyphs (Terminus bold face, sparse subset A: ASCII,
+ * Latin-1/Extended-A, Cyrillic). Device builds can opt out via Kconfig to
+ * reclaim DRAM; the simulator always compiles it.
+ */
+#if defined(CONFIG_CYBERDECK_FONT_BOLD) || defined(BUILD_SIMULATOR)
+#define FONT_BOLD_ENABLED 1
+#else
+#define FONT_BOLD_ENABLED 0
+#endif
+
 /**
  * Initialize font system
  */
@@ -50,5 +61,14 @@ void font_init(void);
  * @return   Pointer to FONT_HEIGHT rows in DRAM, or fallback glyph
  */
 const font_row_t* font_get_glyph(uint16_t cp);
+
+/**
+ * Get the BOLD glyph bitmap — IRAM_ATTR, safe to call from ISR.
+ *
+ * @return  FONT_HEIGHT rows in DRAM, or NULL when the codepoint has no
+ *          stored bold form (identical to normal, outside subset A, or
+ *          bold support disabled) — callers fall back to the normal glyph.
+ */
+const font_row_t* font_get_glyph_bold(uint16_t cp);
 
 #endif // FONT_H

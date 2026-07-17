@@ -13,3 +13,8 @@ typedef struct {
 
 extern const FontRange terminus_ranges[];
 extern const int       terminus_num_ranges;
+
+#if FONT_BOLD_ENABLED
+extern const FontRange terminus_bold_ranges[];
+extern const int       terminus_num_bold_ranges;
+#endif

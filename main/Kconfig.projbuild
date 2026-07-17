@@ -16,6 +16,16 @@ menu "Cyberdeck Configuration"
             bool "Terminus 12x24 (66x20 grid)"
     endchoice
 
+    config CYBERDECK_FONT_BOLD
+        bool "Real bold glyphs (Terminus bold face)"
+        default y
+        help
+            Store the Terminus bold face for ASCII, Latin-1/Extended-A and
+            Cyrillic (~6.6 / 16.5 / 19.8 KB internal DRAM at 8x16 / 10x20 /
+            12x24). SGR-bold text renders with true bold glyphs; codepoints
+            outside the subset fall back to the bold-pop color effect.
+            Disable to reclaim the DRAM.
+
     config SCROLLBACK_LINES
         int "Scrollback buffer (lines)"
         default 1000

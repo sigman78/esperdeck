@@ -364,6 +364,13 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
             underline = cell->attrs & ATTR_UNDERLINE;
             bold      = cell->attrs & ATTR_BOLD;
             glyph = font_get_glyph(cell->cp);
+            if (bold) {
+                /* Real bold face when stored (subset A); misses keep the
+                 * normal glyph. The bold-pop color effect applies either
+                 * way — it is an independent, user-tunable emphasis. */
+                const font_row_t *bg2 = font_get_glyph_bold(cell->cp);
+                if (bg2) glyph = bg2;
+            }
 #if DISPLAY_FX_ROW_GLOW
             /* Back glow tints the terminal bg toward the warm accent,
              * before any scrim dim so a modal's scrim also dims the glow. */
