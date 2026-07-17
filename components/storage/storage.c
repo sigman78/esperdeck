@@ -12,6 +12,7 @@
 #include "esp_heap_caps.h"
 
 #include <stdio.h>
+#include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -341,6 +342,94 @@ esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count)
 
     if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
     ESP_LOGI(TAG, "Saved %d WiFi profile(s)", count);
+    return ESP_OK;
+}
+
+/* -------------------------------------------------------------------------
+ * Render-effect settings — fx.ini, flat "key=value" lines.
+ *
+ * Table-driven: each key maps to one byte field of display_fx_cfg_t, so
+ * load and save can't drift apart. Missing keys keep whatever the caller
+ * pre-filled (pass display_fx_defaults() output); unknown keys are ignored,
+ * and display_fx_set() range-clamps everything afterwards.
+ * ---------------------------------------------------------------------- */
+
+typedef struct {
+    const char *key;
+    size_t      off;      /* offsetof the uint8_t field in display_fx_cfg_t */
+} fx_field_t;
+
+static const fx_field_t fx_fields[] = {
+    { "scanlines",       offsetof(display_fx_cfg_t, scanlines)       },
+    { "bold_pop",        offsetof(display_fx_cfg_t, bold_pop)        },
+    { "mono",            offsetof(display_fx_cfg_t, mono)            },
+    { "glow",            offsetof(display_fx_cfg_t, glow)            },
+    { "glow_frames",     offsetof(display_fx_cfg_t, glow_frames)     },
+    { "glow_strength",   offsetof(display_fx_cfg_t, glow_strength)   },
+    { "wipe",            offsetof(display_fx_cfg_t, wipe)            },
+    { "wipe_frames",     offsetof(display_fx_cfg_t, wipe_frames)     },
+    { "collapse",        offsetof(display_fx_cfg_t, collapse)        },
+    { "collapse_frames", offsetof(display_fx_cfg_t, collapse_frames) },
+    { "static",          offsetof(display_fx_cfg_t, static_burst)    },
+    { "static_frames",   offsetof(display_fx_cfg_t, static_frames)   },
+    { "static_lines",    offsetof(display_fx_cfg_t, static_lines)    },
+};
+
+static void fx_path(char *buf, size_t bufsz)
+{
+    snprintf(buf, bufsz, "%s/fx.ini", storage_platform_mount_point());
+}
+
+esp_err_t storage_fx_load(display_fx_cfg_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+
+    char path[128];
+    fx_path(path, sizeof(path));
+
+    FILE *f = fopen(path, "r");
+    if (!f) return ESP_OK;   /* no file — caller keeps its defaults */
+
+    char line[128];
+    while (fgets(line, sizeof(line), f)) {
+        rtrim(line);
+        if (line[0] == '\0' || line[0] == '#' || line[0] == ';' ||
+            line[0] == '[')
+            continue;
+        char key[32], val[32];
+        if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
+        for (int i = 0; i < (int)(sizeof(fx_fields) / sizeof(fx_fields[0])); i++) {
+            if (strcmp(key, fx_fields[i].key) == 0) {
+                int v = atoi(val);
+                if (v < 0) v = 0;
+                if (v > 255) v = 255;
+                ((uint8_t *)cfg)[fx_fields[i].off] = (uint8_t)v;
+                break;
+            }
+        }
+    }
+    fclose(f);
+    ESP_LOGI(TAG, "Loaded fx settings");
+    return ESP_OK;
+}
+
+esp_err_t storage_fx_save(const display_fx_cfg_t *cfg)
+{
+    if (!cfg) return ESP_ERR_INVALID_ARG;
+
+    char path[128];
+    fx_path(path, sizeof(path));
+
+    atomic_file_t af;
+    FILE *f = atomic_open(&af, path);
+    if (!f) return ESP_FAIL;
+
+    for (int i = 0; i < (int)(sizeof(fx_fields) / sizeof(fx_fields[0])); i++)
+        fprintf(f, "%s=%u\n", fx_fields[i].key,
+                (unsigned)((const uint8_t *)cfg)[fx_fields[i].off]);
+
+    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    ESP_LOGI(TAG, "Saved fx settings");
     return ESP_OK;
 }
 
@@ -750,6 +839,7 @@ esp_err_t storage_factory_reset(void)
     const char *mp = storage_platform_mount_point();
     static const char *files[] = {
         "profiles.ini", "wifi.ini", "known_hosts.ini", "ble_devices.ini",
+        "fx.ini",
     };
     char path[160];
     for (int i = 0; i < (int)(sizeof(files) / sizeof(files[0])); i++) {

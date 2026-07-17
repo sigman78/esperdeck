@@ -17,6 +17,7 @@
 #define STORAGE_H
 
 #include "esp_err.h"
+#include "display_fx.h"   /* display_fx_cfg_t (fx.ini settings) */
 #include <stddef.h>
 #include <stdint.h>
 
@@ -121,6 +122,22 @@ esp_err_t storage_wifi_load(wifi_profile_t *out, int *count, int max);
  * Save WiFi profiles to <mount_point>/wifi.ini (atomic replace).
  */
 esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count);
+
+/* -------------------------------------------------------------------------
+ * Render-effect settings (fx.ini)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Overlay fx settings from <mount_point>/fx.ini onto @p cfg.
+ * Pre-fill @p cfg with display_fx_defaults(); keys absent from the file
+ * keep their pre-filled values. Missing file: ESP_OK, cfg untouched.
+ */
+esp_err_t storage_fx_load(display_fx_cfg_t *cfg);
+
+/**
+ * Save fx settings to <mount_point>/fx.ini (atomic replace).
+ */
+esp_err_t storage_fx_save(const display_fx_cfg_t *cfg);
 
 /* -------------------------------------------------------------------------
  * Known SSH host keys (TOFU pinning)

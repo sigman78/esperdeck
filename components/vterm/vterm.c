@@ -14,6 +14,7 @@
 
 #include "vterm.h"
 #include "display.h"
+#include "display_fx.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <string.h>
@@ -62,10 +63,24 @@ static inline void refresh_display(void)
 #ifdef CONFIG_VTERM_BENCH
     uint32_t t0 = esp_cpu_get_cycle_count();
 #endif
+#if DISPLAY_FX_ROW_GLOW
+    /* Row-glow stamping: a bulk repaint (scroll, clear, paging) marks most
+     * rows dirty in one flush — stamping those would flash the whole screen
+     * instead of highlighting fresh output. Stamp only sparse flushes. */
+    int ndirty = 0;
+    for (int row = 0; row < s_rows; row++)
+        if (dirty[row].l <= dirty[row].r) ndirty++;
+    const bool stamp = ndirty <= s_rows / 3;
+#endif
+
     for (int row = 0; row < s_rows; row++) {
         int l = (int)dirty[row].l;
         int r = (int)dirty[row].r;
         if (l > r) continue;
+#if DISPLAY_FX_ROW_GLOW
+        if (stamp)
+            display_fx_touch_row(row);   /* drives the row-recency back glow */
+#endif
         const tsm_cell_t *src = tsm_screen(s_tsm) + row * s_cols + l;
         terminal_cell_t  *dst = s_buffer          + row * s_cols + l;
         for (int col = l; col <= r; col++, src++, dst++) {
@@ -132,11 +147,13 @@ void vterm_feed(const char *data, size_t len)
 {
     if (!s_initialized) return;
 
-    /* Visual bell: tsm swallows BEL (0x07) silently, so trigger the screen
-     * shake here. A bare BEL in the stream is the terminal bell; the rare
-     * 0x07 inside an escape sequence just gives a harmless extra shake. */
+    /* Visual bell: tsm swallows BEL (0x07) silently, so trigger the alert
+     * here — the red BEL tag plus a half-length static burst (a no-op when
+     * disabled in the fx config). A bare BEL in the stream is the terminal
+     * bell; the rare 0x07 inside an escape sequence just gives a harmless
+     * extra flash. */
     for (size_t i = 0; i < len; i++)
-        if (data[i] == 0x07) { display_bell(); break; }
+        if (data[i] == 0x07) { display_bell(); display_fx_static_brief(); break; }
 
 #ifdef CONFIG_VTERM_BENCH
     uint32_t t0 = esp_cpu_get_cycle_count();

@@ -5,6 +5,7 @@ cyberdeck_component_register(
     SRCS_DEV     storage_dev.c
     SRCS_SIM     storage_sim.c
     INCLUDE_DIRS include
+    REQUIRES     display            # display_fx.h (fx.ini settings struct)
     REQUIRES_DEV nvs_flash          # littlefs auto-required via idf_component.yml
 )
 

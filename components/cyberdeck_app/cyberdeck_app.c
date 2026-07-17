@@ -25,6 +25,7 @@
 #include <time.h>
 
 #include "esp_log.h"
+#include "display_fx.h"
 #include "ssh_client.h"
 #include "storage.h"
 #include "vterm.h"
@@ -1364,6 +1365,7 @@ typedef enum {
     MS_WIFI,       /* Reconnect / Add network / Back                          */
     MS_KEYBOARD,   /* Pair / Forget bonds / Back                             */
     MS_SYSTEM,     /* Clear host keys / Factory reset / Back                  */
+    MS_EFFECTS,    /* dynamic bodies: every runtime render-fx tunable        */
     MS_DELPROFILE, /* dynamic: pick a stored profile to delete               */
     MS_EDITPROFILE,/* dynamic: pick a stored profile to edit                 */
     MS_REORDER,    /* dynamic: grab a profile, move it, drop it              */
@@ -1374,9 +1376,11 @@ typedef enum {
 static const char *main_items[]     = { "Resume session", "Disconnect", "Configuration >" };
 static const uint8_t main_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
 
-static const char *config_items[]   = { "Profiles >", "WiFi >", "Keyboard >", "System >", "Back" };
+static const char *config_items[]   = { "Profiles >", "WiFi >", "Keyboard >", "Effects >",
+                                        "System >", "Back" };
 static const uint8_t config_cols[]  = { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN,
-                                        OVERLAY_COL_MAGENTA, OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
+                                        OVERLAY_COL_MAGENTA, OVERLAY_COL_CYAN,
+                                        OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
 #define CFG_KEYBOARD 2   /* index of "Keyboard >" (needs BLE) */
 
 static const char *profiles_items[] = { "Add (type here)", "Edit", "Reorder",
@@ -1443,6 +1447,121 @@ static bool menu_item_dim(int sc, int sel)
     return (sc == MS_CONFIG && sel == CFG_KEYBOARD) || (sc == MS_KEYBOARD);
 }
 
+/* -------------------------------------------------------------------------
+ * EFFECTS page — every runtime render-fx tunable as a value-cycling tile.
+ * Tapping a tile steps its value (wrapping); the menu re-renders every frame
+ * so the body text follows. Values are quantized presets here; fx.ini keeps
+ * byte-granular control for anything in between.
+ * ---------------------------------------------------------------------- */
+
+/* Tile order for the EFFECTS page. The row-glow tiles exist only when the
+ * effect is compiled in (DISPLAY_FX_ROW_GLOW) — the enum renumbers itself. */
+enum {
+    FXM_SCAN, FXM_MONO, FXM_BOLD,
+#if DISPLAY_FX_ROW_GLOW
+    FXM_GLOW, FXM_DECAY,
+#endif
+    FXM_WIPE, FXM_COLLAPSE, FXM_STATIC, FXM_BACK,
+    FX_MENU_TILES,
+};
+
+/* Frames (~39/s) to a compact "0.5s" string. */
+static void fx_secs(char *buf, size_t sz, unsigned frames)
+{
+    unsigned ms = frames * 26u;
+    snprintf(buf, sz, "%u.%us", ms / 1000u, (ms % 1000u) / 100u);
+}
+
+/* Fill titles + current-value bodies for the EFFECTS page. */
+static int fx_menu_items(const char *out[], const char *bodies[],
+                         char (*buf)[16])
+{
+    display_fx_cfg_t c;
+    display_fx_get(&c);
+    char t[8];
+
+    out[FXM_SCAN] = "Scanlines";
+    snprintf(buf[FXM_SCAN], sizeof(buf[FXM_SCAN]), "%s",
+             c.scanlines ? "on" : "off");
+    out[FXM_MONO] = "Phosphor";
+    snprintf(buf[FXM_MONO], sizeof(buf[FXM_MONO]), "%s",
+             c.mono == 0 ? "color" : c.mono == 1 ? "green" : "amber");
+    out[FXM_BOLD] = "Bold pop";
+    snprintf(buf[FXM_BOLD], sizeof(buf[FXM_BOLD]), "%s",
+             c.bold_pop ? "on" : "off");
+#if DISPLAY_FX_ROW_GLOW
+    out[FXM_GLOW] = "Row glow";
+    snprintf(buf[FXM_GLOW], sizeof(buf[FXM_GLOW]), "%s",
+             !c.glow ? "off" : c.glow_strength ? "strong" : "subtle");
+    fx_secs(t, sizeof(t), c.glow_frames);
+    out[FXM_DECAY] = "Glow decay";
+    snprintf(buf[FXM_DECAY], sizeof(buf[FXM_DECAY]), "%s", t);
+#endif
+    fx_secs(t, sizeof(t), c.wipe_frames);
+    out[FXM_WIPE] = "Connect wipe";
+    snprintf(buf[FXM_WIPE], sizeof(buf[FXM_WIPE]), "%s", !c.wipe ? "off" : t);
+    fx_secs(t, sizeof(t), c.collapse_frames);
+    out[FXM_COLLAPSE] = "Collapse";
+    snprintf(buf[FXM_COLLAPSE], sizeof(buf[FXM_COLLAPSE]), "%s",
+             !c.collapse ? "off" : t);
+    out[FXM_STATIC] = "Static burst";
+    snprintf(buf[FXM_STATIC], sizeof(buf[FXM_STATIC]), "%s",
+             !c.static_burst      ? "off"
+             : c.static_lines <= 1 ? "light"
+             : c.static_lines == 2 ? "medium"
+                                   : "heavy");
+    out[FXM_BACK]    = "Back";
+    buf[FXM_BACK][0] = '\0';
+    for (int i = 0; i < FX_MENU_TILES; i++) bodies[i] = buf[i];
+    return FX_MENU_TILES;
+}
+
+/* Step the EFFECTS tunable at @p sel, persist, and (for the event effects)
+ * arm a one-shot preview so the change is seen immediately. */
+static void fx_menu_cycle(int sel)
+{
+    display_fx_cfg_t c;
+    display_fx_get(&c);
+    switch (sel) {
+    case FXM_SCAN: c.scanlines = !c.scanlines; break;
+    case FXM_MONO: c.mono = (uint8_t)((c.mono + 1) % 3); break;
+    case FXM_BOLD: c.bold_pop = !c.bold_pop;             break;
+#if DISPLAY_FX_ROW_GLOW
+    case FXM_GLOW:  /* off -> subtle -> strong -> off */
+        if (!c.glow)                { c.glow = 1; c.glow_strength = 0; }
+        else if (!c.glow_strength)    c.glow_strength = 1;
+        else                          c.glow = 0;
+        break;
+    case FXM_DECAY:  /* 0.3s -> 0.5s -> 1s -> 2s -> 0.3s */
+        c.glow_frames = c.glow_frames < 16 ? 20
+                      : c.glow_frames < 30 ? 39
+                      : c.glow_frames < 60 ? 78 : 12;
+        break;
+#endif
+    case FXM_WIPE:  /* off -> fast -> slow -> off */
+        if (!c.wipe)                  { c.wipe = 1; c.wipe_frames = 12; }
+        else if (c.wipe_frames <= 12)   c.wipe_frames = 24;
+        else                            c.wipe = 0;
+        break;
+    case FXM_COLLAPSE:
+        if (!c.collapse)                  { c.collapse = 1; c.collapse_frames = 8; }
+        else if (c.collapse_frames <= 8)    c.collapse_frames = 20;
+        else                                c.collapse = 0;
+        break;
+    case FXM_STATIC:  /* off -> light -> heavy -> off */
+        if (!c.static_burst) { c.static_burst = 1; c.static_frames = 8;  c.static_lines = 1; }
+        else if (c.static_lines <= 1) { c.static_frames = 14; c.static_lines = 3; }
+        else c.static_burst = 0;
+        break;
+    default: return;
+    }
+    display_fx_set(&c);
+    storage_fx_save(&c);
+    if (sel == FXM_WIPE && c.wipe)             display_fx_wipe();
+    if (sel == FXM_COLLAPSE && c.collapse)     display_fx_collapse();
+    if (sel == FXM_STATIC && c.static_burst)   display_fx_static();
+}
+
 /* Build a stored-profile picker's tiles plus a trailing "Back". Titles are
  * the profile names; bodies "user@host" keep same-named entries tellable.
  * Names point into s.profiles, bodies into @p bodybuf — frame-local. */
@@ -1468,16 +1587,21 @@ static void render_menu(void)
     const int sc = s.menu_screen;
     const bool root = (sc == MS_MAIN);
 
-    /* Resolve the page: static def, or a dynamic stored-profile picker. */
+    /* Resolve the page: static def, a dynamic stored-profile picker, or the
+     * EFFECTS page (static titles, live value bodies). */
     const char *dyn[MAX_PROFILES + 1];
     const char *dynb[MAX_PROFILES + 1];
     char bodybuf[MAX_PROFILES][28];
+    const char *fxi[FX_MENU_TILES];
+    const char *fxb[FX_MENU_TILES];
+    char fxbuf[FX_MENU_TILES][16];
     const char *title;
     const char *const *items;
     const char *const *bodies = NULL;
     const uint8_t *cols;
     int count;
     const bool picker = menu_is_picker(sc);
+    const bool fxpage = (sc == MS_EFFECTS);
     if (picker) {
         title = sc == MS_DELPROFILE  ? "DELETE PROFILE"
               : sc == MS_EDITPROFILE ? "EDIT PROFILE"
@@ -1485,6 +1609,12 @@ static void render_menu(void)
         count  = picker_items(dyn, dynb, bodybuf, NELEM(dyn));
         items  = dyn;
         bodies = dynb;
+        cols   = NULL;                      /* colored per-tile below */
+    } else if (fxpage) {
+        title  = "EFFECTS";
+        count  = fx_menu_items(fxi, fxb, fxbuf);
+        items  = fxi;
+        bodies = fxb;
         cols   = NULL;                      /* colored per-tile below */
     } else {
         menu_def_t d = menu_def(sc);
@@ -1497,7 +1627,7 @@ static void render_menu(void)
      * tile_y/tile_nav/tile_hit). */
     tilegrid_t g;
     int title_row, ly, chrome_x;
-    if (picker) {
+    if (picker || fxpage) {
         g = picker_grid(count);
         title_row = 2;
         ly        = ui_rows() - 3;
@@ -1541,11 +1671,13 @@ static void render_menu(void)
                               : grabbed             ? OVERLAY_COL_GREEN
                               : sc == MS_REORDER    ? OVERLAY_COL_MAGENTA
                                                     : OVERLAY_COL_CYAN;
+        else if (fxpage)  col = i == g.count - 1 ? OVERLAY_COL_BLUE
+                                                 : OVERLAY_COL_CYAN;
         else              col = cols[i];
         ui_pen(col);
         ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th,
                 armed ? confirm : items[i],
-                picker ? bodies[i] : dim ? "(unavailable)" : "",
+                bodies ? bodies[i] : dim ? "(unavailable)" : "",
                 i == s.menu_sel || grabbed);
         if (i == s.menu_sel) {
             static const uint16_t pulse[3] = { UI_PLAY, UI_DIAMOND, UI_VBAR };
@@ -2355,7 +2487,11 @@ static void menu_activate(uint64_t now)
     case MS_MAIN:
         switch (sel) {
         case 0: s.state = ST_SESSION; ui_hide();          return;  /* resume  */
-        case 1: ssh_client_disconnect(); enter_home(now); return;  /* discon. */
+        case 1:                                                    /* discon. */
+            display_fx_collapse();   /* deliberate power-off: CRT collapse */
+            ssh_client_disconnect();
+            enter_home(now);
+            return;
         case 2: menu_goto(MS_CONFIG);                     return;
         }
         return;
@@ -2368,10 +2504,16 @@ static void menu_activate(uint64_t now)
             if (!s.cfg.ble) { menu_note(now, MENU_MSG_MS, false,
                                         "no BLE keyboard support"); break; }
             menu_goto(MS_KEYBOARD); return;
-        case 3: menu_goto(MS_SYSTEM);   return;
-        case 4: menu_back(now);         return;   /* Back */
+        case 3: menu_goto(MS_EFFECTS); return;
+        case 4: menu_goto(MS_SYSTEM);  return;
+        case 5: menu_back(now);        return;   /* Back */
         }
         break;
+
+    case MS_EFFECTS:
+        if (sel >= FX_MENU_TILES - 1) { menu_back(now); return; }  /* Back */
+        fx_menu_cycle(sel);
+        return;
 
     case MS_PROFILES:
         switch (sel) {
@@ -2571,6 +2713,8 @@ static void session_dropped(uint64_t now)
     uint32_t dur = (uint32_t)((now - s.session_start) / 1000);
     const char *why = ssh_client_last_error();
     display_bell();
+    display_fx_collapse();       /* CRT power-off */
+    if (why[0]) display_fx_static();   /* transport error: signal-loss snow */
     if (why[0])
         toast_for(now, ERR_TOAST_MS, "NO CARRIER (%02u:%02u) - %.36s",
                   dur / 60, dur % 60, why);
@@ -2584,6 +2728,7 @@ static void enter_session(uint64_t now)
     s.state = ST_SESSION;
     s.session_start   = now;
     s.connect_attempt = 0;   /* a future drop counts retries from 1 again */
+    display_fx_wipe();       /* raster-reveal the fresh session */
     ui_hide();
     /* The terminal was cleared inside ssh_client_connect() before the read
      * task spawned — doing it here would race that task inside vterm. */
@@ -2732,6 +2877,13 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     load_profiles();
     kick_wifi();
 
+    /* Render-effect tunables: defaults overlaid with fx.ini (internal-DRAM
+     * startup task — flash I/O is safe here). */
+    display_fx_cfg_t fxc;
+    display_fx_defaults(&fxc);
+    storage_fx_load(&fxc);
+    display_fx_set(&fxc);
+
     ESP_LOGI(TAG, "shell up: %d profile(s)", s.profile_count);
     return ESP_OK;
 }
@@ -2750,6 +2902,7 @@ void cyberdeck_app_tick(uint64_t now)
     switch (s.state) {
     case ST_BOOT:
         if (now >= s.boot_until) {
+            display_fx_wipe();   /* raster-reveal HOME once the splash ends */
             enter_home(now);
             break;
         }
@@ -2846,6 +2999,7 @@ void cyberdeck_app_tick(uint64_t now)
                 ssh_client_disconnect();
                 session_dropped(now);
             } else if (s.cfg.auto_reconnect) {
+                display_fx_static();   /* brief signal-loss snow, then retry */
                 toast(now, "session dropped - reconnecting");
                 start_reconnect(now + s.cfg.ssh_retry_delay_ms, now);
             } else {

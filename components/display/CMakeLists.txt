@@ -1,7 +1,7 @@
 include(${PROJECT_DIR}/cmake/cyberdeck_component.cmake)
 
 cyberdeck_component_register(
-    SRCS         display_render.c
+    SRCS         display_render.c display_fx.c
     SRCS_DEV     lcd_driver.c
     SRCS_SIM     display_sdl.c
     INCLUDE_DIRS include

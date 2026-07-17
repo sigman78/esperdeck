@@ -8,6 +8,7 @@
  */
 
 #include "display_render.h"
+#include "display_fx_internal.h"
 #include "font.h"
 #include <string.h>
 
@@ -75,15 +76,41 @@ static DRAM_ATTR bool          s_cursor_visible = true;
 #define OVERLAY_DIM_DITHER 0
 #endif
 
-static DRAM_ATTR struct {
-    const uint8_t *glyph;   /* 16-byte bitmap in DRAM (terminus8x16)     */
-    uint16_t       bg;      /* background colour RGB565                   */
-    uint16_t       xorfg;   /* bg ^ fg — XOR in to flip bg→fg per bit    */
-    uint8_t        underline; /* draw fg bar on the last two scanlines    */
+/* Column cache as parallel arrays. bg/xorfg carry TWO variants selected per
+ * scanline: [0] = normal, [1] = scanline-dimmed (the CRT-scanline effect).
+ * Selecting the variant per scanline keeps the hot loop free of any
+ * per-pixel effect cost — the "shader" work all happens per-cell here. */
+static DRAM_ATTR const uint8_t *s_cc_glyph[RENDER_MAX_COLS];
+static DRAM_ATTR uint16_t       s_cc_bg[2][RENDER_MAX_COLS];
+static DRAM_ATTR uint16_t       s_cc_xf[2][RENDER_MAX_COLS];
+static DRAM_ATTR uint8_t        s_cc_ul[RENDER_MAX_COLS];
 #if OVERLAY_DIM_DITHER
-    uint8_t        dim;     /* overlay DIM scrim → checkerboard this column */
+static DRAM_ATTR uint8_t        s_cc_dim[RENDER_MAX_COLS];
 #endif
-} s_col_cache[RENDER_MAX_COLS];
+
+/* -------------------------------------------------------------------------
+ * Carry-safe RGB565 helpers (per-field shift/mask math — a masked
+ * right-shift can only shrink a 565 field, never bleed into a neighbour).
+ * ---------------------------------------------------------------------- */
+
+/* Scanline dim: 93.75% brightness, the one level that read as CRT texture
+ * on-glass — everything stronger (87.5% and below) read as bars. */
+static inline uint16_t fx_dim565(uint16_t p)
+{
+    return (uint16_t)(p - ((p >> 4) & 0x0861));
+}
+
+/* Luma-map onto a monochrome phosphor ramp: mode 1 = green, 2 = amber. */
+static inline uint16_t fx_mono565(uint16_t p, uint8_t mode)
+{
+    const uint32_t r6 = ((p >> 11) & 0x1F) << 1;
+    const uint32_t g6 = (p >> 5) & 0x3F;
+    const uint32_t b6 = (p & 0x1F) << 1;
+    const uint32_t y  = (r6 * 5 + g6 * 9 + b6 * 2) >> 4;   /* 0..62 */
+    if (mode == 1)
+        return (uint16_t)(y << 5);                            /* green  */
+    return (uint16_t)(((y >> 1) << 11) | (((y * 11) >> 4) << 5)); /* amber */
+}
 
 /* -------------------------------------------------------------------------
  * Branchless pixel-pair → 32-bit word (little-endian, 2×RGB565).
@@ -197,8 +224,11 @@ static DRAM_ATTR volatile int s_bell_frames = 0;   /* frames the tag stays up */
 
 void display_bell(void) { s_bell_frames = BELL_TOTAL; }
 
-/* Fill s_col_cache with the resolved fg/bg/glyph for character row @p cr. */
-static IRAM_ATTR void build_row_cache(int cr)
+/* Fill the column cache with the resolved fg/bg/glyph for character row
+ * @p cr. @p scan_on (0/1) selects whether the scanline-dim variant [1] is
+ * also produced (captured once per band so the fill and the scanline loop
+ * always agree, even if the config changes mid-band). */
+static IRAM_ATTR void build_row_cache(int cr, int scan_on)
 {
     const terminal_cell_t *row_cells = s_cell_buf + cr * s_cell_cols;
     const int ncols = s_cell_cols;
@@ -206,10 +236,34 @@ static IRAM_ATTR void build_row_cache(int cr)
         (s_overlay_buf && cr < s_overlay_rows)
         ? (s_overlay_buf + cr * s_overlay_cols) : NULL;
 
+    const uint8_t mono     = g_fx_cfg.mono;
+    const uint8_t bold_pop = g_fx_cfg.bold_pop;
+
+#if DISPLAY_FX_ROW_GLOW
+    /* Row-recency back glow: resolve this row's tier once per band.
+     * 0 = none, 1 = subtle (12.5% accent), 2 = strong (25% accent). */
+    int glow_tier = 0;
+    if (g_fx_cfg.glow && cr < DISPLAY_FX_MAX_ROWS) {
+        const uint8_t gf  = g_fx_cfg.glow_frames;
+        const uint8_t age = (uint8_t)(g_fx_frame - g_fx_row_stamp[cr]);
+        if (age < gf)
+            glow_tier = (g_fx_cfg.glow_strength && age * 2 < gf) ? 2 : 1;
+        else if (age > 128)
+            /* Re-pin long-expired stamps so the uint8 frame counter can't
+             * wrap back into the glow window (~6.5 s) and re-tint a stale
+             * row. Only past the halfway point (gf is clamped ≤ 120), so
+             * this write is rare — it races display_fx_touch_row at most
+             * once per ~3 s per idle row, and a lost touch just skips one
+             * glow (self-heals on the row's next flush). */
+            g_fx_row_stamp[cr] = (uint8_t)(g_fx_frame - gf);
+    }
+#endif
+
     for (int c = 0; c < ncols; c++) {
         color_t fg, bg;
         const uint8_t *glyph;
         uint8_t underline = 0;
+        uint8_t bold      = 0;
 #if OVERLAY_DIM_DITHER
         uint8_t dim = 0;
 #endif
@@ -229,7 +283,16 @@ static IRAM_ATTR void build_row_cache(int cr)
             bg = cell->bg_color;
             if (cell->attrs & ATTR_REVERSE) { color_t t = fg; fg = bg; bg = t; }
             underline = cell->attrs & ATTR_UNDERLINE;
+            bold      = cell->attrs & ATTR_BOLD;
             glyph = font_get_glyph(cell->cp);
+#if DISPLAY_FX_ROW_GLOW
+            /* Back glow tints the terminal bg toward the warm accent,
+             * before any scrim dim so a modal's scrim also dims the glow. */
+            if (glow_tier == 1)
+                bg = (color_t)((bg - ((bg >> 3) & 0x18E3)) + g_fx_glow_acc[0]);
+            else if (glow_tier == 2)
+                bg = (color_t)((bg - ((bg >> 2) & 0x39E7)) + g_fx_glow_acc[1]);
+#endif
             if (ov_attrs & OVERLAY_ATTR_DIM) {
 #if OVERLAY_DIM_DITHER
                 dim = 1;   /* full colour; checkerboarded in the post-pass */
@@ -239,12 +302,29 @@ static IRAM_ATTR void build_row_cache(int cr)
 #endif
             }
         }
-        s_col_cache[c].glyph     = glyph;
-        s_col_cache[c].bg        = bg;
-        s_col_cache[c].xorfg     = (uint16_t)(fg ^ bg);
-        s_col_cache[c].underline = underline;
+
+        /* Mono phosphor mode flattens everything (incl. overlay + glow)
+         * onto one ramp; bold pop then brightens within the ramp
+         * (carry-safe OR — sets lower field bits, never overflows). */
+        if (mono) {
+            fg = fx_mono565(fg, mono);
+            bg = fx_mono565(bg, mono);
+        }
+        if (bold && bold_pop)
+            fg |= (uint16_t)((fg >> 1) & 0x7BEF);
+
+        s_cc_glyph[c] = glyph;
+        s_cc_bg[0][c] = bg;
+        s_cc_xf[0][c] = (uint16_t)(fg ^ bg);
+        s_cc_ul[c]    = underline;
+        if (scan_on) {
+            const uint16_t fgd = fx_dim565(fg);
+            const uint16_t bgd = fx_dim565(bg);
+            s_cc_bg[1][c] = bgd;
+            s_cc_xf[1][c] = (uint16_t)(fgd ^ bgd);
+        }
 #if OVERLAY_DIM_DITHER
-        s_col_cache[c].dim       = dim;
+        s_cc_dim[c] = dim;
 #endif
     }
 }
@@ -274,6 +354,15 @@ static IRAM_ATTR void draw_bell_tag(color_t *dst)
     }
 }
 
+/* Signal-loss static: 16 packed pixel-pairs of grayscale "snow", indexed by
+ * a cheap LCG so no RNG state is needed in the ISR. DRAM-resident. */
+static DRAM_ATTR const uint32_t s_fx_noise[16] = {
+    0x0000FFFFu, 0xFFFF0000u, 0x00000000u, 0xFFFFFFFFu,
+    0x84108410u, 0x00008410u, 0x84100000u, 0xC618C618u,
+    0x42084208u, 0x0000C618u, 0xFFFF8410u, 0x21042104u,
+    0x4208FFFFu, 0x00002104u, 0xC6184208u, 0x8410FFFFu,
+};
+
 /**
  * Render one horizontal band (one character-row height) into dst.
  *
@@ -298,12 +387,16 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
     const int num_scans  = (n_bytes >> 1) / DISPLAY_WIDTH;  /* n_bytes/2 = pixels */
     const int char_row   = start_scan / FONT_HEIGHT;
 
-    /* Tick blink counter once per full frame (char_row 0 = start of new frame). */
+    /* Tick per-frame counters once per full frame (char_row 0 = new frame). */
     if (char_row == 0) {
         if (++s_blink_count >= CURSOR_BLINK_FRAMES) {
             s_blink_count    = 0;
             s_cursor_visible = !s_cursor_visible;
         }
+        g_fx_frame++;
+        if (g_fx_wipe_left     > 0) g_fx_wipe_left--;
+        if (g_fx_collapse_left > 0) g_fx_collapse_left--;
+        if (g_fx_static_left   > 0) g_fx_static_left--;
     }
 
     /* Below the text area — fill black. */
@@ -314,9 +407,62 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         return;
     }
 
-    /* Build the per-column cache for this character row (shared with the
-     * bell-shake path). */
-    build_row_cache(char_row);
+    /* ------------------------------------------------------------------
+     * Wipe / collapse clip window: while one is active, only scanlines in
+     * [wv0, wv1) show content; the rest go black, with bright edge lines
+     * at [ea0,ea1) / [eb0,eb1). Bands fully outside skip rendering.
+     * ------------------------------------------------------------------ */
+    int wv0 = 0, wv1 = DISPLAY_HEIGHT;
+    int ea0 = 0, ea1 = 0, eb0 = 0, eb1 = 0;
+    color_t ecol = 0;
+    bool clipped = false;
+    if (g_fx_collapse_left > 0 && g_fx_collapse_total > 2) {
+        clipped = true;
+        ecol = 0xFFFFu;                      /* hot white collapsing edges */
+        if (g_fx_collapse_left <= 2) {       /* last 2 frames: center flash */
+            wv0 = wv1 = 0;
+            ea0 = DISPLAY_HEIGHT / 2 - 1;
+            ea1 = ea0 + 2;
+        } else {
+            /* Window shrinks to ~0 by the time the flash frames start. */
+            const int half = (DISPLAY_HEIGHT / 2) * (g_fx_collapse_left - 2)
+                                                  / (g_fx_collapse_total - 2);
+            wv0 = DISPLAY_HEIGHT / 2 - half;
+            wv1 = DISPLAY_HEIGHT / 2 + half;
+            ea0 = wv0; ea1 = wv0 + 2;
+            eb0 = wv1 - 2; eb1 = wv1;
+        }
+    } else if (g_fx_wipe_left > 0 && g_fx_wipe_total > 0) {
+        clipped = true;
+        ecol = 0x07FFu;                      /* cyan leading edge */
+        const int reveal = DISPLAY_HEIGHT * (g_fx_wipe_total - g_fx_wipe_left)
+                                          / g_fx_wipe_total;
+        wv1 = reveal;
+        ea0 = reveal;
+        ea1 = reveal + 2 > DISPLAY_HEIGHT ? DISPLAY_HEIGHT : reveal + 2;
+    }
+
+    const int band_y0 = start_scan;
+    if (clipped && (band_y0 >= wv1 || band_y0 + num_scans <= wv0)) {
+        /* Band fully hidden: black + any edge lines that fall in it. */
+        uint32_t *p = (uint32_t *)dst;
+        int words = n_bytes >> 2;
+        for (int i = 0; i < words; i++) p[i] = 0;
+        const uint32_t e2 = (uint32_t)ecol | ((uint32_t)ecol << 16);
+        for (int n = 0; n < num_scans; n++) {
+            const int y = band_y0 + n;
+            if ((y >= ea0 && y < ea1) || (y >= eb0 && y < eb1)) {
+                uint32_t *e = (uint32_t *)(dst + (unsigned)n * DISPLAY_WIDTH);
+                for (int i = 0; i < DISPLAY_WIDTH / 2; i++) e[i] = e2;
+            }
+        }
+        return;
+    }
+
+    /* Build the per-column cache for this character row. scan_on is captured
+     * once so the cache fill and the scanline loop agree for the band. */
+    const int scan_on = g_fx_cfg.scanlines ? 1 : 0;
+    build_row_cache(char_row, scan_on);
     const int ncols = s_cell_cols;
 
     /* ------------------------------------------------------------------
@@ -331,14 +477,19 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
 
     for (int n = 0; n < num_scans; n++) {
         const uint8_t gl = (uint8_t)n;
+        /* CRT scanlines: odd scanlines read the pre-dimmed colour variant.
+         * Bands start on even scanlines, so n's parity is global parity. */
+        const int sel = n & scan_on & 1;
+        const uint16_t *bgv = s_cc_bg[sel];
+        const uint16_t *xfv = s_cc_xf[sel];
         uint32_t *d = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH);
 
         int c = 0;
         for (; c + 1 < ncols; c += 2) {
-            const uint8_t b0 = s_col_cache[c    ].glyph ? s_col_cache[c    ].glyph[gl] : 0u;
-            const uint8_t b1 = s_col_cache[c + 1].glyph ? s_col_cache[c + 1].glyph[gl] : 0u;
-            const uint16_t bg0 = s_col_cache[c    ].bg,  xf0 = s_col_cache[c    ].xorfg;
-            const uint16_t bg1 = s_col_cache[c + 1].bg,  xf1 = s_col_cache[c + 1].xorfg;
+            const uint8_t b0 = s_cc_glyph[c    ] ? s_cc_glyph[c    ][gl] : 0u;
+            const uint8_t b1 = s_cc_glyph[c + 1] ? s_cc_glyph[c + 1][gl] : 0u;
+            const uint16_t bg0 = bgv[c    ], xf0 = xfv[c    ];
+            const uint16_t bg1 = bgv[c + 1], xf1 = xfv[c + 1];
 
             d[0] = GPAIR(b0, 0, 1, bg0, xf0);
             d[1] = GPAIR(b0, 2, 3, bg0, xf0);
@@ -355,8 +506,8 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
 
         /* Trailing odd column (defensive; 100 cols → never taken). */
         if (c < ncols) {
-            const uint8_t b0   = s_col_cache[c].glyph ? s_col_cache[c].glyph[gl] : 0u;
-            const uint16_t bg0 = s_col_cache[c].bg, xf0 = s_col_cache[c].xorfg;
+            const uint8_t b0   = s_cc_glyph[c] ? s_cc_glyph[c][gl] : 0u;
+            const uint16_t bg0 = bgv[c], xf0 = xfv[c];
             d[0] = GPAIR(b0, 0, 1, bg0, xf0);
             d[1] = GPAIR(b0, 2, 3, bg0, xf0);
             d[2] = GPAIR(b0, 4, 5, bg0, xf0);
@@ -371,10 +522,11 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
     if (num_scans >= 2) {
         const int ul_first = num_scans - 2;
         for (int c = 0; c < ncols; c++) {
-            if (!s_col_cache[c].underline) continue;
-            const uint16_t fg = (uint16_t)(s_col_cache[c].bg ^ s_col_cache[c].xorfg);
-            const uint32_t fg2 = (uint32_t)fg | ((uint32_t)fg << 16);
+            if (!s_cc_ul[c]) continue;
             for (int n = ul_first; n < num_scans; n++) {
+                const int sel = n & scan_on & 1;   /* match scanline variant */
+                const uint16_t fg = (uint16_t)(s_cc_bg[sel][c] ^ s_cc_xf[sel][c]);
+                const uint32_t fg2 = (uint32_t)fg | ((uint32_t)fg << 16);
                 uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH
                                            + c * FONT_WIDTH);
                 p[0] = fg2; p[1] = fg2; p[2] = fg2; p[3] = fg2;
@@ -392,7 +544,7 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
      * 4 word-ANDs per scanline, only on flagged columns.
      * ------------------------------------------------------------------ */
     for (int c = 0; c < ncols; c++) {
-        if (!s_col_cache[c].dim) continue;
+        if (!s_cc_dim[c]) continue;
         for (int n = 0; n < num_scans; n++) {
             const uint32_t m = (n & 1) ? 0xFFFF0000u : 0x0000FFFFu;
             uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH
@@ -431,6 +583,49 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
                 p[1] ^= 0xFFFFFFFFu;
                 p[2] ^= 0xFFFFFFFFu;
                 p[3] ^= 0xFFFFFFFFu;
+            }
+        }
+    }
+
+    /* ------------------------------------------------------------------
+     * Signal-loss static burst — replace a few pseudo-randomly chosen
+     * scanlines of this band with grayscale snow. Transient (frame-
+     * bounded) by design: this is the one per-pixel-ish pass allowed.
+     * ------------------------------------------------------------------ */
+    if (g_fx_static_left > 0 && num_scans > 0) {
+        int nl = g_fx_cfg.static_lines;
+        if (nl > 4) nl = 4;
+        uint32_t h = ((uint32_t)char_row * 2654435761u)
+                   ^ ((uint32_t)g_fx_frame * 2246822519u);
+        for (int k = 0; k < nl; k++) {
+            h = h * 1664525u + 1013904223u;
+            int n = (int)((h >> 27) & 15);
+            if (n >= num_scans) n = num_scans - 1;
+            uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH);
+            uint32_t r = h;
+            for (int i = 0; i < DISPLAY_WIDTH / 2; i += 4) {
+                r = r * 1664525u + 1013904223u;
+                p[i]     = s_fx_noise[r         & 15];
+                p[i + 1] = s_fx_noise[(r >> 4)  & 15];
+                p[i + 2] = s_fx_noise[(r >> 8)  & 15];
+                p[i + 3] = s_fx_noise[(r >> 12) & 15];
+            }
+        }
+    }
+
+    /* ------------------------------------------------------------------
+     * Wipe / collapse post-pass for bands straddling the visible window:
+     * black out hidden scanlines, then draw the bright edge lines.
+     * ------------------------------------------------------------------ */
+    if (clipped) {
+        const uint32_t e2 = (uint32_t)ecol | ((uint32_t)ecol << 16);
+        for (int n = 0; n < num_scans; n++) {
+            const int y = band_y0 + n;
+            uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH);
+            if ((y >= ea0 && y < ea1) || (y >= eb0 && y < eb1)) {
+                for (int i = 0; i < DISPLAY_WIDTH / 2; i++) p[i] = e2;
+            } else if (y < wv0 || y >= wv1) {
+                for (int i = 0; i < DISPLAY_WIDTH / 2; i++) p[i] = 0;
             }
         }
     }
