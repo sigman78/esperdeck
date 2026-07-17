@@ -183,44 +183,41 @@ int ui_chip(int col, int row, uint16_t left_cp, const char *text,
 void ui_tile(int col, int row, int w, int h,
              const char *title, const char *body, bool selected)
 {
-    uint8_t a = selected ? OVERLAY_ATTR_INVERSE : 0;
+    /* DOS-style solid button: always a colored bar (INVERSE puts the pen
+     * accent into the background). Focus = the bar washes toward a pastel
+     * of its hue (OVERLAY_ATTR_BRIGHT) plus a lit left rail: a white
+     * half-block column with a thin dark seam against the bar. No frames. */
+    uint8_t a = OVERLAY_ATTR_INVERSE | (selected ? OVERLAY_ATTR_BRIGHT : 0);
 
-    /* Solid fill so the whole tile is a tappable, visible target. */
     for (int r = 0; r < h; r++)
         for (int c = 0; c < w; c++)
             ui_putch(col + c, row + r, ' ', a);
 
-    /* Double-line border — a chunky "mainframe panel" look. */
-    ui_putch(col,         row,         UI_DTL, a);
-    ui_putch(col + w - 1, row,         UI_DTR, a);
-    ui_putch(col,         row + h - 1, UI_DBL, a);
-    ui_putch(col + w - 1, row + h - 1, UI_DBR, a);
-    for (int c = 1; c < w - 1; c++) {
-        ui_putch(col + c, row,         UI_DH, a);
-        ui_putch(col + c, row + h - 1, UI_DH, a);
-    }
-    for (int r = 1; r < h - 1; r++) {
-        ui_putch(col,         row + r, UI_DV, a);
-        ui_putch(col + w - 1, row + r, UI_DV, a);
+    if (selected) {
+        /* ▐ in INVERSE+WHITE: set pixels (right half) take the dark fg,
+         * clear pixels (left half) the white bg → white rail + seam. */
+        uint8_t old_pen = s_pen;
+        s_pen = OVERLAY_COL_WHITE;
+        for (int r = 0; r < h; r++)
+            ui_putch(col, row + r, UI_RHALF, OVERLAY_ATTR_INVERSE);
+        s_pen = old_pen;
     }
 
-    /* First inner column is a marker slot: ▶ when selected. Title/body follow.
-     * Everything is truncated to the remaining inner width. */
-    int mx    = col + 1;
+    /* Title (+ optional body) vertically centered, left-padded 2 cells,
+     * truncated to the tile width. */
     int tx    = col + 2;
     int inner = w - 3;
     if (inner < 1) return;
     char t[80];
-    if (h >= 2) {
-        ui_putch(mx, row + 1, selected ? UI_PLAY : ' ', a);
-        if (title && *title) {
-            snprintf(t, sizeof(t), "%-.*s", inner, title);
-            ui_puts(tx, row + 1, t, a);
-        }
+    int lines = (body && *body && h >= 2) ? 2 : 1;
+    int ty    = row + (h - lines) / 2;
+    if (title && *title) {
+        snprintf(t, sizeof(t), "%-.*s", inner, title);
+        ui_puts(tx, ty, t, a);
     }
-    if (body && *body && h >= 3) {
+    if (lines == 2) {
         snprintf(t, sizeof(t), "%-.*s", inner, body);
-        ui_puts(tx, row + 2, t, a);
+        ui_puts(tx, ty + 1, t, a);
     }
 }
 

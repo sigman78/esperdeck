@@ -124,9 +124,16 @@ esp_lcd_panel_handle_t display_get_panel(void);
  * OVERLAY_ATTR_DIM on a TRANSPARENT cell (cp == 0) is a scrim: the primary
  * terminal still shows through, but at ~50% brightness — used to dim the live
  * session behind a modal so the modal pops.
+ *
+ * OVERLAY_ATTR_BRIGHT is the focus style for solid-bar buttons (DOS TUI
+ * style — focus is typographic, not structural): the cell's background is
+ * washed 50% toward white, so a focused accent bar "lights up" to a pastel
+ * of its own hue while the dark label gains contrast. Applied after INVERSE
+ * (meant for bars; on a non-inverse cell it whitens the cell background).
  */
 #define OVERLAY_ATTR_INVERSE  (1 << 0)
 #define OVERLAY_ATTR_DIM      (1 << 1)
+#define OVERLAY_ATTR_BRIGHT   (1 << 2)
 
 /* Per-cell accent color: index into the overlay palette. 0 = use the screen's
  * default overlay fg (set via display_set_overlay_colors); 1..N pick a fixed

@@ -146,10 +146,68 @@ static void touch_tick(uint64_t now)
     }
 }
 
+/* -------------------------------------------------------------------------
+ * --drive "tap:x,y|key:enter|hold:x,y|wait:800" — scripted input for UI
+ * screenshot automation (framebuffer pixel coords; key names: enter, esc,
+ * tab, up/down/left/right, f12, or a single character). Steps fire 450 ms
+ * apart (wait:N overrides the gap) starting 2.5 s after boot, injected
+ * through the same paths as real input. Sim-only test hook.
+ * ---------------------------------------------------------------------- */
+static const char *s_drive      = NULL;
+static uint64_t    s_drive_next = 0;
+
+static void drive_key(const char *name, uint64_t now)
+{
+    const char *seq = NULL;
+    char one[2] = { 0, 0 };
+    if      (!strcmp(name, "enter")) seq = "\r";
+    else if (!strcmp(name, "esc"))   seq = "\x1b";
+    else if (!strcmp(name, "tab"))   seq = "\t";
+    else if (!strcmp(name, "up"))    seq = "\x1b[A";
+    else if (!strcmp(name, "down"))  seq = "\x1b[B";
+    else if (!strcmp(name, "right")) seq = "\x1b[C";
+    else if (!strcmp(name, "left"))  seq = "\x1b[D";
+    else if (!strcmp(name, "f12"))   seq = "\x1b[24~";
+    else if (name[0] && !name[1])    { one[0] = name[0]; seq = one; }
+    if (seq) send_key_bytes(seq, strlen(seq), now);
+}
+
+static void drive_tick(uint64_t now)
+{
+    if (!s_drive || !*s_drive || now < s_drive_next) return;
+    char step[64];
+    const char *bar = strchr(s_drive, '|');
+    size_t n = bar ? (size_t)(bar - s_drive) : strlen(s_drive);
+    if (n >= sizeof(step)) n = sizeof(step) - 1;
+    memcpy(step, s_drive, n);
+    step[n] = '\0';
+    s_drive = bar ? bar + 1 : "";
+
+    uint64_t gap = 450;
+    int x = 0, y = 0;
+    if (!strncmp(step, "wait:", 5)) {
+        gap = strtoul(step + 5, NULL, 10);
+    } else if (sscanf(step, "tap:%d,%d", &x, &y) == 2) {
+        send_touch(CYBERDECK_INPUT_TAP, (uint16_t)x, (uint16_t)y, now);
+    } else if (sscanf(step, "hold:%d,%d", &x, &y) == 2) {
+        send_touch(CYBERDECK_INPUT_LONG_PRESS, (uint16_t)x, (uint16_t)y, now);
+    } else if (!strncmp(step, "key:", 4)) {
+        drive_key(step + 4, now);
+    }
+    s_drive_next = now + gap;
+}
+
 int main(int argc, char *argv[])
 {
-    /* Optional argv override: host [port [user [password]]] becomes the
+    /* --drive <script> is consumed first (scripted-input test hook); the
+     * remaining positionals: host [port [user [password]]] become the
      * "(default)" entry in the profile picker. */
+    if (argc > 2 && strcmp(argv[1], "--drive") == 0) {
+        s_drive      = argv[2];
+        s_drive_next = SDL_GetTicks64() + 2500;
+        argv += 2;
+        argc -= 2;
+    }
     const char *host = (argc > 1) ? argv[1] : "";
     int         port = (argc > 2) ? atoi(argv[2]) : 22;
     const char *user = (argc > 3) ? argv[3] : "user";
@@ -253,6 +311,7 @@ int main(int argc, char *argv[])
 
         uint64_t tick = SDL_GetTicks64();
         touch_tick(tick);
+        drive_tick(tick);
         cyberdeck_app_tick(tick);
         display_render_frame();
 

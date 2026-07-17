@@ -47,6 +47,7 @@ typedef enum {
     ST_HOSTKEY,     /* trust-on-first-use fingerprint prompt (modal) */
     ST_CONNECTING,  /* pending/armed SSH connect                     */
     ST_SESSION,     /* bytes flow to/from SSH                        */
+    ST_POWEROFF,    /* CRT collapse playing over the dead session    */
     ST_MENU,        /* in-session overlay menu                       */
     ST_WIFIPROV,    /* SoftAP WiFi onboarding (modal)                */
     ST_PROFILE,     /* on-device profile editor (modal)              */
@@ -179,6 +180,7 @@ static struct {
     uint64_t next_home_refresh;
     uint32_t anim_frame;            /* advances ~10 fps for subtle animation */
     uint64_t next_anim;             /* next animated re-render (PAIRING)      */
+    uint64_t poweroff_until;        /* ST_POWEROFF: when the collapse ends    */
     bool     halted;
 } s;
 
@@ -384,29 +386,29 @@ static const char *ble_status_str(void)
     }
 }
 
-/* Shared full-screen picker grid (HOME + PAIRING): 3 x 4 tiles, each 30 x 5
- * cells (240 x 80 px ~ 15 mm tall — comfortably above a finger target). */
+/* Shared full-screen picker grid (HOME + PAIRING + menu pickers + EFFECTS):
+ * 3 columns of solid tiles sized from the character grid, capped above the
+ * footer. 100x30 → 3x4 of 30x5 (240x80 px ≈ 15 mm — a comfortable finger
+ * target); 80x24 → 3x3 of 24x4 (80 px); 66x20 → 3x3 of 20x3 (72 px). */
 static tilegrid_t picker_grid(int count)
 {
-    tilegrid_t g = { .x0 = 3, .y0 = 4, .tw = 30, .th = 5,
-                     .gx = 2, .gy = 1, .ncols = 3, .nrows = 4 };
+    tilegrid_t g = { .ncols = 3, .gx = 2, .gy = 1, .y0 = 4 };
+    g.x0 = ui_cols() >= 97 ? 3 : 1;
+    g.tw = (ui_cols() - 2 * g.x0 - (g.ncols - 1) * g.gx) / g.ncols;
+    g.th = ui_rows() >= 28 ? 5 : ui_rows() >= 22 ? 4 : 3;
+    int avail = ui_rows() - 2 - g.y0;          /* keep clear of the footer */
+    g.nrows = (avail + g.gy) / (g.th + g.gy);
     int cap = g.ncols * g.nrows;
     g.count = count < cap ? count : cap;
     return g;
 }
 
-/* Full-width double rule (═══…) on a row. Special glyphs must go through
- * ui_putch — ui_puts/ui_printf only emit Latin-1 bytes. */
-static void draw_rule(int row)
-{
-    for (int i = 0; i < ui_cols(); i++) ui_putch(i, row, UI_DH, 0);
-}
-
-/* Animated rule: a cyan ░▒▓█ "comet" sweeps left→right along the divider. */
+/* Animated scanner: a cyan ░▒▓█ "comet" sweeps left→right along an
+ * otherwise empty row (the ═══ divider it used to ride is gone — the solid
+ * tile bars carry the layout now). */
 static void draw_rule_scan(int row, uint32_t frame)
 {
     int W = ui_cols();
-    draw_rule(row);
     static const uint16_t comet[4] = { UI_SHADE1, UI_SHADE2, UI_SHADE3, UI_BLOCK };
     int head = (int)((frame * 2u) % (uint32_t)W);   /* 2 cells/frame */
     ui_pen(OVERLAY_COL_CYAN);
@@ -486,7 +488,6 @@ static void draw_titlebar(int x0, const char *text, uint32_t frame)
 static void draw_footer_lim(const char *hint, int limit)
 {
     int r = ui_rows() - 1;
-    draw_rule(ui_rows() - 2);
     if (limit < 0) limit = ui_cols();
     int avail = limit - 6;    /* lead-in(3) + trail space + taper + 1 gap */
     if (avail <= 0) return;   /* no room: rule only, no orphaned chip stub */
@@ -672,10 +673,12 @@ static void render_home(void)
         rssi       = wifi_manager_get_rssi();
     }
 
-    /* SSID clamped to its 16-cell field so the dBm suffix always fits the
-     * buffer (16 + 1 + 17 status + 8 suffix = 42 < 48). */
+    /* SSID clamped to a fixed field so the dBm suffix always fits the buffer
+     * and the whole line stays clear of the right-aligned titlebar (which
+     * starts at cols-20 — 10-cell SSIDs keep the worst case at 45 cols). */
+    int sw = ui_cols() >= 97 ? 16 : 10;
     char net[48];
-    snprintf(net, sizeof(net), "%-16.16s %s",
+    snprintf(net, sizeof(net), "%-*.*s %s", sw, sw,
              wifi_manager_get_ssid()[0] ? wifi_manager_get_ssid() : "-",
              wifi_status_str());
     if (rssi < 0) {
@@ -766,7 +769,7 @@ static void render_home(void)
                         "tap or long-press", sel);
                 break;
             case HX_CONFIG:
-                ui_pen(OVERLAY_COL_BLUE);
+                ui_pen(OVERLAY_COL_CYAN);
                 ui_tile(cx, cy, g.tw, g.th, "Configuration",
                         "wifi / profiles / more", sel);
                 break;
@@ -803,9 +806,8 @@ static void render_home(void)
      * advertising a silent no-op reads as broken input. An active toast owns
      * the right edge; draw_footer_lim clips the hint clear of it. */
     const char *hint = s.cfg.ble
-        ? "tap\xB7tap = connect   hold = pair   kbd: arrows+Enter \xB7 "
-          "B pair \xB7 R reload \xB7 W wifi"
-        : "tap\xB7tap = connect   kbd: arrows+Enter \xB7 R reload \xB7 W wifi";
+        ? "tap\xB7tap connect \xB7 hold pair \xB7 B pair \xB7 R reload \xB7 W wifi"
+        : "tap\xB7tap connect \xB7 R reload \xB7 W wifi";
     if (s.toast[0]) {
         int tx = ui_cols() - ((int)strlen(s.toast) + 2) - 1;
         draw_footer_lim(hint, tx - 1);           /* -1: the taper cell */
@@ -890,17 +892,18 @@ static void render_pairing(uint64_t now)
                 s.devs[i].addr_type ? "random addr" : "public addr",
                 i == s.pair_sel);
     }
-    /* Color law: RED = destructive (Forget), DEFAULT = safe navigation
-     * (Cancel). Cancel used to be the red one — inverted semantics. */
+    /* Color law: RED = destructive (Forget), BLUE = safe navigation
+     * (Cancel/Back — matches the menu pages). */
     ui_pen(OVERLAY_COL_RED);
     ui_tile(tile_x(&g, ndev), tile_y(&g, ndev), g.tw, g.th,
             s.pair_forget_armed ? "TAP AGAIN to forget" : "Forget bonds",
             "clear + re-pair", ndev == s.pair_sel);
-    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_pen(OVERLAY_COL_BLUE);
     ui_tile(tile_x(&g, ndev + 1), tile_y(&g, ndev + 1), g.tw, g.th,
             "Cancel", "", (ndev + 1) == s.pair_sel);
+    ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer("put the keyboard in pairing mode, then tap it   Esc = cancel");
+    draw_footer("keyboard in pairing mode, then tap it \xB7 Esc cancel");
     ui_no_cursor();
     ui_present();
 }
@@ -909,8 +912,11 @@ static void render_pairing(uint64_t now)
  * Slot 0 = trust/replace, slot 1 = cancel. */
 static tilegrid_t hostkey_grid(void)
 {
-    tilegrid_t g = { .y0 = 18, .tw = 36, .th = 5,
-                     .gx = 4, .gy = 0, .ncols = 2, .nrows = 1, .count = 2 };
+    tilegrid_t g = { .gx = 4, .gy = 0, .ncols = 2, .nrows = 1, .count = 2 };
+    g.th = ui_rows() >= 28 ? 4 : 3;
+    g.tw = (ui_cols() - 6) / 2;
+    if (g.tw > 36) g.tw = 36;
+    g.y0 = ui_rows() - 3 - g.th;               /* one blank row above the rule */
     g.x0 = (ui_cols() - (g.tw * 2 + g.gx)) / 2;
     return g;
 }
@@ -942,7 +948,6 @@ static void render_hostkey(void)
      * without a title or rule, which made it read as a glitch, not a page. */
     draw_titlebar(2, s.fp_mismatch ? "HOST KEY ALERT" : "NEW HOST KEY",
                   s.anim_frame);
-    draw_rule(3);
 
     if (s.fp_mismatch) {
         /* Blink via INVERSE (ui_puts emits Latin-1 bytes — no UTF-8 here). */
@@ -985,15 +990,15 @@ static void render_hostkey(void)
     ui_tile(tile_x(&g, 0), tile_y(&g, 0), g.tw, g.th, trust,
             s.fp_mismatch ? "danger" : "",
             s.hostkey_sel == 0 || s.hostkey_armed);
-    /* Cancel is safe navigation — DEFAULT pen everywhere (it was RED in
-     * PAIRING and GREEN here, which inverted the color semantics). */
-    ui_pen(OVERLAY_COL_DEFAULT);
+    /* Cancel is safe navigation — BLUE, matching Back on the menu pages. */
+    ui_pen(OVERLAY_COL_BLUE);
     ui_tile(tile_x(&g, 1), tile_y(&g, 1), g.tw, g.th, "Cancel", "",
             s.hostkey_sel == 1);
+    ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_footer(s.fp_mismatch
-                ? "keyboard: arrows + Enter   Y = replace   Esc = cancel"
-                : "keyboard: arrows + Enter = trust   Esc = cancel");
+                ? "arrows+Enter \xB7 Y replace \xB7 Esc cancel"
+                : "arrows+Enter trust \xB7 Esc cancel");
     ui_no_cursor();
     ui_present();
 }
@@ -1015,7 +1020,12 @@ static void render_connecting(const char *msg, uint64_t now)
     if (s.connect_attempt > 0 && ll < sizeof(line))
         snprintf(line + ll, sizeof(line) - ll, "  (attempt %d)",
                  s.connect_attempt);
+    /* A long host/user can outgrow a narrow grid: truncate and pin left so
+     * the leading status word always survives. */
+    int maxw = ui_cols() - 8;
+    if ((int)strlen(line) > maxw) line[maxw] = '\0';
     int lx = (ui_cols() - (int)strlen(line)) / 2;
+    if (lx < 4) lx = 4;
     ui_pen(prof_accent(p->name));   /* carries the tile's identity color */
     ui_putch(lx - 2, cy - 1, UI_DIAMOND, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
@@ -1157,18 +1167,24 @@ static void pf_key_cycle(int dir)
     pf_key_refresh_info();
 }
 
-#define PF_X0   26            /* form left edge  */
-#define PF_FX   34            /* field left edge */
-#define PF_FW   40            /* field width     */
-#define PF_Y0   6             /* first field row */
+/* Form geometry — derived from the grid so the editor fits 100x30 down to
+ * 66x20: wide grids center the form, narrow ones hug the left edge and drop
+ * to single-row field spacing. The touch hit-test shares these. */
+static int pf_x0(void)   { return ui_cols() >= 97 ? 26 : 2; }   /* form left  */
+static int pf_fx(void)   { return pf_x0() + 8; }                /* field left */
+static int pf_fw(void)   { int w = ui_cols() - pf_fx() - 2;     /* field width */
+                           return w > 40 ? 40 : w; }
+static int pf_y0(void)   { return ui_rows() >= 28 ? 6 : 5; }    /* first row  */
+static int pf_step(void) { return ui_rows() >= 22 ? 2 : 1; }    /* row pitch  */
 
 /* A selector row: '<' value '>' rendered as a solid bar, inverted when
  * focused — left/right (or space/tap) cycles it. */
 static void pf_draw_selector(int row, bool focused, const char *value)
 {
-    char bar[PF_FW + 1];
-    snprintf(bar, sizeof(bar), "< %-*.*s >", PF_FW - 4, PF_FW - 4, value);
-    ui_puts(PF_FX, row, bar, focused ? OVERLAY_ATTR_INVERSE : 0);
+    int fw = pf_fw();
+    char bar[64];
+    snprintf(bar, sizeof(bar), "< %-*.*s >", fw - 4, fw - 4, value);
+    ui_puts(pf_fx(), row, bar, focused ? OVERLAY_ATTR_INVERSE : 0);
 }
 
 static void render_profile(void)
@@ -1181,26 +1197,26 @@ static void render_profile(void)
                        "// SSH DECK");
 
     for (int i = 0; i < PF_ROWS; i++) {
-        int row = PF_Y0 + i * 2;
+        int row = pf_y0() + i * pf_step();
         bool focused = (s.pf_field == i);
         if (pf_is_text(i)) {
             const char *label; int max; bool numeric, mask;
             char *buf = pf_buf(i, &label, &max, &numeric, &mask);
             ui_pen(focused ? OVERLAY_COL_CYAN : OVERLAY_COL_DEFAULT);
-            ui_puts(PF_X0, row, label, 0);
+            ui_puts(pf_x0(), row, label, 0);
             /* Only the focused field's caret drives scrolling (ui_field
              * ignores the caret when unfocused); pass 0 to be explicit. */
-            ui_field(PF_FX, row, PF_FW, buf, focused ? s.pf_cursor : 0,
+            ui_field(pf_fx(), row, pf_fw(), buf, focused ? s.pf_cursor : 0,
                      focused, mask);
         } else if (i == PF_AUTH) {
             ui_pen(focused ? OVERLAY_COL_CYAN : OVERLAY_COL_DEFAULT);
-            ui_puts(PF_X0, row, "Auth", 0);
+            ui_puts(pf_x0(), row, "Auth", 0);
             pf_draw_selector(row, focused,
                              s.pf_draft.auth == STORAGE_AUTH_KEY
                              ? "key" : "password");
         } else if (i == PF_KEY && s.pf_draft.auth == STORAGE_AUTH_KEY) {
             ui_pen(focused ? OVERLAY_COL_CYAN : OVERLAY_COL_DEFAULT);
-            ui_puts(PF_X0, row, "Key", 0);
+            ui_puts(pf_x0(), row, "Key", 0);
             char v[64];
             if (s.pf_key_sel >= 0 && s.pf_key_sel < s.pf_nkeys)
                 snprintf(v, sizeof(v), "%s%s%s", s.pf_keys[s.pf_key_sel],
@@ -1218,24 +1234,25 @@ static void render_profile(void)
      * Save must report here or it looks dead. Persists until the next edit. */
     if (s.pf_err[0]) {
         ui_pen(OVERLAY_COL_RED);
-        ui_puts(PF_X0, PF_Y0 + PF_ROWS * 2, s.pf_err, 0);
+        ui_puts(pf_x0(), pf_y0() + PF_ROWS * pf_step(), s.pf_err, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
     /* Save / Cancel buttons — a 2-wide tile grid stashed for touch. */
-    tilegrid_t bg = { .y0 = PF_Y0 + PF_ROWS * 2 + 1, .tw = 20, .th = 3,
+    tilegrid_t bg = { .y0 = pf_y0() + PF_ROWS * pf_step() + 1, .tw = 20,
+                      .th = ui_rows() >= 28 ? 3 : 2,
                       .gx = 4, .gy = 0, .ncols = 2, .nrows = 1, .count = 2 };
     bg.x0 = (ui_cols() - (bg.tw * 2 + bg.gx)) / 2;
     s.grid = bg;
     ui_pen(OVERLAY_COL_GREEN);
     ui_tile(tile_x(&bg, 0), tile_y(&bg, 0), bg.tw, bg.th, "Save", "",
             s.pf_field == PF_SAVE);
-    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_pen(OVERLAY_COL_BLUE);   /* safe navigation — matches menu Back */
     ui_tile(tile_x(&bg, 1), tile_y(&bg, 1), bg.tw, bg.th, "Cancel", "",
             s.pf_field == PF_CANCEL);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer("type to edit   Tab/arrows = move   Enter = next   Esc = cancel");
+    draw_footer("type to edit \xB7 Tab/arrows move \xB7 Enter next \xB7 Esc cancel");
     ui_no_cursor();
     ui_present();
 }
@@ -1374,33 +1391,39 @@ typedef enum {
 
 #define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
+/* Menu color law — one color per KIND of item, not per item (a page of
+ * many-colored bars reads as motley):
+ *   CYAN  = normal action / navigation      GREEN = go / primary
+ *   RED   = destructive                     AMBER = caution
+ *   BLUE  = Back / Cancel (safe exit)
+ * MAGENTA stays reserved for the title lozenge. */
 static const char *main_items[]     = { "Resume session", "Disconnect", "Configuration >" };
-static const uint8_t main_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
+static const uint8_t main_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_AMBER, OVERLAY_COL_CYAN };
 
 static const char *config_items[]   = { "Profiles >", "WiFi >", "Keyboard >", "Effects >",
                                         "System >", "Back" };
-static const uint8_t config_cols[]  = { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN,
-                                        OVERLAY_COL_MAGENTA, OVERLAY_COL_CYAN,
-                                        OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
+static const uint8_t config_cols[]  = { OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
+                                        OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
+                                        OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
 #define CFG_KEYBOARD 2   /* index of "Keyboard >" (needs BLE) */
 
 static const char *profiles_items[] = { "Add (type here)", "Edit", "Reorder",
                                         "Delete", "Import >", "Back" };
-static const uint8_t profiles_cols[]= { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN,
-                                        OVERLAY_COL_MAGENTA, OVERLAY_COL_RED,
-                                        OVERLAY_COL_AMBER, OVERLAY_COL_BLUE };
+static const uint8_t profiles_cols[]= { OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
+                                        OVERLAY_COL_CYAN, OVERLAY_COL_RED,
+                                        OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
 
 static const char *import_items[]   = { "SoftAP (phone)", "Web (PC)", "Back" };
 static const uint8_t import_cols[]  = { OVERLAY_COL_CYAN, OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
 
 static const char *wifi_items[]     = { "Reconnect", "Add network (phone)", "Back" };
-static const uint8_t wifi_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
+static const uint8_t wifi_cols[]    = { OVERLAY_COL_CYAN, OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
 
 static const char *kbd_items[]      = { "Pair keyboard", "Forget bonds", "Back" };
-static const uint8_t kbd_cols[]     = { OVERLAY_COL_GREEN, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
+static const uint8_t kbd_cols[]     = { OVERLAY_COL_CYAN, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
 
 static const char *system_items[]   = { "Clear host keys", "Factory reset", "Back" };
-static const uint8_t system_cols[]  = { OVERLAY_COL_AMBER, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
+static const uint8_t system_cols[]  = { OVERLAY_COL_RED, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
 
 typedef struct {
     const char        *title;
@@ -1499,13 +1522,13 @@ static int fx_menu_items(const char *out[], const char *bodies[],
     snprintf(buf[FXM_DECAY], sizeof(buf[FXM_DECAY]), "%s", t);
 #endif
     fx_secs(t, sizeof(t), c.wipe_frames);
-    out[FXM_WIPE] = "Connect wipe";
+    out[FXM_WIPE] = "Wipe in";
     snprintf(buf[FXM_WIPE], sizeof(buf[FXM_WIPE]), "%s", !c.wipe ? "off" : t);
     fx_secs(t, sizeof(t), c.collapse_frames);
     out[FXM_COLLAPSE] = "Collapse";
     snprintf(buf[FXM_COLLAPSE], sizeof(buf[FXM_COLLAPSE]), "%s",
              !c.collapse ? "off" : t);
-    out[FXM_STATIC] = "Static burst";
+    out[FXM_STATIC] = "Static";
     snprintf(buf[FXM_STATIC], sizeof(buf[FXM_STATIC]), "%s",
              !c.static_burst      ? "off"
              : c.static_lines <= 1 ? "light"
@@ -1634,14 +1657,19 @@ static void render_menu(void)
         ly        = ui_rows() - 3;
         chrome_x  = (ui_cols() - 40) / 2;   /* center chrome over the screen */
     } else {
-        /* 6 tiles at th=4 would overflow the 30-row screen; shrink them. */
-        int th = count >= 6 ? 3 : 4;
+        /* Tile height shrinks with the grid; items always keep a 1-row gap
+         * (glued bars read as one slab). The tallest page (6 tiles at
+         * 20 rows) pins the title to row 0 and the legend to the last row. */
+        int th = ui_rows() >= 28 ? (count >= 6 ? 3 : 4) : 2;
         g = (tilegrid_t){ .tw = 40, .th = th, .gx = 0, .gy = 1,
                           .ncols = 1, .nrows = count, .count = count };
+        int total = count * (g.th + 1) - 1;
         g.x0 = (ui_cols() - g.tw) / 2;
-        g.y0 = (ui_rows() - (count * g.th + (count - 1) * g.gy)) / 2;
+        g.y0 = (ui_rows() - total) / 2;
+        if (g.y0 < 2) g.y0 = 2;             /* title chip needs row y0-2 */
         title_row = g.y0 - 2;
-        ly        = g.y0 + count * g.th + (count - 1) * g.gy + 1;
+        ly        = g.y0 + total + 1;
+        if (ly > ui_rows() - 1) ly = ui_rows() - 1;
         chrome_x  = g.x0;
     }
     s.grid = g;
@@ -1670,34 +1698,38 @@ static void render_menu(void)
         else if (picker)  col = i >= s.stored_count ? OVERLAY_COL_BLUE
                               : sc == MS_DELPROFILE ? OVERLAY_COL_AMBER
                               : grabbed             ? OVERLAY_COL_GREEN
-                              : sc == MS_REORDER    ? OVERLAY_COL_MAGENTA
                                                     : OVERLAY_COL_CYAN;
         else if (fxpage)  col = i == g.count - 1 ? OVERLAY_COL_BLUE
                                                  : OVERLAY_COL_CYAN;
         else              col = cols[i];
         ui_pen(col);
-        ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th,
-                armed ? confirm : items[i],
-                bodies ? bodies[i] : dim ? "(unavailable)" : "",
-                i == s.menu_sel || grabbed);
-        if (i == s.menu_sel) {
-            static const uint16_t pulse[3] = { UI_PLAY, UI_DIAMOND, UI_VBAR };
-            ui_putch(tile_x(&g, i) + 1, tile_y(&g, i) + 1,
-                     pulse[(s.anim_frame / 3) % 3], OVERLAY_ATTR_INVERSE);
+        /* Focus is carried entirely by the tile itself (washed bar + lit
+         * left rail) — no marker glyphs, no animated cursor. A grabbed
+         * REORDER tile reads by its green bar. EFFECTS values are right-
+         * aligned on the title line, settings-table style. */
+        const char *title = armed ? confirm : items[i];
+        const char *body  = bodies ? bodies[i] : dim ? "(unavailable)" : "";
+        char fxline[44];
+        if (fxpage && body[0] && !armed) {
+            int iw  = g.tw - 4;
+            int pad = iw - (int)strlen(body) - 1;   /* ≥1-space gap */
+            if (pad < 1) pad = 1;
+            snprintf(fxline, sizeof(fxline), "%-*.*s %s", pad, pad, title, body);
+            title = fxline;
+            body  = "";
         }
-        if (grabbed)      /* the grabbed tile carries a visible handle */
-            ui_putch(tile_x(&g, i) + 1, tile_y(&g, i) + 1, UI_DIAMOND,
-                     OVERLAY_ATTR_INVERSE);
+        ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, title, body,
+                i == s.menu_sel || grabbed);
     }
 
-    /* Esc legend + action result under the tile area. */
-    const char *legend = root ? "Esc/F12 = resume \xB7 tap outside = close"
+    /* Esc legend under the tile area — quiet blue, centered on the column. */
+    const char *legend = root ? "Esc/F12 resume \xB7 tap outside closes"
                        : sc == MS_CONFIG
-                           ? (s.menu_from_home ? "Esc = back to home"
-                                               : "Esc = back to menu")
-                           : "Esc = back";
-    ui_pen(OVERLAY_COL_DEFAULT);
+                           ? (s.menu_from_home ? "Esc \xB7 home" : "Esc \xB7 menu")
+                           : "Esc \xB7 back";
+    ui_pen(OVERLAY_COL_BLUE);
     ui_puts(chrome_x + (40 - (int)strlen(legend)) / 2, ly, legend, 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
 
     /* Empty-picker hint, just above the (Back-only) grid. */
     if (picker && s.stored_count == 0) {
@@ -2020,6 +2052,66 @@ static void pairing_select(int slot, uint64_t now)
 }
 
 /* Run the in-session menu action for the current selection. */
+
+/* Draw a QR top-right as half-block cells (two QR rows per cell), dark-on-
+ * white via INVERSE. Fits itself to the grid: starts at row 6 on tall grids,
+ * row 4 on short ones (overdrawing the comet rule — the quiet zone keeps it
+ * scannable), drops the caption when the bottom is tight, and draws nothing
+ * when the modules cannot fit above the footer hint. Returns the QR's first
+ * column (the caller's text limit), or ui_cols() when no QR was drawn. */
+typedef bool (*qr_module_fn)(int x, int y);
+static int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption)
+{
+    if (qsz <= 0) return ui_cols();
+    const int QZ = 2;                        /* quiet-zone modules */
+    int span  = qsz + 2 * QZ;
+    int crows = (span + 1) / 2;
+    int qy = ui_rows() >= 28 ? 6 : 4;
+    if (qy + crows > ui_rows() - 1) return ui_cols();
+    int qx = ui_cols() - span - 2;
+    ui_pen(OVERLAY_COL_WHITE);
+    for (int cr = 0; cr < crows; cr++) {
+        for (int cc = 0; cc < span; cc++) {
+            bool top = mod(cc - QZ, 2 * cr - QZ);
+            bool bot = mod(cc - QZ, 2 * cr - QZ + 1);
+            uint16_t g = (top && bot) ? UI_BLOCK
+                       : top ? 0x2580u              /* upper half block */
+                       : bot ? 0x2584u              /* lower half block */
+                       : ' ';
+            ui_putch(qx + cc, qy + cr, g, OVERLAY_ATTR_INVERSE);
+        }
+    }
+    if (caption && qy + crows <= ui_rows() - 3) {
+        ui_pen(OVERLAY_COL_CYAN);
+        ui_puts(qx + (span - (int)strlen(caption)) / 2, qy + crows, caption, 0);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+    return qx;
+}
+
+/* Numbered onboarding step at row @p y: number + label, then the value as an
+ * INVERSE chip — inline after the label when it fits left of @p xlimit
+ * (the QR column), else indented on the next row. Returns the next step row. */
+static int draw_step(int y, char num, const char *label,
+                     const char *value, uint8_t value_pen, int xlimit)
+{
+    ui_pen(OVERLAY_COL_CYAN);
+    ui_putch(4, y, (uint16_t)(uint8_t)num, 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_printf(6, y, 0, "%.*s", xlimit > 6 ? xlimit - 6 : 0, label);
+    if (!value || !*value) return y + 2;
+    int vx = 6 + (int)strlen(label) + 1;
+    ui_pen(value_pen);
+    if (vx + (int)strlen(value) + 2 <= xlimit) {
+        ui_printf(vx, y, OVERLAY_ATTR_INVERSE, " %s ", value);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        return y + 2;
+    }
+    ui_printf(8, y + 1, OVERLAY_ATTR_INVERSE, " %s ", value);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    return y + 3;
+}
+
 /* Full-screen SoftAP onboarding modal. */
 static void render_wifiprov(uint64_t now)
 {
@@ -2065,69 +2157,45 @@ static void render_wifiprov(uint64_t now)
         return;
     }
 
-    /* ACTIVE / RECEIVED — numbered onboarding steps on the left. */
-    ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 6, "1", 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(6, 6, "Get the \"ESP SoftAP Provisioning\" app,", 0);
-    ui_puts(6, 7, "or scan the QR to the right.", 0);
+    /* ACTIVE / RECEIVED — QR first (its column bounds the step text),
+     * then the numbered onboarding steps stacked on the left. */
+    int qx  = draw_qr_panel(wifi_provision_qr_size(), wifi_provision_qr_module,
+                            "scan with app");
+    bool qr = qx < ui_cols();
+    bool wide = ui_cols() >= 97;
 
-    ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 9, "2", 0);
-    ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 9, "Join this WiFi network:", 0);
-    ui_pen(OVERLAY_COL_GREEN);
-    ui_printf(30, 9, OVERLAY_ATTR_INVERSE, " %s ", wifi_provision_service_name());
-    ui_pen(OVERLAY_COL_DEFAULT);
-
-    ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 11, "3", 0);
-    ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 11, "Enter this proof code:", 0);
-    ui_pen(OVERLAY_COL_AMBER);
-    ui_printf(30, 11, OVERLAY_ATTR_INVERSE, " %s ", wifi_provision_pop());
-    ui_pen(OVERLAY_COL_DEFAULT);
-
-    ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 13, "4", 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(6, 13, "Pick your WiFi + password in the app.", 0);
-
-    /* QR (right side): scan instead of typing the AP name + code. Rendered
-     * dark-on-white via INVERSE white cells; two QR rows per half-block cell. */
-    int qsz = wifi_provision_qr_size();
-    if (qsz > 0) {
-        const int QZ   = 2;                 /* quiet-zone modules      */
-        int span  = qsz + 2 * QZ;
-        int crows = (span + 1) / 2;
-        int qx = ui_cols() - span - 2;
-        int qy = 6;
-        ui_pen(OVERLAY_COL_WHITE);
-        for (int cr = 0; cr < crows; cr++) {
-            for (int cc = 0; cc < span; cc++) {
-                bool top = wifi_provision_qr_module(cc - QZ, 2 * cr - QZ);
-                bool bot = wifi_provision_qr_module(cc - QZ, 2 * cr - QZ + 1);
-                uint16_t g = (top && bot) ? UI_BLOCK
-                           : top ? 0x2580u              /* upper half block */
-                           : bot ? 0x2584u              /* lower half block */
-                           : ' ';
-                ui_putch(qx + cc, qy + cr, g, OVERLAY_ATTR_INVERSE);
-            }
-        }
-        ui_pen(OVERLAY_COL_CYAN);
-        const char *ql = "scan with app";
-        ui_puts(qx + (span - (int)strlen(ql)) / 2, qy + crows, ql, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    }
+    int y = ui_rows() >= 28 ? 6 : 4;
+    y = draw_step(y, '1',
+                  qr ? (wide ? "Get the \"ESP SoftAP Provisioning\" app or scan ->"
+                             : "Get the \"ESP SoftAP Prov\" app")
+                     : "Get the \"ESP SoftAP Provisioning\" app",
+                  NULL, 0, qx - 1);
+    y = draw_step(y, '2', wide ? "Join this WiFi network:" : "Join this WiFi:",
+                  wifi_provision_service_name(), OVERLAY_COL_GREEN, qx - 1);
+    y = draw_step(y, '3', wide ? "Enter this proof code:" : "Proof code:",
+                  wifi_provision_pop(), OVERLAY_COL_AMBER, qx - 1);
+    y = draw_step(y, '4', wide ? "Pick your WiFi + password in the app."
+                               : "Pick WiFi + password in app.",
+                  NULL, 0, qx - 1);
 
     bool recv = (st == WIFI_PROV_ST_RECEIVED);
     ui_pen(recv ? OVERLAY_COL_AMBER : OVERLAY_COL_GREEN);
-    ui_putch(4, 15, spinner_glyph(s.anim_frame), 0);
+    ui_putch(4, y, spinner_glyph(s.anim_frame), 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(6, 15, recv ? "credentials received - testing connection..."
-                        : "waiting for the phone...", 0);
+    ui_printf(6, y, 0, "%.*s", qx - 7,
+              recv ? "credentials received - testing..."
+                   : "waiting for the phone...");
 
-    /* Live RAM readout — watch the internal-DRAM peak while the AP+httpd run. */
-    char ram[48];
-    ram_stats(ram, sizeof(ram));
-    ui_pen(OVERLAY_COL_BLUE);
-    ui_putch(4, 17, UI_DIAMOND, 0);
-    ui_printf(6, 17, 0, "RAM  %s", ram);
-    ui_pen(OVERLAY_COL_DEFAULT);
+    /* Live RAM readout — watch the internal-DRAM peak while the AP+httpd
+     * run. Dropped when the short grid has no spare row above the footer. */
+    if (y + 2 <= ui_rows() - 3) {
+        char ram[48];
+        ram_stats(ram, sizeof(ram));
+        ui_pen(OVERLAY_COL_BLUE);
+        ui_putch(4, y + 2, UI_DIAMOND, 0);
+        ui_printf(6, y + 2, 0, "RAM  %s", ram);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
 
     draw_footer(recv ? "testing - long-press or Esc to abort"
                      : "tap or Esc to cancel");
@@ -2148,33 +2216,6 @@ static void enter_wifiprov(uint64_t now)
     render_wifiprov(now);
 }
 
-/* Draw the QR (right side) with a caption. Two QR rows per half-block cell. */
-static void draw_import_qr(const char *caption)
-{
-    int qsz = ssh_import_qr_size();
-    if (qsz <= 0) return;
-    const int QZ = 2;
-    int span  = qsz + 2 * QZ;
-    int crows = (span + 1) / 2;
-    int qx = ui_cols() - span - 2;
-    int qy = 6;
-    ui_pen(OVERLAY_COL_WHITE);
-    for (int cr = 0; cr < crows; cr++) {
-        for (int cc = 0; cc < span; cc++) {
-            bool top = ssh_import_qr_module(cc - QZ, 2 * cr - QZ);
-            bool bot = ssh_import_qr_module(cc - QZ, 2 * cr - QZ + 1);
-            uint16_t g = (top && bot) ? UI_BLOCK
-                       : top ? 0x2580u
-                       : bot ? 0x2584u
-                       : ' ';
-            ui_putch(qx + cc, qy + cr, g, OVERLAY_ATTR_INVERSE);
-        }
-    }
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_puts(qx + (span - (int)strlen(caption)) / 2, qy + crows, caption, 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-}
-
 /* Full-screen HTTP SSH-profile import modal (SoftAP or Web transport). */
 static void render_sshimport(uint64_t now)
 {
@@ -2190,101 +2231,94 @@ static void render_sshimport(uint64_t now)
     ui_pen(OVERLAY_COL_DEFAULT);
     draw_rule_scan(3, s.anim_frame);
 
+    /* QR first — its column bounds the step text on narrow grids. */
+    int qx = draw_qr_panel(ssh_import_qr_size(), ssh_import_qr_module,
+                           web ? "scan to open" : "scan to join");
+    bool wide = ui_cols() >= 97;
+    int y = ui_rows() >= 28 ? 6 : 4;
+
     if (web) {
         /* On the existing LAN — the PC opens the deck's IP directly. */
-        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 6, "1", 0);
-        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 6, "On your PC browser, open:", 0);
-        ui_pen(OVERLAY_COL_WHITE);
-        ui_printf(32, 6, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_url());
-        ui_pen(OVERLAY_COL_DEFAULT);
-
+        y = draw_step(y, '1', wide ? "On your PC browser, open:"
+                                   : "Open on your PC:",
+                      ssh_import_url(), OVERLAY_COL_WHITE, qx - 1);
         if (ssh_import_pop_required()) {
-            ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 8, "2", 0);
-            ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 8, "Type this proof code in the form:", 0);
-            ui_pen(OVERLAY_COL_AMBER);
-            ui_printf(40, 8, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_pop());
-            ui_pen(OVERLAY_COL_DEFAULT);
+            y = draw_step(y, '2', wide ? "Type this proof code in the form:"
+                                       : "Proof code:",
+                          ssh_import_pop(), OVERLAY_COL_AMBER, qx - 1);
         } else {
-            ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 8, "2", 0);
+            ui_pen(OVERLAY_COL_CYAN);
+            ui_putch(4, y, '2', 0);
             ui_pen(OVERLAY_COL_AMBER);
-            ui_puts(6, 8, "Proof code OFF (dev build) - page is open.", 0);
+            ui_printf(6, y, 0, "%.*s", qx - 7,
+                      "Proof code OFF (dev build) - page is open.");
             ui_pen(OVERLAY_COL_DEFAULT);
+            y += 2;
         }
-
-        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 10, "3", 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-        ui_puts(6, 10, "Fill the form + Save. Repeat for more.", 0);
-
-        /* Honest caveat: plain HTTP over the LAN (no WPA2 wrapping our link). */
+        y = draw_step(y, '3', wide ? "Fill the form + Save. Repeat for more."
+                                   : "Fill the form + Save.",
+                      NULL, 0, qx - 1);
+        /* Honest caveat: plain HTTP over the LAN (no WPA2 wrapping us). */
         ui_pen(OVERLAY_COL_AMBER);
-        ui_putch(4, 12, UI_DIAMOND, 0);
+        ui_putch(4, y, UI_DIAMOND, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
-        ui_puts(6, 12, "LAN only - use on a network you trust.", 0);
-
-        draw_import_qr("scan to open");
+        ui_printf(6, y, 0, "%.*s", qx - 7,
+                  wide ? "LAN only - use on a network you trust."
+                       : "trusted LAN only.");
+        y += 2;
     } else {
         /* SoftAP — the phone joins the deck's own WPA2 network. */
-        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 6, "1", 0);
-        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 6, "Join this WiFi network:", 0);
-        ui_pen(OVERLAY_COL_GREEN);
-        ui_printf(30, 6, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_service_name());
-        ui_pen(OVERLAY_COL_DEFAULT);
-
-        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 8, "2", 0);
-        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 8, "WiFi password / proof code:", 0);
-        ui_pen(OVERLAY_COL_AMBER);
-        ui_printf(34, 8, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_pop());
-        ui_pen(OVERLAY_COL_DEFAULT);
-
-        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 10, "3", 0);
-        ui_pen(OVERLAY_COL_DEFAULT); ui_puts(6, 10, "Open in a browser:", 0);
-        ui_pen(OVERLAY_COL_WHITE);
-        ui_printf(25, 10, OVERLAY_ATTR_INVERSE, " %s ", ssh_import_url());
-        ui_pen(OVERLAY_COL_DEFAULT);
-
-        ui_pen(OVERLAY_COL_CYAN);  ui_puts(4, 12, "4", 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-        ui_puts(6, 12, "Fill the form + Save. Repeat for more.", 0);
-
-        draw_import_qr("scan to join");
+        y = draw_step(y, '1', wide ? "Join this WiFi network:"
+                                   : "Join this WiFi:",
+                      ssh_import_service_name(), OVERLAY_COL_GREEN, qx - 1);
+        y = draw_step(y, '2', wide ? "WiFi password / proof code:"
+                                   : "WiFi password:",
+                      ssh_import_pop(), OVERLAY_COL_AMBER, qx - 1);
+        y = draw_step(y, '3', wide ? "Open in a browser:" : "Browse to:",
+                      ssh_import_url(), OVERLAY_COL_WHITE, qx - 1);
+        y = draw_step(y, '4', wide ? "Fill the form + Save. Repeat for more."
+                                   : "Fill the form + Save.",
+                      NULL, 0, qx - 1);
     }
 
     /* Status: running import/delete tally + last name, or a waiting spinner. */
     int cnt = ssh_import_count();
     int del = ssh_import_deleted();
     const char *err = ssh_import_err();
+    char stat[96];
     if (err && err[0]) {
+        snprintf(stat, sizeof(stat), "rejected: %s", err);
         ui_pen(OVERLAY_COL_RED);
-        ui_putch(4, 15, UI_DIAMOND, 0);
-        ui_printf(6, 15, 0, "rejected: %s", err);
-        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_putch(4, y, UI_DIAMOND, 0);
     } else if (cnt > 0 || del > 0) {
-        ui_pen(OVERLAY_COL_GREEN);
-        ui_putch(4, 15, UI_LED_ON, 0);
         if (del > 0 && cnt > 0)
-            ui_printf(6, 15, 0, "last: '%s'  (%d saved, %d removed)",
-                      s.import_last, cnt, del);
+            snprintf(stat, sizeof(stat), "last: '%s'  (%d saved, %d removed)",
+                     s.import_last, cnt, del);
         else if (del > 0)
-            ui_printf(6, 15, 0, "removed '%s'  (%d removed)",
-                      s.import_last, del);
+            snprintf(stat, sizeof(stat), "removed '%s'  (%d removed)",
+                     s.import_last, del);
         else
-            ui_printf(6, 15, 0, "imported '%s'  (%d saved)",
-                      s.import_last, cnt);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    } else {
+            snprintf(stat, sizeof(stat), "imported '%s'  (%d saved)",
+                     s.import_last, cnt);
         ui_pen(OVERLAY_COL_GREEN);
-        ui_putch(4, 15, spinner_glyph(s.anim_frame), 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-        ui_puts(6, 15, "waiting for a browser...", 0);
+        ui_putch(4, y, UI_LED_ON, 0);
+    } else {
+        snprintf(stat, sizeof(stat), "waiting for a browser...");
+        ui_pen(OVERLAY_COL_GREEN);
+        ui_putch(4, y, spinner_glyph(s.anim_frame), 0);
     }
-
-    /* Live RAM readout — watch internal DRAM while the server runs. */
-    char ram[48];
-    ram_stats(ram, sizeof(ram));
-    ui_pen(OVERLAY_COL_BLUE);
-    ui_putch(4, 17, UI_DIAMOND, 0);
-    ui_printf(6, 17, 0, "RAM  %s", ram);
     ui_pen(OVERLAY_COL_DEFAULT);
+    ui_printf(6, y, 0, "%.*s", qx - 7, stat);
+
+    /* Live RAM readout — dropped when the short grid has no spare row. */
+    if (y + 2 <= ui_rows() - 3) {
+        char ram[48];
+        ram_stats(ram, sizeof(ram));
+        ui_pen(OVERLAY_COL_BLUE);
+        ui_putch(4, y + 2, UI_DIAMOND, 0);
+        ui_printf(6, y + 2, 0, "RAM  %s", ram);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
 
     draw_footer(cnt > 0 || del > 0 ? "tap or Esc when done - changes are saved"
                                    : "tap or Esc to cancel");
@@ -2477,6 +2511,26 @@ static void commit_reorder(uint64_t now)
     load_profiles();
 }
 
+/* Session teardown with the CRT power-off done RIGHT: hide the overlay so
+ * the collapse plays over the last live terminal frame (not over HOME/menu
+ * chrome), and only enter HOME once the animation has finished. Toasts set
+ * by the caller survive — they are state, rendered when HOME appears.
+ * With the collapse effect disabled this is just enter_home(). */
+static void enter_home_after_collapse(uint64_t now)
+{
+    display_fx_cfg_t c;
+    display_fx_get(&c);
+    if (!c.collapse) {
+        enter_home(now);
+        return;
+    }
+    ui_hide();
+    ui_no_cursor();
+    display_fx_collapse();
+    s.state          = ST_POWEROFF;
+    s.poweroff_until = now + (uint64_t)c.collapse_frames * 17 + 80;
+}
+
 static void menu_activate(uint64_t now)
 {
     const int sc  = s.menu_screen;
@@ -2489,9 +2543,8 @@ static void menu_activate(uint64_t now)
         switch (sel) {
         case 0: s.state = ST_SESSION; ui_hide();          return;  /* resume  */
         case 1:                                                    /* discon. */
-            display_fx_collapse();   /* deliberate power-off: CRT collapse */
             ssh_client_disconnect();
-            enter_home(now);
+            enter_home_after_collapse(now);   /* deliberate CRT power-off */
             return;
         case 2: menu_goto(MS_CONFIG);                     return;
         }
@@ -2714,14 +2767,13 @@ static void session_dropped(uint64_t now)
     uint32_t dur = (uint32_t)((now - s.session_start) / 1000);
     const char *why = ssh_client_last_error();
     display_bell();
-    display_fx_collapse();       /* CRT power-off */
     if (why[0]) display_fx_static();   /* transport error: signal-loss snow */
     if (why[0])
         toast_for(now, ERR_TOAST_MS, "NO CARRIER (%02u:%02u) - %.36s",
                   dur / 60, dur % 60, why);
     else
         toast(now, "NO CARRIER (%02u:%02u)", dur / 60, dur % 60);
-    enter_home(now);
+    enter_home_after_collapse(now);    /* CRT power-off over the dead screen */
 }
 
 static void enter_session(uint64_t now)
@@ -2911,6 +2963,11 @@ void cyberdeck_app_tick(uint64_t now)
             s.next_anim = now + ANIM_PERIOD_MS;
             render_boot(now);
         }
+        break;
+
+    case ST_POWEROFF:
+        /* Collapse finished (or was cut short by input) — bring HOME up. */
+        if (now >= s.poweroff_until) enter_home(now);
         break;
 
     case ST_HOME:
@@ -3147,6 +3204,11 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         if (k != K_NONE || ev->type == CYBERDECK_INPUT_TAP ||
             ev->type == CYBERDECK_INPUT_LONG_PRESS)
             enter_home(now);
+        break;
+
+    case ST_POWEROFF:
+        /* Any input skips the rest of the power-off animation. */
+        enter_home(now);
         break;
 
     case ST_HOME:
@@ -3443,10 +3505,10 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                 /* Tap on a form row: focus it (selectors also step). */
                 int row = ev->y / FONT_HEIGHT, cc = ev->x / FONT_WIDTH;
                 int f = -1;
-                if (cc >= PF_X0 - 1 && cc <= PF_FX + PF_FW &&
-                    row >= PF_Y0 && row < PF_Y0 + PF_ROWS * 2 &&
-                    (row - PF_Y0) % 2 == 0)
-                    f = (row - PF_Y0) / 2;
+                if (cc >= pf_x0() - 1 && cc <= pf_fx() + pf_fw() &&
+                    row >= pf_y0() && row < pf_y0() + PF_ROWS * pf_step() &&
+                    (row - pf_y0()) % pf_step() == 0)
+                    f = (row - pf_y0()) / pf_step();
                 if (f < 0 || f >= PF_ROWS || !pf_field_present(f)) break;
                 if (f == PF_AUTH)     pf_auth_toggle();
                 else if (f == PF_KEY) pf_key_cycle(+1);

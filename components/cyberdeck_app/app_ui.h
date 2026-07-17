@@ -108,8 +108,10 @@ void ui_box(int col, int row, int w, int h, const char *title);
 int ui_chip(int col, int row, uint16_t left_cp, const char *text,
             uint16_t right_cp);
 
-/** Draw a finger-sized tile: filled + bordered block with a title line and an
- *  optional body line, inverted when selected. Text is truncated to fit. */
+/** Draw a finger-sized tile: a solid bar in the current pen color (DOS-style
+ *  button — always a colored background) with a title line and an optional
+ *  body line, vertically centered. Selection washes the bar toward white
+ *  (OVERLAY_ATTR_BRIGHT pastel glow); text stays dark. Truncated to fit. */
 void ui_tile(int col, int row, int w, int h,
              const char *title, const char *body, bool selected);
 

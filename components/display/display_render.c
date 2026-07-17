@@ -31,9 +31,14 @@ static DRAM_ATTR int                     s_overlay_rows = 0;
 static DRAM_ATTR color_t                 s_overlay_fg   = COLOR_BLACK;
 static DRAM_ATTR color_t                 s_overlay_bg   = COLOR_CYAN;
 
-/* Overlay accent palette (index 0 is a sentinel → use s_overlay_fg). Kept in
- * DRAM so the bounce-buffer ISR can read it without touching flash. */
-/* Classic VGA bright-16 palette (the iconic DOS text-mode colors). */
+/* Overlay accent palettes (index 0 is a sentinel → use s_overlay_fg). Kept
+ * in DRAM so the bounce-buffer ISR can read them without touching flash.
+ *
+ * Dual palette: TEXT accents (colored glyphs on the dark screen) use the
+ * classic VGA bright-16 tones; INVERSE cells (solid button bars, chips) use
+ * muted companions of the same hues — a whole screen of full-saturation
+ * bars reads as motley, and dark labels want a calmer mid-tone behind them.
+ * WHITE stays pure in both (QR codes need true white modules). */
 static DRAM_ATTR const color_t s_overlay_pal[OVERLAY_PAL_SIZE] = {
     0,                        /* 0: default → replaced by s_overlay_fg */
     RGB565( 85, 255,  85),    /* 1 green   (VGA bright green)   */
@@ -43,6 +48,16 @@ static DRAM_ATTR const color_t s_overlay_pal[OVERLAY_PAL_SIZE] = {
     RGB565(255,  85,  85),    /* 5 red     (VGA bright red)     */
     RGB565( 85,  85, 255),    /* 6 blue    (VGA bright blue)    */
     RGB565(255, 255, 255),    /* 7 white   (VGA white)          */
+};
+static DRAM_ATTR const color_t s_overlay_bar[OVERLAY_PAL_SIZE] = {
+    RGB565(148, 148, 148),    /* 0 default → neutral gray       */
+    RGB565( 96, 168,  96),    /* 1 sage                         */
+    RGB565( 80, 160, 168),    /* 2 teal                         */
+    RGB565(168,  96, 160),    /* 3 mauve                        */
+    RGB565(200, 152,  72),    /* 4 ochre                        */
+    RGB565(184,  88,  80),    /* 5 terracotta                   */
+    RGB565(104, 112, 192),    /* 6 periwinkle                   */
+    RGB565(255, 255, 255),    /* 7 white (kept pure — QR)       */
 };
 
 /* -------------------------------------------------------------------------
@@ -318,9 +333,28 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
         const uint8_t  ov_color = (ov_row && c < s_overlay_cols) ? ov_row[c].color : 0;
 
         if (ov_cp != 0) {
-            fg = ov_color ? s_overlay_pal[ov_color] : s_overlay_fg;
-            bg = s_overlay_bg;
-            if (ov_attrs & OVERLAY_ATTR_INVERSE) { color_t t = fg; fg = bg; bg = t; }
+            if (ov_attrs & OVERLAY_ATTR_INVERSE) {
+                /* Solid bar: muted accent background. Colored bars (1-6)
+                 * carry LIGHT text — a pale 3/4-to-white tint of their own
+                 * hue; focus (BRIGHT) washes the bar pastel and flips the
+                 * text dark. Gray/white surfaces (0,7) always keep dark
+                 * text: QR modules must stay dark-on-white. */
+                bg = s_overlay_bar[ov_color];
+                if (ov_color >= 1 && ov_color <= 6 &&
+                        !(ov_attrs & OVERLAY_ATTR_BRIGHT))
+                    fg = (color_t)(((bg >> 2) & 0x39E7) + 0x7BEF + 0x39E7);
+                else
+                    fg = s_overlay_bg;
+            } else {
+                fg = ov_color ? s_overlay_pal[ov_color] : s_overlay_fg;
+                bg = s_overlay_bg;
+            }
+            /* Focus glow: wash the background 50% toward white (carry-safe
+             * half-sum), keeping the dark text — the focused bar turns
+             * pastel and the label gains contrast instead of losing it.
+             * Per-cell cache-build work — the free effect tier. */
+            if (ov_attrs & OVERLAY_ATTR_BRIGHT)
+                bg = (color_t)(((bg >> 1) & 0x7BEF) + 0x7BEF);
             glyph = font_get_glyph(ov_cp);
         } else {
             const terminal_cell_t *cell = &row_cells[c];
