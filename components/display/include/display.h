@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include "esp_err.h"
 #include "esp_attr.h"
+#include "font.h"
 #ifndef BUILD_SIMULATOR
 #include "esp_lcd_panel_ops.h"
 #endif
@@ -17,9 +18,36 @@
 #define DISPLAY_WIDTH   800
 #define DISPLAY_HEIGHT  480
 
-// Bounce buffer configuration (one character row at a time)
-#define BOUNCE_BUFFER_HEIGHT  16  // One character row (8x16 font)
+/*
+ * Bounce buffer height: one character row for the 8x16 font (the original
+ * layout), HALF a character row for taller fonts — esp_lcd allocates two
+ * bounce buffers in internal DMA RAM, and full 20/24-scanline bands would
+ * cost up to +25.6 KB of scarce internal DRAM vs the 8x16 baseline.
+ * The renderer supports any band height that is even, divides FONT_HEIGHT
+ * and divides DISPLAY_HEIGHT (bands never straddle a character row).
+ */
+#if FONT_HEIGHT > 16
+#define BOUNCE_BUFFER_HEIGHT  (FONT_HEIGHT / 2)
+#else
+#define BOUNCE_BUFFER_HEIGHT  FONT_HEIGHT
+#endif
 #define BOUNCE_BUFFER_SIZE    (DISPLAY_WIDTH * BOUNCE_BUFFER_HEIGHT)
+
+/* Character grid implied by the panel and the selected font.
+ * 12x24 leaves an 8 px right margin (66*12 = 792) — rendered black. */
+#define DISPLAY_TEXT_COLS  (DISPLAY_WIDTH  / FONT_WIDTH)
+#define DISPLAY_TEXT_ROWS  (DISPLAY_HEIGHT / FONT_HEIGHT)
+
+_Static_assert(DISPLAY_HEIGHT % FONT_HEIGHT == 0,
+               "text rows must tile the panel exactly");
+_Static_assert(FONT_HEIGHT % BOUNCE_BUFFER_HEIGHT == 0,
+               "bounce bands must not straddle a character row");
+_Static_assert(DISPLAY_HEIGHT % BOUNCE_BUFFER_HEIGHT == 0,
+               "esp_lcd requires the frame to be a whole number of bounce buffers");
+_Static_assert((BOUNCE_BUFFER_HEIGHT & 1) == 0,
+               "renderer scanline-parity effects assume even band starts");
+_Static_assert((FONT_WIDTH & 1) == 0,
+               "renderer packs pixel pairs into uint32 — cell width must be even");
 
 // Color format (RGB565)
 typedef uint16_t color_t;

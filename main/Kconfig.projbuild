@@ -1,20 +1,20 @@
 menu "Cyberdeck Configuration"
 
-    config TERMINAL_WIDTH
-        int "Terminal width (columns)"
-        default 100
-        range 80 133
+    choice CYBERDECK_FONT
+        prompt "Terminal font"
+        default CYBERDECK_FONT_8X16
         help
-            Number of character columns in the terminal display.
-            Default 100 allows 8-pixel wide fonts on 800-pixel display.
+            Terminus bitmap font size. The character grid follows from the
+            800x480 panel: 8x16 -> 100x30, 10x20 -> 80x24, 12x24 -> 66x20
+            (12x24 leaves an 8-pixel black margin at the right edge).
 
-    config TERMINAL_HEIGHT
-        int "Terminal height (rows)"
-        default 30
-        range 24 60
-        help
-            Number of character rows in the terminal display.
-            Default 30 allows 16-pixel tall fonts on 480-pixel display.
+        config CYBERDECK_FONT_8X16
+            bool "Terminus 8x16 (100x30 grid)"
+        config CYBERDECK_FONT_10X20
+            bool "Terminus 10x20 (80x24 grid)"
+        config CYBERDECK_FONT_12X24
+            bool "Terminus 12x24 (66x20 grid)"
+    endchoice
 
     config SCROLLBACK_LINES
         int "Scrollback buffer (lines)"

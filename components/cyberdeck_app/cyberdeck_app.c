@@ -17,6 +17,7 @@
 
 #include "cyberdeck_app.h"
 #include "app_ui.h"
+#include "font.h"   /* FONT_WIDTH/FONT_HEIGHT — touch pixel→cell mapping */
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -236,8 +237,8 @@ static int tile_y(const tilegrid_t *g, int slot)
 static int tile_hit(const tilegrid_t *g, int px, int py)
 {
     if (g->ncols <= 0 || g->nrows <= 0) return -1;
-    int cc = px / 8  - g->x0;
-    int cr = py / 16 - g->y0;
+    int cc = px / FONT_WIDTH  - g->x0;
+    int cr = py / FONT_HEIGHT - g->y0;
     if (cc < 0 || cr < 0) return -1;
     int pitchx = g->tw + g->gx, pitchy = g->th + g->gy;
     int col = cc / pitchx, row = cr / pitchy;
@@ -3440,7 +3441,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
                 break;
             } else {
                 /* Tap on a form row: focus it (selectors also step). */
-                int row = ev->y / 16, cc = ev->x / 8;
+                int row = ev->y / FONT_HEIGHT, cc = ev->x / FONT_WIDTH;
                 int f = -1;
                 if (cc >= PF_X0 - 1 && cc <= PF_FX + PF_FW &&
                     row >= PF_Y0 && row < PF_Y0 + PF_ROWS * 2 &&

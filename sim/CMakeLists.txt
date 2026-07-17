@@ -10,13 +10,21 @@ set(PROJECT_DIR ${ROOT})
 # Preprocessor flag consumed by display.h and display_sdl.c
 add_compile_definitions(BUILD_SIMULATOR=1)
 
-# SSH / terminal configuration used by ssh_client.c
+# SSH configuration used by ssh_client.c
 add_compile_definitions(
     CONFIG_SSH_RECV_WINDOW=32768
     CONFIG_SSH_KEEPALIVE_INTERVAL=60
-    CONFIG_TERMINAL_WIDTH=100
-    CONFIG_TERMINAL_HEIGHT=30
 )
+
+# Terminal font: 8x16 (100x30), 10x20 (80x24) or 12x24 (66x20).
+set(FONT_SIZE "8x16" CACHE STRING "Terminal font size: 8x16, 10x20 or 12x24")
+if(FONT_SIZE STREQUAL "10x20")
+    add_compile_definitions(CYBERDECK_FONT_10X20=1)
+elseif(FONT_SIZE STREQUAL "12x24")
+    add_compile_definitions(CYBERDECK_FONT_12X24=1)
+elseif(NOT FONT_SIZE STREQUAL "8x16")
+    message(FATAL_ERROR "FONT_SIZE must be 8x16, 10x20 or 12x24 (got '${FONT_SIZE}')")
+endif()
 
 include(${ROOT}/cmake/get_cpm.cmake)
 

@@ -62,7 +62,11 @@ static DRAM_ATTR bool          s_cursor_visible = true;
  * Static (not stack) to avoid blowing the ISR stack on ESP32.
  * DRAM_ATTR keeps it in internal SRAM — reachable from ISR without Flash cache.
  * ---------------------------------------------------------------------- */
-#define RENDER_MAX_COLS  (DISPLAY_WIDTH / FONT_WIDTH)   /* 100 */
+#define RENDER_MAX_COLS  (DISPLAY_WIDTH / FONT_WIDTH)   /* 100 / 80 / 66 */
+
+/* uint32_t (pixel-pair) stores per character column. Even FONT_WIDTH keeps
+ * every column start 4-byte aligned (FONT_WIDTH px × 2 B is a multiple of 4). */
+#define COL_WORDS        (FONT_WIDTH / 2)
 
 /* Overlay DIM scrim style (the shade drawn behind a modal):
  *   0 = halved   — every pixel at 50% brightness (default). Done per-cell in
@@ -80,13 +84,23 @@ static DRAM_ATTR bool          s_cursor_visible = true;
  * scanline: [0] = normal, [1] = scanline-dimmed (the CRT-scanline effect).
  * Selecting the variant per scanline keeps the hot loop free of any
  * per-pixel effect cost — the "shader" work all happens per-cell here. */
-static DRAM_ATTR const uint8_t *s_cc_glyph[RENDER_MAX_COLS];
-static DRAM_ATTR uint16_t       s_cc_bg[2][RENDER_MAX_COLS];
-static DRAM_ATTR uint16_t       s_cc_xf[2][RENDER_MAX_COLS];
-static DRAM_ATTR uint8_t        s_cc_ul[RENDER_MAX_COLS];
+static DRAM_ATTR const font_row_t *s_cc_glyph[RENDER_MAX_COLS];
+static DRAM_ATTR uint16_t           s_cc_bg[2][RENDER_MAX_COLS];
+static DRAM_ATTR uint16_t           s_cc_xf[2][RENDER_MAX_COLS];
+static DRAM_ATTR uint8_t            s_cc_ul[RENDER_MAX_COLS];
 #if OVERLAY_DIM_DITHER
-static DRAM_ATTR uint8_t        s_cc_dim[RENDER_MAX_COLS];
+static DRAM_ATTR uint8_t            s_cc_dim[RENDER_MAX_COLS];
 #endif
+
+/* Cache validity — with sub-row bounce bands (BOUNCE_BUFFER_HEIGHT <
+ * FONT_HEIGHT) a character row spans several consecutive bands; only the
+ * first band of the row rebuilds the cache, the rest reuse it. */
+static DRAM_ATTR int     s_cc_row     = -1;  /* char row currently cached */
+static DRAM_ATTR int     s_cc_scan_on = 0;   /* dim variant [1] populated? */
+static DRAM_ATTR uint8_t s_cc_frame   = 0;   /* g_fx_frame at build time — a
+                                                band whose row-first band was
+                                                clipped out must not reuse a
+                                                previous frame's cache */
 
 /* -------------------------------------------------------------------------
  * Carry-safe RGB565 helpers (per-field shift/mask math — a masked
@@ -115,7 +129,7 @@ static inline uint16_t fx_mono565(uint16_t p, uint8_t mode)
 /* -------------------------------------------------------------------------
  * Branchless pixel-pair → 32-bit word (little-endian, 2×RGB565).
  *
- *   bit   = (gb >> (7-p)) & 1
+ *   bit   = (gb >> (FONT_WIDTH-1-p)) & 1     (leftmost pixel = top bit)
  *   mask  = 0xFFFF if bit=1, 0x0000 if bit=0  →  (uint16_t)(0u - bit)
  *   pixel = bg ^ (xorfg & mask)        → bg when bit=0, fg when bit=1
  *
@@ -123,9 +137,39 @@ static inline uint16_t fx_mono565(uint16_t p, uint8_t mode)
  * ---------------------------------------------------------------------- */
 #define GPAIR(gb, p0, p1, bg_v, xor_v)                                          \
     (   (uint32_t)((uint16_t)((bg_v) ^ ((xor_v) &                               \
-            (uint16_t)(0u - (((unsigned)(gb) >> (7u - (p0))) & 1u)))))           \
+            (uint16_t)(0u - (((unsigned)(gb) >> (FONT_WIDTH - 1u - (p0))) & 1u))))) \
     |  ((uint32_t)((uint16_t)((bg_v) ^ ((xor_v) &                               \
-            (uint16_t)(0u - (((unsigned)(gb) >> (7u - (p1))) & 1u))))) << 16) )
+            (uint16_t)(0u - (((unsigned)(gb) >> (FONT_WIDTH - 1u - (p1))) & 1u))))) << 16) )
+
+/* Emit one full character column (COL_WORDS aligned uint32 stores) —
+ * unrolled per FONT_WIDTH so the hot loop stays branch- and loop-free. */
+#if FONT_WIDTH == 8
+#define EMIT_COL(d, gb, bg_v, xor_v) do {                                       \
+    (d)[0] = GPAIR(gb, 0, 1, bg_v, xor_v);                                      \
+    (d)[1] = GPAIR(gb, 2, 3, bg_v, xor_v);                                      \
+    (d)[2] = GPAIR(gb, 4, 5, bg_v, xor_v);                                      \
+    (d)[3] = GPAIR(gb, 6, 7, bg_v, xor_v);                                      \
+} while (0)
+#elif FONT_WIDTH == 10
+#define EMIT_COL(d, gb, bg_v, xor_v) do {                                       \
+    (d)[0] = GPAIR(gb, 0, 1, bg_v, xor_v);                                      \
+    (d)[1] = GPAIR(gb, 2, 3, bg_v, xor_v);                                      \
+    (d)[2] = GPAIR(gb, 4, 5, bg_v, xor_v);                                      \
+    (d)[3] = GPAIR(gb, 6, 7, bg_v, xor_v);                                      \
+    (d)[4] = GPAIR(gb, 8, 9, bg_v, xor_v);                                      \
+} while (0)
+#elif FONT_WIDTH == 12
+#define EMIT_COL(d, gb, bg_v, xor_v) do {                                       \
+    (d)[0] = GPAIR(gb, 0,  1,  bg_v, xor_v);                                    \
+    (d)[1] = GPAIR(gb, 2,  3,  bg_v, xor_v);                                    \
+    (d)[2] = GPAIR(gb, 4,  5,  bg_v, xor_v);                                    \
+    (d)[3] = GPAIR(gb, 6,  7,  bg_v, xor_v);                                    \
+    (d)[4] = GPAIR(gb, 8,  9,  bg_v, xor_v);                                    \
+    (d)[5] = GPAIR(gb, 10, 11, bg_v, xor_v);                                    \
+} while (0)
+#else
+#error "display_render: unsupported FONT_WIDTH (add an EMIT_COL variant)"
+#endif
 
 /* -------------------------------------------------------------------------
  * ANSI-256 colour → RGB565.
@@ -218,6 +262,7 @@ void display_get_text_size(int *cols, int *rows)
  * band by the ISR (so it works during a session with no overlay involved).
  * ---------------------------------------------------------------------- */
 static DRAM_ATTR volatile int s_bell_frames = 0;   /* frames the tag stays up */
+static DRAM_ATTR bool         s_bell_show   = false; /* latched at frame tick */
 
 #define BELL_TOTAL   40    /* 4 half-periods → exactly two on/off flashes */
 #define BELL_HALF    10    /* frames per on (or off) half at ~60 fps      */
@@ -261,7 +306,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
 
     for (int c = 0; c < ncols; c++) {
         color_t fg, bg;
-        const uint8_t *glyph;
+        const font_row_t *glyph;
         uint8_t underline = 0;
         uint8_t bold      = 0;
 #if OVERLAY_DIM_DITHER
@@ -329,26 +374,28 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
     }
 }
 
-/* Overlay a white bell on a red tag in the top-right of the top band. The bell
- * is a hand-drawn 16x16 silhouette (bit 15 = leftmost column); @p dst points at
- * the top band's first pixel. */
-static IRAM_ATTR void draw_bell_tag(color_t *dst)
+/* Overlay a white bell on a red tag in the top-right of the screen. The bell
+ * is a hand-drawn 16x16 silhouette (bit 15 = leftmost column); @p dst points
+ * at the band's first pixel, @p y0/@p nrows select the slice of the tag that
+ * falls inside this band (sub-row bands render the tag across two calls). */
+static IRAM_ATTR void draw_bell_tag(color_t *dst, int y0, int nrows)
 {
-    static const uint16_t bell[16] = {
+    static DRAM_ATTR const uint16_t bell[16] = {
         0x0180, 0x0180, 0x03C0, 0x07E0, 0x07E0, 0x0FF0, 0x0FF0, 0x1FF8,
         0x1FF8, 0x3FFC, 0x3FFC, 0x7FFE, 0x7FFE, 0x0000, 0x0180, 0x0180,
     };
     const color_t red   = 0xF800u;
     const color_t white = 0xFFFFu;
-    const int tag_w  = 32;                          /* 4 cells wide          */
+    const int tag_w  = 32;                          /* 32 px wide            */
     const int x0     = DISPLAY_WIDTH - tag_w;       /* hard top-right corner */
     const int bell_x = x0 + (tag_w - 16) / 2;       /* centre the 16px bell  */
 
-    for (int row = 0; row < FONT_HEIGHT; row++) {
-        color_t *p = dst + row * DISPLAY_WIDTH + x0;
+    if (nrows > 16 - y0) nrows = 16 - y0;           /* tag is 16 px tall */
+    for (int n = 0; n < nrows; n++) {
+        color_t *p = dst + n * DISPLAY_WIDTH + x0;
         for (int i = 0; i < tag_w; i++) p[i] = red;         /* red background */
-        uint16_t bits = bell[row];
-        color_t *b = dst + row * DISPLAY_WIDTH + bell_x;
+        uint16_t bits = bell[y0 + n];
+        color_t *b = dst + n * DISPLAY_WIDTH + bell_x;
         for (int col = 0; col < 16; col++)
             if ((bits >> (15 - col)) & 1u) b[col] = white;  /* white bell     */
     }
@@ -364,12 +411,16 @@ static DRAM_ATTR const uint32_t s_fx_noise[16] = {
 };
 
 /**
- * Render one horizontal band (one character-row height) into dst.
+ * Render one horizontal band (one bounce-buffer height) into dst.
+ *
+ * Bands must start on a bounce-buffer boundary: BOUNCE_BUFFER_HEIGHT is even
+ * and divides FONT_HEIGHT, so a band never straddles a character row and may
+ * cover either a whole row (8x16) or half of one (10x20, 12x24).
  *
  * pos_px   — index of first pixel in the full framebuffer
  *            (= start_scanline × DISPLAY_WIDTH)
  * n_bytes  — byte count of the band
- *            (= DISPLAY_WIDTH × FONT_HEIGHT × sizeof(color_t) per chunk)
+ *            (= DISPLAY_WIDTH × BOUNCE_BUFFER_HEIGHT × sizeof(color_t))
  */
 void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
 {
@@ -386,9 +437,14 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
     const int start_scan = pos_px / DISPLAY_WIDTH;
     const int num_scans  = (n_bytes >> 1) / DISPLAY_WIDTH;  /* n_bytes/2 = pixels */
     const int char_row   = start_scan / FONT_HEIGHT;
+    /* First glyph scanline of this band. Non-zero only with sub-row bounce
+     * bands (BOUNCE_BUFFER_HEIGHT < FONT_HEIGHT); always a multiple of the
+     * band height, so band starts stay even (scanline-parity effects rely
+     * on it — see the _Static_asserts in display.h). */
+    const int glyph_row0 = start_scan % FONT_HEIGHT;
 
-    /* Tick per-frame counters once per full frame (char_row 0 = new frame). */
-    if (char_row == 0) {
+    /* Tick per-frame counters once per full frame (scanline 0 = new frame). */
+    if (start_scan == 0) {
         if (++s_blink_count >= CURSOR_BLINK_FRAMES) {
             s_blink_count    = 0;
             s_cursor_visible = !s_cursor_visible;
@@ -397,6 +453,13 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         if (g_fx_wipe_left     > 0) g_fx_wipe_left--;
         if (g_fx_collapse_left > 0) g_fx_collapse_left--;
         if (g_fx_static_left   > 0) g_fx_static_left--;
+        /* Visual bell: latch this frame's on/off flash phase. */
+        if (s_bell_frames > 0) {
+            s_bell_show = ((BELL_TOTAL - s_bell_frames) / BELL_HALF) % 2 == 0;
+            s_bell_frames--;
+        } else {
+            s_bell_show = false;
+        }
     }
 
     /* Below the text area — fill black. */
@@ -444,7 +507,11 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
 
     const int band_y0 = start_scan;
     if (clipped && (band_y0 >= wv1 || band_y0 + num_scans <= wv0)) {
-        /* Band fully hidden: black + any edge lines that fall in it. */
+        /* Band fully hidden: black + any edge lines that fall in it.
+         * Invalidate the row cache: a later band of this row (or of a frame
+         * long after — the uint8 frame stamp can wrap) must never reuse a
+         * cache this path skipped rebuilding. */
+        s_cc_row = -1;
         uint32_t *p = (uint32_t *)dst;
         int words = n_bytes >> 2;
         for (int i = 0; i < words; i++) p[i] = 0;
@@ -459,24 +526,36 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         return;
     }
 
-    /* Build the per-column cache for this character row. scan_on is captured
-     * once so the cache fill and the scanline loop agree for the band. */
+    /* Build the per-column cache for this character row. With sub-row bands
+     * only the row's first band rebuilds; later bands reuse the cache (the
+     * DMA feeds bands strictly in order). scan_on is captured at build time
+     * so the cache fill and the scanline loop always agree. */
     const int scan_on = g_fx_cfg.scanlines ? 1 : 0;
-    build_row_cache(char_row, scan_on);
+    if (glyph_row0 == 0 || s_cc_row != char_row || s_cc_scan_on != scan_on
+            || s_cc_frame != g_fx_frame) {
+        build_row_cache(char_row, scan_on);
+        s_cc_row     = char_row;
+        s_cc_scan_on = scan_on;
+        s_cc_frame   = g_fx_frame;
+    }
     const int ncols = s_cell_cols;
+
+    /* Right margin beyond the text area, in uint32 (pixel-pair) words.
+     * Zero for 8x16/10x20; 4 words (8 px) for 12x24 (66*12 = 792 < 800). */
+    const int margin_words = (DISPLAY_WIDTH - ncols * FONT_WIDTH) >> 1;
 
     /* ------------------------------------------------------------------
      * Render scanlines.
-     * glyph scanline index == scanline index within the band (n)
-     * because the band always starts on a char-row boundary.
+     * glyph scanline index == glyph_row0 + scanline index within the band
+     * (bands never straddle a character row).
      *
-     * Inner loop: two adjacent columns per iteration → 16 pixels
-     * → 8 × uint32_t writes, naturally aligned.
+     * Inner loop: two adjacent columns per iteration → 2×FONT_WIDTH pixels
+     * → 2×COL_WORDS uint32_t writes, naturally aligned.
      * ------------------------------------------------------------------ */
     color_t *dst_base = dst;
 
     for (int n = 0; n < num_scans; n++) {
-        const uint8_t gl = (uint8_t)n;
+        const int gl = glyph_row0 + n;
         /* CRT scanlines: odd scanlines read the pre-dimmed colour variant.
          * Bands start on even scanlines, so n's parity is global parity. */
         const int sel = n & scan_on & 1;
@@ -486,50 +565,48 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
 
         int c = 0;
         for (; c + 1 < ncols; c += 2) {
-            const uint8_t b0 = s_cc_glyph[c    ] ? s_cc_glyph[c    ][gl] : 0u;
-            const uint8_t b1 = s_cc_glyph[c + 1] ? s_cc_glyph[c + 1][gl] : 0u;
+            const font_row_t b0 = s_cc_glyph[c    ] ? s_cc_glyph[c    ][gl] : 0u;
+            const font_row_t b1 = s_cc_glyph[c + 1] ? s_cc_glyph[c + 1][gl] : 0u;
             const uint16_t bg0 = bgv[c    ], xf0 = xfv[c    ];
             const uint16_t bg1 = bgv[c + 1], xf1 = xfv[c + 1];
 
-            d[0] = GPAIR(b0, 0, 1, bg0, xf0);
-            d[1] = GPAIR(b0, 2, 3, bg0, xf0);
-            d[2] = GPAIR(b0, 4, 5, bg0, xf0);
-            d[3] = GPAIR(b0, 6, 7, bg0, xf0);
-
-            d[4] = GPAIR(b1, 0, 1, bg1, xf1);
-            d[5] = GPAIR(b1, 2, 3, bg1, xf1);
-            d[6] = GPAIR(b1, 4, 5, bg1, xf1);
-            d[7] = GPAIR(b1, 6, 7, bg1, xf1);
-
-            d += 8;
+            EMIT_COL(d,             b0, bg0, xf0);
+            EMIT_COL(d + COL_WORDS, b1, bg1, xf1);
+            d += 2 * COL_WORDS;
         }
 
-        /* Trailing odd column (defensive; 100 cols → never taken). */
+        /* Trailing odd column (defensive; all three grids are even-col). */
         if (c < ncols) {
-            const uint8_t b0   = s_cc_glyph[c] ? s_cc_glyph[c][gl] : 0u;
+            const font_row_t b0  = s_cc_glyph[c] ? s_cc_glyph[c][gl] : 0u;
             const uint16_t bg0 = bgv[c], xf0 = xfv[c];
-            d[0] = GPAIR(b0, 0, 1, bg0, xf0);
-            d[1] = GPAIR(b0, 2, 3, bg0, xf0);
-            d[2] = GPAIR(b0, 4, 5, bg0, xf0);
-            d[3] = GPAIR(b0, 6, 7, bg0, xf0);
+            EMIT_COL(d, b0, bg0, xf0);
+            d += COL_WORDS;
         }
+
+        /* Blank the margin right of the text area (black). */
+        for (int i = 0; i < margin_words; i++) d[i] = 0;
     }
 
     /* ------------------------------------------------------------------
-     * Underline post-pass — force fg on the last two scanlines of any
-     * underlined column. Touches only flagged columns, off the hot loop.
+     * Underline post-pass — force fg on the last two scanlines of the
+     * character CELL (not the band) for any underlined column. With
+     * sub-row bands those scanlines live in the row's last band only.
+     * Touches only flagged columns, off the hot loop.
      * ------------------------------------------------------------------ */
-    if (num_scans >= 2) {
-        const int ul_first = num_scans - 2;
-        for (int c = 0; c < ncols; c++) {
-            if (!s_cc_ul[c]) continue;
-            for (int n = ul_first; n < num_scans; n++) {
-                const int sel = n & scan_on & 1;   /* match scanline variant */
-                const uint16_t fg = (uint16_t)(s_cc_bg[sel][c] ^ s_cc_xf[sel][c]);
-                const uint32_t fg2 = (uint32_t)fg | ((uint32_t)fg << 16);
-                uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH
-                                           + c * FONT_WIDTH);
-                p[0] = fg2; p[1] = fg2; p[2] = fg2; p[3] = fg2;
+    {
+        int ul_first = (FONT_HEIGHT - 2) - glyph_row0;  /* band-relative */
+        if (ul_first < 0) ul_first = 0;
+        if (ul_first < num_scans) {
+            for (int c = 0; c < ncols; c++) {
+                if (!s_cc_ul[c]) continue;
+                for (int n = ul_first; n < num_scans; n++) {
+                    const int sel = n & scan_on & 1;   /* match scanline variant */
+                    const uint16_t fg = (uint16_t)(s_cc_bg[sel][c] ^ s_cc_xf[sel][c]);
+                    const uint32_t fg2 = (uint32_t)fg | ((uint32_t)fg << 16);
+                    uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH
+                                               + c * FONT_WIDTH);
+                    for (int w = 0; w < COL_WORDS; w++) p[w] = fg2;
+                }
             }
         }
     }
@@ -549,7 +626,7 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
             const uint32_t m = (n & 1) ? 0xFFFF0000u : 0x0000FFFFu;
             uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH
                                        + c * FONT_WIDTH);
-            p[0] &= m; p[1] &= m; p[2] &= m; p[3] &= m;
+            for (int w = 0; w < COL_WORDS; w++) p[w] &= m;
         }
     }
 #endif
@@ -557,33 +634,26 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
     /* ------------------------------------------------------------------
      * Cursor overlay — XOR every pixel in the cursor region with
      * 0xFFFFFFFF, inverting all bits and guaranteeing contrast.
-     * FONT_WIDTH=8 px × 2 B = 16 B = 4 × uint32_t per scanline.
+     * FONT_WIDTH px × 2 B = COL_WORDS × uint32_t per scanline.
      * Alignment is guaranteed: dst_base is 4-byte aligned,
-     * DISPLAY_WIDTH×sizeof(color_t)=1600 B and cx×16 B are both ×4.
+     * DISPLAY_WIDTH×2 B = 1600 B and cx×FONT_WIDTH×2 B are both ×4.
+     * The underscore lives on the last two scanlines of the CELL; a block
+     * cursor spans every band of its row.
      * ------------------------------------------------------------------ */
     if (s_cursor_mode != CURSOR_NONE && s_cursor_visible &&
             s_cursor_y == char_row && s_cursor_x >= 0 && s_cursor_x < ncols) {
 
         const int cx       = s_cursor_x;
         const int px_start = cx * FONT_WIDTH;
+        int first = 0;
 
         if (s_cursor_mode == CURSOR_UNDERSCORE) {
-            const int first = num_scans >= 2 ? num_scans - 2 : 0;
-            for (int n = first; n < num_scans; n++) {
-                uint32_t *p = (uint32_t *)(dst_base + n * DISPLAY_WIDTH + px_start);
-                p[0] ^= 0xFFFFFFFFu;
-                p[1] ^= 0xFFFFFFFFu;
-                p[2] ^= 0xFFFFFFFFu;
-                p[3] ^= 0xFFFFFFFFu;
-            }
-        } else { /* CURSOR_BLOCK */
-            for (int n = 0; n < num_scans; n++) {
-                uint32_t *p = (uint32_t *)(dst_base + n * DISPLAY_WIDTH + px_start);
-                p[0] ^= 0xFFFFFFFFu;
-                p[1] ^= 0xFFFFFFFFu;
-                p[2] ^= 0xFFFFFFFFu;
-                p[3] ^= 0xFFFFFFFFu;
-            }
+            first = (FONT_HEIGHT - 2) - glyph_row0;   /* band-relative */
+            if (first < 0) first = 0;
+        }
+        for (int n = first; n < num_scans; n++) {
+            uint32_t *p = (uint32_t *)(dst_base + n * DISPLAY_WIDTH + px_start);
+            for (int w = 0; w < COL_WORDS; w++) p[w] ^= 0xFFFFFFFFu;
         }
     }
 
@@ -595,12 +665,15 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
     if (g_fx_static_left > 0 && num_scans > 0) {
         int nl = g_fx_cfg.static_lines;
         if (nl > 4) nl = 4;
-        uint32_t h = ((uint32_t)char_row * 2654435761u)
+        /* Seed by BAND (not char row): with sub-row bands a per-row seed
+         * would draw the same snow lines in both halves of the row, and the
+         * pairing reads as structure instead of noise. */
+        uint32_t h = ((uint32_t)(start_scan / BOUNCE_BUFFER_HEIGHT) * 2654435761u)
                    ^ ((uint32_t)g_fx_frame * 2246822519u);
         for (int k = 0; k < nl; k++) {
             h = h * 1664525u + 1013904223u;
-            int n = (int)((h >> 27) & 15);
-            if (n >= num_scans) n = num_scans - 1;
+            /* Unbiased 0..num_scans-1 from 4 hash bits (scale, not clamp). */
+            int n = (int)((((h >> 27) & 15u) * (unsigned)num_scans) >> 4);
             uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH);
             uint32_t r = h;
             for (int i = 0; i < DISPLAY_WIDTH / 2; i += 4) {
@@ -630,13 +703,14 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         }
     }
 
-    /* Visual bell: flash the red bell tag twice over the top-right corner. */
-    if (char_row == 0 && s_bell_frames > 0) {
-        if (((BELL_TOTAL - s_bell_frames) / BELL_HALF) % 2 == 0)
-            draw_bell_tag(dst_base);
-        s_bell_frames--;
-    }
+    /* Visual bell: flash the red bell tag twice over the top-right corner.
+     * The 16 px tag spans the whole first character row; each band of that
+     * row draws its slice (glyph_row0 offsets into the tag bitmap). */
+    if (char_row == 0 && s_bell_show && glyph_row0 < 16)
+        draw_bell_tag(dst_base, glyph_row0, num_scans);
 }
 
 #undef GPAIR
+#undef EMIT_COL
+#undef COL_WORDS
 #undef RENDER_MAX_COLS

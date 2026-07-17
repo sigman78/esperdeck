@@ -3,7 +3,7 @@
  */
 
 #include "font.h"
-#include "terminus8x16.h"
+#include "terminus_font.h"
 #include "esp_attr.h"
 #include "esp_log.h"
 #include <string.h>
@@ -29,7 +29,8 @@ void font_init(void)
         total += (size_t)(terminus_ranges[i].last_char - terminus_ranges[i].first_char + 1)
                  * FONT_GLYPH_BYTES;
 
-    uint8_t *data_buf = heap_caps_malloc(total, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    /* font_row_t-typed alloc keeps the row arrays naturally aligned. */
+    font_row_t *data_buf = heap_caps_malloc(total, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     FontRange *range_buf = heap_caps_malloc(
         (size_t)terminus_num_ranges * sizeof(FontRange), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!data_buf || !range_buf) {
@@ -44,24 +45,26 @@ void font_init(void)
         return;
     }
 
-    uint8_t *dst = data_buf;
+    font_row_t *dst = data_buf;
     for (int i = 0; i < terminus_num_ranges; i++) {
-        size_t sz = (size_t)(terminus_ranges[i].last_char - terminus_ranges[i].first_char + 1)
-                    * FONT_GLYPH_BYTES;
-        memcpy(dst, terminus_ranges[i].data, sz);
+        size_t nglyphs = (size_t)(terminus_ranges[i].last_char
+                                  - terminus_ranges[i].first_char + 1);
+        memcpy(dst, terminus_ranges[i].data, nglyphs * FONT_GLYPH_BYTES);
         range_buf[i].first_char = terminus_ranges[i].first_char;
         range_buf[i].last_char  = terminus_ranges[i].last_char;
         range_buf[i].data       = dst;
-        dst += sz;
+        dst += nglyphs * FONT_HEIGHT;
     }
     s_ranges     = range_buf;
     s_num_ranges = terminus_num_ranges;
-    ESP_LOGI(TAG, "Font loaded: %u ranges, %zu bytes DRAM", terminus_num_ranges, total);
+    ESP_LOGI(TAG, "Font %dx%d loaded: %u ranges, %zu bytes DRAM",
+             FONT_WIDTH, FONT_HEIGHT, terminus_num_ranges, total);
 #else
     /* Simulator: data already in normal RAM, no copy needed */
     s_ranges     = terminus_ranges;
     s_num_ranges = terminus_num_ranges;
-    ESP_LOGI(TAG, "Font system initialized (simulator, %d ranges)", s_num_ranges);
+    ESP_LOGI(TAG, "Font system initialized (simulator, %dx%d, %d ranges)",
+             FONT_WIDTH, FONT_HEIGHT, s_num_ranges);
 #endif
 }
 
@@ -69,9 +72,9 @@ void font_init(void)
  * Get font glyph bitmap — IRAM_ATTR so it is safe to call from the ISR.
  *
  * @param cp Unicode codepoint (BMP, U+0000..U+FFFF)
- * @return   Pointer to 16-byte glyph bitmap in DRAM, or fallback glyph
+ * @return   Pointer to FONT_HEIGHT glyph rows in DRAM, or fallback glyph
  */
-IRAM_ATTR const uint8_t *font_get_glyph(uint16_t cp)
+IRAM_ATTR const font_row_t *font_get_glyph(uint16_t cp)
 {
     int lo = 0, hi = s_num_ranges - 1;
     while (lo <= hi) {
@@ -80,7 +83,7 @@ IRAM_ATTR const uint8_t *font_get_glyph(uint16_t cp)
         else if (cp > s_ranges[mid].last_char)  lo = mid + 1;
         else {
             return s_ranges[mid].data
-                 + (size_t)(cp - s_ranges[mid].first_char) * FONT_GLYPH_BYTES;
+                 + (size_t)(cp - s_ranges[mid].first_char) * FONT_HEIGHT;
         }
     }
     /* fallback: U+003F '?' */

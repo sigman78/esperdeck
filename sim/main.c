@@ -29,12 +29,6 @@
 #include "vterm.h"
 #include "wifi_manager.h"
 
-#ifndef CONFIG_TERMINAL_WIDTH
-#define CONFIG_TERMINAL_WIDTH  100
-#endif
-#ifndef CONFIG_TERMINAL_HEIGHT
-#define CONFIG_TERMINAL_HEIGHT 30
-#endif
 
 /*
  * Translate an SDL keydown event to a terminal escape sequence.
@@ -178,7 +172,7 @@ int main(int argc, char *argv[])
 
     font_init();
     display_init();
-    vterm_init(CONFIG_TERMINAL_WIDTH, CONFIG_TERMINAL_HEIGHT);
+    vterm_init(DISPLAY_TEXT_COLS, DISPLAY_TEXT_ROWS);
     vterm_write("\x1b[2J\x1b[H", 7);
     display_render_frame();
 

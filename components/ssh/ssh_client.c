@@ -15,6 +15,7 @@
 
 #include "ssh_client.h"
 #include "vterm.h"
+#include "display.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -596,11 +597,18 @@ auth_done:
     }
 
     /* ── 8. Request PTY ─────────────────────────────────────────────── */
+    /* PTY size = the registered display grid (set by vterm_init). */
+    int term_cols = 0, term_rows = 0;
+    display_get_text_size(&term_cols, &term_rows);
+    if (term_cols <= 0 || term_rows <= 0) {
+        term_cols = DISPLAY_TEXT_COLS;
+        term_rows = DISPLAY_TEXT_ROWS;
+    }
     rc = libssh2_channel_request_pty_ex(s_channel,
                                         "xterm-256color", 14,
                                         NULL, 0,
-                                        CONFIG_TERMINAL_WIDTH,
-                                        CONFIG_TERMINAL_HEIGHT,
+                                        term_cols,
+                                        term_rows,
                                         0, 0);
     if (rc != 0) {
         ESP_LOGE(TAG, "PTY request failed: %d", rc);

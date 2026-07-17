@@ -20,7 +20,7 @@
  * @param pos_px   Index of the first pixel in the full framebuffer
  *                 (= start_scanline * DISPLAY_WIDTH).
  * @param n_bytes  Byte count of the band
- *                 (= DISPLAY_WIDTH × FONT_HEIGHT × sizeof(color_t) per chunk).
+ *                 (= DISPLAY_WIDTH × BOUNCE_BUFFER_HEIGHT × sizeof(color_t)).
  */
 void display_render_chunk(color_t *dst, int pos_px, int n_bytes);
 

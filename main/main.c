@@ -142,7 +142,7 @@ void app_main(void)
 
     display_init();
     font_init();
-    vterm_init(CONFIG_TERMINAL_WIDTH, CONFIG_TERMINAL_HEIGHT);
+    vterm_init(DISPLAY_TEXT_COLS, DISPLAY_TEXT_ROWS);
     splash_show();
     log_heap("after display+vterm");
 
