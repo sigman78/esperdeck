@@ -166,7 +166,7 @@ void session_dropped(uint64_t now)
                   dur / 60, dur % 60, why);
     else
         toast(now, "NO CARRIER (%02u:%02u)", dur / 60, dur % 60);
-    enter_home_after_collapse(now);    /* CRT power-off over the dead screen */
+    enter_home_after_melt(now);        /* HOME melts down over the dead frame */
 }
 
 static void enter_session(uint64_t now)
@@ -174,8 +174,13 @@ static void enter_session(uint64_t now)
     app.state = ST_SESSION;
     app.session_start   = now;
     app.connect_attempt = 0;   /* a future drop counts retries from 1 again */
-    display_fx_wipe();       /* raster-reveal the fresh session */
-    ui_hide();
+    /* The CONNECTING overlay melts away, revealing the live session already
+     * beneath it. Keep the overlay up until the melt finishes — hiding it
+     * then is visually a no-op (session_tick does it); with the melt
+     * disabled, hide right here. */
+    display_fx_melt_away();
+    if (display_fx_melt_active()) app.session_melting = true;
+    else                          ui_hide();
     /* The terminal was cleared inside ssh_client_connect() before the read
      * task spawned — doing it here would race that task inside vterm. */
     static const char *const HELLO[] = {
@@ -185,7 +190,10 @@ static void enter_session(uint64_t now)
     toast(now, "%s - F12 or long-press for menu",
           HELLO[app.anim_frame % (sizeof(HELLO) / sizeof(HELLO[0]))]);
     app.toast_ok = true;       /* garnish with the spinner-to-checkmark */
-    render_session_toast(now);
+    /* While melting, the overlay still holds the sliding CONNECTING frame —
+     * painting the chip now would wipe it (ui_clear). The toast outlives
+     * the melt; session_tick brings the chip up when the sheet is gone. */
+    if (!app.session_melting) render_session_toast(now);
 }
 
 /* Kick off the connect on a worker task (non-blocking) so the shell keeps
@@ -311,6 +319,20 @@ void connecting_tick(uint64_t now)
 
 void session_tick(uint64_t now)
 {
+    /* Retire the CONNECTING overlay once its melt-away has finished —
+     * every column already shows the terminal, so the hide is invisible.
+     * Until then the overlay is strictly hands-off: any repaint (like the
+     * toast chip, which starts with ui_clear) would wipe the sliding
+     * sheet mid-melt. */
+    if (app.session_melting) {
+        if (display_fx_melt_active()) {
+            /* fall through: connection watchdog still runs during the melt */
+        } else {
+            app.session_melting = false;
+            ui_hide();
+        }
+    }
+
     if (!ssh_client_is_connected()) {
         if (ssh_client_session_eof()) {
             /* Remote closed the channel cleanly (exit/logout): a
@@ -326,7 +348,7 @@ void session_tick(uint64_t now)
         }
         return;
     }
-    render_session_toast(now);
+    if (!app.session_melting) render_session_toast(now);
 }
 
 void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)

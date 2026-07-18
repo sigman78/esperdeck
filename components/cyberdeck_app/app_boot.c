@@ -117,8 +117,15 @@ void boot_advance_tagline(void)
 void boot_tick(uint64_t now)
 {
     if (now >= app.boot_until) {
-        display_fx_wipe();   /* raster-reveal HOME once the splash ends */
-        enter_home(now);
+        /* Splash exit, DOOM style: the logo (overlay) melts away to the
+         * blank terminal beneath, then HOME appears. Rendering stops so
+         * the sliding sheet is the last splash frame. */
+        if (!app.boot_melt_armed) {
+            app.boot_melt_armed = true;
+            display_fx_melt_away();      /* no-op when melt is disabled */
+            return;
+        }
+        if (!display_fx_melt_active()) enter_home(now);
         return;
     }
     if (now >= app.next_anim) {
@@ -133,6 +140,17 @@ void boot_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
     /* Any key OR touch skips the splash — touch-only decks have no
      * keyboard yet, so a bare key check locked them out of skipping. */
     if (k != K_NONE || ev->type == CYBERDECK_INPUT_TAP ||
-        ev->type == CYBERDECK_INPUT_LONG_PRESS)
-        enter_home(now);
+        ev->type == CYBERDECK_INPUT_LONG_PRESS) {
+        if (!app.boot_melt_armed) {
+            /* Still on the splash hold: a skip is a skip — HOME now,
+             * no exit melt (boot_melt_armed keeps boot_tick from
+             * re-arming on this same tick). */
+            app.boot_melt_armed = true;
+            enter_home(now);
+        } else if (!display_fx_melt_active()) {
+            enter_home(now);
+        }
+        /* else: melt already running; boot_tick brings HOME up when
+         * it ends — never render HOME into a still-melting overlay. */
+    }
 }

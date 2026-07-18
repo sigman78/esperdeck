@@ -42,10 +42,11 @@ extern DRAM_ATTR int8_t g_fx_wobble_lut[256];
 /* Event countdowns (frames remaining) + total durations captured at arm
  * time. Totals are written strictly before counters so the ISR never sees
  * a nonzero counter with a zero total. */
-extern DRAM_ATTR volatile int16_t g_fx_wipe_left;
-extern DRAM_ATTR volatile int16_t g_fx_wipe_total;
-extern DRAM_ATTR volatile int16_t g_fx_collapse_left;
-extern DRAM_ATTR volatile int16_t g_fx_collapse_total;
+extern DRAM_ATTR volatile int16_t g_fx_melt_left;
+extern DRAM_ATTR volatile int16_t g_fx_melt_total;
+extern DRAM_ATTR volatile uint8_t g_fx_melt_mode;  /* 1 = overlay drops in
+                                                      2 = overlay slides off */
+extern DRAM_ATTR volatile uint8_t g_fx_melt_seed;  /* per-melt column walk */
 extern DRAM_ATTR volatile int16_t g_fx_static_left;
 
 #endif /* DISPLAY_FX_INTERNAL_H */

@@ -299,6 +299,31 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
     const uint8_t mono     = g_fx_cfg.mono;
     const uint8_t bold_pop = g_fx_cfg.bold_pop;
 
+    /* DOOM melt: columns advance 1.3 cell rows per frame (13/10 fixed
+     * point) after a per-column random-walk delay. Mode 1 (over): the
+     * incoming overlay sheet drops into place — column c shows the new
+     * screen from row cr + roff (roff shrinking to 0); where it has not
+     * arrived yet, the OLD frame (terminal only) stays in place. Mode 2
+     * (away): the old overlay slides down OFF the screen — column c
+     * shows overlay row cr - roff (roff growing); where it has already
+     * slid past, the live terminal beneath shows through: the original
+     * DOOM transition. Cell-row granular by design — the source row is
+     * constant within a band, so the one-row cache (and the hot loop)
+     * is untouched and the melt costs the same as normal rendering.
+     * The walk restarts from the armed seed every build, so all bands
+     * of a frame agree. */
+    const int melt = (g_fx_melt_left > 0)
+                   ? (int)(g_fx_melt_total - g_fx_melt_left) : -1;
+    uint32_t mh = 0;
+    int madv = 0, mdelay = 0, mrange = 1;
+    if (melt >= 0) {
+        madv   = (melt * 13) / 10;
+        mrange = ((int)g_fx_melt_total * 13) / 10 - s_cell_rows;
+        if (mrange < 4) mrange = 4;
+        mh = ((uint32_t)g_fx_melt_seed + 1u) * 2654435761u;
+        mdelay = (int)((mh >> 24) % (uint32_t)mrange);
+    }
+
 #if DISPLAY_FX_ROW_GLOW
     /* Row-recency back glow: resolve this row's tier once per band.
      * 0 = none, 1 = subtle (12.5% accent), 2 = strong (25% accent). */
@@ -328,9 +353,40 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
         uint8_t dim = 0;
 #endif
 
-        const uint8_t  ov_attrs = (ov_row && c < s_overlay_cols) ? ov_row[c].attrs : 0;
-        const uint16_t ov_cp    = (ov_row && c < s_overlay_cols) ? ov_row[c].cp    : 0;
-        const uint8_t  ov_color = (ov_row && c < s_overlay_cols) ? ov_row[c].color : 0;
+        const terminal_cell_t        *cells = row_cells;
+        const display_overlay_cell_t *ovr   = ov_row;
+        if (melt >= 0) {
+            /* Walk the per-column start delay (±1, clamped) — the ragged
+             * "liquid" edge of the classic melt. */
+            mh = mh * 1664525u + 1013904223u;
+            mdelay += (int)((mh >> 13) % 3u) - 1;
+            if (mdelay < 0)       mdelay = 0;
+            if (mdelay >= mrange) mdelay = mrange - 1;
+            if (g_fx_melt_mode == 1) {
+                /* Incoming sheet drops in over the old frame. */
+                int roff = (s_cell_rows + mdelay) - madv;
+                if (roff < 0) roff = 0;
+                const int src = cr + roff;
+                if (src >= s_cell_rows) {
+                    ovr = NULL;   /* not arrived: old frame in place */
+                } else if (src != cr) {
+                    cells = s_cell_buf + src * ncols;
+                    ovr   = (s_overlay_buf && src < s_overlay_rows)
+                          ? (s_overlay_buf + src * s_overlay_cols) : NULL;
+                }
+            } else {
+                /* Old overlay slides off; the terminal stays in place. */
+                int roff = madv - mdelay;
+                if (roff < 0) roff = 0;
+                const int osrc = cr - roff;
+                ovr = (osrc >= 0 && s_overlay_buf && osrc < s_overlay_rows)
+                    ? (s_overlay_buf + osrc * s_overlay_cols) : NULL;
+            }
+        }
+
+        const uint8_t  ov_attrs = (ovr && c < s_overlay_cols) ? ovr[c].attrs : 0;
+        const uint16_t ov_cp    = (ovr && c < s_overlay_cols) ? ovr[c].cp    : 0;
+        const uint8_t  ov_color = (ovr && c < s_overlay_cols) ? ovr[c].color : 0;
 
         if (ov_cp != 0) {
             if (ov_attrs & OVERLAY_ATTR_INVERSE) {
@@ -364,7 +420,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
                 if (ob) glyph = ob;
             }
         } else {
-            const terminal_cell_t *cell = &row_cells[c];
+            const terminal_cell_t *cell = &cells[c];
             fg = cell->fg_color;
             bg = cell->bg_color;
             if (cell->attrs & ATTR_REVERSE) { color_t t = fg; fg = bg; bg = t; }
@@ -498,9 +554,8 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
             s_cursor_visible = !s_cursor_visible;
         }
         g_fx_frame++;
-        if (g_fx_wipe_left     > 0) g_fx_wipe_left--;
-        if (g_fx_collapse_left > 0) g_fx_collapse_left--;
-        if (g_fx_static_left   > 0) g_fx_static_left--;
+        if (g_fx_melt_left   > 0) g_fx_melt_left--;
+        if (g_fx_static_left > 0) g_fx_static_left--;
         /* Visual bell: latch this frame's on/off flash phase. */
         if (s_bell_frames > 0) {
             s_bell_show = ((BELL_TOTAL - s_bell_frames) / BELL_HALF) % 2 == 0;
@@ -515,62 +570,6 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         uint32_t *p = (uint32_t *)dst;
         int words = n_bytes >> 2;
         for (int i = 0; i < words; i++) p[i] = 0;
-        return;
-    }
-
-    /* ------------------------------------------------------------------
-     * Wipe / collapse clip window: while one is active, only scanlines in
-     * [wv0, wv1) show content; the rest go black, with bright edge lines
-     * at [ea0,ea1) / [eb0,eb1). Bands fully outside skip rendering.
-     * ------------------------------------------------------------------ */
-    int wv0 = 0, wv1 = DISPLAY_HEIGHT;
-    int ea0 = 0, ea1 = 0, eb0 = 0, eb1 = 0;
-    color_t ecol = 0;
-    bool clipped = false;
-    if (g_fx_collapse_left > 0 && g_fx_collapse_total > 2) {
-        clipped = true;
-        ecol = 0xFFFFu;                      /* hot white collapsing edges */
-        if (g_fx_collapse_left <= 2) {       /* last 2 frames: center flash */
-            wv0 = wv1 = 0;
-            ea0 = DISPLAY_HEIGHT / 2 - 1;
-            ea1 = ea0 + 2;
-        } else {
-            /* Window shrinks to ~0 by the time the flash frames start. */
-            const int half = (DISPLAY_HEIGHT / 2) * (g_fx_collapse_left - 2)
-                                                  / (g_fx_collapse_total - 2);
-            wv0 = DISPLAY_HEIGHT / 2 - half;
-            wv1 = DISPLAY_HEIGHT / 2 + half;
-            ea0 = wv0; ea1 = wv0 + 2;
-            eb0 = wv1 - 2; eb1 = wv1;
-        }
-    } else if (g_fx_wipe_left > 0 && g_fx_wipe_total > 0) {
-        clipped = true;
-        ecol = 0x07FFu;                      /* cyan leading edge */
-        const int reveal = DISPLAY_HEIGHT * (g_fx_wipe_total - g_fx_wipe_left)
-                                          / g_fx_wipe_total;
-        wv1 = reveal;
-        ea0 = reveal;
-        ea1 = reveal + 2 > DISPLAY_HEIGHT ? DISPLAY_HEIGHT : reveal + 2;
-    }
-
-    const int band_y0 = start_scan;
-    if (clipped && (band_y0 >= wv1 || band_y0 + num_scans <= wv0)) {
-        /* Band fully hidden: black + any edge lines that fall in it.
-         * Invalidate the row cache: a later band of this row (or of a frame
-         * long after — the uint8 frame stamp can wrap) must never reuse a
-         * cache this path skipped rebuilding. */
-        s_cc_row = -1;
-        uint32_t *p = (uint32_t *)dst;
-        int words = n_bytes >> 2;
-        for (int i = 0; i < words; i++) p[i] = 0;
-        const uint32_t e2 = (uint32_t)ecol | ((uint32_t)ecol << 16);
-        for (int n = 0; n < num_scans; n++) {
-            const int y = band_y0 + n;
-            if ((y >= ea0 && y < ea1) || (y >= eb0 && y < eb1)) {
-                uint32_t *e = (uint32_t *)(dst + (unsigned)n * DISPLAY_WIDTH);
-                for (int i = 0; i < DISPLAY_WIDTH / 2; i++) e[i] = e2;
-            }
-        }
         return;
     }
 
@@ -689,6 +688,7 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
      * cursor spans every band of its row.
      * ------------------------------------------------------------------ */
     if (s_cursor_mode != CURSOR_NONE && s_cursor_visible &&
+            g_fx_melt_left == 0 &&        /* a melting frame has no caret */
             s_cursor_y == char_row && s_cursor_x >= 0 && s_cursor_x < ncols) {
 
         const int cx       = s_cursor_x;
@@ -780,23 +780,6 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
                 p[i + 1] = s_fx_noise[(r >> 4)  & 15];
                 p[i + 2] = s_fx_noise[(r >> 8)  & 15];
                 p[i + 3] = s_fx_noise[(r >> 12) & 15];
-            }
-        }
-    }
-
-    /* ------------------------------------------------------------------
-     * Wipe / collapse post-pass for bands straddling the visible window:
-     * black out hidden scanlines, then draw the bright edge lines.
-     * ------------------------------------------------------------------ */
-    if (clipped) {
-        const uint32_t e2 = (uint32_t)ecol | ((uint32_t)ecol << 16);
-        for (int n = 0; n < num_scans; n++) {
-            const int y = band_y0 + n;
-            uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH);
-            if ((y >= ea0 && y < ea1) || (y >= eb0 && y < eb1)) {
-                for (int i = 0; i < DISPLAY_WIDTH / 2; i++) p[i] = e2;
-            } else if (y < wv0 || y >= wv1) {
-                for (int i = 0; i < DISPLAY_WIDTH / 2; i++) p[i] = 0;
             }
         }
     }

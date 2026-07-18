@@ -17,15 +17,13 @@ void boot_advance_tagline(void);        /* next splash tagline (init-time) */
 void boot_tick(uint64_t now);
 void boot_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 
-/* ---- HOME + POWEROFF (app_home.c) ---- */
+/* ---- HOME (app_home.c) ---- */
 void enter_home(uint64_t now);
-/** Session teardown entry: CRT collapse over the dead frame, then HOME. */
-void enter_home_after_collapse(uint64_t now);
+/** Session teardown entry: HOME melts down over the dead frame. */
+void enter_home_after_melt(uint64_t now);
 void render_home(void);
 void home_tick(uint64_t now);
 void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
-void poweroff_tick(uint64_t now);
-void poweroff_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 
 /* ---- screensaver (app_saver.c) ---- */
 void render_saver(void);

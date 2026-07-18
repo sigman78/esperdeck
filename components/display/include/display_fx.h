@@ -41,15 +41,18 @@ typedef struct {
     uint8_t glow_frames;      /* duration in frames (~39/s), 1..120        */
     uint8_t glow_strength;    /* 0 = subtle (12.5%), 1 = strong (25%)      */
 
-    /* Connect raster reveal — screen wipes in top-to-bottom behind a
-     * cyan leading edge. Armed via display_fx_wipe(). */
-    uint8_t wipe;             /* 0 off / 1 on                              */
-    uint8_t wipe_frames;      /* sweep duration in frames, 4..120          */
-
-    /* Disconnect CRT collapse — picture collapses to a bright center
-     * line, then black. Armed via display_fx_collapse(). */
-    uint8_t collapse;         /* 0 off / 1 on                              */
-    uint8_t collapse_frames;  /* collapse duration in frames, 4..120       */
+    /* DOOM-style melt — screens change by melting DOWN at 1.3 cell
+     * rows/frame, each 1-cell-wide column staggered by a random-walk
+     * delay. Two flavors: melt_over drops the incoming overlay over the
+     * still-visible old frame (disconnect: HOME over the dead session);
+     * melt_away slides the old overlay down off the screen, revealing
+     * the live terminal already beneath (connect: CONNECTING peels away
+     * to the fresh session — the original DOOM transition). Cell-row
+     * granular (the no-framebuffer renderer remaps each column's source
+     * row — same cost as normal rendering). */
+    uint8_t melt;             /* 0 off / 1 on                              */
+    uint8_t melt_frames;      /* total duration in frames (lower bound
+                                 tracks the grid height; max 120)          */
 
     /* Signal-loss static burst — noise snow on a few scanlines per band.
      * Armed via display_fx_static(). */
@@ -75,8 +78,11 @@ void display_fx_set(const display_fx_cfg_t *cfg);
 
 /* Event triggers. Each is a no-op when the effect is disabled in the
  * active config. Safe to call from any task. */
-void display_fx_wipe(void);       /* raster reveal (connect / boot done)   */
-void display_fx_collapse(void);   /* CRT power-off collapse (disconnect)   */
+void display_fx_melt_over(void);  /* overlay drops in over the old frame   */
+void display_fx_melt_away(void);  /* overlay slides off, revealing terminal*/
+/** True while a melt is running. After melt_away completes, hiding the
+ *  overlay is visually a no-op — poll this to know when. */
+int  display_fx_melt_active(void);
 void display_fx_static(void);     /* signal-loss static burst              */
 /** Half-length static burst (terminal BEL). Never shortens a burst already
  *  in flight — a bell during a disconnect burst leaves the long one alone. */

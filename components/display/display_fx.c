@@ -8,6 +8,7 @@
  */
 
 #include "display_fx_internal.h"
+#include "display.h"    /* DISPLAY_TEXT_ROWS — melt duration floor */
 #include <math.h>
 #include <string.h>
 
@@ -21,10 +22,8 @@ DRAM_ATTR display_fx_cfg_t g_fx_cfg = {
     .glow            = 0,    /* judged a failure on-glass — off by default */
     .glow_frames     = 20,   /* ~0.5 s */
     .glow_strength   = 0,
-    .wipe            = 1,
-    .wipe_frames     = 18,   /* ~0.46 s */
-    .collapse        = 1,
-    .collapse_frames = 12,   /* ~0.3 s */
+    .melt            = 1,
+    .melt_frames     = 37,   /* ~0.95 s — DOOM pace at 1.3 rows/frame */
     .static_burst    = 1,
     .static_frames   = 10,   /* ~0.25 s */
     .static_lines    = 2,
@@ -52,11 +51,11 @@ DRAM_ATTR volatile uint8_t g_fx_row_stamp[DISPLAY_FX_MAX_ROWS] = {
 };
 #endif
 
-DRAM_ATTR volatile int16_t g_fx_wipe_left      = 0;
-DRAM_ATTR volatile int16_t g_fx_wipe_total     = 0;
-DRAM_ATTR volatile int16_t g_fx_collapse_left  = 0;
-DRAM_ATTR volatile int16_t g_fx_collapse_total = 0;
-DRAM_ATTR volatile int16_t g_fx_static_left    = 0;
+DRAM_ATTR volatile int16_t g_fx_melt_left   = 0;
+DRAM_ATTR volatile int16_t g_fx_melt_total  = 0;
+DRAM_ATTR volatile uint8_t g_fx_melt_mode   = 0;
+DRAM_ATTR volatile uint8_t g_fx_melt_seed   = 0;
+DRAM_ATTR volatile int16_t g_fx_static_left = 0;
 
 static uint8_t clamp_u8(uint8_t v, uint8_t lo, uint8_t hi)
 {
@@ -73,8 +72,7 @@ void display_fx_defaults(display_fx_cfg_t *out)
         .scanlines = 1,
         .bold_pop = 1,   .mono = 0,
         .glow = 0,       .glow_frames = 20,     .glow_strength = 0,
-        .wipe = 1,       .wipe_frames = 18,
-        .collapse = 1,   .collapse_frames = 12,
+        .melt = 1,       .melt_frames = 37,
         .static_burst = 1, .static_frames = 10, .static_lines = 2,
         .wobble = 2,   /* medium ±4 px — prototype default, on trial */
     };
@@ -97,10 +95,12 @@ void display_fx_set(const display_fx_cfg_t *cfg)
     c.glow            = !!c.glow;
     c.glow_frames     = clamp_u8(c.glow_frames, 1, 120);
     c.glow_strength   = clamp_u8(c.glow_strength, 0, 1);
-    c.wipe            = !!c.wipe;
-    c.wipe_frames     = clamp_u8(c.wipe_frames, 4, 120);
-    c.collapse        = !!c.collapse;
-    c.collapse_frames = clamp_u8(c.collapse_frames, 4, 120);
+    c.melt            = !!c.melt;
+    /* Columns move 1.3 cell rows per frame; a melt shorter than the grid
+     * height could never finish, so the floor tracks the active font. */
+    c.melt_frames     = clamp_u8(c.melt_frames,
+                                 (uint8_t)((DISPLAY_TEXT_ROWS * 10) / 13 + 4),
+                                 120);
     c.static_burst    = !!c.static_burst;
     c.static_frames   = clamp_u8(c.static_frames, 1, 120);
     c.static_lines    = clamp_u8(c.static_lines, 1, 4);
@@ -116,25 +116,22 @@ void display_fx_set(const display_fx_cfg_t *cfg)
     g_fx_cfg = c;   /* byte fields; a torn update is a one-frame glitch */
 }
 
-void display_fx_wipe(void)
+/* Arm a melt. Disarm before rewriting total/seed/mode: the ISR must
+ * never pair fresh parameters with a stale, larger counter. */
+static void melt_arm(uint8_t mode)
 {
-    if (!g_fx_cfg.wipe) return;
-    g_fx_collapse_left = 0;                       /* mutually exclusive */
-    /* Disarm before rewriting total: the ISR must never pair a new total
-     * with a stale, larger counter (negative window for one frame). */
-    g_fx_wipe_left     = 0;
-    g_fx_wipe_total    = g_fx_cfg.wipe_frames;
-    g_fx_wipe_left     = g_fx_cfg.wipe_frames;
+    if (!g_fx_cfg.melt) return;
+    g_fx_melt_left  = 0;
+    g_fx_melt_seed  = (uint8_t)(g_fx_frame * 73u + 29u);
+    g_fx_melt_mode  = mode;
+    g_fx_melt_total = g_fx_cfg.melt_frames;
+    g_fx_melt_left  = g_fx_cfg.melt_frames;
 }
 
-void display_fx_collapse(void)
-{
-    if (!g_fx_cfg.collapse) return;
-    g_fx_wipe_left      = 0;                      /* mutually exclusive */
-    g_fx_collapse_left  = 0;                      /* disarm before rewrite */
-    g_fx_collapse_total = g_fx_cfg.collapse_frames;
-    g_fx_collapse_left  = g_fx_cfg.collapse_frames;
-}
+void display_fx_melt_over(void) { melt_arm(1); }
+void display_fx_melt_away(void) { melt_arm(2); }
+
+int display_fx_melt_active(void) { return g_fx_melt_left > 0; }
 
 void display_fx_static(void)
 {

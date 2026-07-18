@@ -1,6 +1,5 @@
 /*
- * app_home.c — HOME profile picker (ST_HOME) + the CRT power-off interlude
- * (ST_POWEROFF) that precedes it after a session ends.
+ * app_home.c — HOME profile picker (ST_HOME).
  */
 
 #include "app_internal.h"
@@ -256,24 +255,16 @@ static bool home_activate_extra(int slot, uint64_t now)
     }
 }
 
-/* Session teardown with the CRT power-off done RIGHT: hide the overlay so
- * the collapse plays over the last live terminal frame (not over HOME/menu
- * chrome), and only enter HOME once the animation has finished. Toasts set
- * by the caller survive — they are state, rendered when HOME appears.
- * With the collapse effect disabled this is just enter_home(). */
-void enter_home_after_collapse(uint64_t now)
+/* Session teardown, DOOM style: enter HOME right away and let its overlay
+ * melt down OVER the dead terminal frame still in the vterm buffer (the
+ * renderer shows the old frame wherever the sheet has not arrived). Purely
+ * visual — no interlude state, input acts on HOME immediately. Toasts set
+ * by the caller survive: they are state, rendered as HOME's chrome arrives.
+ * With the melt disabled the arm is a no-op and HOME just appears. */
+void enter_home_after_melt(uint64_t now)
 {
-    display_fx_cfg_t c;
-    display_fx_get(&c);
-    if (!c.collapse) {
-        enter_home(now);
-        return;
-    }
-    ui_hide();
-    ui_no_cursor();
-    display_fx_collapse();
-    app.state          = ST_POWEROFF;
-    app.poweroff_until = now + (uint64_t)c.collapse_frames * 17 + 80;
+    display_fx_melt_over();
+    enter_home(now);
 }
 
 void home_tick(uint64_t now)
@@ -298,12 +289,6 @@ void home_tick(uint64_t now)
         app.next_home_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
         render_home();   /* live wifi/ble status */
     }
-}
-
-void poweroff_tick(uint64_t now)
-{
-    /* Collapse finished (or was cut short by input) — bring HOME up. */
-    if (now >= app.poweroff_until) enter_home(now);
 }
 
 void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
@@ -379,11 +364,4 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
     default:
         break;
     }
-}
-
-void poweroff_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
-{
-    (void)ev; (void)k; (void)ch;
-    /* Any input skips the rest of the power-off animation. */
-    enter_home(now);
 }

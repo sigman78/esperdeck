@@ -29,7 +29,7 @@ enum {
 #if DISPLAY_FX_ROW_GLOW
     FXM_GLOW, FXM_DECAY,
 #endif
-    FXM_WIPE, FXM_COLLAPSE, FXM_STATIC, FXM_BACK,
+    FXM_MELT, FXM_STATIC, FXM_BACK,
     FX_MENU_TILES,
 };
 
@@ -69,13 +69,9 @@ static int fx_menu_items(const char *out[], const char *bodies[],
     out[FXM_DECAY] = "Glow decay";
     snprintf(buf[FXM_DECAY], sizeof(buf[FXM_DECAY]), "%s", t);
 #endif
-    fx_secs(t, sizeof(t), c.wipe_frames);
-    out[FXM_WIPE] = "Wipe in";
-    snprintf(buf[FXM_WIPE], sizeof(buf[FXM_WIPE]), "%s", !c.wipe ? "off" : t);
-    fx_secs(t, sizeof(t), c.collapse_frames);
-    out[FXM_COLLAPSE] = "Collapse";
-    snprintf(buf[FXM_COLLAPSE], sizeof(buf[FXM_COLLAPSE]), "%s",
-             !c.collapse ? "off" : t);
+    fx_secs(t, sizeof(t), c.melt_frames);
+    out[FXM_MELT] = "Melt";
+    snprintf(buf[FXM_MELT], sizeof(buf[FXM_MELT]), "%s", !c.melt ? "off" : t);
     out[FXM_STATIC] = "Static";
     snprintf(buf[FXM_STATIC], sizeof(buf[FXM_STATIC]), "%s",
              !c.static_burst      ? "off"
@@ -111,15 +107,11 @@ static void fx_menu_cycle(int sel)
                       : c.glow_frames < 60 ? 78 : 12;
         break;
 #endif
-    case FXM_WIPE:  /* off -> fast -> slow -> off */
-        if (!c.wipe)                  { c.wipe = 1; c.wipe_frames = 12; }
-        else if (c.wipe_frames <= 12)   c.wipe_frames = 24;
-        else                            c.wipe = 0;
-        break;
-    case FXM_COLLAPSE:
-        if (!c.collapse)                  { c.collapse = 1; c.collapse_frames = 8; }
-        else if (c.collapse_frames <= 8)    c.collapse_frames = 20;
-        else                                c.collapse = 0;
+    case FXM_MELT:  /* off -> fast -> slow -> off (display_fx_set floors
+                     * the fast value for the active font's grid height) */
+        if (!c.melt)                  { c.melt = 1; c.melt_frames = 32; }
+        else if (c.melt_frames <= 32)   c.melt_frames = 52;
+        else                            c.melt = 0;
         break;
     case FXM_STATIC:  /* off -> light -> heavy -> off */
         if (!c.static_burst) { c.static_burst = 1; c.static_frames = 8;  c.static_lines = 1; }
@@ -130,8 +122,7 @@ static void fx_menu_cycle(int sel)
     }
     display_fx_set(&c);
     storage_fx_save(&c);
-    if (sel == FXM_WIPE && c.wipe)             display_fx_wipe();
-    if (sel == FXM_COLLAPSE && c.collapse)     display_fx_collapse();
+    if (sel == FXM_MELT && c.melt)             display_fx_melt_over();
     if (sel == FXM_STATIC && c.static_burst)   display_fx_static();
 }
 
@@ -436,7 +427,7 @@ static void menu_activate(uint64_t now)
         case 0: app.state = ST_SESSION; ui_hide();          return;  /* resume  */
         case 1:                                                    /* discon. */
             ssh_client_disconnect();
-            enter_home_after_collapse(now);   /* deliberate CRT power-off */
+            enter_home_after_melt(now);       /* deliberate melt-off */
             return;
         case 2: menu_goto(MS_CONFIG);                     return;
         }

@@ -188,7 +188,6 @@ static const screen_ops_t SCREENS[ST_COUNT] = {
     [ST_HOSTKEY]    = { hostkey_tick,    hostkey_input    },
     [ST_CONNECTING] = { connecting_tick, connecting_input },
     [ST_SESSION]    = { session_tick,    session_input    },
-    [ST_POWEROFF]   = { poweroff_tick,   poweroff_input   },
     [ST_MENU]       = { menu_tick,       menu_input       },
     [ST_WIFIPROV]   = { wifiprov_tick,   wifiprov_input   },
     [ST_PROFILE]    = { profile_tick,    profile_input    },

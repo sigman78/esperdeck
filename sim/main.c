@@ -276,11 +276,11 @@ int main(int argc, char *argv[])
                     break;
                 }
                 /* Sim-only fx previews (no SSH events on the host):
-                 * Ctrl+F5 wipe, Ctrl+F6 collapse, Ctrl+F7 static burst. */
+                 * Ctrl+F5 melt away, Ctrl+F6 melt over, Ctrl+F7 static. */
                 if (ev.key.keysym.mod & KMOD_CTRL) {
-                    if (ev.key.keysym.sym == SDLK_F5) { display_fx_wipe();     break; }
-                    if (ev.key.keysym.sym == SDLK_F6) { display_fx_collapse(); break; }
-                    if (ev.key.keysym.sym == SDLK_F7) { display_fx_static();   break; }
+                    if (ev.key.keysym.sym == SDLK_F5) { display_fx_melt_away(); break; }
+                    if (ev.key.keysym.sym == SDLK_F6) { display_fx_melt_over(); break; }
+                    if (ev.key.keysym.sym == SDLK_F7) { display_fx_static();    break; }
                 }
                 const char *seq = translate_key(ev.key.keysym.sym,
                                                 ev.key.keysym.mod);

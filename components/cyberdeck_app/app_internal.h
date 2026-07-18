@@ -33,7 +33,6 @@ typedef enum {
     ST_HOSTKEY,     /* trust-on-first-use fingerprint prompt (modal) */
     ST_CONNECTING,  /* pending/armed SSH connect                     */
     ST_SESSION,     /* bytes flow to/from SSH                        */
-    ST_POWEROFF,    /* CRT collapse playing over the dead session    */
     ST_MENU,        /* in-session overlay menu                       */
     ST_WIFIPROV,    /* SoftAP WiFi onboarding (modal)                */
     ST_PROFILE,     /* on-device profile editor (modal)              */
@@ -152,6 +151,9 @@ struct app_state {
     uint8_t  prev_ble;     /* ble_state_t as int (see cyberdeck_ble_ops_t) */
 
     uint64_t session_start;         /* enter_session() time, for NO CARRIER */
+    bool     session_melting;       /* CONNECTING overlay still melting away;
+                                     * hidden by session_tick once done     */
+    bool     boot_melt_armed;       /* splash melt-away armed at boot end   */
     uint64_t last_input;            /* any key/touch; drives the screensaver */
     bool     saver_on;              /* rain actually on screen (not derived) */
     uint64_t saver_since;           /* when the rain went up (wake grace)    */
@@ -179,7 +181,6 @@ struct app_state {
     uint64_t next_home_refresh;
     uint32_t anim_frame;            /* advances ~10 fps for subtle animation */
     uint64_t next_anim;             /* next animated re-render (PAIRING)      */
-    uint64_t poweroff_until;        /* ST_POWEROFF: when the collapse ends    */
     bool     halted;
 };
 
