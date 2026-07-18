@@ -204,15 +204,14 @@ void draw_footer_lim(const char *hint, int limit)
 
 void draw_footer(const char *hint) { draw_footer_lim(hint, -1); }
 
-/* Standard modal header: animated titlebar chip, a right-aligned "// tag"
- * in blue, and the comet rule on row 3. Shared by CONNECTING / NEW PROFILE. */
+/* Standard modal header: animated titlebar chip and a right-aligned
+ * "// tag" in blue. Shared by CONNECTING / NEW PROFILE. */
 void draw_screen_header(const char *title, const char *tag)
 {
     draw_titlebar(2, title, app.anim_frame);
     ui_pen(OVERLAY_COL_BLUE);
     ui_puts(ui_cols() - (int)strlen(tag) - 1, 0, tag, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    draw_rule_scan(3, app.anim_frame);
 }
 
 /* Free-RAM summary for the header. */
