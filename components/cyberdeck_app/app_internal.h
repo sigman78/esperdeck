@@ -147,6 +147,10 @@ struct app_state {
     uint64_t toast_until;
     bool     toast_ok;     /* success toast: spinner-to-checkmark garnish */
 
+    /* link watcher: last states seen, for connect/disconnect toasts */
+    uint8_t  prev_wifi;    /* wifi_mgr_state_t */
+    uint8_t  prev_ble;     /* ble_state_t as int (see cyberdeck_ble_ops_t) */
+
     uint64_t session_start;         /* enter_session() time, for NO CARRIER */
     uint64_t last_input;            /* any key/touch; drives the screensaver */
     bool     saver_on;              /* rain actually on screen (not derived) */

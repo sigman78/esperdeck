@@ -66,8 +66,8 @@ void render_home(void)
     }
 
     /* SSID clamped to a fixed field so the dBm suffix always fits the buffer
-     * and the whole line stays clear of the right-aligned titlebar (which
-     * starts at cols-20 — 10-cell SSIDs keep the worst case at 45 cols). */
+     * and the whole line stays clear of the right-aligned CYBERDECK wordmark
+     * (which starts at cols-10). */
     int sw = ui_cols() >= 97 ? 16 : 10;
     char net[48];
     snprintf(net, sizeof(net), "%-*.*s %s", sw, sw,
@@ -112,8 +112,9 @@ void render_home(void)
     ui_puts(9, 2, ram, 0);
 
     /* ── Title + version on the RIGHT (rows 0-1) ────────────────────── */
-    int tw = (int)strlen("CYBERDECK") + 10;
-    draw_titlebar(ui_cols() - tw - 1, "CYBERDECK", app.anim_frame);
+    ui_pen(OVERLAY_COL_CYAN);
+    ui_puts(ui_cols() - (int)strlen("CYBERDECK") - 1, 0, "CYBERDECK",
+            OVERLAY_ATTR_BOLD);
     char ver[24];
     snprintf(ver, sizeof(ver), "// %s", app.cfg.version ? app.cfg.version : "?");
     ui_pen(OVERLAY_COL_BLUE);
@@ -124,8 +125,6 @@ void render_home(void)
     if (clock_str(clk, sizeof(clk)))
         ui_puts(ui_cols() - (int)strlen(clk) - 1, 2, clk, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-
-    draw_rule_scan(3, app.anim_frame);
 
     /* Tiles: one per profile, then a conditional trailing set (New profile only
      * as a first-run shortcut, Pair keyboard only when none is bonded, and
@@ -297,7 +296,7 @@ void home_tick(uint64_t now)
     app.saver_on = false;
     if (now >= app.next_home_refresh) {
         app.next_home_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
-        render_home();   /* live wifi/ble status + comet sweep */
+        render_home();   /* live wifi/ble status */
     }
 }
 

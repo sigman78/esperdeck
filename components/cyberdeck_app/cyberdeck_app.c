@@ -135,6 +135,43 @@ void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
     app.toast_ok    = false;   /* only enter_session() garnishes with a ✓ */
 }
 
+/* Watch the wifi + BLE keyboard links and toast every transition the user
+ * cares about (connecting / connected / disconnected), so link changes
+ * surface on HOME and in-session without staring at the status HUD.
+ * Pairing-scan churn is deliberately silent — the pairing screen narrates
+ * itself, and leaving it for a scan is not a "disconnect". */
+static void status_toasts(uint64_t now)
+{
+    uint8_t w = (uint8_t)wifi_manager_get_state();
+    if (w != app.prev_wifi) {
+        if (w == WIFI_MGR_CONNECTED)
+            toast(now, "wifi connected %s", wifi_manager_get_ip());
+        else if (w == WIFI_MGR_CONNECTING)
+            toast(now, "wifi connecting...");
+        else if (w == WIFI_MGR_FAILED)
+            toast_for(now, ERR_TOAST_MS, "wifi connect failed (retrying)");
+        else if (app.prev_wifi == WIFI_MGR_CONNECTED)   /* -> LOST / IDLE */
+            toast(now, "wifi disconnected");
+        app.prev_wifi = w;
+    }
+
+    if (app.cfg.ble && app.cfg.ble->get_state) {
+        uint8_t b = (uint8_t)app.cfg.ble->get_state();
+        if (b != app.prev_ble) {
+            if (b == 4) {                          /* BLE_CONNECTED  */
+                const char *n = app.cfg.ble->get_name
+                              ? app.cfg.ble->get_name() : "";
+                toast(now, "keyboard connected %s", n);
+            } else if (b == 3) {                   /* BLE_CONNECTING */
+                toast(now, "keyboard connecting...");
+            } else if (app.prev_ble == 4 && b != 2) {  /* not pairing scan */
+                toast(now, "keyboard disconnected");
+            }
+            app.prev_ble = b;
+        }
+    }
+}
+
 /* ------------------------------------------------------------- dispatch */
 
 typedef struct {
@@ -202,6 +239,8 @@ void cyberdeck_app_tick(uint64_t now)
 
     app.anim_frame = (uint32_t)(now / ANIM_PERIOD_MS);
     ui_frame(app.anim_frame);   /* marquee clock for ui_tile */
+
+    status_toasts(now);
 
     if (app.state < ST_COUNT && SCREENS[app.state].tick)
         SCREENS[app.state].tick(now);
