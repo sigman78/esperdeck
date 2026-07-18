@@ -33,6 +33,12 @@ extern DRAM_ATTR uint16_t g_fx_glow_acc[2];
 extern DRAM_ATTR volatile uint8_t g_fx_row_stamp[DISPLAY_FX_MAX_ROWS];
 #endif
 
+/* CRT line wobble: one full sine of horizontal offsets (±6 px max),
+ * rebuilt by display_fx_set for the active amplitude. The ISR indexes it
+ * with g_fx_frame directly — one sine cycle per 256-frame (~6.5 s) sweep
+ * of the scanning bump. */
+extern DRAM_ATTR int8_t g_fx_wobble_lut[256];
+
 /* Event countdowns (frames remaining) + total durations captured at arm
  * time. Totals are written strictly before counters so the ISR never sees
  * a nonzero counter with a zero total. */

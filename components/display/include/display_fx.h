@@ -56,6 +56,12 @@ typedef struct {
     uint8_t static_burst;     /* 0 off / 1 on                              */
     uint8_t static_frames;    /* burst duration in frames, 1..120          */
     uint8_t static_lines;     /* noisy scanlines per 16-line band, 1..4    */
+
+    /* CRT line wobble — a ~16-scanline S-wiggle (a full vertical sine:
+     * two opposite bulges) sweeps down the screen (~5 s visible pass,
+     * ~1.6 s off-screen rest); bulge depth follows a temporal sine, one
+     * cycle per sweep — the analog tracking-line instability look. */
+    uint8_t wobble;           /* 0 off / 1 ±2 px / 2 ±4 px / 3 ±6 px       */
 } display_fx_cfg_t;
 
 /** Fill @p out with the default effect configuration. */

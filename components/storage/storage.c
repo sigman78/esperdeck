@@ -373,6 +373,7 @@ static const fx_field_t fx_fields[] = {
     { "static",          offsetof(display_fx_cfg_t, static_burst)    },
     { "static_frames",   offsetof(display_fx_cfg_t, static_frames)   },
     { "static_lines",    offsetof(display_fx_cfg_t, static_lines)    },
+    { "wobble",          offsetof(display_fx_cfg_t, wobble)          },
 };
 
 static void fx_path(char *buf, size_t bufsz)

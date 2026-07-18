@@ -25,7 +25,7 @@
 /* Tile order for the EFFECTS page. The row-glow tiles exist only when the
  * effect is compiled in (DISPLAY_FX_ROW_GLOW) — the enum renumbers itself. */
 enum {
-    FXM_SCAN, FXM_MONO, FXM_BOLD,
+    FXM_SCAN, FXM_MONO, FXM_BOLD, FXM_WOBBLE,
 #if DISPLAY_FX_ROW_GLOW
     FXM_GLOW, FXM_DECAY,
 #endif
@@ -57,6 +57,10 @@ static int fx_menu_items(const char *out[], const char *bodies[],
     out[FXM_BOLD] = "Bold pop";
     snprintf(buf[FXM_BOLD], sizeof(buf[FXM_BOLD]), "%s",
              c.bold_pop ? "on" : "off");
+    out[FXM_WOBBLE] = "Wobble";
+    snprintf(buf[FXM_WOBBLE], sizeof(buf[FXM_WOBBLE]), "%s",
+             c.wobble == 0 ? "off"    : c.wobble == 1 ? "subtle"
+           : c.wobble == 2 ? "medium" : "deep");
 #if DISPLAY_FX_ROW_GLOW
     out[FXM_GLOW] = "Row glow";
     snprintf(buf[FXM_GLOW], sizeof(buf[FXM_GLOW]), "%s",
@@ -94,6 +98,7 @@ static void fx_menu_cycle(int sel)
     case FXM_SCAN: c.scanlines = !c.scanlines; break;
     case FXM_MONO: c.mono = (uint8_t)((c.mono + 1) % 3); break;
     case FXM_BOLD: c.bold_pop = !c.bold_pop;             break;
+    case FXM_WOBBLE: c.wobble = (uint8_t)((c.wobble + 1) % 4); break;
 #if DISPLAY_FX_ROW_GLOW
     case FXM_GLOW:  /* off -> subtle -> strong -> off */
         if (!c.glow)                { c.glow = 1; c.glow_strength = 0; }

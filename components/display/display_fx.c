@@ -8,6 +8,7 @@
  */
 
 #include "display_fx_internal.h"
+#include <math.h>
 #include <string.h>
 
 /* -------------------------------------------------------------------------
@@ -27,9 +28,14 @@ DRAM_ATTR display_fx_cfg_t g_fx_cfg = {
     .static_burst    = 1,
     .static_frames   = 10,   /* ~0.25 s */
     .static_lines    = 2,
+    .wobble          = 2,    /* medium ±4 px — prototype default, on trial */
 };
 
 DRAM_ATTR volatile uint8_t g_fx_frame = 0;
+
+/* Wobble LUT starts flat (matches .wobble = 0); display_fx_set rebuilds it
+ * whenever a config is applied. */
+DRAM_ATTR int8_t g_fx_wobble_lut[256] = { 0 };
 
 #if DISPLAY_FX_ROW_GLOW
 /* Glow accent: warm phosphor amber. Blend terms are per-field shift/mask
@@ -70,6 +76,7 @@ void display_fx_defaults(display_fx_cfg_t *out)
         .wipe = 1,       .wipe_frames = 18,
         .collapse = 1,   .collapse_frames = 12,
         .static_burst = 1, .static_frames = 10, .static_lines = 2,
+        .wobble = 2,   /* medium ±4 px — prototype default, on trial */
     };
     if (out) *out = def;
 }
@@ -97,6 +104,14 @@ void display_fx_set(const display_fx_cfg_t *cfg)
     c.static_burst    = !!c.static_burst;
     c.static_frames   = clamp_u8(c.static_frames, 1, 120);
     c.static_lines    = clamp_u8(c.static_lines, 1, 4);
+    c.wobble          = clamp_u8(c.wobble, 0, 3);
+
+    /* Rebuild the wobble LUT for the active amplitude (task context — the
+     * ISR reads single bytes, so a mid-rebuild frame shows at worst a
+     * one-frame ripple). Amplitude = 2 px per level. */
+    for (int i = 0; i < 256; i++)
+        g_fx_wobble_lut[i] = (int8_t)lrintf(
+            2.0f * (float)c.wobble * sinf((float)i * (6.2831853f / 256.0f)));
 
     g_fx_cfg = c;   /* byte fields; a torn update is a one-frame glitch */
 }
