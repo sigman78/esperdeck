@@ -47,14 +47,43 @@ static int services_discovered;
  * failure branch needs it: on a failed/timed-out connect there is no valid
  * conn_handle to look the dev up by, and the stock code dereferenced a
  * NULL `dev` there — a panic on any 30 s connect timeout. */
-static esp_hidh_dev_t *s_opening_dev;
+static esp_hidh_dev_t * volatile s_opening_dev;   /* opener task <-> host task */
 static int chrs_discovered;
 static int dscs_discovered;
 static int status = 0;
 
-static inline void WAIT_CB(void)
+/* CYBERDECK PATCH E: every wait below used to be portMAX_DELAY. A GATT
+ * request that fails synchronously (link dropped -> BLE_HS_ENOTCONN) never
+ * produces a callback, so the opener task blocked here FOREVER: the app's
+ * `s_hid_open_live` guard then rejected every later connect attempt and the
+ * keyboard could not come back without a reboot. Waits are bounded now and
+ * the callers unwind. NimBLE's own ATT procedure timeout is 30 s, so a GATT
+ * wait that exceeds that is dead for good. */
+#define HIDH_CB_TIMEOUT_MS       12000
+#define HIDH_CONNECT_TIMEOUT_MS  35000   /* ble_gap_connect() itself allows 30 s */
+
+static inline bool WAIT_CB_MS(uint32_t ms)
 {
-    xSemaphoreTake(s_ble_hidh_cb_semaphore, portMAX_DELAY);
+    if (xSemaphoreTake(s_ble_hidh_cb_semaphore, pdMS_TO_TICKS(ms)) == pdTRUE) {
+        return true;
+    }
+    ESP_LOGE(TAG, "callback wait timed out after %u ms", (unsigned)ms);
+    return false;
+}
+
+static inline bool WAIT_CB(void)
+{
+    return WAIT_CB_MS(HIDH_CB_TIMEOUT_MS);
+}
+
+/* Re-synchronise the binary semaphore before an open. A callback that fires
+ * after a wait timed out (or NimBLE's habit of reporting a failed GATT
+ * procedure both on the rx path and via its err_cb) leaves the semaphore
+ * signalled; the next WAIT_CB would then return instantly for an event that
+ * never happened and the open would proceed on a dead conn handle. */
+static inline void DRAIN_CB(void)
+{
+    while (xSemaphoreTake(s_ble_hidh_cb_semaphore, 0) == pdTRUE) { }
 }
 
 static inline void SEND_CB(void)
@@ -145,7 +174,9 @@ static int read_char(uint16_t conn_handle, uint16_t handle, uint8_t **out, uint1
         ESP_LOGE(TAG, "read_char failed");
         return rc;
     }
-    WAIT_CB();
+    if (!WAIT_CB()) {
+        return BLE_HS_ETIMEOUT;   /* PATCH E */
+    }
     if (s_read_status == 0) {
         *out = s_read_data_val;
         *out_len = s_read_data_len;
@@ -165,7 +196,9 @@ static int read_descr(uint16_t conn_handle, uint16_t handle, uint8_t **out, uint
         ESP_LOGE(TAG, "read_descr failed");
         return rc;
     }
-    WAIT_CB();
+    if (!WAIT_CB()) {
+        return BLE_HS_ETIMEOUT;   /* PATCH E */
+    }
     if (s_read_status == 0) {
         *out = s_read_data_val;
         *out_len = s_read_data_len;
@@ -304,8 +337,12 @@ desc_disced(uint16_t conn_handle, const struct ble_gatt_error *error,
 
 /* this api does the following things :
 ** does service, characteristic and discriptor discovery and
-** fills the hid device information accordingly in dev */
-static void read_device_services(esp_hidh_dev_t *dev)
+** fills the hid device information accordingly in dev
+**
+** CYBERDECK PATCH E/H: returns false when the peer went away mid-discovery
+** (or never had a HID service) instead of hanging on a callback that will
+** never come / aborting the whole firmware through assert(). */
+static bool read_device_services(esp_hidh_dev_t *dev)
 {
     uint16_t suuid, cuuid, duuid;
     uint16_t chandle, dhandle;
@@ -325,31 +362,46 @@ static void read_device_services(esp_hidh_dev_t *dev)
      * device open in one boot appends past the first discovery's results
      * and parses garbage. Latent until PATCH A makes re-opens possible. */
     services_discovered = 0;
+    chrs_discovered     = 0;   /* PATCH E: an aborted discovery leaves these */
+    dscs_discovered     = 0;   /* set — the next open would parse garbage.   */
     status = 0;
 
     rc = ble_gattc_disc_all_svcs(dev->ble.conn_id, svc_disced, service_result);
     if (rc != 0) {
-        ESP_LOGD(TAG, "Error discovering services : %d", rc);
-        assert(rc != 0);
+        /* PATCH E: the stock code logged, then ran the useless assert(rc != 0)
+         * and fell through into WAIT_CB() — a permanent block, because a
+         * request that never went out has no callback. */
+        ESP_LOGE(TAG, "Error discovering services : %d", rc);
+        return false;
     }
-    WAIT_CB();
+    if (!WAIT_CB()) {
+        return false;
+    }
     if (status != 0) {
-        ESP_LOGE(TAG, "failed to find services");
-        assert(status == 0);
+        /* PATCH H: was assert(status == 0) — i.e. a panic reboot every time
+         * the keyboard dropped the link during service discovery. */
+        ESP_LOGE(TAG, "failed to find services (status=%d)", status);
+        return false;
     }
     dcount = services_discovered; /* fatal if services are more than 10 */
 
-    if (rc == ESP_OK) {
+    {
         ESP_LOGD(TAG, "Found %u HID Services", dev->config.report_maps_len);
+        if (dev->config.report_maps_len == 0) {
+            /* Not a HID peer (or discovery came back empty). malloc(0) here is
+             * what produced the old "malloc report maps failed" noise. */
+            ESP_LOGW(TAG, "no HID service on this device");
+            return false;
+        }
         dev->config.report_maps = (esp_hid_raw_report_map_t *)malloc(dev->config.report_maps_len * sizeof(esp_hid_raw_report_map_t));
         if (dev->config.report_maps == NULL) {
             ESP_LOGE(TAG, "malloc report maps failed");
-            return;
+            return false;
         }
         dev->protocol_mode = (uint8_t *)malloc(dev->config.report_maps_len * sizeof(uint8_t));
         if (dev->protocol_mode == NULL) {
             ESP_LOGE(TAG, "malloc protocol_mode failed");
-            return;
+            return false;
         }
 
         /* read characteristic value may fail, so we should init report maps */
@@ -371,13 +423,20 @@ static void read_device_services(esp_hidh_dev_t *dev)
             uint16_t ccount = 20;
             rc = ble_gattc_disc_all_chrs(dev->ble.conn_id, service_result[s].start_handle,
                                          service_result[s].end_handle, chr_disced, char_result);
-            WAIT_CB();
+            if (rc != 0) {
+                ESP_LOGE(TAG, "char discovery start failed for service %d: %d", s, rc);
+                goto fail;   /* PATCH E: no request went out, no callback comes */
+            }
+            if (!WAIT_CB()) {
+                goto fail;
+            }
             if (status != 0) {
-                ESP_LOGE(TAG, "failed to find chars for service : %d", s);
-                assert(status == 0);
+                /* PATCH H: was assert() */
+                ESP_LOGE(TAG, "failed to find chars for service : %d (status=%d)", s, status);
+                goto fail;
             }
             ccount = chrs_discovered;
-            if (rc == ESP_OK) {
+            {
                 for (uint16_t c = 0; c < ccount; c++) {
                     cuuid = ble_uuid_u16(&char_result[c].uuid.u);
                     chandle = char_result[c].val_handle;
@@ -442,7 +501,7 @@ static void read_device_services(esp_hidh_dev_t *dev)
                             report = (esp_hidh_dev_report_t *)malloc(sizeof(esp_hidh_dev_report_t));
                             if (report == NULL) {
                                 ESP_LOGE(TAG, "malloc esp_hidh_dev_report_t failed");
-                                return;
+                                return false;
                             }
                             report->next = NULL;
                             report->permissions = char_result[c].properties;
@@ -485,13 +544,20 @@ static void read_device_services(esp_hidh_dev_t *dev)
                     }
                     rc = ble_gattc_disc_all_dscs(dev->ble.conn_id, char_result[c].val_handle,
                                                  chr_end_handle, desc_disced, descr_result);
-                    WAIT_CB();
+                    if (rc != 0) {
+                        ESP_LOGE(TAG, "dsc discovery start failed for char %d: %d", c, rc);
+                        goto fail;   /* PATCH E */
+                    }
+                    if (!WAIT_CB()) {
+                        goto fail;
+                    }
                     if (status != 0) {
-                        ESP_LOGE(TAG, "failed to find discriptors for characteristic : %d", c);
-                        assert(status == 0);
+                        /* PATCH H: was assert() */
+                        ESP_LOGE(TAG, "failed to find discriptors for characteristic : %d (status=%d)", c, status);
+                        goto fail;
                     }
                     dcount = dscs_discovered;
-                    if (rc == ESP_OK) {
+                    {
                         for (uint16_t d = 0; d < dcount; d++) {
                             duuid = ble_uuid_u16(&descr_result[d].uuid.u);
                             dhandle = descr_result[d].handle;
@@ -565,6 +631,16 @@ static void read_device_services(esp_hidh_dev_t *dev)
             }
         }
     }
+    return true;
+
+fail:
+    /* PATCH E: `report` is either NULL, already linked at the head of
+     * dev->reports, or freshly malloc'd and not linked yet — free only the
+     * last case. Everything else hangs off dev and is released with it. */
+    if (report != NULL && report != dev->reports) {
+        free(report);
+    }
+    return false;
 }
 
 static int
@@ -573,31 +649,31 @@ on_subscribe(uint16_t conn_handle,
              struct ble_gatt_attr *attr,
              void *arg)
 {
-    uint16_t conn_id;
-    conn_id = *((uint16_t*) arg);
-
-    assert(conn_id == conn_handle);
-
+    /* PATCH E: the stock code dereferenced `arg` (a pointer to the caller's
+     * stack) and asserted it matched. With bounded waits the caller may be
+     * gone by the time a late callback lands, so the arg is ignored now. */
+    (void)arg;
     MODLOG_DFLT(INFO, "Subscribe complete; status=%d conn_handle=%d "
                 "attr_handle=%d\n",
-                error->status, conn_handle, attr->handle);
+                error->status, conn_handle, attr ? attr->handle : 0);
     SEND_CB();
 
     return 0;
 }
 
-static void register_for_notify(uint16_t conn_handle, uint16_t handle)
+static bool register_for_notify(uint16_t conn_handle, uint16_t handle)
 {
     uint8_t value[2];
     int rc;
     value[0] = 1;
     value[1] = 0;
-    rc = ble_gattc_write_flat(conn_handle, handle, value, sizeof value, on_subscribe, (void *)&conn_handle);
+    rc = ble_gattc_write_flat(conn_handle, handle, value, sizeof value, on_subscribe, NULL);
     if (rc != 0) {
-        ESP_LOGE(TAG, "Error: Failed to subscribe to characteristic; "
-                 "rc=%d\n", rc);
+        /* PATCH E: was logged and then waited on a callback that never comes. */
+        ESP_LOGE(TAG, "Error: Failed to subscribe to characteristic; rc=%d", rc);
+        return false;
     }
-    WAIT_CB();
+    return WAIT_CB();
 }
 
 static int
@@ -606,52 +682,64 @@ on_write(uint16_t conn_handle,
          struct ble_gatt_attr *attr,
          void *arg)
 {
-    uint16_t conn_id;
-    conn_id = *((uint16_t*) arg);
-
-    assert(conn_id == conn_handle);
-
+    (void)arg;   /* PATCH E: see on_subscribe() */
     MODLOG_DFLT(DEBUG, "write complete; status=%d conn_handle=%d "
                 "attr_handle=%d\n",
-                error->status, conn_handle, attr->handle);
+                error->status, conn_handle, attr ? attr->handle : 0);
     SEND_CB();
 
     return 0;
 }
-static void write_char_descr(uint16_t conn_id, uint16_t handle, uint16_t value_len, uint8_t *value)
+static bool write_char_descr(uint16_t conn_id, uint16_t handle, uint16_t value_len, uint8_t *value)
 {
-    ble_gattc_write_flat(conn_id, handle, value, value_len, on_write, &conn_id);
-    WAIT_CB();
+    /* PATCH E: rc was discarded and the wait was unconditional. */
+    int rc = ble_gattc_write_flat(conn_id, handle, value, value_len, on_write, NULL);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "CCC write failed on handle %u; rc=%d", handle, rc);
+        return false;
+    }
+    return WAIT_CB();
 }
 
-static void attach_report_listeners(esp_hidh_dev_t *dev)
+/* PATCH E: returns false as soon as the link is gone, so the opener unwinds
+ * instead of grinding through every remaining report on a dead conn. */
+static bool attach_report_listeners(esp_hidh_dev_t *dev)
 {
     if (dev == NULL) {
-        return;
+        return false;
     }
     uint16_t ccc_data = 1;
     esp_hidh_dev_report_t *report = dev->reports;
 
     //subscribe to battery notifications
     if (dev->ble.battery_handle) {
-        register_for_notify(dev->ble.conn_id, dev->ble.battery_handle);
+        if (!register_for_notify(dev->ble.conn_id, dev->ble.battery_handle)) {
+            return false;
+        }
         if (dev->ble.battery_ccc_handle) {
             //Write CCC descr to enable notifications
-            write_char_descr(dev->ble.conn_id, dev->ble.battery_ccc_handle, 2, (uint8_t *)&ccc_data);
+            if (!write_char_descr(dev->ble.conn_id, dev->ble.battery_ccc_handle, 2, (uint8_t *)&ccc_data)) {
+                return false;
+            }
         }
     }
 
     while (report) {
         /* subscribe to notifications */
         if ((report->permissions & BLE_GATT_CHR_PROP_NOTIFY) != 0 && report->protocol_mode == ESP_HID_PROTOCOL_MODE_REPORT) {
-            register_for_notify(dev->ble.conn_id, report->handle);
+            if (!register_for_notify(dev->ble.conn_id, report->handle)) {
+                return false;
+            }
             if (report->ccc_handle) {
                 /* Write CCC descr to enable notifications */
-                write_char_descr(dev->ble.conn_id, report->ccc_handle, 2, (uint8_t *)&ccc_data);
+                if (!write_char_descr(dev->ble.conn_id, report->ccc_handle, 2, (uint8_t *)&ccc_data)) {
+                    return false;
+                }
             }
         }
         report = report->next;
     }
+    return true;
 }
 
 static int
@@ -716,6 +804,20 @@ esp_hidh_gattc_event_handler(struct ble_gap_event *event, void *arg)
         if (!dev) {
             ESP_LOGE(TAG, "CLOSE received for unknown device");
             break;
+        }
+        /* CYBERDECK PATCH G: this dev is still inside esp_ble_hidh_dev_open()
+         * — the opener task owns it. The CLOSE path below hands it to the
+         * event task, which frees it while the opener is still discovering
+         * services on it (use-after-free), and posts a CLOSE for a device the
+         * app never saw OPEN. Instead: mark the link dead and release the
+         * opener, which unwinds and frees the dev itself. */
+        if (dev == s_opening_dev) {
+            ESP_LOGW(TAG, "peer left mid-open (reason=%d)", event->disconnect.reason);
+            dev->connected = false;
+            dev->status = event->disconnect.reason;
+            dev->ble.conn_id = -1;
+            SEND_CB();
+            return 0;
         }
         if (!dev->connected) {
             dev->status = event->disconnect.reason;
@@ -850,7 +952,10 @@ static esp_err_t esp_ble_hidh_dev_report_write(esp_hidh_dev_t *dev, size_t map_i
         ESP_LOGE(TAG, "%s report %d takes maximum %d bytes. you have provided %d", esp_hid_report_type_str(report_type), report_id, report->value_len, value_len);
         return ESP_FAIL;
     }
-    rc = ble_gattc_write_flat(dev->ble.conn_id, report->handle, value, value_len, on_write, &dev->ble.conn_id);
+    rc = ble_gattc_write_flat(dev->ble.conn_id, report->handle, value, value_len, on_write, NULL);
+    if (rc != 0) {
+        return rc;               /* PATCH E: no callback is coming */
+    }
     WAIT_CB();// this is not blocking in bluedroid code
     return rc;
 }
@@ -964,7 +1069,10 @@ esp_hidh_dev_t *esp_ble_hidh_dev_open(uint8_t *bda, uint8_t address_type)
     memcpy(addr.val, bda, sizeof(addr.val));
     addr.type = address_type;
 
-    s_opening_dev = dev;   /* CYBERDECK PATCH D */
+    /* PATCH F: start from a known semaphore state — see DRAIN_CB(). */
+    DRAIN_CB();
+
+    s_opening_dev = dev;   /* CYBERDECK PATCH D/G — stays set for the whole open */
     ret = ble_gap_connect(own_addr_type, &addr, 30000, NULL, esp_hidh_gattc_event_handler, NULL);
     if (ret) {
         s_opening_dev = NULL;
@@ -972,11 +1080,20 @@ esp_hidh_dev_t *esp_ble_hidh_dev_open(uint8_t *bda, uint8_t address_type)
         ESP_LOGE(TAG, "esp_ble_gattc_open failed: %d", ret);
         return NULL;
     }
-    WAIT_CB();
-    s_opening_dev = NULL;  /* CYBERDECK PATCH D */
+    if (!WAIT_CB_MS(HIDH_CONNECT_TIMEOUT_MS)) {
+        /* PATCH E: the connect callback never arrived (it always should —
+         * ble_gap_connect has its own 30 s timeout — but never block the
+         * opener forever on it). Cancel the pending attempt and give up. */
+        ESP_LOGE(TAG, "connect wait timed out; cancelling");
+        s_opening_dev = NULL;
+        esp_hidh_dev_free_inner(dev);
+        ble_gap_conn_cancel();
+        return NULL;
+    }
     if (dev->ble.conn_id < 0) {
         ret = dev->status;
         ESP_LOGE(TAG, "dev open failed! status: 0x%x", dev->status);
+        s_opening_dev = NULL;
         esp_hidh_dev_free_inner(dev);
         return NULL;
     }
@@ -993,8 +1110,22 @@ esp_hidh_dev_t *esp_ble_hidh_dev_open(uint8_t *bda, uint8_t address_type)
     dev->connected = true;
 
     /* perform service discovery and fill the report maps */
-    read_device_services(dev);
+    if (!read_device_services(dev) || dev->ble.conn_id < 0) {
+        ESP_LOGE(TAG, "service discovery failed; aborting open");
+        goto abort_open;
+    }
 
+    /* PATCH G: subscribe BEFORE announcing the device. Upstream posts
+     * OPEN_EVENT first, so a link drop during subscription reached the app as
+     * "connected" — and no CLOSE ever followed, because the dev was still the
+     * one being opened. Now the app only ever sees an OPEN for a device that
+     * is fully live. */
+    if (!attach_report_listeners(dev) || dev->ble.conn_id < 0) {
+        ESP_LOGE(TAG, "report subscription failed; aborting open");
+        goto abort_open;
+    }
+
+    s_opening_dev = NULL;
     if (event_loop_handle) {
         esp_hidh_event_data_t p = {0};
         p.open.status = ESP_OK;
@@ -1002,7 +1133,21 @@ esp_hidh_dev_t *esp_ble_hidh_dev_open(uint8_t *bda, uint8_t address_type)
         esp_event_post_to(event_loop_handle, ESP_HIDH_EVENTS, ESP_HIDH_OPEN_EVENT, &p, sizeof(esp_hidh_event_data_t), portMAX_DELAY);
     }
 
-    attach_report_listeners(dev);
     return dev;
+
+abort_open: {
+        /* Order matters: clear `connected`/`in_use` and drop the dev out of
+         * the device list BEFORE tearing the link down, so the disconnect
+         * event cannot post a CLOSE for a device we are about to free. */
+        int conn_id = dev->ble.conn_id;
+        dev->connected = false;
+        dev->in_use = false;
+        s_opening_dev = NULL;
+        esp_hidh_dev_free_inner(dev);
+        if (conn_id >= 0) {
+            ble_gap_terminate((uint16_t)conn_id, BLE_ERR_REM_USER_CONN_TERM);
+        }
+        return NULL;
+    }
 }
 #endif // CONFIG_BT_NIMBLE_HID_SERVICE

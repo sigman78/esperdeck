@@ -64,7 +64,7 @@ static int               s_scan_count = 0;
 
 /* BDA of connected device (NimBLE little-endian: val[0] = LSB) */
 static uint8_t s_connected_bda[6];
-static esp_hidh_dev_t *s_connected_dev = NULL;
+static esp_hidh_dev_t * volatile s_connected_dev = NULL;   /* also read by the keeper timer */
 static char    s_connected_name[64] = "";   /* name of the live device, "" = none */
 
 /* Previous HID report keys — for rollover diffing (emit only new keys) */
@@ -116,6 +116,17 @@ static void repeat_stop(void)
 /* Global GAP event listener — drives link encryption/bonding, which esp_hidh's
  * NimBLE backend does not do on its own. */
 static struct ble_gap_event_listener s_gap_listener;
+
+/* Link keeper — see keeper_cb(). Every "keyboard never comes back until a
+ * reboot" failure we have chased looked identical from the outside: some RAM
+ * state (a scan that failed to start, an open that never returned, a device
+ * object freed underneath us) left the machine in a state nothing re-drives.
+ * This timer re-asserts the invariant "not connected => a scan is running". */
+#define KEEPER_PERIOD_US    (5 * 1000 * 1000)
+#define OPEN_STUCK_US       (75ULL * 1000 * 1000)   /* 30 s connect + discovery */
+static esp_timer_handle_t s_keeper_timer = NULL;
+static volatile int64_t   s_connecting_since_us = 0;
+static uint8_t            s_no_scan_ticks = 0;   /* consecutive "no scan" samples */
 
 /* ------------------------------------------------------------------ */
 /*  Forward declarations                                               */
@@ -335,8 +346,17 @@ static void hid_open_task(void *arg)
 
 static void open_device_async(const uint8_t addr[6], uint8_t addr_type)
 {
-    if (s_state == BLE_CONNECTING) return;   /* one attempt at a time */
-    if (s_hid_open_live) return;             /* previous task still exiting */
+    /* Both guards used to bail silently. When an open wedged (it could block
+     * forever inside esp_hidh) that silence was the whole symptom: the picker
+     * and the reconnect scan both looked alive and simply did nothing. */
+    if (s_state == BLE_CONNECTING) {
+        ESP_LOGW(TAG, "open declined: another connect is in flight");
+        return;
+    }
+    if (s_hid_open_live) {
+        ESP_LOGW(TAG, "open declined: previous open task still running");
+        return;
+    }
 
     /* All fallible steps BEFORE committing state — an early return must
      * never leave the machine stuck in BLE_CONNECTING with no task alive. */
@@ -358,8 +378,9 @@ static void open_device_async(const uint8_t addr[6], uint8_t addr_type)
     }
 
     ble_gap_disc_cancel();
-    s_state         = BLE_CONNECTING;
-    s_hid_open_live = true;
+    s_state               = BLE_CONNECTING;
+    s_connecting_since_us = esp_timer_get_time();
+    s_hid_open_live       = true;
     xTaskCreateStatic(hid_open_task, "hid_open",
                       HID_OPEN_STACK / sizeof(StackType_t),
                       req, 6, s_hid_open_stack, &s_hid_open_tcb);
@@ -367,12 +388,18 @@ static void open_device_async(const uint8_t addr[6], uint8_t addr_type)
 
 void ble_keyboard_select_device(const uint8_t addr[6], uint8_t addr_type)
 {
-    /* Deliberate (re)pair from the picker: drop any stale bond first so we
-     * pair cleanly. A keyboard put into pairing mode has cleared its own
-     * bond, so a leftover LTK on our side would only make encryption fail. */
-    ble_addr_t peer = { .type = addr_type };
-    memcpy(peer.val, addr, 6);
-    ble_store_util_delete_peer(&peer);
+    /* A device we have never bonded with: clear any leftover LTK so pairing
+     * starts from scratch. A device already in the registry is picked here to
+     * force a reconnect at least as often as to re-pair it, so keep the bond
+     * — throwing it away would demand the keyboard be in pairing mode to get
+     * back in, turning a stuck link into an unusable one. A genuinely stale
+     * LTK still self-heals: encryption fails, the ENC_CHANGE handler drops
+     * the bond, and the next attempt pairs fresh. */
+    if (!addr_in_registry(addr)) {
+        ble_addr_t peer = { .type = addr_type };
+        memcpy(peer.val, addr, 6);
+        ble_store_util_delete_peer(&peer);
+    }
 
     open_device_async(addr, addr_type);
 }
@@ -567,6 +594,17 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
             start_scan(CONFIG_INPUT_BLE_SCAN_DURATION * 1000);
             break;
         }
+        /* The dev can be torn down between the post and this handler (a link
+         * that dropped the instant it came up). Touching it then is a
+         * use-after-free, and believing it leaves the FSM CONNECTED to a
+         * device that no longer exists — one of the states only a reboot
+         * used to clear. */
+        if (!esp_hidh_dev_exists(data->open.dev)) {
+            ESP_LOGW(TAG, "HIDH open: device already gone, returning to reconnect");
+            s_state = BLE_RECONNECT;
+            start_scan(CONFIG_INPUT_BLE_SCAN_DURATION * 1000);
+            break;
+        }
         const uint8_t *bda = esp_hidh_dev_bda_get(data->open.dev);
         if (!bda) {
             ESP_LOGE(TAG, "HIDH open: bda_get returned NULL");
@@ -751,7 +789,7 @@ static int sec_gap_event(struct ble_gap_event *event, void *arg)
              * then drops and CLOSE_EVENT restarts the reconnect scan. */
             struct ble_gap_conn_desc desc;
             if (ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0) {
-                ESP_LOGW(TAG, "encryption failed — dropping stale bond");
+                ESP_LOGW(TAG, "encryption failed - dropping stale bond");
                 ble_store_util_delete_peer(&desc.peer_id_addr);
             }
         }
@@ -787,7 +825,7 @@ static void on_sync(void)
         s_state = BLE_RECONNECT;
         start_scan(CONFIG_INPUT_BLE_SCAN_DURATION * 1000);
     } else {
-        ESP_LOGI(TAG, "No paired devices — awaiting pairing trigger");
+        ESP_LOGI(TAG, "No paired devices - awaiting pairing trigger");
     }
 }
 
@@ -803,6 +841,80 @@ static void nimble_host_task(void *param)
     (void)param;
     nimble_port_run();   /* blocks until nimble_port_stop() */
     nimble_port_freertos_deinit();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Link keeper                                                        */
+/* ------------------------------------------------------------------ */
+
+/* Periodic supervisor. Nothing here is needed when every layer behaves; it
+ * exists because the failure mode when one doesn't is always the same — the
+ * keyboard never comes back and only a reboot helps. Cheap insurance:
+ *   CONNECTED  : the device object vanished under us  -> resume scanning
+ *   CONNECTING : an open that never returned          -> cancel it
+ *   RECONNECT  : no scan actually running             -> restart it
+ *   IDLE       : devices in the registry              -> resume scanning
+ * Runs on the esp_timer task: NimBLE calls are fine there, flash I/O is not. */
+static void keeper_cb(void *arg)
+{
+    (void)arg;
+    if (!s_nimble_synced) return;
+
+    switch (s_state) {
+    case BLE_CONNECTED:
+        if (s_connected_dev && !esp_hidh_dev_exists(s_connected_dev)) {
+            ESP_LOGW(TAG, "keeper: connected device vanished - rescanning");
+            s_connected_dev     = NULL;
+            s_connected_name[0] = '\0';
+            repeat_stop();
+            s_state = (s_registry_count > 0) ? BLE_RECONNECT : BLE_IDLE;
+            if (s_state == BLE_RECONNECT)
+                start_scan(CONFIG_INPUT_BLE_SCAN_DURATION * 1000);
+        }
+        break;
+
+    case BLE_CONNECTING:
+        if (esp_timer_get_time() - s_connecting_since_us > (int64_t)OPEN_STUCK_US) {
+            /* An open should finish (or fail) well inside this. Cancelling the
+             * GAP procedure makes the stack report the connect as failed,
+             * which unblocks the opener task and lets it unwind normally. */
+            ESP_LOGE(TAG, "keeper: connect stuck - cancelling");
+            ble_gap_conn_cancel();
+            s_connecting_since_us = esp_timer_get_time();   /* don't spam */
+        }
+        break;
+
+    case BLE_RECONNECT:
+    case BLE_PAIRING_SCAN:
+        if (!s_hid_open_live && !ble_gap_disc_active() && !ble_gap_conn_active()) {
+            /* Two strikes: a scan ends and is restarted from the same
+             * DISC_COMPLETE callback, and this timer samples often enough to
+             * land in that gap (~twice a day with a 10 s scan and a 5 s tick).
+             * One miss says nothing; two in a row means nothing is restarting
+             * it. */
+            if (++s_no_scan_ticks >= 2) {
+                ESP_LOGW(TAG, "keeper: no scan running in state %d - restarting",
+                         (int)s_state);
+                start_scan(CONFIG_INPUT_BLE_SCAN_DURATION * 1000);
+                s_no_scan_ticks = 0;
+            }
+        } else {
+            s_no_scan_ticks = 0;
+        }
+        break;
+
+    case BLE_IDLE:
+        if (s_registry_count > 0 && !s_hid_open_live) {
+            ESP_LOGW(TAG, "keeper: idle with %d known device(s) - rescanning",
+                     s_registry_count);
+            s_state = BLE_RECONNECT;
+            start_scan(CONFIG_INPUT_BLE_SCAN_DURATION * 1000);
+        }
+        break;
+
+    default:
+        break;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -862,6 +974,14 @@ esp_err_t ble_keyboard_backend_init(void)
     ble_gap_event_listener_register(&s_gap_listener, sec_gap_event, NULL);
 
     nimble_port_freertos_init(nimble_host_task);
+
+    const esp_timer_create_args_t keeper_args = {
+        .callback = keeper_cb, .name = "ble_keeper",
+    };
+    if (esp_timer_create(&keeper_args, &s_keeper_timer) == ESP_OK)
+        esp_timer_start_periodic(s_keeper_timer, KEEPER_PERIOD_US);
+    else
+        ESP_LOGW(TAG, "keeper timer unavailable");
 
     ESP_LOGI(TAG, "BLE keyboard backend initialised (NimBLE)");
     return ESP_OK;
