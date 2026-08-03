@@ -475,18 +475,6 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
         return ESP_FAIL;
     }
 
-    /* ── 4b. Keepalive configuration ───────────────────────────────── */
-#if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
-    /* want_reply=0: we send traffic to keep NAT alive but don't ask the
-     * server to respond.  want_reply=1 causes the server to send back
-     * SSH_MSG_REQUEST_SUCCESS which libssh2 must allocate a buffer for;
-     * under heap pressure that allocation fails with LIBSSH2_ERROR_ALLOC
-     * and drops the channel.                                              */
-    libssh2_keepalive_config(s_session, 0 /* want_reply */,
-                             CONFIG_SSH_KEEPALIVE_INTERVAL);
-    ESP_LOGI(TAG, "Keepalive every %d s", CONFIG_SSH_KEEPALIVE_INTERVAL);
-#endif
-
     /* ── 5. Host-key verification (TOFU pinning) ────────────────────── */
     const char *fp = libssh2_hostkey_hash(s_session, LIBSSH2_HOSTKEY_HASH_SHA256);
     if (!fp) {
@@ -553,6 +541,21 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
                  config->passphrase);
         if (rc == 0) goto auth_done;
         log_last_error("publickey");
+        /* Key auth fails far more often from a mis-stored key or a profile
+         * missing its passphrase than from anything libssh2 can name, so dump
+         * what we fed it — on the failure path only, to keep a good connect
+         * quiet. The BEGIN line is public; the key body never goes to the
+         * console, and the passphrase is reported by length alone. */
+        {
+            const char *pem = config->private_key_pem;
+            size_t hdr = strcspn(pem, "\r\n");
+            if (hdr > 48) hdr = 48;
+            ESP_LOGE(TAG, "  key header: \"%.*s\"", (int)hdr, pem);
+            ESP_LOGE(TAG, "  passphrase: %s (%u chars), pubkey: %s",
+                     config->passphrase ? "yes" : "NONE",
+                     (unsigned)(config->passphrase ? strlen(config->passphrase) : 0),
+                     config->public_key_pem ? "yes" : "no");
+        }
         ssh_cleanup();
         return SSH_ERR_AUTH;
     }
@@ -583,6 +586,28 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
 auth_done:
     s_kb_password = NULL;
     ESP_LOGI(TAG, "Authenticated");
+
+    /* ── 6b. Keepalive configuration ───────────────────────────────── */
+#if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
+    /* Configured only AFTER userauth completes. A keepalive is an
+     * SSH_MSG_GLOBAL_REQUEST (80), a connection-protocol message that is only
+     * legal once the user is authenticated — and libssh2 leaves
+     * keepalive_last_sent at 0, so the first blocking wait after this call
+     * sends one immediately rather than waiting out the interval. Configured
+     * any earlier, that stray request lands mid-auth: OpenSSH answers it with
+     * REQUEST_FAILURE and carries on, but a Go x/crypto/ssh server parses
+     * every packet during auth as a userauth request and drops the
+     * connection (seen as LIBSSH2_ERROR_SOCKET_RECV from the publickey probe).
+     *
+     * want_reply=0: we send traffic to keep NAT alive but don't ask the
+     * server to respond.  want_reply=1 causes the server to send back
+     * SSH_MSG_REQUEST_SUCCESS which libssh2 must allocate a buffer for;
+     * under heap pressure that allocation fails with LIBSSH2_ERROR_ALLOC
+     * and drops the channel.                                              */
+    libssh2_keepalive_config(s_session, 0 /* want_reply */,
+                             CONFIG_SSH_KEEPALIVE_INTERVAL);
+    ESP_LOGI(TAG, "Keepalive every %d s", CONFIG_SSH_KEEPALIVE_INTERVAL);
+#endif
 
     /* ── 7. Open shell channel ──────────────────────────────────────── */
     s_channel = libssh2_channel_open_ex(s_session,

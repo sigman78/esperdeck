@@ -1,3 +1,19 @@
+diff --git i/src/keepalive.c w/src/keepalive.c
+index 9dcc2a1a..7e2c85d5 100644
+--- i/src/keepalive.c
++++ w/src/keepalive.c
+@@ -44,6 +44,11 @@ void libssh2_keepalive_config(LIBSSH2_SESSION *session,
+     else
+         session->keepalive_interval = interval;
+     session->keepalive_want_reply = want_reply ? 1 : 0;
++    /* Start the clock now. The session is calloc'd, so leaving this at 0 makes
++       the very first libssh2_keepalive_send() fire immediately instead of
++       after `interval` — which can push a GLOBAL_REQUEST out at a point in the
++       protocol where it is not yet legal. */
++    session->keepalive_last_sent = time(NULL);
+ }
+ 
+ int libssh2_keepalive_send(LIBSSH2_SESSION *session, int *seconds_to_next)
 diff --git i/src/libssh2_priv.h w/src/libssh2_priv.h
 index f1d6d606..0bc5f8a1 100644
 --- i/src/libssh2_priv.h
@@ -33,6 +49,55 @@ index f1d6d606..0bc5f8a1 100644
      ssize_t banner_TxRx_total_send;
  
      /* State variables used in kexinit() */
+diff --git i/src/mbedtls.c w/src/mbedtls.c
+index 37585255..88a39e07 100644
+--- i/src/mbedtls.c
++++ w/src/mbedtls.c
+@@ -743,11 +743,21 @@ int ssh2_pub_priv_keyfilememory(LIBSSH2_SESSION *session,
+         mbedtls_pk_free(&pkey);
+ #if LIBSSH2_ED25519
+         /* mbedTLS cannot parse OpenSSH-format keys; try ed25519 */
+-        if(mbed_ed25519_pub_priv_mem(session, method, method_len,
+-                                     pubkeydata, pubkeydata_len,
+-                                     privatekeydata, privatekeydata_len,
+-                                     passphrase) == 0)
+-            return 0;
++        {
++            int ed_rc = mbed_ed25519_pub_priv_mem(session, method, method_len,
++                                                  pubkeydata, pubkeydata_len,
++                                                  privatekeydata,
++                                                  privatekeydata_len,
++                                                  passphrase);
++            if(ed_rc == 0)
++                return 0;
++            /* An OpenSSH-format blob was never mbedTLS's to parse: report the
++               ed25519 parser's own error instead of masking it with mbedTLS's
++               generic "invalid key format". */
++            if(privatekeydata_len >= 18 &&
++               memcmp(privatekeydata, "-----BEGIN OPENSSH", 18) == 0)
++                return ed_rc;
++        }
+ #endif
+         mbedtls_strerror(ret, (char *)buf, sizeof(buf));
+         return ssh2_err_flags(session, LIBSSH2_ERROR_FILE, buf,
+diff --git i/src/pem.c w/src/pem.c
+index 271a05fa..d49fd06e 100644
+--- i/src/pem.c
++++ w/src/pem.c
+@@ -466,8 +466,11 @@ static int pem_parse_data_openssh(LIBSSH2_SESSION *session,
+ 
+     if((!passphrase || strlen((const char *)passphrase) == 0) &&
+        strcmp((const char *)ciphername, "none")) {
+-        /* passphrase required */
+-        ret = LIBSSH2_ERROR_KEYFILE_AUTH_FAILED;
++        /* passphrase required — say so, otherwise the caller reports a
++           blank error and the user cannot tell this apart from a corrupt
++           key file. */
++        ret = ssh2_err(session, LIBSSH2_ERROR_KEYFILE_AUTH_FAILED,
++                       "encrypted key requires a passphrase");
+         goto out;
+     }
+ 
 diff --git i/src/transport.c w/src/transport.c
 index bd0f273f..589d3732 100644
 --- i/src/transport.c
@@ -55,3 +120,27 @@ index bd0f273f..589d3732 100644
              /* too large packet, return error for this until we make this
                 function split it up and send multiple SSH packets */
              return LIBSSH2_ERROR_INVAL;
+diff --git i/src/userauth.c w/src/userauth.c
+index 3554895e..00de0f34 100644
+--- i/src/userauth.c
++++ w/src/userauth.c
+@@ -1652,11 +1652,17 @@ retry_auth:
+         if(rc == LIBSSH2_ERROR_EAGAIN)
+             return ssh2_err(session, LIBSSH2_ERROR_EAGAIN, "Would block");
+         else if(rc || session->userauth_pblc_data_len < 1) {
++            char errbuf[80];
+             SSH2_SAFEFREE(session, session->userauth_pblc_packet);
+             SSH2_SAFEFREE(session, session->userauth_pblc_method);
+             session->userauth_pblc_state = ssh2_NB_state_idle;
+-            return ssh2_err(session, LIBSSH2_ERROR_PUBLICKEY_UNVERIFIED,
+-                            "Waiting for USERAUTH response");
++            /* Carry the transport rc: without it a dropped connection, a
++               protocol error and a zero-length reply are indistinguishable. */
++            snprintf(errbuf, sizeof(errbuf),
++                     "Waiting for USERAUTH response (rc=%d, len=%u)",
++                     rc, (unsigned)session->userauth_pblc_data_len);
++            return ssh2_err_flags(session, LIBSSH2_ERROR_PUBLICKEY_UNVERIFIED,
++                                  errbuf, SSH2_ERR_FLAG_DUP);
+         }
+ 
+         if(session->userauth_pblc_data[0] == SSH_MSG_USERAUTH_SUCCESS) {

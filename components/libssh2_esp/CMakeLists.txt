@@ -1,8 +1,12 @@
 # libssh2 as an ESP-IDF component (device, mbedTLS) and a plain static library
 # (simulator, WinCNG). Vendored wrapper — originally skuodi/libssh2_esp.
 #
-# libssh2 itself is CLONED by CMake at configure time and patched (RAM diet),
-# so there are no git submodules and no manual patch step. See cmake/apply_patch.cmake
+# libssh2 itself is CLONED by CMake at configure time and patched (RAM diet +
+# private-key error reporting: upstream masks the OpenSSH-format parser's error
+# with mbedTLS's generic one, and reports "passphrase required" with no message
+# at all — between them an encrypted key with no passphrase is indistinguishable
+# from a corrupt key file). There are no git submodules and no manual patch
+# step. See cmake/apply_patch.cmake
 # and patches/. To bump libssh2, change GIT_TAG below and regenerate the patch:
 #   git -C <fetched-src> diff > patches/libssh2-ram-diet.patch
 #
