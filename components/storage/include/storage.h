@@ -140,6 +140,26 @@ esp_err_t storage_fx_load(display_fx_cfg_t *cfg);
 esp_err_t storage_fx_save(const display_fx_cfg_t *cfg);
 
 /* -------------------------------------------------------------------------
+ * Terminal font size (font.ini)
+ *
+ * Kept out of fx.ini: fx settings are live-tunable and pushed to the ISR
+ * mid-frame, whereas the font size is read exactly once at boot and only
+ * takes effect on the next one.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Read the stored font size name ("8x16"/"10x20"/"12x24") into @p buf.
+ * Missing file or key: ESP_ERR_NOT_FOUND, @p buf set to "" — the caller
+ * applies its build default.
+ */
+esp_err_t storage_font_load(char *buf, size_t buf_len);
+
+/**
+ * Save the font size by name (atomic replace). Applied on next boot.
+ */
+esp_err_t storage_font_save(const char *name);
+
+/* -------------------------------------------------------------------------
  * Known SSH host keys (TOFU pinning)
  * ---------------------------------------------------------------------- */
 

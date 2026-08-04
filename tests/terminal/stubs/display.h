@@ -43,3 +43,7 @@ typedef enum {
 
 void display_set_text_buffer(const terminal_cell_t *buf, int cols, int rows);
 void display_set_cursor(int x, int y, cursor_mode_t mode);
+
+/* Defined in display_stub.c. Declared here because terminal.c calls it and
+ * an implicit declaration is an error on current clang (MSVC let it pass). */
+color_t display_ansi_to_rgb565(uint8_t ansi);

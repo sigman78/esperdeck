@@ -87,9 +87,10 @@ void display_render_frame(void)
 
     /* Render one bounce-buffer band per call to display_render_chunk,
      * mirroring how the ESP32 ISR calls it for each bounce-buffer fill. */
-    const int chunk_px    = DISPLAY_WIDTH * BOUNCE_BUFFER_HEIGHT;
+    const int band_h      = display_band_height();
+    const int chunk_px    = DISPLAY_WIDTH * band_h;
     const int chunk_bytes = chunk_px * (int)sizeof(color_t);
-    const int num_rows    = DISPLAY_HEIGHT / BOUNCE_BUFFER_HEIGHT;
+    const int num_rows    = DISPLAY_HEIGHT / band_h;
 
     for (int r = 0; r < num_rows; r++) {
         display_render_chunk(

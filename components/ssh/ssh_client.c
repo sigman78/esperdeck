@@ -626,8 +626,8 @@ auth_done:
     int term_cols = 0, term_rows = 0;
     display_get_text_size(&term_cols, &term_rows);
     if (term_cols <= 0 || term_rows <= 0) {
-        term_cols = DISPLAY_TEXT_COLS;
-        term_rows = DISPLAY_TEXT_ROWS;
+        term_cols = display_text_cols();
+        term_rows = display_text_rows();
     }
     rc = libssh2_channel_request_pty_ex(s_channel,
                                         "xterm-256color", 14,

@@ -21,6 +21,7 @@ typedef enum {
     MS_KEYBOARD,   /* Pair / Forget bonds / Back                             */
     MS_SYSTEM,     /* Clear host keys / Factory reset / Back                  */
     MS_EFFECTS,    /* dynamic bodies: every runtime render-fx tunable        */
+    MS_FONT,       /* dynamic bodies: terminal font size, applied on reboot  */
     MS_DELPROFILE, /* dynamic: pick a stored profile to delete               */
     MS_EDITPROFILE,/* dynamic: pick a stored profile to edit                 */
     MS_REORDER,    /* dynamic: grab a profile, move it, drop it              */

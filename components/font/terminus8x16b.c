@@ -16,7 +16,7 @@
 #include "terminus_font.h"
 #include <stddef.h>
 
-#if FONT_BOLD_ENABLED && FONT_WIDTH == 8 && FONT_HEIGHT == 16
+#if FONT_RT_8X16 && FONT_BOLD_ENABLED
 
 static const uint8_t font_bold_0021_007E[] = {
     0x00, 0x00, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, // U+0021
@@ -444,7 +444,7 @@ static const uint8_t font_bold_0400_045F[] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xC6, 0xFE, 0x38, 0x38, 0x00, 0x00, // U+045F
 };
 
-const FontRange terminus_bold_ranges[] = {
+const FontRange terminus8x16_bold_ranges[] = {
     {0x0021, 0x007E, font_bold_0021_007E},
     {0x00A1, 0x00A8, font_bold_00A1_00A8},
     {0x00AA, 0x00AD, font_bold_00AA_00AD},
@@ -452,6 +452,6 @@ const FontRange terminus_bold_ranges[] = {
     {0x0400, 0x045F, font_bold_0400_045F},
 };
 
-const int terminus_num_bold_ranges = 5;
+const int terminus8x16_num_bold_ranges = 5;
 
-#endif /* FONT_BOLD_ENABLED && 8x16 */
+#endif /* FONT_RT_8X16 && FONT_BOLD_ENABLED */

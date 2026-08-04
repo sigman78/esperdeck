@@ -17,10 +17,11 @@ static const char *main_items[]     = { "Resume session", "Disconnect", "Configu
 static const uint8_t main_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_AMBER, OVERLAY_COL_CYAN };
 
 static const char *config_items[]   = { "Profiles >", "WiFi >", "Keyboard >", "Effects >",
-                                        "System >", "Back" };
+                                        "Font >", "System >", "Back" };
 static const uint8_t config_cols[]  = { OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
                                         OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
-                                        OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
+                                        OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
+                                        OVERLAY_COL_BLUE };
 
 static const char *profiles_items[] = { "Add (type here)", "Edit", "Reorder",
                                         "Delete", "Import >", "Back" };
@@ -75,6 +76,11 @@ const char *menu_confirm(int sc, int sel)
 /* Is (sc,sel) unavailable because BLE support is absent? */
 bool menu_item_dim(int sc, int sel)
 {
+    /* Font sizes Kconfig left out of this build: shown so the page always
+     * lists the same three, but visibly unavailable. */
+    if (sc == MS_FONT)
+        return sel < FONT_SIZE_COUNT && !font_size_available((font_size_t)sel);
+
     if (app.cfg.ble) return false;
     return (sc == MS_CONFIG && sel == CFG_KEYBOARD) || (sc == MS_KEYBOARD);
 }

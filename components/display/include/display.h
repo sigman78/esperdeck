@@ -19,35 +19,35 @@
 #define DISPLAY_HEIGHT  480
 
 /*
- * Bounce buffer height: one character row for the 8x16 font (the original
+ * Bounce band height: one character row for the 8x16 font (the original
  * layout), HALF a character row for taller fonts — esp_lcd allocates two
  * bounce buffers in internal DMA RAM, and full 20/24-scanline bands would
  * cost up to +25.6 KB of scarce internal DRAM vs the 8x16 baseline.
- * The renderer supports any band height that is even, divides FONT_HEIGHT
- * and divides DISPLAY_HEIGHT (bands never straddle a character row).
+ * The renderer supports any band height that is even, divides the cell
+ * height and divides DISPLAY_HEIGHT (bands never straddle a character row);
+ * each per-size renderer variant static-asserts its own case.
+ *
+ * Runtime, because the font size is chosen at boot — but fixed from then on:
+ * esp_lcd captures the bounce geometry when the panel comes up, which is why
+ * changing the size needs a reboot.
  */
-#if FONT_HEIGHT > 16
-#define BOUNCE_BUFFER_HEIGHT  (FONT_HEIGHT / 2)
-#else
-#define BOUNCE_BUFFER_HEIGHT  FONT_HEIGHT
-#endif
-#define BOUNCE_BUFFER_SIZE    (DISPLAY_WIDTH * BOUNCE_BUFFER_HEIGHT)
+int display_band_height(void);   /* scanlines in one bounce band */
+int display_bounce_px(void);     /* DISPLAY_WIDTH * display_band_height() */
 
-/* Character grid implied by the panel and the selected font.
+/* Publish the active cell size to the renderer. Call once after font_init()
+ * and BEFORE the panel is brought up — esp_lcd captures the bounce geometry
+ * at panel init, which is why a size change needs a reboot. Rejects a size
+ * that would not tile the panel, keeping the previous geometry. */
+void display_render_set_font(int width, int height);
+
+/* Upper bound over every selectable size — sizes anything that must be
+ * statically allocated before the font is known. */
+#define BOUNCE_BUFFER_MAX_PX  (DISPLAY_WIDTH * FONT_MAX_BAND)
+
+/* Character grid implied by the panel and the ACTIVE font.
  * 12x24 leaves an 8 px right margin (66*12 = 792) — rendered black. */
-#define DISPLAY_TEXT_COLS  (DISPLAY_WIDTH  / FONT_WIDTH)
-#define DISPLAY_TEXT_ROWS  (DISPLAY_HEIGHT / FONT_HEIGHT)
-
-_Static_assert(DISPLAY_HEIGHT % FONT_HEIGHT == 0,
-               "text rows must tile the panel exactly");
-_Static_assert(FONT_HEIGHT % BOUNCE_BUFFER_HEIGHT == 0,
-               "bounce bands must not straddle a character row");
-_Static_assert(DISPLAY_HEIGHT % BOUNCE_BUFFER_HEIGHT == 0,
-               "esp_lcd requires the frame to be a whole number of bounce buffers");
-_Static_assert((BOUNCE_BUFFER_HEIGHT & 1) == 0,
-               "renderer scanline-parity effects assume even band starts");
-_Static_assert((FONT_WIDTH & 1) == 0,
-               "renderer packs pixel pairs into uint32 — cell width must be even");
+int display_text_cols(void);
+int display_text_rows(void);
 
 // Color format (RGB565)
 typedef uint16_t color_t;

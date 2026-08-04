@@ -1,20 +1,40 @@
 menu "Cyberdeck Configuration"
 
-    choice CYBERDECK_FONT
-        prompt "Terminal font"
-        default CYBERDECK_FONT_8X16
-        help
-            Terminus bitmap font size. The character grid follows from the
-            800x480 panel: 8x16 -> 100x30, 10x20 -> 80x24, 12x24 -> 66x20
-            (12x24 leaves an 8-pixel black margin at the right edge).
+    menu "Terminal font"
 
-        config CYBERDECK_FONT_8X16
-            bool "Terminus 8x16 (100x30 grid)"
-        config CYBERDECK_FONT_10X20
-            bool "Terminus 10x20 (80x24 grid)"
-        config CYBERDECK_FONT_12X24
-            bool "Terminus 12x24 (66x20 grid)"
+    comment "Sizes selectable at runtime (Config > Font, applied on reboot)"
+
+    config CYBERDECK_FONT_RT_8X16
+        bool "Terminus 8x16 (100x30 grid)"
+        default y
+    config CYBERDECK_FONT_RT_10X20
+        bool "Terminus 10x20 (80x24 grid)"
+        default y
+    config CYBERDECK_FONT_RT_12X24
+        bool "Terminus 12x24 (66x20 grid)"
+        default y
+
+    comment "WARNING: enable at least one font size"
+        depends on !CYBERDECK_FONT_RT_8X16 && !CYBERDECK_FONT_RT_10X20 && \
+                   !CYBERDECK_FONT_RT_12X24
+
+    choice CYBERDECK_FONT_DEFAULT
+        prompt "Font used before one is chosen"
+        default CYBERDECK_FONT_DEFAULT_8X16
+        help
+            Applied on first boot and whenever the stored choice names a size
+            that is not enabled above (a setting can outlive a Kconfig
+            change). If this size is disabled too, the first enabled one wins.
+
+        config CYBERDECK_FONT_DEFAULT_8X16
+            bool "8x16"
+        config CYBERDECK_FONT_DEFAULT_10X20
+            bool "10x20"
+        config CYBERDECK_FONT_DEFAULT_12X24
+            bool "12x24"
     endchoice
+
+    endmenu
 
     config CYBERDECK_FONT_BOLD
         bool "Real bold glyphs (Terminus bold face)"

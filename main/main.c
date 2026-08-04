@@ -123,6 +123,36 @@ static void main_task(void *pvParameters)
 /* -------------------------------------------------------------------------
  * Application entry point
  * ---------------------------------------------------------------------- */
+/* Resolve the font size to boot with: the stored choice when it names a size
+ * this build links, otherwise the Kconfig default. font_init() applies a
+ * final fallback if even that size was compiled out, so a stale setting or a
+ * trimmed build can never leave the renderer without a glyph table. */
+static font_size_t boot_font_size(void)
+{
+#if defined(CONFIG_CYBERDECK_FONT_DEFAULT_12X24)
+    font_size_t want = FONT_SIZE_12X24;
+#elif defined(CONFIG_CYBERDECK_FONT_DEFAULT_10X20)
+    font_size_t want = FONT_SIZE_10X20;
+#else
+    font_size_t want = FONT_SIZE_8X16;
+#endif
+
+    char stored[16];
+    if (storage_font_load(stored, sizeof(stored)) == ESP_OK) {
+        for (int i = 0; i < FONT_SIZE_COUNT; i++) {
+            /* Availability, not just the name: honouring a size this build
+             * dropped would send font_init() to its last-resort "first
+             * linked size", overriding the configured default. */
+            if (font_size_available((font_size_t)i) &&
+                strcmp(stored, font_size_name((font_size_t)i)) == 0) {
+                want = (font_size_t)i;
+                break;
+            }
+        }
+    }
+    return want;
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "===========================================");
@@ -140,9 +170,14 @@ void app_main(void)
     init_network();
     log_heap("after netif_init");
 
+    /* Font BEFORE display: esp_lcd captures the bounce-buffer geometry when
+     * the panel comes up, and that geometry follows the cell height. This
+     * ordering is why changing the size needs a reboot rather than taking
+     * effect live. */
+    font_init(boot_font_size());
+    display_render_set_font(font_width(), font_height());
     display_init();
-    font_init();
-    vterm_init(DISPLAY_TEXT_COLS, DISPLAY_TEXT_ROWS);
+    vterm_init(display_text_cols(), display_text_rows());
     splash_show();
     log_heap("after display+vterm");
 

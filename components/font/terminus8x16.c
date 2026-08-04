@@ -13,7 +13,7 @@
 #include "terminus_font.h"
 #include <stddef.h>
 
-#if FONT_WIDTH == 8 && FONT_HEIGHT == 16
+#if FONT_RT_8X16
 
 static const uint8_t font_range_0000_0000[] = {
     0x00, 0x00, 0x66, 0x42, 0x00, 0x42, 0x42, 0x42, 0x00, 0x42, 0x42, 0x66, 0x00, 0x00, 0x00, 0x00, // U+0000
@@ -1815,7 +1815,7 @@ static const uint8_t font_range_FFFD_FFFD[] = {
     0x00, 0x00, 0x7E, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x42, 0x7E, 0x00, 0x00, 0x00, 0x00, // U+FFFD
 };
 
-const FontRange terminus_ranges[] = {
+const FontRange terminus8x16_ranges[] = {
     {0x0000, 0x0000, font_range_0000_0000},
     {0x0020, 0x007E, font_range_0020_007E},
     {0x00A0, 0x017F, font_range_00A0_017F},
@@ -1966,6 +1966,6 @@ const FontRange terminus_ranges[] = {
     {0xFFFD, 0xFFFD, font_range_FFFD_FFFD},
 };
 
-const int terminus_num_ranges = 148;
+const int terminus8x16_num_ranges = 148;
 
-#endif /* FONT_WIDTH == 8 && FONT_HEIGHT == 16 */
+#endif /* FONT_RT_8X16 */

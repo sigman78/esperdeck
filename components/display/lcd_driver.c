@@ -88,7 +88,7 @@ esp_err_t display_init(void)
         .bits_per_pixel      = 16,
         .num_fbs             = 0,
         .flags.no_fb         = 1,
-        .bounce_buffer_size_px = BOUNCE_BUFFER_SIZE,
+        .bounce_buffer_size_px = display_bounce_px(),
         .hsync_gpio_num      = 46,
         .vsync_gpio_num      = 3,
         .de_gpio_num         = 5,
@@ -117,7 +117,7 @@ esp_err_t display_init(void)
 
     ESP_LOGI(TAG, "LCD initialized: %dx%d, bounce buffer %d bytes",
              DISPLAY_WIDTH, DISPLAY_HEIGHT,
-             (int)(BOUNCE_BUFFER_SIZE * sizeof(color_t)));
+             (int)(display_bounce_px() * sizeof(color_t)));
     return ESP_OK;
 }
 

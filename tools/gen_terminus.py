@@ -125,7 +125,7 @@ HEADER = """\
 #include "terminus_font.h"
 #include <stddef.h>
 
-#if FONT_WIDTH == {w} && FONT_HEIGHT == {h}
+#if FONT_RT_{w}X{h}
 
 """
 
@@ -144,12 +144,12 @@ def emit_c(width, height, glyphs, src_name, out_path):
             parts.append(f"    {vals}, // U+{cp:04X}\n")
         parts.append("};\n\n")
 
-    parts.append("const FontRange terminus_ranges[] = {\n")
+    parts.append(f"const FontRange terminus{width}x{height}_ranges[] = {{\n")
     for lo, hi in ranges:
         parts.append(f"    {{0x{lo:04X}, 0x{hi:04X}, font_range_{lo:04X}_{hi:04X}}},\n")
     parts.append("};\n\n")
-    parts.append(f"const int terminus_num_ranges = {len(ranges)};\n\n")
-    parts.append(f"#endif /* FONT_WIDTH == {width} && FONT_HEIGHT == {height} */\n")
+    parts.append(f"const int terminus{width}x{height}_num_ranges = {len(ranges)};\n\n")
+    parts.append(f"#endif /* FONT_RT_{width}X{height} */\n")
 
     Path(out_path).write_text("".join(parts), encoding="utf-8", newline="\n")
     total = len(cps)
@@ -177,7 +177,7 @@ BOLD_HEADER = """\
 #include "terminus_font.h"
 #include <stddef.h>
 
-#if FONT_BOLD_ENABLED && FONT_WIDTH == {w} && FONT_HEIGHT == {h}
+#if FONT_RT_{w}X{h} && FONT_BOLD_ENABLED
 
 """
 
@@ -201,12 +201,12 @@ def emit_bold_c(width, height, normal, bold, src_name, out_path):
             parts.append(f"    {vals}, // U+{cp:04X}\n")
         parts.append("};\n\n")
 
-    parts.append("const FontRange terminus_bold_ranges[] = {\n")
+    parts.append(f"const FontRange terminus{width}x{height}_bold_ranges[] = {{\n")
     for lo, hi in ranges:
         parts.append(f"    {{0x{lo:04X}, 0x{hi:04X}, font_bold_{lo:04X}_{hi:04X}}},\n")
     parts.append("};\n\n")
-    parts.append(f"const int terminus_num_bold_ranges = {len(ranges)};\n\n")
-    parts.append(f"#endif /* FONT_BOLD_ENABLED && {width}x{height} */\n")
+    parts.append(f"const int terminus{width}x{height}_num_bold_ranges = {len(ranges)};\n\n")
+    parts.append(f"#endif /* FONT_RT_{width}X{height} && FONT_BOLD_ENABLED */\n")
 
     Path(out_path).write_text("".join(parts), encoding="utf-8", newline="\n")
     bytes_per = height * (1 if width <= 8 else 2)

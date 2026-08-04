@@ -16,7 +16,7 @@
 #include "terminus_font.h"
 #include <stddef.h>
 
-#if FONT_BOLD_ENABLED && FONT_WIDTH == 12 && FONT_HEIGHT == 24
+#if FONT_RT_12X24 && FONT_BOLD_ENABLED
 
 static const uint16_t font_bold_0021_007E[] = {
     0x0000, 0x0000, 0x0000, 0x0000, 0x0060, 0x0060, 0x0060, 0x0060, 0x0060, 0x0060, 0x0060, 0x0060, 0x0060, 0x0060, 0x0000, 0x0000, 0x0060, 0x0060, 0x0060, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, // U+0021
@@ -440,12 +440,12 @@ static const uint16_t font_bold_0400_045F[] = {
     0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0606, 0x0606, 0x0606, 0x0606, 0x0606, 0x0606, 0x0606, 0x0606, 0x0606, 0x0606, 0x07FE, 0x0060, 0x0060, 0x0060, 0x0000, 0x0000, // U+045F
 };
 
-const FontRange terminus_bold_ranges[] = {
+const FontRange terminus12x24_bold_ranges[] = {
     {0x0021, 0x007E, font_bold_0021_007E},
     {0x00A1, 0x017F, font_bold_00A1_017F},
     {0x0400, 0x045F, font_bold_0400_045F},
 };
 
-const int terminus_num_bold_ranges = 3;
+const int terminus12x24_num_bold_ranges = 3;
 
-#endif /* FONT_BOLD_ENABLED && 12x24 */
+#endif /* FONT_RT_12X24 && FONT_BOLD_ENABLED */

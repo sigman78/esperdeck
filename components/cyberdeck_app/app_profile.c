@@ -356,7 +356,7 @@ void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
             return;
         } else {
             /* Tap on a form row: focus it (selectors also step). */
-            int row = ev->y / FONT_HEIGHT, cc = ev->x / FONT_WIDTH;
+            int row = ev->y / font_height(), cc = ev->x / font_width();
             int f = -1;
             if (cc >= pf_x0() - 1 && cc <= pf_fx() + pf_fw() &&
                 row >= pf_y0() && row < pf_y0() + PF_ROWS * pf_step() &&

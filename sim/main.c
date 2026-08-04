@@ -228,9 +228,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    font_init();
+    /* The sim links exactly one size (cmake -DFONT_SIZE=...), so the request
+     * is irrelevant — font_init falls back to whichever one that is. The
+     * renderer still has to be told, or it keeps its 8x16 defaults. */
+    font_init(FONT_SIZE_8X16);
+    display_render_set_font(font_width(), font_height());
     display_init();
-    vterm_init(DISPLAY_TEXT_COLS, DISPLAY_TEXT_ROWS);
+    vterm_init(display_text_cols(), display_text_rows());
     vterm_write("\x1b[2J\x1b[H", 7);
     display_render_frame();
 

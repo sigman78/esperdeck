@@ -6,7 +6,7 @@
  */
 
 #include "app_widgets.h"
-#include "font.h"   /* FONT_WIDTH/FONT_HEIGHT — touch pixel→cell mapping */
+#include "font.h"   /* font_width/height() — touch pixel→cell mapping */
 #include "wifi_manager.h"
 
 #include <stdio.h>
@@ -33,8 +33,8 @@ int tile_y(const tilegrid_t *g, int slot)
 int tile_hit(const tilegrid_t *g, int px, int py)
 {
     if (g->ncols <= 0 || g->nrows <= 0) return -1;
-    int cc = px / FONT_WIDTH  - g->x0;
-    int cr = py / FONT_HEIGHT - g->y0;
+    int cc = px / font_width()  - g->x0;
+    int cr = py / font_height() - g->y0;
     if (cc < 0 || cr < 0) return -1;
     int pitchx = g->tw + g->gx, pitchy = g->th + g->gy;
     int col = cc / pitchx, row = cr / pitchy;

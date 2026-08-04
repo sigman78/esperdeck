@@ -435,6 +435,65 @@ esp_err_t storage_fx_save(const display_fx_cfg_t *cfg)
 }
 
 /* -------------------------------------------------------------------------
+ * Terminal font size — font.ini
+ *
+ *   size=10x20
+ *
+ * Stored by NAME rather than by enum ordinal so the file stays readable and
+ * survives a reordering of font_size_t.
+ * ---------------------------------------------------------------------- */
+
+static void font_path(char *buf, size_t bufsz)
+{
+    snprintf(buf, bufsz, "%s/font.ini", storage_platform_mount_point());
+}
+
+esp_err_t storage_font_load(char *buf, size_t buf_len)
+{
+    if (!buf || buf_len == 0) return ESP_ERR_INVALID_ARG;
+    buf[0] = '\0';
+
+    char path[128];
+    font_path(path, sizeof(path));
+
+    FILE *f = fopen(path, "r");
+    if (!f) return ESP_ERR_NOT_FOUND;
+
+    char line[64];
+    esp_err_t rc = ESP_ERR_NOT_FOUND;
+    while (fgets(line, sizeof(line), f)) {
+        rtrim(line);
+        char key[32], val[32];
+        if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
+        if (strcmp(key, "size") == 0) {
+            snprintf(buf, buf_len, "%s", val);
+            rc = ESP_OK;
+            break;
+        }
+    }
+    fclose(f);
+    return rc;
+}
+
+esp_err_t storage_font_save(const char *name)
+{
+    if (!name || !name[0]) return ESP_ERR_INVALID_ARG;
+
+    char path[128];
+    font_path(path, sizeof(path));
+
+    atomic_file_t af;
+    FILE *f = atomic_open(&af, path);
+    if (!f) return ESP_FAIL;
+
+    fprintf(f, "size=%s\n", name);
+
+    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    ESP_LOGI(TAG, "Saved font size '%s' (applies on reboot)", name);
+    return ESP_OK;
+}
+
+/* -------------------------------------------------------------------------
  * Known SSH host keys — known_hosts.ini, flat "host:port=fp" lines
  * ---------------------------------------------------------------------- */
 
