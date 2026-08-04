@@ -23,7 +23,7 @@ time**. The gap is pacing, not parsing:
 
 `CONFIG_VTERM_BENCH=y` is already set; `vterm_bench_report()` shows
 `tsm_us + draw_us` as a small fraction of wall time, confirming the above
-on-glass.
+on hardware.
 
 The display side is *not* a factor: the ISR re-renders every band every frame
 from the DRAM cell buffer at constant cost. (The occasional glitch when a
@@ -106,7 +106,7 @@ structurally available later if measurements ask for it; scale
 may cap WiFi-layer aggregation independently.
 
 **Expected end state for items 1–3: a 60 KB btop frame drops from ~1.2 s to
-~100–150 ms.** On-glass validation: `vterm_bench_report()` before/after, and
+~100–150 ms.** On-hardware validation: `vterm_bench_report()` before/after, and
 wall-clock a btop refresh / `mc` startup.
 
 ## Not yet implemented (ranked backlog)

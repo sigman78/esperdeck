@@ -1,12 +1,8 @@
 /*
- * cyberdeck_app — the shell: boot, WiFi bring-up, profile picker TUI,
- * BLE keyboard pairing, SSH session with host-key pinning, in-session menu.
- *
- * Platform-neutral: no FreeRTOS/SDL includes; the composition root supplies
- * timestamps and input events and calls tick() from its main loop.
- *
- * UI states own the keyboard; in SESSION every byte goes to SSH except the
- * menu hotkey (F12) and touch long-press, which open the overlay menu.
+ * cyberdeck_app — the shell: boot, WiFi bring-up, profile picker TUI, BLE
+ * pairing, SSH session with host-key pinning, in-session menu.
+ * Platform-neutral: the composition root supplies timestamps and input
+ * events and calls tick() from its main loop.
  */
 
 #pragma once

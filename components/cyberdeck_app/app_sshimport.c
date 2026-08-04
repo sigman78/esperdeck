@@ -88,13 +88,13 @@ static void render_sshimport(uint64_t now)
     } else if (cnt > 0 || del > 0) {
         if (del > 0 && cnt > 0)
             snprintf(stat, sizeof(stat), "last: '%s'  (%d saved, %d removed)",
-                     app.import_last, cnt, del);
+                     app.imp.last, cnt, del);
         else if (del > 0)
             snprintf(stat, sizeof(stat), "removed '%s'  (%d removed)",
-                     app.import_last, del);
+                     app.imp.last, del);
         else
             snprintf(stat, sizeof(stat), "imported '%s'  (%d saved)",
-                     app.import_last, cnt);
+                     app.imp.last, cnt);
         ui_pen(OVERLAY_COL_GREEN);
         ui_putch(4, y, UI_LED_ON, 0);
     } else {
@@ -133,10 +133,10 @@ void enter_sshimport(uint64_t now, ssh_import_mode_t mode)
         enter_home(now);
         return;
     }
-    app.import_seen = 0;
-    app.import_last[0] = '\0';
-    app.next_anim   = 0;
-    app.state       = ST_SSHIMPORT;
+    app.imp.seen        = 0;
+    app.imp.last[0]     = '\0';
+    app.next_anim = 0;
+    app.state     = ST_SSHIMPORT;
     render_sshimport(now);
 }
 
@@ -159,16 +159,13 @@ static void exit_sshimport(uint64_t now)
 
 void sshimport_tick(uint64_t now)
 {
-    /* A submission lands on the httpd task; re-render on its activity
-     * bump (imports + web deletes) so the confirmation appears at once,
-     * plus the usual anim tick. Snapshot the name under the module's
-     * lock (via the getter) once per bump so the render never samples a
-     * half-written string. */
-    if (ssh_import_count() + ssh_import_deleted() != app.import_seen) {
-        app.import_seen = ssh_import_count() + ssh_import_deleted();
-        snprintf(app.import_last, sizeof(app.import_last), "%s",
-                 ssh_import_last());
-        app.next_anim   = now + ANIM_PERIOD_MS;
+    /* A submission lands on the httpd task; re-render on its activity bump
+     * so the confirmation appears at once. Snapshot the name via the locked
+     * getter once per bump so the render never samples a half-write. */
+    if (ssh_import_count() + ssh_import_deleted() != app.imp.seen) {
+        app.imp.seen = ssh_import_count() + ssh_import_deleted();
+        snprintf(app.imp.last, sizeof(app.imp.last), "%s", ssh_import_last());
+        app.next_anim = now + ANIM_PERIOD_MS;
         render_sshimport(now);
     } else if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;

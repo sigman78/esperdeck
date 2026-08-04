@@ -2,8 +2,7 @@
  * app_hostkey.c — trust-on-first-use host-key prompt (ST_HOSTKEY).
  *
  * Two flavors: first contact (calm, Enter trusts) and a CHANGED pinned key
- * (possible MITM: hazard tape, default Cancel, modality-matched two-step
- * arming before REPLACE fires).
+ * (possible MITM: hazard tape, default Cancel, two-step arming).
  */
 
 #include "app_internal.h"
@@ -11,11 +10,7 @@
 #include "app_widgets.h"
 #include "ssh_client.h"
 
-#include <stdio.h>
-#include <string.h>
-
-/* Hostkey prompt buttons: two side-by-side tiles (trust/replace + cancel).
- * Slot 0 = trust/replace, slot 1 = cancel. */
+/* Two side-by-side button tiles: slot 0 = trust/replace, slot 1 = cancel. */
 static tilegrid_t hostkey_grid(void)
 {
     tilegrid_t g = { .gx = 4, .gy = 0, .ncols = 2, .nrows = 1, .count = 2 };
@@ -29,18 +24,17 @@ static tilegrid_t hostkey_grid(void)
 
 static void render_hostkey(void)
 {
-    ui_colors(app.fp_mismatch ? COLOR_WHITE : UI_FG,
-              app.fp_mismatch ? RGB565(96, 0, 0) : UI_BG);
+    ui_colors(app.hostkey.mismatch ? COLOR_WHITE : UI_FG,
+              app.hostkey.mismatch ? RGB565(96, 0, 0) : UI_BG);
     ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
-    const conn_profile_t *p = &app.active;
+    const conn_profile_t *p = &app.conn.active;
     const char *fp = ssh_client_get_fingerprint();
 
-    if (app.fp_mismatch) {
+    if (app.hostkey.mismatch) {
         /* Scrolling ╱╱╲╲ hazard tape framing the screen: the one modal that
-         * must not look like a calm dialog. The titlebar chip below draws
-         * over the top run, so the tape flanks it on both sides. */
+         * must not look like a calm dialog. */
         ui_pen(OVERLAY_COL_AMBER);
         for (int x = 0; x < ui_cols(); x++) {
             uint16_t cp = (((x + app.anim_frame / 2) & 3) < 2) ? 0x2571 : 0x2572;
@@ -50,12 +44,10 @@ static void render_hostkey(void)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    /* Standard screen chrome — the security modal was the only full screen
-     * without a title or rule, which made it read as a glitch, not a page. */
-    draw_titlebar(2, app.fp_mismatch ? "HOST KEY ALERT" : "NEW HOST KEY",
+    draw_titlebar(2, app.hostkey.mismatch ? "HOST KEY ALERT" : "NEW HOST KEY",
                   app.anim_frame);
 
-    if (app.fp_mismatch) {
+    if (app.hostkey.mismatch) {
         /* Blink via INVERSE (ui_puts emits Latin-1 bytes — no UTF-8 here). */
         uint8_t blink = ((app.anim_frame / 5) & 1) ? OVERLAY_ATTR_INVERSE : 0;
         ui_puts(4, 5, "!  HOST KEY CHANGED - possible attack  !", blink);
@@ -67,12 +59,11 @@ static void render_hostkey(void)
         ui_puts(4, 8, "Verify the fingerprint before trusting it.", 0);
     }
 
-    /* SHA256 fingerprint in 4-hex groups inside a box, so it can be read
-     * against `ssh-keygen -lf` output group by group. On entry the digits
-     * decode out of braille noise left-to-right (~0.8 s), then hold. */
+    /* SHA256 fingerprint in 4-hex groups (reads against `ssh-keygen -lf`).
+     * On entry the digits decode out of braille noise left-to-right. */
     int bx = (ui_cols() - 43) / 2;
     ui_box(bx, 10, 43, 4, " SHA256 ");
-    uint32_t shown = (app.anim_frame - app.hostkey_frame0) * 8;
+    uint32_t shown = (app.anim_frame - app.hostkey.frame0) * 8;
     for (int i = 0; i < 64; i++) {
         int x = bx + 2 + (i % 32) + (i % 32) / 4;   /* 1-cell group gaps */
         int y = 11 + i / 32;
@@ -89,61 +80,52 @@ static void render_hostkey(void)
 
     tilegrid_t g = hostkey_grid();
     app.grid = g;
-    const char *trust = app.fp_mismatch
-        ? (app.hostkey_armed ? "TAP AGAIN to REPLACE" : "Replace key")
+    const char *trust = app.hostkey.mismatch
+        ? (app.hostkey.armed ? "TAP AGAIN to REPLACE" : "Replace key")
         : "Trust & Connect";
-    ui_pen(app.fp_mismatch ? OVERLAY_COL_AMBER : OVERLAY_COL_GREEN);
+    ui_pen(app.hostkey.mismatch ? OVERLAY_COL_AMBER : OVERLAY_COL_GREEN);
     ui_tile(tile_x(&g, 0), tile_y(&g, 0), g.tw, g.th, trust,
-            app.fp_mismatch ? "danger" : "",
-            app.hostkey_sel == 0 || app.hostkey_armed);
+            app.hostkey.mismatch ? "danger" : "",
+            app.hostkey.sel == 0 || app.hostkey.armed);
     /* Cancel is safe navigation — BLUE, matching Back on the menu pages. */
     ui_pen(OVERLAY_COL_BLUE);
     ui_tile(tile_x(&g, 1), tile_y(&g, 1), g.tw, g.th, "Cancel", "",
-            app.hostkey_sel == 1);
+            app.hostkey.sel == 1);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer(app.fp_mismatch
+    draw_footer(app.hostkey.mismatch
                 ? "arrows+Enter \xB7 Y replace \xB7 Esc cancel"
                 : "arrows+Enter trust \xB7 Esc cancel");
     ui_no_cursor();
     ui_present();
 }
 
-/* Pin the server's current fingerprint and (re)connect. Called from the
- * hostkey prompt once the user has confirmed — a plain Enter for a first-seen
- * host, but only an explicit 'Y' for a CHANGED key (possible MITM). */
+/* Pin the server's current fingerprint and (re)connect. */
 static void hostkey_trust_and_connect(uint64_t now)
 {
-    const conn_profile_t *p = &app.active;
-    storage_known_host_set(p->host, p->port, ssh_client_get_fingerprint());
-    snprintf(app.pinned_fp, sizeof(app.pinned_fp), "%s", ssh_client_get_fingerprint());
-    app.connect_attempt = 0;             /* explicit user action, not a retry */
-    app.connect_armed = true;
-    app.connect_at    = now;
-    app.state         = ST_CONNECTING;
-    render_connecting("Connecting to", now);
+    const conn_profile_t *p = &app.conn.active;
+    const char *fp = ssh_client_get_fingerprint();
+    storage_known_host_set(p->host, p->port, fp);
+    connect_arm_pinned(fp, now);
 }
 
 /* Enter the prompt for the fingerprint ssh_client just reported. A first-
- * seen host defaults to Trust (Enter pins + connects); a CHANGED key
- * defaults to Cancel. */
+ * seen host defaults to Trust; a CHANGED key defaults to Cancel. */
 void hostkey_open(bool mismatch)
 {
-    app.fp_mismatch     = mismatch;
-    app.hostkey_armed   = false;
-    app.hostkey_arm_src = 0;
-    app.hostkey_sel     = mismatch ? 1 : 0;
-    app.hostkey_frame0  = app.anim_frame;   /* start the decode reveal */
-    app.next_anim       = 0;
-    app.state = ST_HOSTKEY;
+    app.hostkey.mismatch    = mismatch;
+    app.hostkey.armed       = false;
+    app.hostkey.arm_src     = 0;
+    app.hostkey.sel         = mismatch ? 1 : 0;
+    app.hostkey.frame0      = app.anim_frame;   /* start the decode reveal */
+    app.next_anim = 0;
+    app.state     = ST_HOSTKEY;
     render_hostkey();
 }
 
 void hostkey_tick(uint64_t now)
 {
-    /* Full animated screen like every other: titlebar spark, decode
-     * reveal, and (on mismatch) the hazard tape all stay alive.
-     * Stopping after the reveal froze the spark mid-shimmer. */
+    /* Keep the whole screen animated (spark, decode reveal, hazard tape). */
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
         render_hostkey();
@@ -155,74 +137,72 @@ void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
     if (ev->type == CYBERDECK_INPUT_TAP) {
         int slot = tile_hit(&app.grid, ev->x, ev->y);
         if (slot < 0) {                          /* tap outside: back down */
-            if (app.hostkey_armed) {
-                app.hostkey_armed   = false;
-                app.hostkey_arm_src = 0;
+            if (app.hostkey.armed) {
+                app.hostkey.armed   = false;
+                app.hostkey.arm_src = 0;
                 render_hostkey();
             }
         } else if (slot == 1) {                  /* Cancel tile */
             enter_home(now);
         } else {                                 /* Trust / Replace tile */
-            app.hostkey_sel = 0;
-            if (!app.fp_mismatch) {
+            app.hostkey.sel = 0;
+            if (!app.hostkey.mismatch) {
                 hostkey_trust_and_connect(now);
-            } else if (app.hostkey_armed && app.hostkey_arm_src == 1) {
+            } else if (app.hostkey.armed && app.hostkey.arm_src == 1) {
                 hostkey_trust_and_connect(now);  /* 2nd tap fires */
             } else {
-                /* First tap arms. Arming is modality-matched: a tap can
-                 * only be fired by a second TAP — never by Enter — so an
-                 * accidental tap + habitual Enter cannot re-pin. */
-                app.hostkey_armed   = true;
-                app.hostkey_arm_src = 1;
+                /* Arming is modality-matched: a tap can only be fired by a
+                 * second TAP — an accidental tap + habitual Enter can't re-pin. */
+                app.hostkey.armed   = true;
+                app.hostkey.arm_src = 1;
                 render_hostkey();
             }
         }
         return;
     }
     if (k == K_LEFT || k == K_RIGHT || k == K_UP || k == K_DOWN) {
-        int ns = tile_nav(&app.grid, app.hostkey_sel, k);
-        bool redraw = ns != app.hostkey_sel;
-        app.hostkey_sel = ns;
-        if (app.hostkey_armed) {                 /* any arrow backs down */
-            app.hostkey_armed   = false;
-            app.hostkey_arm_src = 0;
+        int ns = tile_nav(&app.grid, app.hostkey.sel, k);
+        bool redraw = ns != app.hostkey.sel;
+        app.hostkey.sel = ns;
+        if (app.hostkey.armed) {                           /* any arrow backs down */
+            app.hostkey.armed   = false;
+            app.hostkey.arm_src = 0;
             redraw = true;
         }
         if (redraw) render_hostkey();
         return;
     }
     if (k == K_ESC) { enter_home(now); return; }
-    if (!app.fp_mismatch) {
+    if (!app.hostkey.mismatch) {
         /* First contact (TOFU): Enter activates the selected tile
          * (default = Trust, so a single Enter still pins + connects). */
         if (k == K_ENTER) {
-            if (app.hostkey_sel == 0) hostkey_trust_and_connect(now);
-            else                      enter_home(now);
+            if (app.hostkey.sel == 0) hostkey_trust_and_connect(now);
+            else            enter_home(now);
         }
     } else {
-        /* The pinned key CHANGED — possible MITM. 'Y' always replaces.
-         * Enter follows the selection (default = Cancel) with two-step
-         * arming that only Enter itself can fire (modality-matched, see
-         * the tap branch). Every other input backs the arming down. */
+        /* CHANGED key — possible MITM. 'Y' always replaces; Enter follows
+         * the selection (default = Cancel) with two-step arming only Enter
+         * itself can fire. Every other input backs the arming down. */
         if (k == K_CHAR && (ch == 'y' || ch == 'Y')) {
             hostkey_trust_and_connect(now);
         } else if (k == K_ENTER) {
-            if (app.hostkey_sel != 0) {
+            if (app.hostkey.sel != 0) {
                 enter_home(now);
-            } else if (app.hostkey_armed && app.hostkey_arm_src == 2) {
+            } else if (app.hostkey.armed && app.hostkey.arm_src == 2) {
                 hostkey_trust_and_connect(now);
-            } else if (app.hostkey_armed) {      /* tap-armed: back down */
-                app.hostkey_armed   = false;
-                app.hostkey_arm_src = 0;
+            } else if (app.hostkey.armed) {                /* tap-armed: back down */
+                app.hostkey.armed   = false;
+                app.hostkey.arm_src = 0;
                 render_hostkey();
             } else {
-                app.hostkey_armed   = true;
-                app.hostkey_arm_src = 2;
+                app.hostkey.armed   = true;
+                app.hostkey.arm_src = 2;
                 render_hostkey();
             }
-        } else if (app.hostkey_armed) {          /* anything else backs down */
-            app.hostkey_armed   = false;
-            app.hostkey_arm_src = 0;
+        } else if (app.hostkey.armed) {                    /* anything else backs down */
+            app.hostkey.armed   = false;
+            app.hostkey.arm_src = 0;
             render_hostkey();
         }
     }

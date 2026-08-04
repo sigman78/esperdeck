@@ -7,7 +7,7 @@
  *
  *   SOFTAP — brings up a temporary WPA2 SoftAP with a RANDOM per-session
  *     passphrase shown on the device. That passphrase IS the proof-of-
- *     possession: you must read the on-glass code to join, so the air link is
+ *     possession: you must read the code on the device screen to join, so the air link is
  *     WPA2-encrypted and the pasted private key is not sniffable. For a phone.
  *
  *   WEB — no SoftAP; the deck must already be on WiFi (STA). The same server

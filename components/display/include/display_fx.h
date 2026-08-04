@@ -15,18 +15,16 @@
 
 #include <stdint.h>
 
-/* Row-recency back glow is experimental: the idea fits the phosphor/mono
- * modes, but the current implementation didn't hold up on-glass (2026-07).
- * Compiled out by default — build with -DDISPLAY_FX_ROW_GLOW=1 to
- * experiment. The cfg fields and fx.ini keys survive either way so saved
- * settings round-trip across the gate. */
+/* Row-recency back glow didn't hold up on hardware (2026-07): compiled out by
+ * default, -DDISPLAY_FX_ROW_GLOW=1 to experiment. The cfg fields and fx.ini
+ * keys survive either way so saved settings round-trip. */
 #ifndef DISPLAY_FX_ROW_GLOW
 #define DISPLAY_FX_ROW_GLOW 0
 #endif
 
 typedef struct {
     /* CRT scanlines — every other scanline rendered at 93.75% brightness.
-     * A single fixed level: anything stronger read as bars on-glass. */
+     * A single fixed level: anything stronger read as bars on hardware. */
     uint8_t scanlines;        /* 0 off / 1 on                              */
 
     /* Bold phosphor pop — ATTR_BOLD glyphs get ~1.5x brighter fg. */
@@ -57,10 +55,8 @@ typedef struct {
     uint8_t static_frames;    /* burst duration in frames, 1..120          */
     uint8_t static_lines;     /* noisy scanlines per 16-line band, 1..4    */
 
-    /* CRT line wobble — a ~16-scanline S-wiggle (a full vertical sine:
-     * two opposite bulges) sweeps down the screen (~5 s visible pass,
-     * ~1.6 s off-screen rest); bulge depth follows a temporal sine, one
-     * cycle per sweep — the analog tracking-line instability look. */
+    /* CRT line wobble — an S-wiggle sweeping down the screen (~5 s pass);
+     * the analog tracking-line instability look. */
     uint8_t wobble;           /* 0 off / 1 ±2 px / 2 ±4 px / 3 ±6 px       */
 } display_fx_cfg_t;
 
@@ -82,10 +78,8 @@ void display_fx_static(void);     /* signal-loss static burst              */
  *  in flight — a bell during a disconnect burst leaves the long one alone. */
 void display_fx_static_brief(void);
 
-/** Mark a character row as freshly changed (drives the row back glow).
- *  Call from the vterm present path for each row whose cells were copied
- *  this flush. One byte store — safe from any task. No-op unless built
- *  with DISPLAY_FX_ROW_GLOW=1. */
+/** Mark a character row freshly changed (drives the row back glow). One
+ *  byte store — safe from any task; no-op unless DISPLAY_FX_ROW_GLOW=1. */
 void display_fx_touch_row(int row);
 
 #endif /* DISPLAY_FX_H */

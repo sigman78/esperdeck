@@ -1,6 +1,6 @@
 /*
  * app_saver.c — idle screensaver: braille digital rain painting the wall
- * clock (runs inside ST_HOME once the idle timer expires).
+ * clock. Owns the idle timer; runs inside ST_HOME via saver_tick_home().
  */
 
 #include "app_internal.h"
@@ -8,6 +8,8 @@
 #include "app_widgets.h"
 
 #include <string.h>
+
+#define SAVER_IDLE_MS  (3 * 60 * 1000)   /* HOME idle before the rain */
 
 /* Bold 6x7 block font (2-px strokes) for the screensaver clock, bit 5 =
  * leftmost column. Digits 0-9 plus ':' at index 10 (blinked by clk_mask). */
@@ -25,8 +27,7 @@ static const uint8_t k_clk_font[11][7] = {
     { 0x00, 0x0C, 0x0C, 0x00, 0x0C, 0x0C, 0x00 },   /* : */
 };
 
-/* One font pixel = 2x2 cells: strokes 32x32 px on glass, the whole "HH:MM"
- * block 544x224 px — a bit over half the 800x480 panel. */
+/* One font pixel = 2x2 cells: "HH:MM" spans 544x224 px on the 800x480 panel. */
 #define CLK_FW   6                           /* font pixels per glyph row   */
 #define CLK_SX   2
 #define CLK_SY   2
@@ -54,20 +55,12 @@ static bool clk_mask(const clk_geom_t *g, int x, int y)
     return (k_clk_font[gl][dy / CLK_SY] >> (CLK_FW - 1 - cx / CLK_SX)) & 1;
 }
 
-/* Idle screensaver: braille digital rain that paints the wall clock. The
- * time spans half the panel as bold 6x7 digits that start invisible —
- * black cells the rain refuses to enter. Each rain head that strikes a
- * digit pixel glints and settles as a wet blue cell that stays lit, so the
- * time is painted out of nothing over ~10 s and holds; the cycle's last
- * 10 s the same rain takes it back — each head that strikes a painted cell
- * scrubs it black and the rain pours through the scrubbed holes, so the
- * clock dissolves drop by drop into the storm before the next cycle starts
- * invisible at a fresh spot. A head landing on the top edge of a stroke
- * throws a three-frame splash (impact, bounce, droplets scattering
- * sideways). The colon blinks at 1 Hz and nothing stays put longer than
- * 30 s, so the LCD never holds a static image; any input wakes HOME. Falls back to the old floating chip until SNTP
- * delivers real time. Cost: ~1.3 KB of static tables, zero heap. */
-void render_saver(void)
+/* Rain paints the clock out of nothing: digits start as black rain-holes,
+ * each head that strikes a stroke settles as a wet blue cell (~10 s to
+ * paint); the cycle's last 10 s the rain scrubs it back off, then the block
+ * hops to a fresh spot — nothing stays put longer than 30 s (LCD safety).
+ * Falls back to a floating chip until SNTP delivers real time. */
+static void render_saver(void)
 {
     static uint8_t head[100];    /* per-column head row (grid is 100 wide) */
     static bool    seeded = false;
@@ -104,10 +97,8 @@ void render_saver(void)
         ck.colon_on = ((app.anim_frame / 5) & 1) == 0;      /* 1 Hz blink */
     }
 
-    /* Wash-off: the cycle's last 10 s heads scrub paint instead of laying
-     * it, and rain falls through the scrubbed cells. Ten seconds is enough
-     * for every head to visit every row (slowest columns wrap in 9 s), so
-     * the block is bare again before the hop. */
+    /* Wash-off window: ten seconds is enough for every head to visit every
+     * row (slowest columns wrap in 9 s), so the block is bare by the hop. */
     bool washing = big && app.anim_frame % CLK_CYCLE >= CLK_CYCLE - CLK_WASH;
 
     ui_colors(UI_FG, UI_BG);
@@ -147,10 +138,8 @@ void render_saver(void)
         }
     }
 
-    /* The clock: invisible until the rain paints it. A struck cell glints,
-     * then settles at glow 1 — a wet blue pixel that stays lit until a
-     * washing head scrubs it back to zero. Unstruck cells draw nothing:
-     * the digits exist only as rain-holes until the storm finds them. */
+    /* Painted cells: a struck cell glints (glow 4..2), then settles at 1 —
+     * a wet blue pixel that stays lit until a washing head scrubs it. */
     for (int y = 0; big && y < CLK_H; y++) {
         for (int x = 0; x < CLK_W; x++) {
             uint8_t g = glow[y][x];
@@ -168,8 +157,7 @@ void render_saver(void)
         int r = sp_row[c];
         switch (sp_ttl[c]--) {
         /* Re-check the mask at draw time: a colon blink or minute rollover
-         * mid-splash can move a stroke under the cell (skip the frame, let
-         * the ttl run out). */
+         * mid-splash can move a stroke under the cell (skip the frame). */
         case 3:
             ui_pen(OVERLAY_COL_WHITE);
             if (!clk_mask(&ck, c, r)) ui_putch(c, r, 0x28C0, 0);   /* impact */
@@ -198,4 +186,40 @@ void render_saver(void)
     ui_pen(OVERLAY_COL_DEFAULT);
     ui_no_cursor();
     ui_present();
+}
+
+void saver_reset(uint64_t now)
+{
+    app.saver.last_input = now;
+    app.saver.on         = false;
+}
+
+bool saver_on_input(uint64_t now)
+{
+    app.saver.last_input = now;
+    if (!app.saver.on) return false;
+    app.saver.on = false;
+    if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
+    render_home();
+    /* Only swallow once the rain has been up for a moment: the main loop
+     * ticks before it drains input, so a keypress aimed at a HOME visible
+     * milliseconds ago must still act, not vanish into a wake. */
+    return now - app.saver.since >= 1000;
+}
+
+bool saver_tick_home(uint64_t now)
+{
+    if (now - app.saver.last_input <= SAVER_IDLE_MS) {
+        app.saver.on = false;
+        return false;
+    }
+    if (now >= app.next_anim) {          /* idle: let it rain */
+        app.next_anim = now + ANIM_PERIOD_MS;
+        if (!app.saver.on) {
+            app.saver.on    = true;   /* input handling keys off what's on screen */
+            app.saver.since = now;
+        }
+        render_saver();
+    }
+    return true;
 }

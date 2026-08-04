@@ -323,7 +323,7 @@ static void ssh_read_task(void *arg)
 
         /* Present the whole batch once (no-op while a ?2026 synchronized
          * update is open — btop frames land atomically). Present even if the
-         * session just dropped so the tail of the output reaches the glass. */
+         * session just dropped so the tail of the output reaches the display. */
         if (drained > 0)
             vterm_flush();
 

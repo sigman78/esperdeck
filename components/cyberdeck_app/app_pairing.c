@@ -9,11 +9,13 @@
 
 #include <string.h>
 
-/* Number of device tiles PAIRING shows (the rest of the page is the Cancel
- * tile, which is always the last slot). */
+#define PAIR_TIMEOUT_MS  30000
+#define PAIR_POLL_MS     250
+
+/* Device tiles on the page; the last two slots are Forget bonds + Cancel. */
 static int pairing_ndev(const tilegrid_t *g)
 {
-    return g->count - 2;   /* last two tiles are "Forget bonds" + "Cancel" */
+    return g->count - 2;
 }
 
 static void render_pairing(uint64_t now)
@@ -23,17 +25,17 @@ static void render_pairing(uint64_t now)
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     draw_titlebar(2, "PAIR KEYBOARD", app.anim_frame);
-    ui_pen(app.ndevs ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER);
-    ui_putch(2, 1, app.ndevs ? UI_LED_ON : spinner_glyph(app.anim_frame), 0);
+    ui_pen(app.pair.ndevs ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER);
+    ui_putch(2, 1, app.pair.ndevs ? UI_LED_ON : spinner_glyph(app.anim_frame), 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    if (app.ndevs)
-        ui_printf(4, 1, 0, "%d found - select your keyboard", app.ndevs);
+    if (app.pair.ndevs)
+        ui_printf(4, 1, 0, "%d found - select your keyboard", app.pair.ndevs);
     else
         ui_puts(4, 1, "scanning for keyboards...", 0);
 
     /* The scan self-dismisses after PAIR_TIMEOUT_MS of inactivity; give the
      * last 10 s a visible countdown instead of vanishing without warning. */
-    uint64_t idle = now - app.pair_last_activity;
+    uint64_t idle = now - app.pair.last_activity;
     if (idle > PAIR_TIMEOUT_MS - 10000) {
         uint32_t left = (uint32_t)((PAIR_TIMEOUT_MS - idle + 999) / 1000);
         ui_pen(OVERLAY_COL_AMBER);
@@ -42,20 +44,19 @@ static void render_pairing(uint64_t now)
     }
     draw_rule_scan(3, app.anim_frame);
 
-    /* Devices, then a "Forget bonds" tile and a Cancel tile (always last two).
+    /* Devices, then "Forget bonds" and Cancel (always the last two).
      * Cap devices so both special tiles fit on the page. */
     tilegrid_t g = picker_grid(0);
     int cap  = g.ncols * g.nrows;
-    int ndev = app.ndevs > cap - 2 ? cap - 2 : app.ndevs;
+    int ndev = app.pair.ndevs > cap - 2 ? cap - 2 : app.pair.ndevs;
     g.count  = ndev + 2;
-    app.grid   = g;
-    if (app.pair_sel >= g.count) app.pair_sel = g.count - 1;
+    app.grid = g;
+    if (app.pair.sel >= g.count) app.pair.sel = g.count - 1;
 
     if (ndev == 0) {
-        /* Nothing found yet: a cyan radar beam sweeps the empty tile field
-         * with a fading trail, and faint braille "contacts" blip in and out
-         * behind it — 30 s of scan reads as a search, not a hang. The
-         * Forget/Cancel tiles overdraw whatever the beam leaves behind. */
+        /* Empty-scan theater: a cyan radar beam sweeps the tile field with
+         * faint braille "contacts" blipping behind it — 30 s of scan reads
+         * as a search, not a hang. */
         int y0 = 4, y1 = ui_rows() - 3;
         int bx = (int)((app.anim_frame * 2u) % (uint32_t)ui_cols());
         for (int y = y0; y <= y1; y++) {
@@ -75,19 +76,18 @@ static void render_pairing(uint64_t now)
     ui_pen(OVERLAY_COL_GREEN);
     for (int i = 0; i < ndev; i++) {
         ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th,
-                app.devs[i].name,
-                app.devs[i].addr_type ? "random addr" : "public addr",
-                i == app.pair_sel);
+                app.pair.devs[i].name,
+                app.pair.devs[i].addr_type ? "random addr" : "public addr",
+                i == app.pair.sel);
     }
-    /* Color law: RED = destructive (Forget), BLUE = safe navigation
-     * (Cancel/Back — matches the menu pages). */
+    /* Color law: RED = destructive (Forget), BLUE = safe navigation. */
     ui_pen(OVERLAY_COL_RED);
     ui_tile(tile_x(&g, ndev), tile_y(&g, ndev), g.tw, g.th,
-            app.pair_forget_armed ? "TAP AGAIN to forget" : "Forget bonds",
-            "clear + re-pair", ndev == app.pair_sel);
+            app.pair.forget_armed ? "TAP AGAIN to forget" : "Forget bonds",
+            "clear + re-pair", ndev == app.pair.sel);
     ui_pen(OVERLAY_COL_BLUE);
     ui_tile(tile_x(&g, ndev + 1), tile_y(&g, ndev + 1), g.tw, g.th,
-            "Cancel", "", (ndev + 1) == app.pair_sel);
+            "Cancel", "", (ndev + 1) == app.pair.sel);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_footer("keyboard in pairing mode, then tap it \xB7 Esc cancel");
@@ -100,11 +100,11 @@ void enter_pairing(uint64_t now)
     if (!app.cfg.ble || !app.cfg.ble->enter_pairing) return;
     app.cfg.ble->enter_pairing();
     app.state = ST_PAIRING;
-    app.ndevs = 0;
-    app.pair_sel = 0;
-    app.pair_last_poll = 0;
-    app.pair_last_activity = now;
-    app.pair_forget_armed = false;
+    app.pair.ndevs = 0;
+    app.pair.sel = 0;
+    app.pair.last_poll = 0;
+    app.pair.last_activity = now;
+    app.pair.forget_armed = false;
     render_pairing(now);
 }
 
@@ -125,15 +125,14 @@ static void exit_pairing(uint64_t now)
 static void pairing_select(int slot, uint64_t now)
 {
     int nd = pairing_ndev(&app.grid);
-    if (slot < nd && app.cfg.ble) {                 /* a discovered device */
-        app.cfg.ble->select_device(app.devs[slot].addr, app.devs[slot].addr_type);
-        toast(now, "pairing %.32s...", app.devs[slot].name);
+    if (slot < nd && app.cfg.ble) {                /* a discovered device */
+        app.cfg.ble->select_device(app.pair.devs[slot].addr, app.pair.devs[slot].addr_type);
+        toast(now, "pairing %.32s...", app.pair.devs[slot].name);
         exit_pairing(now);
     } else if (slot == nd) {                       /* Forget bonds */
-        /* Destructive: one mis-tap would wipe the bond and force a full
-         * re-pair, so arm on the first activation like hostkey REPLACE. */
-        if (!app.pair_forget_armed) {
-            app.pair_forget_armed = true;
+        /* Destructive: arm on the first activation like hostkey REPLACE. */
+        if (!app.pair.forget_armed) {
+            app.pair.forget_armed = true;
             render_pairing(now);
         } else if (app.cfg.ble && app.cfg.ble->forget) {
             app.cfg.ble->forget();
@@ -147,7 +146,7 @@ static void pairing_select(int slot, uint64_t now)
 
 void pairing_tick(uint64_t now)
 {
-    if (now - app.pair_last_activity > PAIR_TIMEOUT_MS) {
+    if (now - app.pair.last_activity > PAIR_TIMEOUT_MS) {
         toast(now, "pairing timed out");
         exit_pairing(now);
         return;
@@ -156,16 +155,16 @@ void pairing_tick(uint64_t now)
         app.next_anim = now + ANIM_PERIOD_MS;
         render_pairing(now);
     }
-    if (now - app.pair_last_poll >= PAIR_POLL_MS && app.cfg.ble) {
-        app.pair_last_poll = now;
+    if (now - app.pair.last_poll >= PAIR_POLL_MS && app.cfg.ble) {
+        app.pair.last_poll = now;
         ble_device_info_t fresh[PAIR_MAX];
         int n = app.cfg.ble->get_scan_results(fresh, PAIR_MAX);
-        if (n != app.ndevs ||
-            memcmp(fresh, app.devs, (size_t)n * sizeof(fresh[0])) != 0) {
-            memcpy(app.devs, fresh, sizeof(fresh));
-            app.ndevs = n;
-            if (app.pair_sel >= n) app.pair_sel = n ? n - 1 : 0;
-            app.pair_last_activity = now;   /* results still arriving */
+        if (n != app.pair.ndevs ||
+            memcmp(fresh, app.pair.devs, (size_t)n * sizeof(fresh[0])) != 0) {
+            memcpy(app.pair.devs, fresh, sizeof(fresh));
+            app.pair.ndevs = n;
+            if (app.pair.sel >= n) app.pair.sel = n ? n - 1 : 0;
+            app.pair.last_activity = now;   /* results still arriving */
             render_pairing(now);
         }
     }
@@ -174,7 +173,7 @@ void pairing_tick(uint64_t now)
 void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
 {
     (void)ch;
-    app.pair_last_activity = now;
+    app.pair.last_activity = now;
     if (ev->type == CYBERDECK_INPUT_TAP) {
         int slot = tile_hit(&app.grid, ev->x, ev->y);
         if (slot >= 0) pairing_select(slot, now);   /* gutter tap: ignore */
@@ -182,16 +181,16 @@ void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
     }
     switch (k) {
     case K_UP: case K_DOWN: case K_LEFT: case K_RIGHT: {
-        int ns = tile_nav(&app.grid, app.pair_sel, k);
-        if (ns != app.pair_sel) {
-            app.pair_sel = ns;
-            app.pair_forget_armed = false;   /* moving away backs down */
+        int ns = tile_nav(&app.grid, app.pair.sel, k);
+        if (ns != app.pair.sel) {
+            app.pair.sel = ns;
+            app.pair.forget_armed = false;   /* moving away backs down */
             render_pairing(now);
         }
         break;
     }
     case K_ENTER:
-        pairing_select(app.pair_sel, now);
+        pairing_select(app.pair.sel, now);
         break;
     case K_ESC:
         exit_pairing(now);

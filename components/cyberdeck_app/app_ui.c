@@ -1,12 +1,8 @@
 /*
- * app_ui.c — overlay TUI primitives, double-buffered.
- *
- * Two internal-DRAM buffers: the shell draws into the *back* buffer while the
- * display ISR composites the *front* one, so a frame is never shown while it
- * is being rebuilt. ui_present() publishes the back buffer with a single
- * pointer store (the ISR picks it up on its next scan) and swaps. Without
- * this, the ISR caught render_*()'s clear-then-redraw mid-flight and the
- * underlying terminal flashed through every repaint.
+ * app_ui.c — overlay TUI primitives, double-buffered: the shell draws into
+ * the back buffer while the ISR composites the front one; ui_present()
+ * publishes with a single pointer store and swaps. Without this the ISR
+ * caught clear-then-redraw mid-flight and the terminal flashed through.
  */
 
 #include "app_ui.h"
@@ -25,19 +21,16 @@ static int  s_rows    = 0;
 static bool s_visible = false;
 static uint8_t s_pen  = OVERLAY_COL_DEFAULT;   /* current accent color */
 
-/* Shell animation clock (~10 fps), fed each tick via ui_frame(). Drives the
- * selected-tile body marquee; time-based, so it keeps counting even while a
- * screen skips renders. */
+/* Shell animation clock (~10 fps), fed each tick via ui_frame(); drives the
+ * selected-tile body marquee. */
 static uint32_t s_frame = 0;
 
 void ui_frame(uint32_t frame) { s_frame = frame; }
 
-/* Bounce marquee for a body line longer than its tile: park at the head,
- * crawl one character at a time to the tail, park, crawl back. State is a
- * single owner slot keyed by tile origin — at most one tile is selected per
- * screen, and the epoch resets whenever a different tile (or the same tile
- * after a gap: reselection or a screen change) takes the marquee, so a fresh
- * selection always starts reading from the head. */
+/* Bounce marquee: park at the head, crawl to the tail, park, crawl back.
+ * One owner slot keyed by tile origin; the epoch resets when another tile
+ * (or the same tile after a gap) takes it, so a fresh selection starts at
+ * the head. */
 #define MQ_STEP_FRAMES 3   /* frames per character step (~3 cells/s) */
 #define MQ_DWELL_STEPS 5   /* extra steps parked at each end (~1.5 s) */
 
@@ -132,10 +125,8 @@ void ui_clear(void)
 
 void ui_dim(void)
 {
-    /* Transparent scrim: every cell stays see-through (cp==0) but flagged DIM,
-     * so the renderer fades the terminal behind it (50% halving by default, or a
-     * dithered checkerboard if OVERLAY_DIM_DITHER is set in display_render.c).
-     * Draw opaque chrome on top afterwards. */
+    /* Transparent scrim: cells stay see-through (cp==0) but flagged DIM, so
+     * the renderer fades the terminal behind them. Draw chrome on top. */
     s_pen = OVERLAY_COL_DEFAULT;
     if (!s_draw) return;
     for (int i = 0; i < s_cols * s_rows; i++) {
@@ -223,10 +214,8 @@ int ui_chip(int col, int row, uint16_t left_cp, const char *text,
 void ui_tile(int col, int row, int w, int h,
              const char *title, const char *body, bool selected)
 {
-    /* DOS-style solid button: always a colored bar (INVERSE puts the pen
-     * accent into the background). Focus = the bar washes toward a pastel
-     * of its hue (OVERLAY_ATTR_BRIGHT) plus a lit left rail: a white
-     * half-block column with a thin dark seam against the bar. No frames. */
+    /* DOS-style solid button: a colored bar (INVERSE puts the pen accent in
+     * the background). Focus = pastel wash (BRIGHT) + a lit left rail. */
     uint8_t a = OVERLAY_ATTR_INVERSE | (selected ? OVERLAY_ATTR_BRIGHT : 0);
 
     for (int r = 0; r < h; r++)
@@ -243,9 +232,8 @@ void ui_tile(int col, int row, int w, int h,
         s_pen = old_pen;
     }
 
-    /* Title (+ optional body) vertically centered, left-padded 2 cells,
-     * truncated to the tile width. Titles carry the real bold face; the
-     * body stays regular so the pair reads as heading + detail. */
+    /* Title (+ optional body) vertically centered; bold title, regular
+     * body — heading + detail. */
     int tx    = col + 2;
     int inner = w - 3;
     if (inner < 1) return;
@@ -257,9 +245,8 @@ void ui_tile(int col, int row, int w, int h,
         ui_puts(tx, ty, t, a | OVERLAY_ATTR_BOLD);
     }
     if (lines == 2) {
-        /* A body longer than the tile bounce-scrolls while selected (one
-         * character per step, dwelling at each end); unselected tiles show
-         * the truncated head. */
+        /* An overlong body bounce-scrolls while selected; unselected tiles
+         * show the truncated head. */
         int off = 0, blen = (int)strlen(body);
         if (selected && blen > inner)
             off = marquee_offset(col, row, blen - inner);

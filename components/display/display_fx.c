@@ -1,10 +1,7 @@
 /*
- * display_fx.c — owner of the runtime render-effect state.
- *
- * The rendering itself happens in display_render.c; this file only holds
- * the DRAM-resident config/state and the task-side API (set/get, event
- * arming, row stamps). Compiled for both the ESP32 target and the
- * PC simulator.
+ * display_fx.c — owner of the runtime render-effect state: the DRAM
+ * config/state and the task-side API. The rendering itself happens in
+ * display_render.c. Compiled for both the ESP32 target and the simulator.
  */
 
 #include "display_fx_internal.h"
@@ -18,7 +15,7 @@ DRAM_ATTR display_fx_cfg_t g_fx_cfg = {
     .scanlines       = 1,
     .bold_pop        = 1,
     .mono            = 0,
-    .glow            = 0,    /* judged a failure on-glass — off by default */
+    .glow            = 0,    /* judged a failure on hardware — off by default */
     .glow_frames     = 20,   /* ~0.5 s */
     .glow_strength   = 0,
     .wipe            = 1,

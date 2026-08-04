@@ -1,22 +1,11 @@
 /*
  * cyberdeck_app.c — the shell's core: shared state, init, dispatch.
  *
- * State machine:
- *
- *   BOOT ── delay ──> HOME (profile picker) ──Enter──> CONNECTING ──> SESSION
- *            ^          │  'b'                  ^  ESC     │ ok          │
- *            │          v                       │          v             v
- *            │       PAIRING ──Enter/ESC──> HOME│      HOSTKEY ──trust──>│
- *            │                                  │      (TOFU prompt)     │
- *            └─────── session drop (no auto-reconnect) <────── F12 ──> MENU
- *
- * All shell UI lives in the display overlay layer (app_ui). The vterm cell
- * buffer belongs to the boot splash and the SSH session; the shell never
- * writes ANSI into it except to clear it when a session starts.
- *
- * Screen behavior lives in the per-screen modules (see app_internal.h for
- * the file map). This file owns the one shared state instance, decodes
- * input once, and dispatches tick/input to the module for app.state.
+ * BOOT → HOME → CONNECTING → SESSION, with PAIRING/HOSTKEY/MENU/PROFILE/
+ * WIFIPROV/SSHIMPORT as modals. All shell UI lives in the display overlay
+ * layer (app_ui); the vterm cell buffer belongs to the boot splash and the
+ * SSH session. This file owns the shared state instance, decodes input
+ * once, and dispatches tick/input to the module for app.state.
  */
 
 #include "app_internal.h"
@@ -74,8 +63,7 @@ void load_profiles(void)
     app.stored_count  = n;   /* real, on-flash profiles (before any synth below) */
 
     /* Synthesize "(default)" from the Kconfig fallback ONLY when profiles.ini
-     * gave us nothing — otherwise a populated file gets padded with a
-     * redundant extra entry. */
+     * gave us nothing — a populated file must not get a redundant extra. */
     if (n == 0 && app.cfg.fallback_host && app.cfg.fallback_host[0]) {
         conn_profile_t *p = &app.profiles[app.profile_count++];
         memset(p, 0, sizeof(*p));
@@ -88,10 +76,8 @@ void load_profiles(void)
         snprintf(p->password, sizeof(p->password), "%s",
                  app.cfg.fallback_password ? app.cfg.fallback_password : "");
     }
-    if (app.sel >= app.profile_count) app.sel = app.profile_count ? app.profile_count - 1 : 0;
 }
 
-/* True if a keyboard is bonded (present in the BLE registry). */
 bool ble_has_bond(void)
 {
     if (!app.cfg.ble) return false;
@@ -136,10 +122,8 @@ void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
 }
 
 /* Watch the wifi + BLE keyboard links and toast every transition the user
- * cares about (connecting / connected / disconnected), so link changes
- * surface on HOME and in-session without staring at the status HUD.
- * Pairing-scan churn is deliberately silent — the pairing screen narrates
- * itself, and leaving it for a scan is not a "disconnect". */
+ * cares about. Pairing-scan churn is deliberately silent — the pairing
+ * screen narrates itself, and leaving it for a scan is not a "disconnect". */
 static void status_toasts(uint64_t now)
 {
     uint8_t w = (uint8_t)wifi_manager_get_state();
@@ -203,13 +187,11 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 
     memset(&app, 0, sizeof(app));
     app.cfg = *cfg;
-    app.pf_edit_idx  = -1;
-    app.pf_key_sel   = -1;
-    app.reorder_grab = -1;
-    app.state = ST_BOOT;
-    app.boot_until = now_ms + cfg->boot_delay_ms;
-    app.last_input = now_ms;   /* idle timer starts at boot */
-    boot_advance_tagline();
+    app.pf.edit_idx    = -1;
+    app.pf.key_sel     = -1;
+    app.menu.reorder_grab = -1;
+    boot_enter(now_ms);
+    saver_reset(now_ms);   /* idle timer starts at boot */
 
     esp_err_t err = ui_init();
     if (err != ESP_OK) return err;
@@ -235,8 +217,6 @@ bool cyberdeck_app_in_session(void)
 
 void cyberdeck_app_tick(uint64_t now)
 {
-    if (app.halted) return;
-
     app.anim_frame = (uint32_t)(now / ANIM_PERIOD_MS);
     ui_frame(app.anim_frame);   /* marquee clock for ui_tile */
 
@@ -248,22 +228,12 @@ void cyberdeck_app_tick(uint64_t now)
 
 void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
 {
-    if (!ev || app.halted) return;
+    if (!ev) return;
 
-    /* Any input feeds the idle timer. Only input arriving while the rain
-     * is ACTUALLY on screen is swallowed as a wake — and only once the
-     * rain has been up for a moment: the main loop ticks before it drains
-     * input, so a keypress aimed at a HOME that was visible milliseconds
-     * ago must still act, not vanish into a wake. */
-    app.last_input = now;
-    if (app.saver_on) {
-        app.saver_on = false;
-        if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
-        render_home();
-        if (now - app.saver_since >= 1000)
-            return;                    /* true wake: swallow the input */
-        /* else: rain just went up — fall through and act on the event */
-    }
+    /* Any input feeds the idle timer; a true screensaver wake is swallowed
+     * (see saver_on_input for the just-went-up grace). */
+    if (saver_on_input(now))
+        return;
 
     char ch = 0;
     ui_key_t k = (ev->type == CYBERDECK_INPUT_KEY)

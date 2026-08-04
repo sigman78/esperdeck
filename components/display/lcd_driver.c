@@ -1,13 +1,7 @@
 /*
- * lcd_driver.c — hardware-only LCD driver for Waveshare ESP32-S3-Touch-LCD-7.
- *
- * Responsible for: GPIO init, RGB panel configuration, DMA/bounce-buffer
- * setup, and the thin on_bounce_empty ISR wrapper.
- *
- * All pixel rendering logic lives in display_render.c (shared with the
- * PC simulator via display_render_chunk).
- *
- * Compatible with ESP-IDF v5.1+
+ * lcd_driver.c — hardware LCD driver for Waveshare ESP32-S3-Touch-LCD-7:
+ * GPIO init, RGB panel config, DMA/bounce-buffer setup, and the thin
+ * on_bounce_empty ISR wrapper. Pixel rendering lives in display_render.c.
  */
 
 #include "display.h"
@@ -28,11 +22,8 @@ static const char *TAG = "lcd_driver";
 
 static esp_lcd_panel_handle_t panel_handle  = NULL;
 
-/* -------------------------------------------------------------------------
- * Bounce-buffer fill callback — ISR context.
- *
- * Thin wrapper: all rendering logic is in display_render_chunk().
- * ---------------------------------------------------------------------- */
+/* Bounce-buffer fill callback — ISR context; all rendering logic is in
+ * display_render_chunk(). */
 static IRAM_ATTR bool on_bounce_empty(esp_lcd_panel_handle_t panel,
                                       void *buf,
                                       int   pos_px,

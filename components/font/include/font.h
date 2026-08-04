@@ -116,10 +116,8 @@ const void *font_get_glyph(uint16_t cp);
 
 /**
  * BOLD glyph bitmap — IRAM_ATTR, safe to call from the ISR.
- *
- * @return  Glyph rows, or NULL when the codepoint has no stored bold form
- *          (identical to normal, outside subset A, or bold disabled) —
- *          callers fall back to the normal glyph.
+ * Falls back to the regular glyph when the codepoint has no stored bold form
+ * (identical to normal, outside the bold subset, or bold disabled).
  */
 const void *font_get_glyph_bold(uint16_t cp);
 

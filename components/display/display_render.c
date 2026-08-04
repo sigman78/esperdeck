@@ -1,10 +1,7 @@
 /*
- * display_render.c — shared rendering core.
- *
- * Compiled for BOTH the ESP32 target (called from the bounce-buffer ISR)
- * and the PC simulator (called from the SDL2 frame loop).
- *
- * No SDL headers, no esp_lcd headers — only display.h and font.h.
+ * display_render.c — shared rendering core, compiled for BOTH the ESP32
+ * target (bounce-buffer ISR) and the PC simulator (SDL2 frame loop).
+ * No SDL or esp_lcd headers — only display.h and font.h.
  */
 
 #include "display_render.h"
@@ -31,14 +28,10 @@ static DRAM_ATTR int                     s_overlay_rows = 0;
 static DRAM_ATTR color_t                 s_overlay_fg   = COLOR_BLACK;
 static DRAM_ATTR color_t                 s_overlay_bg   = COLOR_CYAN;
 
-/* Overlay accent palettes (index 0 is a sentinel → use s_overlay_fg). Kept
- * in DRAM so the bounce-buffer ISR can read them without touching flash.
- *
- * Dual palette: TEXT accents (colored glyphs on the dark screen) use the
- * classic VGA bright-16 tones; INVERSE cells (solid button bars, chips) use
- * muted companions of the same hues — a whole screen of full-saturation
- * bars reads as motley, and dark labels want a calmer mid-tone behind them.
- * WHITE stays pure in both (QR codes need true white modules). */
+/* Overlay accent palettes (index 0 → s_overlay_fg), DRAM for the ISR.
+ * Dual palette: TEXT accents use VGA bright tones; INVERSE bars use muted
+ * companions of the same hues (full-saturation bars read as motley).
+ * WHITE stays pure in both — QR codes need true white modules. */
 static DRAM_ATTR const color_t s_overlay_pal[OVERLAY_PAL_SIZE] = {
     0,                        /* 0: default → replaced by s_overlay_fg */
     RGB565( 85, 255,  85),    /* 1 green   (VGA bright green)   */
@@ -97,24 +90,17 @@ int display_text_rows(void)   { return DISPLAY_HEIGHT / s_fh; }
  * active. The tail beyond the active grid simply goes unused. */
 #define RENDER_MAX_COLS  FONT_MAX_COLS
 
-/* Overlay DIM scrim style (the shade drawn behind a modal):
- *   0 = halved   — every pixel at 50% brightness (default). Done per-cell in
- *       build_row_cache with zero extra per-band work — the cheapest ISR path.
- *   1 = dithered — checkerboard: alternate pixels kept at full brightness, the
- *       rest blacked. A crisper look, but NOT an ISR win — it adds a per-band
- *       post-pass over scrim columns plus a fixed flag-check every frame, so it
- *       is off by default. Set to 1 (e.g. from the build system) to enable; the
- *       dither code compiles out completely when 0. */
+/* Overlay DIM scrim style: 0 = 50% brightness per-cell (cheapest ISR path,
+ * default), 1 = dithered checkerboard (crisper but adds a per-band post-
+ * pass, compiled out when 0). */
 #ifndef OVERLAY_DIM_DITHER
 #define OVERLAY_DIM_DITHER 0
 #endif
 
-/* Column cache as parallel arrays. bg/xorfg carry TWO variants selected per
- * scanline: [0] = normal, [1] = scanline-dimmed (the CRT-scanline effect).
- * Selecting the variant per scanline keeps the hot loop free of any
- * per-pixel effect cost — the "shader" work all happens per-cell here. */
-/* void *: the glyph row type follows the active size (uint8_t at 8x16,
- * uint16_t above), so the band loop casts it once it has switched on width. */
+/* Column cache as parallel arrays. bg/xf carry TWO variants selected per
+ * scanline ([0] normal, [1] scanline-dimmed) so the hot loop pays no
+ * per-pixel effect cost. Glyph is void *: the row type follows the active
+ * size; the band loop casts after switching on width. */
 static DRAM_ATTR const void        *s_cc_glyph[RENDER_MAX_COLS];
 static DRAM_ATTR uint16_t           s_cc_bg[2][RENDER_MAX_COLS];
 static DRAM_ATTR uint16_t           s_cc_xf[2][RENDER_MAX_COLS];
@@ -135,15 +121,10 @@ static DRAM_ATTR uint8_t s_cc_frame   = 0;   /* g_fx_frame at build time — a
 
 void display_render_set_font(int width, int height)
 {
-    /* Bands must be even (scanline-parity effects assume even band starts),
-     * must divide the cell height (a band never straddles a character row)
-     * and must divide the panel height (esp_lcd wants a whole number of
-     * bounce buffers per frame). Full-row bands at 8x16, half-row above —
-     * two full 20/24-scanline bounce buffers would cost up to +25.6 KB.
-     *
-     * Checked here rather than by _Static_assert because the size is no
-     * longer a build constant; a bad value keeps the previous geometry
-     * instead of handing the ISR something that would tear or overrun. */
+    /* Bands must be even (scanline-parity effects), divide the cell height
+     * (never straddle a character row) and divide the panel height. Checked
+     * at runtime because the size is no longer a build constant; a bad
+     * value keeps the previous geometry instead of tearing in the ISR. */
     const int band = (height > 16) ? (height / 2) : height;
 
     if (width <= 0 || height <= 0 ||
@@ -167,18 +148,15 @@ void display_render_set_font(int width, int height)
  * ---------------------------------------------------------------------- */
 
 /* Scanline dim: 93.75% brightness, the one level that read as CRT texture
- * on-glass — everything stronger (87.5% and below) read as bars. */
+ * on hardware — everything stronger (87.5% and below) read as bars. */
 static inline uint16_t fx_dim565(uint16_t p)
 {
     return (uint16_t)(p - ((p >> 4) & 0x0861));
 }
 
 /* Luma-map onto a monochrome phosphor ramp: mode 1 = green, 2 = amber.
- *
- * IRAM_ATTR, not just `inline`: at -Os GCC outlines this and it landed in
- * FLASH while its only caller (build_row_cache) runs from the bounce ISR —
- * a call the ISR must not make with the flash cache disabled. `inline` is a
- * hint, so the attribute is what actually guarantees placement. */
+ * IRAM_ATTR, not `inline`: at -Os GCC outlines this into FLASH while its
+ * only caller runs from the bounce ISR with the flash cache disabled. */
 static IRAM_ATTR uint16_t fx_mono565(uint16_t p, uint8_t mode)
 {
     const uint32_t r6 = ((p >> 11) & 0x1F) << 1;
@@ -190,26 +168,19 @@ static IRAM_ATTR uint16_t fx_mono565(uint16_t p, uint8_t mode)
     return (uint16_t)(((y >> 1) << 11) | (((y * 11) >> 4) << 5)); /* amber */
 }
 
-/* -------------------------------------------------------------------------
- * Branchless pixel-pair → 32-bit word (little-endian, 2×RGB565).
- *
- *   bit   = (gb >> (FONT_WIDTH-1-p)) & 1     (leftmost pixel = top bit)
- *   mask  = 0xFFFF if bit=1, 0x0000 if bit=0  →  (uint16_t)(0u - bit)
- *   pixel = bg ^ (xorfg & mask)        → bg when bit=0, fg when bit=1
- *
- * Left pixel in low 16 bits, right pixel in high 16 bits (little-endian).
- * ---------------------------------------------------------------------- */
+/* Branchless pixel-pair → 32-bit word (little-endian, 2×RGB565):
+ *   bit   = (gb >> (W-1-p)) & 1              (leftmost pixel = top bit)
+ *   mask  = (uint16_t)(0u - bit)             (0xFFFF / 0x0000)
+ *   pixel = bg ^ (xorfg & mask)              (bg when 0, fg when 1) */
 #define GPAIR(W, gb, p0, p1, bg_v, xor_v)                                       \
     (   (uint32_t)((uint16_t)((bg_v) ^ ((xor_v) &                               \
             (uint16_t)(0u - (((unsigned)(gb) >> ((W) - 1u - (p0))) & 1u))))) \
     |  ((uint32_t)((uint16_t)((bg_v) ^ ((xor_v) &                               \
             (uint16_t)(0u - (((unsigned)(gb) >> ((W) - 1u - (p1))) & 1u))))) << 16) )
 
-/* Emit one full character column ((W)/2 aligned uint32 stores) — unrolled
- * per width so the hot loop stays branch- and loop-free. The width is a
- * macro argument rather than a build-wide constant: every enabled size is
- * linked at once and chosen at boot, so all three unrollings coexist and the
- * band loop picks one ONCE per band (see SCAN_BAND). */
+/* Emit one character column ((W)/2 aligned uint32 stores), unrolled per
+ * width: all enabled sizes coexist and the band loop picks one unrolling
+ * ONCE per band (see SCAN_BAND). */
 #define EMIT_COL_8(d, gb, bg_v, xor_v) do {                                     \
     (d)[0] = GPAIR(8, gb, 0, 1, bg_v, xor_v);                                   \
     (d)[1] = GPAIR(8, gb, 2, 3, bg_v, xor_v);                                   \
@@ -232,10 +203,7 @@ static IRAM_ATTR uint16_t fx_mono565(uint16_t p, uint8_t mode)
     (d)[5] = GPAIR(12, gb, 10, 11, bg_v, xor_v);                                \
 } while (0)
 
-/* -------------------------------------------------------------------------
- * ANSI-256 colour → RGB565.
- * IRAM_ATTR: callable from ESP32 ISR without going through Flash cache.
- * ---------------------------------------------------------------------- */
+/* ANSI-256 colour → RGB565. IRAM: callable from the ISR. */
 color_t IRAM_ATTR display_ansi_to_rgb565(uint8_t ansi_color)
 {
     /* 0-15: standard 16 colours */
@@ -317,11 +285,8 @@ void display_get_text_size(int *cols, int *rows)
     if (rows) *rows = s_cell_rows;
 }
 
-/* -------------------------------------------------------------------------
- * Terminal BELL → visual bell. A speakerless alert: display_bell() arms a
- * brief red "BEL" tag that flashes in the top-right corner, drawn over the top
- * band by the ISR (so it works during a session with no overlay involved).
- * ---------------------------------------------------------------------- */
+/* Visual bell: a brief red tag flashing in the top-right corner, drawn by
+ * the ISR over the top band (works in-session with no overlay). */
 static DRAM_ATTR volatile int s_bell_frames = 0;   /* frames the tag stays up */
 static DRAM_ATTR bool         s_bell_show   = false; /* latched at frame tick */
 
@@ -356,11 +321,8 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
             glow_tier = (g_fx_cfg.glow_strength && age * 2 < gf) ? 2 : 1;
         else if (age > 128)
             /* Re-pin long-expired stamps so the uint8 frame counter can't
-             * wrap back into the glow window (~6.5 s) and re-tint a stale
-             * row. Only past the halfway point (gf is clamped ≤ 120), so
-             * this write is rare — it races display_fx_touch_row at most
-             * once per ~3 s per idle row, and a lost touch just skips one
-             * glow (self-heals on the row's next flush). */
+             * wrap back into the glow window and re-tint a stale row. Races
+             * display_fx_touch_row benignly (a lost touch self-heals). */
             g_fx_row_stamp[cr] = (uint8_t)(g_fx_frame - gf);
     }
 #endif
@@ -380,11 +342,9 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
 
         if (ov_cp != 0) {
             if (ov_attrs & OVERLAY_ATTR_INVERSE) {
-                /* Solid bar: muted accent background. Colored bars (1-6)
-                 * carry LIGHT text — a pale 3/4-to-white tint of their own
-                 * hue; focus (BRIGHT) washes the bar pastel and flips the
-                 * text dark. Gray/white surfaces (0,7) always keep dark
-                 * text: QR modules must stay dark-on-white. */
+                /* Solid bar: muted accent bg. Colored bars (1-6) carry a
+                 * pale tint of their own hue as text; gray/white (0,7) keep
+                 * dark text — QR modules must stay dark-on-white. */
                 bg = s_overlay_bar[ov_color];
                 if (ov_color >= 1 && ov_color <= 6 &&
                         !(ov_attrs & OVERLAY_ATTR_BRIGHT))
@@ -395,20 +355,14 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
                 fg = ov_color ? s_overlay_pal[ov_color] : s_overlay_fg;
                 bg = s_overlay_bg;
             }
-            /* Focus glow: wash the background 50% toward white (carry-safe
-             * half-sum), keeping the dark text — the focused bar turns
-             * pastel and the label gains contrast instead of losing it.
-             * Per-cell cache-build work — the free effect tier. */
+            /* Focus glow: wash the bg 50% toward white (carry-safe
+             * half-sum) — the focused bar turns pastel, text stays dark. */
             if (ov_attrs & OVERLAY_ATTR_BRIGHT)
                 bg = (color_t)(((bg >> 1) & 0x7BEF) + 0x7BEF);
-            glyph = font_get_glyph(ov_cp);
-            if (ov_attrs & OVERLAY_ATTR_BOLD) {
-                /* Real bold face when stored; misses keep the normal glyph.
-                 * The `bold` local stays 0 — bold-pop is a terminal effect
-                 * and must not recolor overlay chrome. */
-                const void *ob = font_get_glyph_bold(ov_cp);
-                if (ob) glyph = ob;
-            }
+            /* `bold` stays 0: bold-pop is a terminal effect and must not
+             * recolor overlay chrome. */
+            glyph = (ov_attrs & OVERLAY_ATTR_BOLD)
+                  ? font_get_glyph_bold(ov_cp) : font_get_glyph(ov_cp);
         } else {
             const terminal_cell_t *cell = &row_cells[c];
             fg = cell->fg_color;
@@ -416,21 +370,12 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
             if (cell->attrs & ATTR_REVERSE) { color_t t = fg; fg = bg; bg = t; }
             underline = cell->attrs & ATTR_UNDERLINE;
             bold      = cell->attrs & ATTR_BOLD;
-            /* Blanks skip the lookup entirely: the band loop already renders
-             * a NULL glyph as all-zero bits, and U+0020 is all-zero in
-             * Terminus, so this is byte-identical output for one compare
-             * instead of two windowed calls plus a binary search. Terminal
-             * and menu screens run well over half blank, and the saving
-             * lands on the row's FIRST band — the peak-cost one. */
-            glyph = (cell->cp == 0x20 || cell->cp == 0)
-                  ? NULL : font_get_glyph(cell->cp);
-            if (bold && glyph) {
-                /* Real bold face when stored (subset A); misses keep the
-                 * normal glyph. The bold-pop color effect applies either
-                 * way — it is an independent, user-tunable emphasis. */
-                const void *bg2 = font_get_glyph_bold(cell->cp);
-                if (bg2) glyph = bg2;
-            }
+            /* Blanks skip the lookup: the band loop renders a NULL glyph as
+             * all-zero bits and U+0020 is blank in Terminus, and screens run
+             * well over half blank. */
+            glyph = (cell->cp == 0x20 || cell->cp == 0) ? NULL
+                  : bold ? font_get_glyph_bold(cell->cp)
+                         : font_get_glyph(cell->cp);
 #if DISPLAY_FX_ROW_GLOW
             /* Back glow tints the terminal bg toward the warm accent,
              * before any scrim dim so a modal's scrim also dims the glow. */
@@ -513,15 +458,9 @@ static DRAM_ATTR const uint32_t s_fx_noise[16] = {
 
 /**
  * Render one horizontal band (one bounce-buffer height) into dst.
- *
- * Bands must start on a bounce-buffer boundary: BOUNCE_BUFFER_HEIGHT is even
- * and divides FONT_HEIGHT, so a band never straddles a character row and may
- * cover either a whole row (8x16) or half of one (10x20, 12x24).
- *
- * pos_px   — index of first pixel in the full framebuffer
- *            (= start_scanline × DISPLAY_WIDTH)
- * n_bytes  — byte count of the band
- *            (= DISPLAY_WIDTH × BOUNCE_BUFFER_HEIGHT × sizeof(color_t))
+ * A band never straddles a character row: it covers either a whole row
+ * (8x16) or half of one (10x20, 12x24). pos_px = start scanline ×
+ * DISPLAY_WIDTH; n_bytes = band pixel count × sizeof(color_t).
  */
 void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
 {
@@ -535,18 +474,16 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         return;
     }
 
-    /* Active cell geometry, latched once per band. DRAM-resident (set at
-     * boot by display_render_set_font) so the ISR never faults on flash. */
+    /* Active cell geometry, latched once per band (DRAM-resident). */
     const int fw = s_fw, fh = s_fh;
     const int col_words = fw >> 1;
 
     const int start_scan = pos_px / DISPLAY_WIDTH;
     const int num_scans  = (n_bytes >> 1) / DISPLAY_WIDTH;  /* n_bytes/2 = pixels */
     const int char_row   = start_scan / fh;
-    /* First glyph scanline of this band. Non-zero only with sub-row bounce
-     * bands (band height < cell height); always a multiple of the band
-     * height, so band starts stay even (scanline-parity effects rely on it
-     * — see the per-size checks in display_render_set_font). */
+    /* First glyph scanline of this band; non-zero only with sub-row bands.
+     * Always a multiple of the (even) band height, so scanline-parity
+     * effects stay aligned. */
     const int glyph_row0 = start_scan % fh;
 
     /* Tick per-frame counters once per full frame (scanline 0 = new frame). */
@@ -613,10 +550,9 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
 
     const int band_y0 = start_scan;
     if (clipped && (band_y0 >= wv1 || band_y0 + num_scans <= wv0)) {
-        /* Band fully hidden: black + any edge lines that fall in it.
-         * Invalidate the row cache: a later band of this row (or of a frame
-         * long after — the uint8 frame stamp can wrap) must never reuse a
-         * cache this path skipped rebuilding. */
+        /* Band fully hidden: black + any edge lines. Invalidate the row
+         * cache — a later band must never reuse a cache this path skipped
+         * rebuilding. */
         s_cc_row = -1;
         uint32_t *p = (uint32_t *)dst;
         int words = n_bytes >> 2;
@@ -632,10 +568,9 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         return;
     }
 
-    /* Build the per-column cache for this character row. With sub-row bands
-     * only the row's first band rebuilds; later bands reuse the cache (the
-     * DMA feeds bands strictly in order). scan_on is captured at build time
-     * so the cache fill and the scanline loop always agree. */
+    /* Per-column cache: only the row's first band rebuilds, later bands
+     * reuse it (DMA feeds bands strictly in order). scan_on is captured at
+     * build time so the fill and the scanline loop always agree. */
     const int scan_on = g_fx_cfg.scanlines ? 1 : 0;
     if (glyph_row0 == 0 || s_cc_row != char_row || s_cc_scan_on != scan_on
             || s_cc_frame != g_fx_frame) {
@@ -650,22 +585,12 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
      * Zero for 8x16/10x20; 4 words (8 px) for 12x24 (66*12 = 792 < 800). */
     const int margin_words = (DISPLAY_WIDTH - ncols * fw) >> 1;
 
-    /* ------------------------------------------------------------------
-     * Render scanlines.
-     * glyph scanline index == glyph_row0 + scanline index within the band
-     * (bands never straddle a character row).
-     *
-     * Inner loop: two adjacent columns per iteration → 2×FONT_WIDTH pixels
-     * → 2×COL_WORDS uint32_t writes, naturally aligned.
-     * ------------------------------------------------------------------ */
     color_t *dst_base = dst;
 
-    /* One whole band at a FIXED cell width. Instantiated once per enabled
-     * size and selected ONCE per band by the switch below, so the per-pixel
-     * path is byte-for-byte what a compile-time-sized build produced: the
-     * width, the glyph row type and the store count are all constants inside.
-     * Only this loop is duplicated — the cache build, clipping, underline,
-     * cursor and bell code around it stays single-copy. */
+    /* One whole band at a FIXED cell width, instantiated per enabled size
+     * and selected ONCE per band: width, glyph row type and store count are
+     * constants inside, so the per-pixel path matches a compile-time-sized
+     * build. Only this loop is duplicated. */
 #define SCAN_BAND(W, ROW_T, EMIT)                                              \
     do {                                                                       \
         enum { CW = (W) / 2 };                                                 \
@@ -721,12 +646,8 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
     }
 #undef SCAN_BAND
 
-    /* ------------------------------------------------------------------
-     * Underline post-pass — force fg on the last two scanlines of the
-     * character CELL (not the band) for any underlined column. With
-     * sub-row bands those scanlines live in the row's last band only.
-     * Touches only flagged columns, off the hot loop.
-     * ------------------------------------------------------------------ */
+    /* Underline post-pass — force fg on the last two scanlines of the CELL
+     * (they live in the row's last band). Touches only flagged columns. */
     {
         int ul_first = (fh - 2) - glyph_row0;  /* band-relative */
         if (ul_first < 0) ul_first = 0;
@@ -746,14 +667,10 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
     }
 
 #if OVERLAY_DIM_DITHER
-    /* ------------------------------------------------------------------
-     * Dithered dim post-pass — for overlay DIM (scrim) columns, black out a
-     * checkerboard of pixels, leaving the rest at full brightness. FONT_WIDTH
-     * and FONT_HEIGHT are even, so the pattern stays screen-aligned and the
-     * parity reduces to the band scanline (n): even n blacks the odd pixels
-     * (high half of each packed pair), odd n blacks the even pixels. Cheap:
-     * 4 word-ANDs per scanline, only on flagged columns.
-     * ------------------------------------------------------------------ */
+    /* Dithered dim post-pass — black out a checkerboard on scrim columns.
+     * Cell sizes are even, so the parity reduces to the band scanline:
+     * even n blacks the odd pixels (high half of each pair), odd n the
+     * even ones. */
     for (int c = 0; c < ncols; c++) {
         if (!s_cc_dim[c]) continue;
         for (int n = 0; n < num_scans; n++) {
@@ -765,15 +682,10 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
     }
 #endif
 
-    /* ------------------------------------------------------------------
-     * Cursor overlay — XOR every pixel in the cursor region with
-     * 0xFFFFFFFF, inverting all bits and guaranteeing contrast.
-     * FONT_WIDTH px × 2 B = COL_WORDS × uint32_t per scanline.
-     * Alignment is guaranteed: dst_base is 4-byte aligned,
-     * DISPLAY_WIDTH×2 B = 1600 B and cx×FONT_WIDTH×2 B are both ×4.
-     * The underscore lives on the last two scanlines of the CELL; a block
-     * cursor spans every band of its row.
-     * ------------------------------------------------------------------ */
+    /* Cursor overlay — XOR the cursor region, guaranteeing contrast. The
+     * underscore lives on the last two scanlines of the CELL; a block
+     * cursor spans every band of its row. Word alignment is guaranteed
+     * (row stride and cell offsets are multiples of 4 bytes). */
     if (s_cursor_mode != CURSOR_NONE && s_cursor_visible &&
             s_cursor_y == char_row && s_cursor_x >= 0 && s_cursor_x < ncols) {
 
@@ -791,18 +703,11 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         }
     }
 
-    /* ------------------------------------------------------------------
-     * CRT line wobble — a single ~16-scanline S-wiggle sweeps down the
-     * screen (~2.5 lines/frame → a visible pass in ~5 s, then a short
-     * off-screen rest). The vertical envelope is one FULL signed sine:
-     * the top half bulges one way, the bottom half the other, crossing
-     * zero smoothly in the middle. Bulge depth additionally follows the
-     * temporal sine (one cycle per sweep, from the LUT). At most 16
-     * shifted lines per FRAME — negligible ISR cost. The shift is
-     * in-place WITHIN the line (an offset render origin would spill
-     * across line/band boundaries — the sync-tear bounce-buffer lesson);
-     * 1-px granularity via uint16 copies, vacated edge pixels go black.
-     * ------------------------------------------------------------------ */
+    /* CRT line wobble — a ~16-scanline S-wiggle sweeps down the screen;
+     * the vertical envelope is one full signed sine and bulge depth follows
+     * a temporal sine from the LUT. At most 16 shifted lines per FRAME.
+     * The shift is in-place WITHIN the line — an offset render origin
+     * would spill across band boundaries (the sync-tear lesson). */
     if (g_fx_cfg.wobble) {
         /* Vertical envelope: sin(2*pi * (k+1) / 17) * 127, k = 0..15 —
          * a full period: bulge right, then bulge left (for positive dx). */
@@ -841,11 +746,8 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         }
     }
 
-    /* ------------------------------------------------------------------
-     * Signal-loss static burst — replace a few pseudo-randomly chosen
-     * scanlines of this band with grayscale snow. Transient (frame-
-     * bounded) by design: this is the one per-pixel-ish pass allowed.
-     * ------------------------------------------------------------------ */
+    /* Signal-loss static burst — grayscale snow on a few pseudo-random
+     * scanlines; transient by design (the one per-pixel-ish pass allowed). */
     if (g_fx_static_left > 0 && num_scans > 0) {
         int nl = g_fx_cfg.static_lines;
         if (nl > 4) nl = 4;
@@ -870,10 +772,8 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
         }
     }
 
-    /* ------------------------------------------------------------------
-     * Wipe / collapse post-pass for bands straddling the visible window:
-     * black out hidden scanlines, then draw the bright edge lines.
-     * ------------------------------------------------------------------ */
+    /* Wipe / collapse post-pass for bands straddling the visible window:
+     * black out hidden scanlines, then draw the bright edge lines. */
     if (clipped) {
         const uint32_t e2 = (uint32_t)ecol | ((uint32_t)ecol << 16);
         for (int n = 0; n < num_scans; n++) {

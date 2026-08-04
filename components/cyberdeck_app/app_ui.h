@@ -1,9 +1,7 @@
 /*
- * app_ui.h — overlay TUI primitives for the shell (internal to cyberdeck_app).
- *
- * All shell UI is drawn into the display overlay layer, composited by the
- * render core above the vterm cell buffer. The vterm buffer belongs to the
- * SSH session (and boot splash) alone — shell chrome never corrupts it.
+ * app_ui.h — overlay TUI primitives (internal to cyberdeck_app). All shell
+ * UI draws into the display overlay layer; the vterm cell buffer belongs to
+ * the SSH session alone.
  */
 
 #pragma once
@@ -70,17 +68,15 @@ void ui_no_cursor(void);
 /** Set the two overlay colors (all cells share them; INVERSE swaps). */
 void ui_colors(color_t fg, color_t bg);
 
-/** Set the current accent color (OVERLAY_COL_*) for subsequent draws. Applies
- *  to every ui_putch/puts/printf/tile until changed; reset to default each
- *  ui_clear()/ui_dim(). */
+/** Set the accent color (OVERLAY_COL_*) for subsequent draws; reset to
+ *  default by ui_clear()/ui_dim(). */
 void ui_pen(uint8_t color);
 
 /** Clear the whole overlay to transparent. */
 void ui_clear(void);
 
-/** Transparent DIM scrim: fades the session behind it (50% halving by default;
- *  optionally a dithered checkerboard via OVERLAY_DIM_DITHER). Draw opaque
- *  chrome (tiles) on top afterwards. For modals over a session. */
+/** Transparent DIM scrim fading the session behind it; draw opaque chrome
+ *  on top afterwards. For modals over a session. */
 void ui_dim(void);
 
 /** Put one codepoint; attrs = 0 or OVERLAY_ATTR_INVERSE. */
@@ -102,31 +98,21 @@ void ui_fill(int col, int row, int w, int h, uint8_t attrs);
 /** Box with border and title centered in the top rule. */
 void ui_box(int col, int row, int w, int h, const char *title);
 
-/** Chip: optional left cap, " text " INVERSE, optional right cap (0 = none),
- *  all in the current pen. Caps draw non-INVERSE so they read as the chip
- *  tapering into the background. @p attrs is OR-ed into the text cells
- *  (OVERLAY_ATTR_BOLD for title chips; 0 for plain). Returns the column
- *  after the chip. */
+/** Chip: optional caps around " text " INVERSE, in the current pen.
+ *  Returns the column after the chip. */
 int ui_chip(int col, int row, uint16_t left_cp, const char *text,
             uint16_t right_cp, uint8_t attrs);
 
-/** Draw a finger-sized tile: a solid bar in the current pen color (DOS-style
- *  button — always a colored background) with a bold title line and an
- *  optional regular-weight body line, vertically centered. Selection washes
- *  the bar toward white (OVERLAY_ATTR_BRIGHT pastel glow); text stays dark.
- *  Titles truncate; a too-long body bounce-scrolls per character while the
- *  tile is selected (driven by the ui_frame() clock). */
+/** Finger-sized tile: a solid bar in the pen color with a bold title and an
+ *  optional body line. Selection washes the bar pastel; an overlong body
+ *  bounce-scrolls while selected. */
 void ui_tile(int col, int row, int w, int h,
              const char *title, const char *body, bool selected);
 
-/** Feed the shell's ~10 fps animation frame counter (drives the selected-tile
- *  body marquee). Call once per tick before rendering. */
+/** Feed the ~10 fps animation frame counter (drives the tile marquee). */
 void ui_frame(uint32_t frame);
 
-/** Single-line text-entry field: a bracketed box @p width cells wide showing
- *  @p text with a block cursor at @p cursor when @p focused. Horizontally
- *  scrolls to keep the cursor in view for text longer than the box. When
- *  @p mask, every character renders as '*' (passwords). Uses the current pen
- *  for the frame; focused fields invert the interior. */
+/** Single-line text-entry field with a block cursor at @p cursor when
+ *  @p focused; scrolls to keep the cursor visible. @p mask renders '*'. */
 void ui_field(int col, int row, int width, const char *text,
               int cursor, bool focused, bool mask);

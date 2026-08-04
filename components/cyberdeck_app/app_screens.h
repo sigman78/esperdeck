@@ -1,10 +1,9 @@
 /*
  * app_screens.h — per-screen module entry points (internal).
  *
- * Each app.state has a <screen>_tick(now) driven from cyberdeck_app_tick()
- * and a <screen>_input(ev, k, ch, now) driven from
- * cyberdeck_app_handle_input() after key decode. Cross-screen jumps go
- * through the enter/open functions.
+ * Each app.state has a <screen>_tick(now) and <screen>_input(ev, k, ch, now)
+ * pair dispatched by the core; cross-screen jumps go through the enter/open
+ * functions below.
  */
 
 #pragma once
@@ -13,7 +12,8 @@
 #include "ssh_import.h"     /* ssh_import_mode_t */
 
 /* ---- boot (app_boot.c) ---- */
-void boot_advance_tagline(void);        /* next splash tagline (init-time) */
+/** Arm the splash: state, hold time, next tagline. */
+void boot_enter(uint64_t now);
 void boot_tick(uint64_t now);
 void boot_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 
@@ -28,7 +28,12 @@ void poweroff_tick(uint64_t now);
 void poweroff_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 
 /* ---- screensaver (app_saver.c) ---- */
-void render_saver(void);
+/** Count activity: restart the idle timer, rain off. */
+void saver_reset(uint64_t now);
+/** Feed an input event; true = it woke the rain and must be swallowed. */
+bool saver_on_input(uint64_t now);
+/** Run the rain when HOME is idle; true = this tick was handled. */
+bool saver_tick_home(uint64_t now);
 
 /* ---- pairing (app_pairing.c) ---- */
 void enter_pairing(uint64_t now);
@@ -42,9 +47,10 @@ void hostkey_tick(uint64_t now);
 void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 
 /* ---- connect + session (app_connect.c) ---- */
-/** Arm a connect to profile @p idx (snapshots it into app.active). */
+/** Arm a connect to profile @p idx (snapshots it into app.conn.active). */
 void start_connect(int idx, uint64_t not_before, uint64_t now);
-void render_connecting(const char *msg, uint64_t now);
+/** Re-arm a connect to the active snapshot, pinning @p fp (hostkey trust). */
+void connect_arm_pinned(const char *fp, uint64_t now);
 /** Session died and we are NOT auto-reconnecting: NO CARRIER + collapse. */
 void session_dropped(uint64_t now);
 void connecting_tick(uint64_t now);
@@ -61,8 +67,12 @@ void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
 /* ---- menu (app_menu.c) ---- */
 /** Open the in-session root menu (F12 / long-press). */
 void menu_open(uint64_t now);
+/** Open the config hub directly from HOME (no session behind it). */
+void menu_open_config(void);
 /** Switch to menu screen @p sc (menu_screen_t), resetting selection/arm. */
 void menu_goto(int sc);
+/** Discard a grabbed-but-not-dropped reorder (session drop safety). */
+void menu_abort_reorder(void);
 /** Post an action-feedback line under the menu tiles (0 ms = sticky). */
 void menu_note(uint64_t now, uint32_t ms, bool live_wifi, const char *text);
 void menu_tick(uint64_t now);

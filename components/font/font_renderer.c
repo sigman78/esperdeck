@@ -252,10 +252,12 @@ IRAM_ATTR const void *font_get_glyph(uint16_t cp)
 }
 
 /**
- * Get the BOLD glyph — NULL when no stored bold form exists (identical to
- * normal, outside subset A, or bold disabled); callers use the normal glyph.
+ * Get the BOLD glyph. The bold face is a sparse subset of the regular one;
+ * a codepoint without a stored bold form (identical to normal, outside the
+ * subset, or bold disabled) falls back to the regular glyph.
  */
 IRAM_ATTR const void *font_get_glyph_bold(uint16_t cp)
 {
-    return lookup(s_bold_ranges, s_num_bold, cp);
+    const void *g = lookup(s_bold_ranges, s_num_bold, cp);
+    return g ? g : font_get_glyph(cp);
 }

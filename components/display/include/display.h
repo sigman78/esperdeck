@@ -19,29 +19,21 @@
 #define DISPLAY_HEIGHT  480
 
 /*
- * Bounce band height: one character row for the 8x16 font (the original
- * layout), HALF a character row for taller fonts — esp_lcd allocates two
- * bounce buffers in internal DMA RAM, and full 20/24-scanline bands would
- * cost up to +25.6 KB of scarce internal DRAM vs the 8x16 baseline.
- * The renderer supports any band height that is even, divides the cell
- * height and divides DISPLAY_HEIGHT (bands never straddle a character row);
- * each per-size renderer variant static-asserts its own case.
- *
- * Runtime, because the font size is chosen at boot — but fixed from then on:
- * esp_lcd captures the bounce geometry when the panel comes up, which is why
- * changing the size needs a reboot.
+ * Bounce band: one character row at 8x16, HALF a row for taller fonts —
+ * full 20/24-scanline bounce buffers would cost up to +25.6 KB of scarce
+ * internal DMA RAM. Runtime because the font size is chosen at boot, but
+ * fixed after: esp_lcd captures the geometry at panel init (size changes
+ * need a reboot).
  */
 int display_band_height(void);   /* scanlines in one bounce band */
 int display_bounce_px(void);     /* DISPLAY_WIDTH * display_band_height() */
 
-/* Publish the active cell size to the renderer. Call once after font_init()
- * and BEFORE the panel is brought up — esp_lcd captures the bounce geometry
- * at panel init, which is why a size change needs a reboot. Rejects a size
- * that would not tile the panel, keeping the previous geometry. */
+/* Publish the active cell size to the renderer. Call after font_init() and
+ * BEFORE the panel comes up. Rejects a size that would not tile the panel. */
 void display_render_set_font(int width, int height);
 
-/* Upper bound over every selectable size — sizes anything that must be
- * statically allocated before the font is known. */
+/* Upper bound over every selectable size — sizes static allocations made
+ * before the font is known. */
 #define BOUNCE_BUFFER_MAX_PX  (DISPLAY_WIDTH * FONT_MAX_BAND)
 
 /* Character grid implied by the panel and the ACTIVE font.
@@ -63,14 +55,9 @@ typedef uint16_t color_t;
 #define COLOR_CYAN      RGB565(0, 255, 255)
 #define COLOR_MAGENTA   RGB565(255, 0, 255)
 
-/*
- * Terminal cell — defined here (not in terminal.h) so the display ISR can
- * read cell data without creating a circular dependency.
- *
- * fg_color / bg_color store pre-converted RGB565 values so the renderer can
- * use them directly without a per-cell palette lookup.  Both terminal.c and
- * vterm.c call display_ansi_to_rgb565() when writing cells.
- */
+/* Terminal cell — defined here so the display ISR can read cell data
+ * without a circular dependency. Colors are pre-converted RGB565, so the
+ * renderer needs no per-cell palette lookup. */
 typedef struct {
     uint16_t cp;        // Unicode codepoint (BMP, U+0000..U+FFFF)
     uint16_t fg_color;  // Foreground RGB565
@@ -114,28 +101,16 @@ esp_err_t display_init(void);
 esp_lcd_panel_handle_t display_get_panel(void);
 #endif /* BUILD_SIMULATOR */
 
-/**
- * Overlay cell — a second compositing layer rendered on top of the primary
- * terminal buffer.  cp == 0 means "transparent" (primary cell shows through).
- * All overlay cells share the same fg/bg colors set via
- * display_set_overlay_colors(); OVERLAY_ATTR_INVERSE swaps them per cell
- * (menu selection highlight).
- *
- * OVERLAY_ATTR_DIM on a TRANSPARENT cell (cp == 0) is a scrim: the primary
- * terminal still shows through, but at ~50% brightness — used to dim the live
- * session behind a modal so the modal pops.
- *
- * OVERLAY_ATTR_BRIGHT is the focus style for solid-bar buttons (DOS TUI
- * style — focus is typographic, not structural): the cell's background is
- * washed 50% toward white, so a focused accent bar "lights up" to a pastel
- * of its own hue while the dark label gains contrast. Applied after INVERSE
- * (meant for bars; on a non-inverse cell it whitens the cell background).
- *
- * OVERLAY_ATTR_BOLD renders the cell with the real bold face when the font
- * carries one for that codepoint (sparse subset A — ASCII, Latin-1/Ext-A,
- * Cyrillic); outside the subset, or with bold glyphs compiled out, it
- * silently falls back to the normal glyph. Purely a glyph swap: colors and
- * the bold-pop terminal effect are untouched.
+/*
+ * Overlay cell — a second compositing layer above the terminal buffer;
+ * cp == 0 is transparent. All cells share the fg/bg pair set via
+ * display_set_overlay_colors().
+ *   INVERSE  swaps fg/bg per cell (solid bars, selection).
+ *   DIM      on a transparent cell = scrim: the terminal shows through at
+ *            ~50% brightness (modal backdrop).
+ *   BRIGHT   focus wash: bg 50% toward white — a focused bar turns pastel.
+ *   BOLD     use the real bold face; falls back to the normal glyph when
+ *            no bold form exists. Pure glyph swap, colors untouched.
  */
 #define OVERLAY_ATTR_INVERSE  (1 << 0)
 #define OVERLAY_ATTR_DIM      (1 << 1)
@@ -172,20 +147,11 @@ void display_set_overlay_colors(color_t fg, color_t bg);
 /** Query the currently registered terminal buffer dimensions (0,0 if not set). */
 void display_get_text_size(int *cols, int *rows);
 
-/** Trigger the visual bell: a brief decaying vertical screen shake (a speaker-
- *  less substitute for the terminal BEL). Safe to call from any task. */
+/** Trigger the visual bell (a speakerless BEL). Safe from any task. */
 void display_bell(void);
 
-/**
- * Register the terminal cell buffer so the display ISR can render from it.
- *
- * Call once after vterm_init(). The pointer must remain valid for the
- * lifetime of the display (never free the cell buffer).
- *
- * @param buf   Pointer to cols*rows terminal_cell_t array (must be in DRAM)
- * @param cols  Number of character columns
- * @param rows  Number of character rows
- */
+/** Register the terminal cell buffer (cols*rows, DRAM) for the ISR to
+ *  render from. Call once after vterm_init(); never free the buffer. */
 void display_set_text_buffer(const terminal_cell_t *buf, int cols, int rows);
 
 /**
@@ -200,25 +166,14 @@ esp_err_t display_set_backlight(uint8_t brightness);
 void display_set_cursor(int x, int y, cursor_mode_t mode);
 
 #ifdef BUILD_SIMULATOR
-/**
- * Render one full frame to the SDL2 window (simulator only).
- * Call once per iteration of the main event loop.
- */
+/** Render one full frame to the SDL2 window; call once per event loop. */
 void display_render_frame(void);
 
-/**
- * Toggle the SDL2 window between 1× and 2× scale (simulator only).
- * The texture resolution stays fixed at DISPLAY_WIDTH × DISPLAY_HEIGHT;
- * SDL scales it to fill the window.
- */
+/** Toggle the SDL2 window between 1× and 2× scale. */
 void display_toggle_scale(void);
 
-/**
- * Map window coordinates (SDL mouse events) to framebuffer coordinates
- * (simulator only). Needed because the framebuffer texture is stretched to
- * the current window size (scale toggle / manual resize). Results are
- * clamped to the framebuffer bounds.
- */
+/** Map window coordinates (SDL mouse) to framebuffer coordinates — the
+ *  texture is stretched to the window size; results are clamped. */
 void display_window_to_fb(int wx, int wy, uint16_t *fx, uint16_t *fy);
 #endif /* BUILD_SIMULATOR */
 

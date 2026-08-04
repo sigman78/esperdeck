@@ -1,8 +1,6 @@
 /*
- * app_boot.c — the boot splash (ST_BOOT).
- *
- * A big CYBER*DECK block logo wipes in while WiFi/BLE come up in the
- * background; one tagline per boot, sequenced by an RTC-resident counter.
+ * app_boot.c — the boot splash (ST_BOOT): a block CYBER*DECK logo wipes in
+ * while WiFi/BLE come up; one tagline per boot.
  */
 
 #include "app_internal.h"
@@ -34,15 +32,13 @@ static const char *boot_glyph(char c)
 }
 
 /* Boot counter in RTC memory: survives soft resets and starts random at
- * power-on, so successive boots walk through the taglines without needing
- * NVS or an RNG this early. (Plain static in the simulator.) */
+ * power-on, so boots walk the taglines without NVS or an RNG this early. */
 #ifndef BUILD_SIMULATOR
 static RTC_NOINIT_ATTR uint32_t s_boot_seq;
 #else
 static uint32_t s_boot_seq;
 #endif
 
-/* One tagline per boot, stable for the whole splash. */
 static const char *const BOOT_TAGLINES[] = {
     "SPINNING UP THE ICE",
     "WAKING THE WETWARE",
@@ -53,9 +49,8 @@ static const char *const BOOT_TAGLINES[] = {
 };
 #define TAGLINE_COUNT (sizeof(BOOT_TAGLINES) / sizeof(BOOT_TAGLINES[0]))
 
-/* Boot splash: a big CYBER*DECK block logo that wipes in left→right over ~80%
- * of the boot delay (a bright white scan edge leads the reveal), then holds.
- * Runs from the ST_BOOT tick while WiFi/BLE come up in the background. */
+/* Logo wipes in left→right over ~80% of the boot delay behind a bright
+ * white scan edge, then holds with the * twinkling. */
 static void render_boot(uint64_t now)
 {
     static const char LOGO[] = "CYBER*DECK";
@@ -65,7 +60,7 @@ static void render_boot(uint64_t now)
     int x0 = (ui_cols() - total_w) / 2;
     int y0 = ui_rows() / 4;
 
-    uint64_t start     = app.boot_until - app.cfg.boot_delay_ms;
+    uint64_t start     = app.boot.until - app.cfg.boot_delay_ms;
     uint32_t reveal_ms = app.cfg.boot_delay_ms * 4 / 5;
     uint32_t el        = (uint32_t)(now - start);
     int reveal = reveal_ms ? (int)((uint64_t)el * total_w / reveal_ms) : total_w;
@@ -78,8 +73,8 @@ static void render_boot(uint64_t now)
     bool done = (reveal == total_w);
     for (int i = 0; i < n; i++) {
         char ch = LOGO[i];
-        /* Once the wipe lands, the * twinkles: it swaps between the star
-         * and an X-burst every ~0.8 s, flashing white on the swap frame. */
+        /* Landed * twinkles: star/X-burst swap every ~0.8 s, white flash on
+         * the swap frame. */
         bool star = (ch == '*');
         if (star && done && ((app.anim_frame >> 3) & 1)) ch = '+';
         bool flash = star && done && (app.anim_frame & 7) == 0;
@@ -109,14 +104,16 @@ static void render_boot(uint64_t now)
     ui_present();
 }
 
-void boot_advance_tagline(void)
+void boot_enter(uint64_t now)
 {
     s_boot_seq++;   /* next tagline (RTC-resident, see decl above) */
+    app.boot.until = now + app.cfg.boot_delay_ms;
+    app.state    = ST_BOOT;
 }
 
 void boot_tick(uint64_t now)
 {
-    if (now >= app.boot_until) {
+    if (now >= app.boot.until) {
         display_fx_wipe();   /* raster-reveal HOME once the splash ends */
         enter_home(now);
         return;
@@ -131,7 +128,7 @@ void boot_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
 {
     (void)ch;
     /* Any key OR touch skips the splash — touch-only decks have no
-     * keyboard yet, so a bare key check locked them out of skipping. */
+     * keyboard yet. */
     if (k != K_NONE || ev->type == CYBERDECK_INPUT_TAP ||
         ev->type == CYBERDECK_INPUT_LONG_PRESS)
         enter_home(now);

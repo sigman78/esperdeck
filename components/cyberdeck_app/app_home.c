@@ -6,7 +6,6 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_widgets.h"
-#include "app_menu_defs.h"   /* Configuration tile opens MS_CONFIG */
 #include "display_fx.h"
 #include "wifi_manager.h"
 
@@ -17,25 +16,29 @@
 
 static const char *TAG = "app_home";
 
+/* Trailing HOME tiles after the profiles: "New profile" only as a first-run
+ * shortcut, "Pair keyboard" only while nothing is bonded, Configuration
+ * always last. Order resolved by home_extras(). */
+typedef enum { HX_NEW, HX_PAIR, HX_CONFIG } home_extra_t;
+#define HOME_EXTRA_MAX 3
+
 /* Resolve the trailing HOME tiles for the current state, in display order.
  * Returns the count; @p out must hold at least HOME_EXTRA_MAX entries. */
 static int home_extras(home_extra_t *out)
 {
     int n = 0;
-    if (app.stored_count == 0)            out[n++] = HX_NEW;   /* first-run help */
-    if (app.cfg.ble && !app.kbd_bonded)     out[n++] = HX_PAIR;  /* not yet bonded */
+    if (app.stored_count == 0)          out[n++] = HX_NEW;   /* first-run help */
+    if (app.cfg.ble && !app.home.kbd_bonded)   out[n++] = HX_PAIR;  /* not yet bonded */
     out[n++] = HX_CONFIG;                                    /* always, last   */
     return n;
 }
 
-/* Little ● / ○ LED then a label + value, cyberpunk status line.
- * Returns the column just past the value text (the "%-4s " puts the value
- * at column 9), so callers can append glyphs without layout knowledge. */
+/* Little ● / ○ LED then a label + value; returns the column just past the
+ * value text so callers can append glyphs without layout knowledge. */
 static int draw_status_led(int row, bool on, const char *label, const char *value)
 {
-    /* A live link gets a heartbeat: the dot contracts to ∙ (U+2219, a
-     * genuinely smaller bitmap — U+2022 is byte-identical to ● in this
-     * font!) twice per ~1.6 s cycle. Off stays a steady hollow ○. */
+    /* Live-link heartbeat: the dot contracts to ∙ (U+2219 — U+2022 is
+     * byte-identical to ● in this font!) twice per ~1.6 s cycle. */
     uint32_t ph = app.anim_frame & 15;
     uint16_t cp = !on ? UI_LED_OFF
                 : (ph == 0 || ph == 2) ? 0x2219 : UI_LED_ON;
@@ -65,9 +68,8 @@ void render_home(void)
         rssi       = wifi_manager_get_rssi();
     }
 
-    /* SSID clamped to a fixed field so the dBm suffix always fits the buffer
-     * and the whole line stays clear of the right-aligned CYBERDECK wordmark
-     * (which starts at cols-10). */
+    /* SSID clamped to a fixed field so the dBm suffix always fits and the
+     * line stays clear of the right-aligned wordmark (starts at cols-10). */
     int sw = ui_cols() >= 97 ? 16 : 10;
     char net[48];
     snprintf(net, sizeof(net), "%-*.*s %s", sw, sw,
@@ -79,8 +81,7 @@ void render_home(void)
     }
     int netend = draw_status_led(0, wifi_manager_is_connected(), "NET", net);
     if (rssi < 0) {
-        /* 4-step signal bar after the text (glyphs can't ride in the
-         * Latin-1 string); pen color tracks link quality. */
+        /* 4-step signal bar after the text; pen color tracks link quality. */
         uint16_t bar = rssi > -55 ? UI_BLOCK : rssi > -67 ? 0x2586
                      : rssi > -78 ? 0x2584  : 0x2582;
         ui_pen(rssi > -67 ? OVERLAY_COL_GREEN
@@ -95,8 +96,7 @@ void render_home(void)
     snprintf(kbdinfo, sizeof(kbdinfo), "%-11s %s", ble_status_str(), kn);
     draw_status_led(1, kbd, "KBD", kbdinfo);
 
-    /* All systems go: a small amber ☺ in the margin when net + keyboard
-     * are both up. Blink-and-you-miss-it personality, zero clutter. */
+    /* All systems go: a small amber ☺ in the margin when net + keyboard up. */
     if (wifi_manager_is_connected() && kbd) {
         ui_pen(OVERLAY_COL_AMBER);
         ui_putch(0, 1, 0x263A, 0);
@@ -126,21 +126,19 @@ void render_home(void)
         ui_puts(ui_cols() - (int)strlen(clk) - 1, 2, clk, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    /* Tiles: one per profile, then a conditional trailing set (New profile only
-     * as a first-run shortcut, Pair keyboard only when none is bonded, and
-     * Configuration always). See home_extras(). */
+    /* Tiles: one per profile, then the trailing extras (see home_extras). */
     home_extra_t xt[HOME_EXTRA_MAX];
     int nx = home_extras(xt);
     tilegrid_t g = picker_grid(app.profile_count + nx);
     app.grid = g;
-    if (app.sel >= g.count) app.sel = g.count ? g.count - 1 : 0;
+    if (app.home.sel >= g.count) app.home.sel = g.count ? g.count - 1 : 0;
     if (app.profile_count + nx > g.ncols * g.nrows)
         ESP_LOGW(TAG, "%d profiles exceed one page; showing first %d",
                  app.profile_count, g.count - nx);
 
     for (int i = 0; i < g.count; i++) {
         int cx = tile_x(&g, i), cy = tile_y(&g, i);
-        bool sel = (i == app.sel);
+        bool sel = (i == app.home.sel);
         if (i < app.profile_count) {
             const conn_profile_t *p = &app.profiles[i];
             char body[48];
@@ -170,8 +168,7 @@ void render_home(void)
     }
 
     /* Vacant tile sockets get a whisper of CRT static: a few dim braille
-     * specks per empty slot, re-hashed every ~0.8 s — unpowered bays on a
-     * deck that is very much alive. */
+     * specks per empty slot, re-hashed every ~0.8 s. */
     ui_pen(OVERLAY_COL_BLUE);
     for (int i = g.count; i < g.ncols * g.nrows; i++) {
         for (int k = 0; k < 5; k++) {
@@ -185,18 +182,15 @@ void render_home(void)
     ui_pen(OVERLAY_COL_DEFAULT);
 
     if (app.profile_count == 0) {
-        /* Below the two tiles that still render (pair + config) — row 5 is
-         * their title row and the hint used to punch right through it. */
+        /* Below the two tiles that still render (pair + config). */
         ui_pen(OVERLAY_COL_AMBER);
         ui_puts(3, g.y0 + g.th + 1,
                 "no profiles - edit profiles.ini in storage", 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    /* Footer: touch + keyboard legend (the B/R/W shortcuts were previously
-     * undiscoverable). Pairing hints only appear when the build has BLE —
-     * advertising a silent no-op reads as broken input. An active toast owns
-     * the right edge; draw_footer_lim clips the hint clear of it. */
+    /* Footer legend; pairing hints only when the build has BLE. An active
+     * toast owns the right edge — draw_footer_lim clips clear of it. */
     const char *hint = app.cfg.ble
         ? "tap\xB7tap connect \xB7 hold pair \xB7 B pair \xB7 R reload \xB7 W wifi"
         : "tap\xB7tap connect \xB7 R reload \xB7 W wifi";
@@ -217,22 +211,12 @@ void render_home(void)
 void enter_home(uint64_t now)
 {
     app.state = ST_HOME;
-    app.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
-    app.next_home_refresh = 0;
+    app.home.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
+    app.home.next_refresh = 0;
     /* Arriving on HOME counts as activity: a session drop or provisioning
-     * result must show its toast for the full lifetime — the rain waiting
-     * out a stale idle timer would paint over it on the next tick. */
-    app.last_input = now;
-    app.saver_on   = false;
+     * toast must live its full lifetime before the rain paints over it. */
+    saver_reset(now);
     render_home();
-}
-
-/* Open the config hub directly from HOME (no session behind it). */
-static void home_open_config(void)
-{
-    app.menu_from_home = true;
-    app.state          = ST_MENU;
-    menu_goto(MS_CONFIG);
 }
 
 /* If HOME tile @p slot is a trailing extra, return its home_extra_t, else -1. */
@@ -249,18 +233,16 @@ static int home_extra_kind(int slot)
 static bool home_activate_extra(int slot, uint64_t now)
 {
     switch (home_extra_kind(slot)) {
-    case HX_NEW:    enter_profile(now, -1);            return true;
+    case HX_NEW:    enter_profile(now, -1);              return true;
     case HX_PAIR:   if (app.cfg.ble) enter_pairing(now); return true;
-    case HX_CONFIG: home_open_config();                return true;
+    case HX_CONFIG: menu_open_config();                  return true;
     default:        return false;
     }
 }
 
-/* Session teardown with the CRT power-off done RIGHT: hide the overlay so
- * the collapse plays over the last live terminal frame (not over HOME/menu
- * chrome), and only enter HOME once the animation has finished. Toasts set
- * by the caller survive — they are state, rendered when HOME appears.
- * With the collapse effect disabled this is just enter_home(). */
+/* Session teardown: hide the overlay so the CRT collapse plays over the last
+ * live terminal frame, and enter HOME only once it finishes. Toasts set by
+ * the caller survive — they are state, rendered when HOME appears. */
 void enter_home_after_collapse(uint64_t now)
 {
     display_fx_cfg_t c;
@@ -272,8 +254,8 @@ void enter_home_after_collapse(uint64_t now)
     ui_hide();
     ui_no_cursor();
     display_fx_collapse();
-    app.state          = ST_POWEROFF;
-    app.poweroff_until = now + (uint64_t)c.collapse_frames * 17 + 80;
+    app.state        = ST_POWEROFF;
+    app.home.poweroff_until = now + (uint64_t)c.collapse_frames * 17 + 80;
 }
 
 void home_tick(uint64_t now)
@@ -281,21 +263,9 @@ void home_tick(uint64_t now)
     /* Expire toasts regardless of the saver, so a wake never flashes
      * a long-dead message. */
     if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
-    if (now - app.last_input > SAVER_IDLE_MS) {
-        if (now >= app.next_anim) {          /* idle: let it rain */
-            app.next_anim = now + ANIM_PERIOD_MS;
-            if (!app.saver_on) {
-                app.saver_on    = true;      /* input handling keys off
-                                              * what is actually on screen */
-                app.saver_since = now;
-            }
-            render_saver();
-        }
-        return;
-    }
-    app.saver_on = false;
-    if (now >= app.next_home_refresh) {
-        app.next_home_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
+    if (saver_tick_home(now)) return;
+    if (now >= app.home.next_refresh) {
+        app.home.next_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
         render_home();   /* live wifi/ble status */
     }
 }
@@ -303,7 +273,7 @@ void home_tick(uint64_t now)
 void poweroff_tick(uint64_t now)
 {
     /* Collapse finished (or was cut short by input) — bring HOME up. */
-    if (now >= app.poweroff_until) enter_home(now);
+    if (now >= app.home.poweroff_until) enter_home(now);
 }
 
 void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
@@ -318,8 +288,8 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
         if (slot < 0) return;                    /* gutter/margin: ignore */
         if (home_activate_extra(slot, now)) {    /* New / Pair / Config */
             /* handled */
-        } else if (app.sel != slot) {            /* first tap: select + show */
-            app.sel = slot;
+        } else if (app.home.sel != slot) {              /* first tap: select + show */
+            app.home.sel = slot;
             render_home();
         } else if (!wifi_manager_is_connected()) {
             toast(now, "wifi not connected yet");
@@ -332,34 +302,33 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
     switch (k) {
     case K_UP: case K_DOWN: case K_LEFT: case K_RIGHT: {
         /* Konami progress rides along invisibly; EVERY arrow still
-         * navigates, including the one that completes the sequence.
-         * On mismatch, fall back honoring the overlapping UP-UP prefix
+         * navigates. On mismatch, honor the overlapping UP-UP prefix
          * (an extra leading UP must not break the code). */
         static const ui_key_t KONAMI[8] = {
             K_UP, K_UP, K_DOWN, K_DOWN, K_LEFT, K_RIGHT, K_LEFT, K_RIGHT,
         };
-        if (k == KONAMI[app.kon_idx])   app.kon_idx++;
-        else if (k == K_UP)             app.kon_idx = (app.kon_idx == 2) ? 2 : 1;
-        else                            app.kon_idx = 0;
-        if (app.kon_idx == 8) {
-            app.kon_idx = 0;
+        if (k == KONAMI[app.home.kon_idx])   app.home.kon_idx++;
+        else if (k == K_UP)           app.home.kon_idx = (app.home.kon_idx == 2) ? 2 : 1;
+        else                          app.home.kon_idx = 0;
+        if (app.home.kon_idx == 8) {
+            app.home.kon_idx = 0;
             display_bell();
             toast(now, "CHEAT ACCEPTED - RAM +30K (not really)");
         }
-        int ns = tile_nav(&app.grid, app.sel, k);
-        if (ns != app.sel) app.sel = ns;
+        int ns = tile_nav(&app.grid, app.home.sel, k);
+        if (ns != app.home.sel) app.home.sel = ns;
         render_home();
         break;
     }
     case K_ENTER:
-        if (home_activate_extra(app.sel, now)) {             /* New/Pair/Config */
+        if (home_activate_extra(app.home.sel, now)) {               /* New/Pair/Config */
             /* handled */
         } else if (app.profile_count > 0) {
             if (!wifi_manager_is_connected()) {
                 toast(now, "wifi not connected yet");
                 render_home();
             } else {
-                start_connect(app.sel, now, now);
+                start_connect(app.home.sel, now, now);
             }
         }
         break;

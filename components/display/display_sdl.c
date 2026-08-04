@@ -1,10 +1,6 @@
 /*
- * display_sdl.c — SDL2 display backend for the PC simulator.
- *
- * Implements the same display.h public API as lcd_driver.c, using SDL2
- * instead of the ESP32 RGB panel.  All pixel rendering is delegated to
- * display_render_chunk (display_render.c) — no rendering logic here.
- *
+ * display_sdl.c — SDL2 backend for the PC simulator: same display.h API as
+ * lcd_driver.c, all pixel rendering delegated to display_render_chunk.
  * Compiled only when BUILD_SIMULATOR is defined.
  */
 

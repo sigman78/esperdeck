@@ -124,7 +124,7 @@ existing `patches/` + `cmake/apply_patch.cmake` mechanism next to the RAM-diet p
    `mbedtls_platform_zeroize` on seed/ctx teardown.
 4. Update `ssh_client.h:26` comment; check flash/DRAM delta after build
    (expect ~+17 KB flash, negligible DRAM).
-5. Test on glass: (a) server with ed25519-only hostkey — KEX + TOFU pin;
+5. Test on hardware: (a) server with ed25519-only hostkey — KEX + TOFU pin;
    (b) ed25519 identity auth with and without `.pub` present;
    (c) passphrase-protected ed25519 key (aes256-ctr + bcrypt);
    (d) confirm curve25519-sha256 negotiates; (e) regression: RSA/ECDSA profiles.

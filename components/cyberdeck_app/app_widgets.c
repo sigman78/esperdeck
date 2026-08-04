@@ -84,10 +84,9 @@ const char *ble_status_str(void)
     }
 }
 
-/* Shared full-screen picker grid (HOME + PAIRING + menu pickers + EFFECTS):
- * 3 columns of solid tiles sized from the character grid, capped above the
- * footer. 100x30 → 3x4 of 30x5 (240x80 px ≈ 15 mm — a comfortable finger
- * target); 80x24 → 3x3 of 24x4 (80 px); 66x20 → 3x3 of 20x3 (72 px). */
+/* Shared full-screen picker grid: 3 columns of solid tiles sized from the
+ * character grid, capped above the footer (100x30 → 3x4, 80x24/66x20 → 3x3;
+ * every tile stays a comfortable finger target). */
 tilegrid_t picker_grid(int count)
 {
     tilegrid_t g = { .ncols = 3, .gx = 2, .gy = 1, .y0 = 4 };
@@ -102,8 +101,7 @@ tilegrid_t picker_grid(int count)
 }
 
 /* Animated scanner: a cyan ░▒▓█ "comet" sweeps left→right along an
- * otherwise empty row (the ═══ divider it used to ride is gone — the solid
- * tile bars carry the layout now). */
+ * otherwise empty row. */
 void draw_rule_scan(int row, uint32_t frame)
 {
     int W = ui_cols();
@@ -134,9 +132,8 @@ uint16_t braille_noise(uint32_t h)
     return (uint16_t)(0x2801 + h % 255u);
 }
 
-/* Wall-clock "HH:MM" once real time exists: wifi_manager's one-shot NTP
- * fetch on device (0 until synced — no RTC battery), host clock in the
- * simulator. TZ comes from CONFIG_CYBERDECK_TZ via localtime. */
+/* Wall-clock "HH:MM": SNTP time on device (0 until synced — no RTC
+ * battery), host clock in the simulator. */
 bool clock_str(char *buf, size_t sz)
 {
     time_t t = wifi_manager_time();
@@ -151,9 +148,8 @@ bool clock_str(char *buf, size_t sz)
     return true;
 }
 
-/* Title chip framed by a shade gradient: ░▒▓█ TEXT █▓▒░, drawn at cell x0 on
- * row 0. The flanking blocks glow: a cyan "spark" travels through them each
- * frame for a subtle animated shimmer. Its total width is strlen(text)+10. */
+/* Title chip framed by a shade gradient: ░▒▓█ TEXT █▓▒░ on row 0, with a
+ * cyan "spark" traveling the flanks. Total width strlen(text)+10. */
 void draw_titlebar(int x0, const char *text, uint32_t frame)
 {
     int spark = (int)((frame / 3u) % 4u);
@@ -176,13 +172,9 @@ void draw_titlebar(int x0, const char *text, uint32_t frame)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
-/* Footer strip shared by every full screen: a rule, then the hint riding a
- * cyan powerline segment — ▶ hint ▶ — that tapers off with UI_PL_R (its
- * first use). INVERSE puts the accent in the cell background, so the run
- * reads as a solid bar with dark text.
- * @p limit: first column the chip must stay clear of (a right-aligned toast
- * lives there), or -1 for the full width. Clipping is internal so callers
- * never depend on the chip geometry. */
+/* Footer hint riding a cyan powerline chip. @p limit: first column the chip
+ * must stay clear of (a right-aligned toast lives there), or -1 for full
+ * width; clipping is internal so callers never depend on chip geometry. */
 void draw_footer_lim(const char *hint, int limit)
 {
     int r = ui_rows() - 1;
@@ -243,11 +235,9 @@ uint8_t prof_accent(const char *name)
 }
 
 /* Draw a QR top-right as half-block cells (two QR rows per cell), dark-on-
- * white via INVERSE. Fits itself to the grid: starts at row 6 on tall grids,
- * row 4 on short ones (overdrawing the comet rule — the quiet zone keeps it
- * scannable), drops the caption when the bottom is tight, and draws nothing
- * when the modules cannot fit above the footer hint. Returns the QR's first
- * column (the caller's text limit), or ui_cols() when no QR was drawn. */
+ * white via INVERSE. Fits itself to the grid, dropping caption/QR when the
+ * space runs out. Returns the QR's first column (the caller's text limit),
+ * or ui_cols() when no QR was drawn. */
 int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption)
 {
     if (qsz <= 0) return ui_cols();
