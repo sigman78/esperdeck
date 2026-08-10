@@ -81,7 +81,7 @@ static inline void refresh_display(void)
         if (stamp)
             display_fx_touch_row(row);   /* drives the row-recency back glow */
 #endif
-        const tsm_cell_t *src = tsm_screen(s_tsm) + row * s_cols + l;
+        const tsm_cell_t *src = tsm_row(s_tsm, row) + l;
         terminal_cell_t  *dst = s_buffer          + row * s_cols + l;
         for (int col = l; col <= r; col++, src++, dst++) {
             dst->cp       = src->cp;

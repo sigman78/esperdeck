@@ -60,7 +60,7 @@ Placement facts (map + code):
 | 3 | Batch `do_print_span` | −50–65% tsm text, −25–40% btop | medium | open |
 | 4 | `tsm_t`+dirty → internal DRAM; drop `IRAM_ATTR` from `vtparse_feed` | −5–15%, +1.2 KB SRAM | small | open |
 | 5 | `-O2` on tsm (after #4) | 5–15% residual | trivial | open |
-| 6 | Row-pointer ring for scroll | −80–90% scroll CPU | high | open |
+| 6 | Row-pointer ring for scroll | measured: 40× cheaper per scrolled line | high | **DONE** (feature/scroll-ring) |
 | 7 | Blank-cell fast path in ISR band loop | ISR duty −~40% | small | open |
 | 8 | memcpy per dirty span; flush rate-limit to ~39 Hz; BEL memchr | few % each | tiny | open |
 
@@ -170,6 +170,24 @@ Bench instrument notes: cycle accumulator must be u64 (a 30 s idle window is
 within 8% of u32 wrap — the first-ever report window overflowed and printed
 garbage avg/chunks-per-sec); counters reset at session start so window 1 is
 clean. Both fixed.
+
+### Scroll ring measured (2026-08-10, item #6 flashed)
+
+Same ls flood, 30 s windows, before (flat memmove) → after (ring):
+
+| metric | memmove | ring |
+|---|---|---|
+| tsm CPU | 12.23 s (41% of core 0) | 1.80 s (6%) |
+| scroll path (c0 bucket) | 11.81 s | 0.85 s |
+| scroll_up calls | 9,114 | 26,381 |
+| CPU per scroll | ~1,295 µs | **~32 µs (40×)** |
+| rows memmoved | 264,306 (211 MB PSRAM) | **0** |
+| bytes ingested | 664 KB | 1.43 MB (2.2×) |
+
+btop regression check: parse 72% / 586 ns/B — unchanged within variance.
+ISR duty stable at 54.6% (core 1). During ls the top bucket is now print
+(714 ms) → item #3 (do_print batch) is the next scroll-workload lever;
+for btop it remains #4/#5 + the CSI-parameter fast path.
 
 ## Rejected ideas (don't revisit without new data)
 

@@ -8,6 +8,7 @@
  */
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include "unity.h"
 #include "tsm.h"
@@ -25,7 +26,7 @@ static void feed(tsm_t *t, const char *s)
 /* Get cell at (col, row). */
 static tsm_cell_t cell(tsm_t *t, int col, int row)
 {
-    return tsm_screen(t)[row * tsm_cols(t) + col];
+    return tsm_row(t, row)[col];
 }
 
 /* Get codepoint at (col, row). */
@@ -550,6 +551,126 @@ void test_csi_sd_scroll_down(void)
     tsm_free(t);
 }
 
+/* ── Row-ring: full-screen scrolls rotate a base index instead of moving
+ * cells, so everything below runs with a non-zero base to prove the ring
+ * mapping composes with the rest of the model. ── */
+
+/* Rotate the full-screen ring by n: n LFs issued from the bottom row. */
+static void rotate_ring(tsm_t *t, int n)
+{
+    char buf[16];
+    snprintf(buf, sizeof(buf), "\x1b[%d;1H", tsm_rows(t));
+    feed(t, buf);
+    for (int i = 0; i < n; i++) feed(t, "\n");
+}
+
+void test_ring_scroll_wraps_past_rows(void)
+{
+    tsm_t *t = tsm_new(10, 3);
+    /* ls-style: print at bottom, CRLF, repeat — 4 scrolls on a 3-row grid
+     * wraps the base (4 % 3 = 1). */
+    feed(t, "\x1b[3;1H");
+    feed(t, "1\r\n2\r\n3\r\n4\r\n");
+    TEST_ASSERT_EQUAL_HEX16('3', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('4', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 2));
+    /* Writes after the wrap land where the mapping says they do. */
+    feed(t, "\x1b[1;5HX");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 4, 0));
+    tsm_free(t);
+}
+
+void test_ring_alt_screen_roundtrip(void)
+{
+    tsm_t *t = tsm_new(10, 3);
+    rotate_ring(t, 2);                       /* primary base = 2 */
+    feed(t, "\x1b[1;1HP\x1b[2;1HQ\x1b[3;1HR");
+    feed(t, "\x1b[?1049h");                  /* enter alt */
+    feed(t, "\x1b[3;1Halt\n\n");             /* rotate the ALT ring too */
+    feed(t, "\x1b[?1049l");                  /* back to primary */
+    /* Primary content must survive the alt session's own rotations. */
+    TEST_ASSERT_EQUAL_HEX16('P', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('Q', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16('R', cp_at(t, 0, 2));
+    tsm_free(t);
+}
+
+void test_ring_then_decstbm_partial_scroll(void)
+{
+    tsm_t *t = tsm_new(10, 5);
+    rotate_ring(t, 2);                       /* base = 2 */
+    feed(t, "\x1b[2;4r");                    /* region rows 2-4 (1-based) */
+    feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC\x1b[4;1HD\x1b[5;1HE");
+    feed(t, "\x1b[4;1H\n");                  /* LF at region bottom */
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('C', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16('D', cp_at(t, 0, 2));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 3));
+    TEST_ASSERT_EQUAL_HEX16('E', cp_at(t, 0, 4));
+    tsm_free(t);
+}
+
+void test_ring_then_insert_delete_lines(void)
+{
+    tsm_t *t = tsm_new(10, 4);
+    rotate_ring(t, 1);                       /* base = 1 */
+    feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC\x1b[4;1HD");
+    feed(t, "\x1b[2;1H\x1b[2L");             /* insert 2 lines at row 2 */
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 2));
+    TEST_ASSERT_EQUAL_HEX16('B', cp_at(t, 0, 3));
+    feed(t, "\x1b[2;1H\x1b[2M");             /* delete them again */
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('B', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 2));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 3));
+    tsm_free(t);
+}
+
+void test_ring_then_insert_delete_chars(void)
+{
+    tsm_t *t = tsm_new(10, 3);
+    rotate_ring(t, 1);
+    feed(t, "\x1b[2;1HABCDEF");
+    feed(t, "\x1b[2;3H\x1b[2P");             /* DCH 2 at col 3 */
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16('B', cp_at(t, 1, 1));
+    TEST_ASSERT_EQUAL_HEX16('E', cp_at(t, 2, 1));
+    TEST_ASSERT_EQUAL_HEX16('F', cp_at(t, 3, 1));
+    feed(t, "\x1b[2;3H\x1b[2@");             /* ICH 2 back */
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 2, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 3, 1));
+    TEST_ASSERT_EQUAL_HEX16('E', cp_at(t, 4, 1));
+    tsm_free(t);
+}
+
+void test_ring_reverse_index_wraps_negative(void)
+{
+    tsm_t *t = tsm_new(10, 3);
+    feed(t, "\x1b[1;1HA\x1b[2;1HB");
+    feed(t, "\x1b[1;1H\x1bM");               /* RI at top: base 0 -> rows-1 */
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16('B', cp_at(t, 0, 2));
+    feed(t, "\x1b[1;1HZ");
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+    tsm_free(t);
+}
+
+void test_ring_hard_reset_clears_base(void)
+{
+    tsm_t *t = tsm_new(10, 3);
+    rotate_ring(t, 2);
+    feed(t, "\x1b[1;1HA");
+    feed(t, "\x1b" "c");                     /* RIS */
+    for (int r = 0; r < 3; r++)
+        TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, r));
+    feed(t, "Z");
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+    tsm_free(t);
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  * Insert / delete
  * ════════════════════════════════════════════════════════════════════════════ */
@@ -1047,6 +1168,15 @@ int main(void)
     RUN_TEST(test_scroll_region_decstbm);
     RUN_TEST(test_csi_su_scroll_up);
     RUN_TEST(test_csi_sd_scroll_down);
+
+    /* row ring (base != 0 compositions) */
+    RUN_TEST(test_ring_scroll_wraps_past_rows);
+    RUN_TEST(test_ring_alt_screen_roundtrip);
+    RUN_TEST(test_ring_then_decstbm_partial_scroll);
+    RUN_TEST(test_ring_then_insert_delete_lines);
+    RUN_TEST(test_ring_then_insert_delete_chars);
+    RUN_TEST(test_ring_reverse_index_wraps_negative);
+    RUN_TEST(test_ring_hard_reset_clears_base);
 
     /* insert / delete */
     RUN_TEST(test_csi_il_insert_line);

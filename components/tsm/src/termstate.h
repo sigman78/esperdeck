@@ -58,6 +58,14 @@ struct tsm_s {
     tsm_cell_t *cells;      /* active screen — cols*rows */
     tsm_cell_t *alt_cells;  /* alt screen   — cols*rows */
 
+    /* Row ring: logical row r lives at physical row (r + base) % rows.
+     * Full-region scrolls rotate base instead of memmoving the grid
+     * (23 KB of PSRAM traffic per scrolled line at 100x30). base belongs
+     * to the ACTIVE grid, alt_base to the inactive one — they swap
+     * together with the cells/alt_cells pointer swap, always. */
+    int base;
+    int alt_base;
+
     /* Dirty tracking */
     tsm_row_dirty_t *dirty;  /* rows entries */
 

@@ -82,10 +82,11 @@ void tsm_free(tsm_t *tsm);
 /* Feed raw bytes from the host (VT sequences + UTF-8 text). */
 void tsm_feed(tsm_t *tsm, const uint8_t *data, size_t len);
 
-/* Direct pointer to the cell grid (cols*rows tsm_cell_t, row-major).
- * Binary-compatible with terminal_cell_t; pass directly to
- * display_set_text_buffer(). */
-const tsm_cell_t *tsm_screen(const tsm_t *tsm);
+/* Pointer to one screen row (cols tsm_cell_t, binary-compatible with
+ * terminal_cell_t). Rows live in a rotating ring — full-screen scrolls move
+ * the ring base, not the cells — so consecutive logical rows are NOT
+ * contiguous in memory; never index past the returned row. */
+const tsm_cell_t *tsm_row(const tsm_t *tsm, int row);
 
 /* Current cursor position and visibility. */
 void tsm_cursor(const tsm_t *tsm, int *col, int *row, bool *visible);

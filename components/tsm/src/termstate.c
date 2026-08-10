@@ -54,10 +54,25 @@ static inline int32_t param(const int32_t *params, int nparams, int i, int32_t d
     return params[i];
 }
 
+/* Physical row of logical row r under the ring. base and r are both in
+ * [0, rows), so one conditional subtract replaces the modulo. */
+static inline int phys_row(const tsm_t *t, int r)
+{
+    int p = r + t->base;
+    if (p >= t->rows) p -= t->rows;
+    return p;
+}
+
+/* Pointer to the first cell of logical row on the active screen. */
+static inline tsm_cell_t *row_ptr(tsm_t *t, int row)
+{
+    return &t->cells[phys_row(t, row) * t->cols];
+}
+
 /* Pointer to cell (col, row) on the active screen. */
 static inline tsm_cell_t *cell_at(tsm_t *t, int col, int row)
 {
-    return &t->cells[row * t->cols + col];
+    return row_ptr(t, row) + col;
 }
 
 /* Mark column range [l, r] on row as dirty. */
@@ -106,7 +121,13 @@ static void erase_screen(tsm_t *t)
 
 /* ── Scrolling ───────────────────────────────────────────────────────────── */
 
-/* Scroll [top, bot] up by n lines; new lines at bottom are blank. */
+/* Scroll [top, bot] up by n lines; new lines at bottom are blank.
+ *
+ * Full-region scroll rotates the row ring — O(1) bookkeeping plus n erased
+ * rows instead of a (span-n)*cols*8 B memmove. A partial region (DECSTBM,
+ * IL/DL) copies per logical row: once base != 0 the physical rows are not
+ * contiguous, so the old flat memmove would be wrong. Distinct logical rows
+ * never alias physically, so memcpy per row is safe. */
 static void scroll_up(tsm_t *t, int n)
 {
     if (n <= 0) return;
@@ -117,12 +138,17 @@ static void scroll_up(tsm_t *t, int n)
     int bot  = t->scroll_bot;
     int span = bot - top + 1;
     if (n >= span) { for (int r = top; r <= bot; r++) erase_row(t, r); return; }
-    memmove(&t->cells[top * t->cols],
-            &t->cells[(top + n) * t->cols],
-            (size_t)(span - n) * (size_t)t->cols * sizeof(tsm_cell_t));
+    if (top == 0 && bot == t->rows - 1) {
+        t->base += n;
+        if (t->base >= t->rows) t->base -= t->rows;
+    } else {
+        for (int r = top; r <= bot - n; r++)
+            memcpy(row_ptr(t, r), row_ptr(t, r + n),
+                   (size_t)t->cols * sizeof(tsm_cell_t));
 #ifdef CONFIG_VTERM_BENCH
-    s_tsm_bench.scroll_rows += (uint32_t)(span - n);
+        s_tsm_bench.scroll_rows += (uint32_t)(span - n);
 #endif
+    }
     for (int r = bot - n + 1; r <= bot; r++) erase_row(t, r);
     for (int r = top; r <= bot; r++) mark_row_dirty(t, r);
 }
@@ -138,12 +164,17 @@ static void scroll_down(tsm_t *t, int n)
     int bot  = t->scroll_bot;
     int span = bot - top + 1;
     if (n >= span) { for (int r = top; r <= bot; r++) erase_row(t, r); return; }
-    memmove(&t->cells[(top + n) * t->cols],
-            &t->cells[top * t->cols],
-            (size_t)(span - n) * (size_t)t->cols * sizeof(tsm_cell_t));
+    if (top == 0 && bot == t->rows - 1) {
+        t->base -= n;
+        if (t->base < 0) t->base += t->rows;
+    } else {
+        for (int r = bot; r >= top + n; r--)
+            memcpy(row_ptr(t, r), row_ptr(t, r - n),
+                   (size_t)t->cols * sizeof(tsm_cell_t));
 #ifdef CONFIG_VTERM_BENCH
-    s_tsm_bench.scroll_rows += (uint32_t)(span - n);
+        s_tsm_bench.scroll_rows += (uint32_t)(span - n);
 #endif
+    }
     for (int r = top; r < top + n; r++) erase_row(t, r);
     for (int r = top; r <= bot; r++) mark_row_dirty(t, r);
 }
@@ -204,15 +235,26 @@ static void restore_cursor(tsm_t *t, const tsm_cursor_save_t *s)
 
 /* ── Alt screen switch ───────────────────────────────────────────────────── */
 
+/* The ring base is per-grid state: it must travel with the cells pointer in
+ * every swap, or a rotated primary screen comes back scrambled on alt exit. */
+static void swap_grids(tsm_t *t)
+{
+    tsm_cell_t *tmp = t->cells;
+    t->cells     = t->alt_cells;
+    t->alt_cells = tmp;
+    int tb       = t->base;
+    t->base      = t->alt_base;
+    t->alt_base  = tb;
+}
+
 static void switch_to_alt(tsm_t *t)
 {
     if (t->mode.decalt) return;
     save_cursor(t, &t->saved);
-    tsm_cell_t *tmp = t->cells;
-    t->cells = t->alt_cells;
-    t->alt_cells = tmp;
+    swap_grids(t);
     t->mode.decalt = true;
     erase_screen(t);
+    t->base = 0;   /* freshly erased — mapping is free to reset */
     restore_cursor(t, &t->alt_saved);
 }
 
@@ -220,9 +262,7 @@ static void switch_to_primary(tsm_t *t)
 {
     if (!t->mode.decalt) return;
     save_cursor(t, &t->alt_saved);
-    tsm_cell_t *tmp = t->cells;
-    t->cells = t->alt_cells;
-    t->alt_cells = tmp;
+    swap_grids(t);
     t->mode.decalt = false;
     restore_cursor(t, &t->saved);
     for (int r = 0; r < t->rows; r++) mark_row_dirty(t, r);
@@ -527,12 +567,10 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
 
 static void do_hard_reset(tsm_t *t)
 {
-    if (t->mode.decalt) {          /* return to primary first */
-        tsm_cell_t *tmp = t->cells;
-        t->cells        = t->alt_cells;
-        t->alt_cells    = tmp;
-    }
+    if (t->mode.decalt)            /* return to primary first */
+        swap_grids(t);
     erase_screen(t);
+    t->base = 0;                   /* freshly erased — mapping is free to reset */
     t->cx = 0; t->cy = 0;
     t->attrs = 0; t->attrs2 = 0;
     t->fg = COLOR_DEFAULT_FG; t->bg = COLOR_DEFAULT_BG;
@@ -789,9 +827,9 @@ void tsm_feed(tsm_t *t, const uint8_t *data, size_t len)
     vtparse_feed(&t->vtp, data, len);
 }
 
-const tsm_cell_t *tsm_screen(const tsm_t *t)
+const tsm_cell_t *tsm_row(const tsm_t *t, int row)
 {
-    return t->cells;
+    return &t->cells[phys_row(t, row) * t->cols];
 }
 
 void tsm_cursor(const tsm_t *t, int *col, int *row, bool *visible)
