@@ -658,6 +658,59 @@ void test_ring_reverse_index_wraps_negative(void)
     tsm_free(t);
 }
 
+/* ── Batched print: wrap and autowrap-off edges ── */
+
+void test_print_span_wraps_across_rows(void)
+{
+    tsm_t *t = tsm_new(10, 3);
+    /* 25 chars from col 6 (0-based 5): fills cols 5-9, wraps twice. */
+    feed(t, "\x1b[1;6HABCDEFGHIJKLMNOPQRSTUVWXY");
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 5, 0));
+    TEST_ASSERT_EQUAL_HEX16('E', cp_at(t, 9, 0));
+    TEST_ASSERT_EQUAL_HEX16('F', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16('O', cp_at(t, 9, 1));
+    TEST_ASSERT_EQUAL_HEX16('P', cp_at(t, 0, 2));
+    TEST_ASSERT_EQUAL_HEX16('Y', cp_at(t, 9, 2));
+    /* Last char landed in the last column: wrap still pending. */
+    int cx, cy; bool vis;
+    tsm_cursor(t, &cx, &cy, &vis);
+    TEST_ASSERT_EQUAL_INT(9, cx);
+    TEST_ASSERT_EQUAL_INT(2, cy);
+    tsm_free(t);
+}
+
+void test_print_span_autowrap_off_parks_at_margin(void)
+{
+    tsm_t *t = tsm_new(10, 3);
+    feed(t, "\x1b[?7l");                     /* DECAWM off */
+    feed(t, "\x1b[2;6HABCDEFGHIJ");          /* 10 chars from col 5 */
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 5, 1));
+    TEST_ASSERT_EQUAL_HEX16('D', cp_at(t, 8, 1));
+    /* Chars past the margin overwrite the last column in turn. */
+    TEST_ASSERT_EQUAL_HEX16('J', cp_at(t, 9, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 2));
+    int cx, cy; bool vis;
+    tsm_cursor(t, &cx, &cy, &vis);
+    TEST_ASSERT_EQUAL_INT(9, cx);
+    TEST_ASSERT_EQUAL_INT(1, cy);
+    tsm_free(t);
+}
+
+void test_print_span_wrap_scrolls_ring_at_bottom(void)
+{
+    tsm_t *t = tsm_new(10, 3);
+    /* 15 chars at the bottom row: wraps once, scrolling the full screen —
+     * 'top' (row 0) scrolls off, the filled row lands on row 1. */
+    feed(t, "\x1b[1;1Htop");
+    feed(t, "\x1b[3;1HABCDEFGHIJKLMNO");
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16('J', cp_at(t, 9, 1));
+    TEST_ASSERT_EQUAL_HEX16('K', cp_at(t, 0, 2));
+    TEST_ASSERT_EQUAL_HEX16('O', cp_at(t, 4, 2));
+    tsm_free(t);
+}
+
 void test_ring_hard_reset_clears_base(void)
 {
     tsm_t *t = tsm_new(10, 3);
@@ -1177,6 +1230,11 @@ int main(void)
     RUN_TEST(test_ring_then_insert_delete_chars);
     RUN_TEST(test_ring_reverse_index_wraps_negative);
     RUN_TEST(test_ring_hard_reset_clears_base);
+
+    /* batched print */
+    RUN_TEST(test_print_span_wraps_across_rows);
+    RUN_TEST(test_print_span_autowrap_off_parks_at_margin);
+    RUN_TEST(test_print_span_wrap_scrolls_ring_at_bottom);
 
     /* insert / delete */
     RUN_TEST(test_csi_il_insert_line);

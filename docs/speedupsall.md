@@ -57,9 +57,10 @@ Placement facts (map + code):
 | 0 | Instrumentation (see below) | enables the rest | tiny | this branch |
 | 1 | LCD bounce ISR → core 1 | frees 34–54% of core 0 | small | this branch |
 | 2 | GROUND fast-path run scanner in `vtparse_feed` | ~5× plain text, −15–25% mixed | small | this branch |
-| 3 | Batch `do_print_span` | −50–65% tsm text, −25–40% btop | medium | open |
-| 4 | `tsm_t`+dirty → internal DRAM; drop `IRAM_ATTR` from `vtparse_feed` | −5–15%, +1.2 KB SRAM | small | open |
-| 5 | `-O2` on tsm (after #4) | 5–15% residual | trivial | open |
+| 3 | Batch `do_print_span` | measured: print −51%/B btop, −82%/B ls | medium | **DONE** (pass 3) |
+| 4 | `tsm_t`+dirty → internal DRAM; drop `IRAM_ATTR` from `vtparse_feed` | net +1.3 KB internal free | small | **DONE** (pass 3) |
+| 5 | `-O2` on tsm (after #4) | folded into pass-3 parse −25%/B | trivial | **DONE** (pass 3) |
+| 5b | CSI-param fast path (digits/`;`/`:` = 0x30–0x3B run scan) | folded into pass-3 parse −25%/B | small | **DONE** (pass 3) |
 | 6 | Row-pointer ring for scroll | measured: 40× cheaper per scrolled line | high | **DONE** (feature/scroll-ring) |
 | 7 | Blank-cell fast path in ISR band loop | ISR duty −~40% | small | open |
 | 8 | memcpy per dirty span; flush rate-limit to ~39 Hz; BEL memchr | few % each | tiny | open |
@@ -188,6 +189,27 @@ btop regression check: parse 72% / 586 ns/B — unchanged within variance.
 ISR duty stable at 54.6% (core 1). During ls the top bucket is now print
 (714 ms) → item #3 (do_print batch) is the next scroll-workload lever;
 for btop it remains #4/#5 + the CSI-parameter fast path.
+
+### Pass 3 measured (2026-08-10: #3 + #4 + #5 + CSI fast path flashed)
+
+- **btop**: 104 KB/s sustained ingest (highest recorded; 51 pre-drain, 84
+  pre-ring). CPU/byte 586 → **426 ns/B (−27%)**: parse −25%/B (CSI fast
+  path + -O2 + DRAM parser state), print −51%/B (batching), do_sgr
+  unchanged (expected — its cost was always noise).
+- **ls**: 34,479 lines/30 s (1,150 lines/s) at **883 ms tsm CPU = 2.9% of
+  core 0** (pre-ring: 41%). Print 500 → 91 ns/B (−82%); scroll c0 32 →
+  14.7 µs/line. Cumulative across passes 2+3: **a byte of ls output costs
+  ~38× less CPU** (18.4 → 0.48 µs/B).
+- rows_moved = 0 in every window (ring holding); ISR duty 55–57% on
+  core 1; boot heap +1.3 KB internal (IRAM reclaim > tsm_t move).
+- The "-O2 did little on hw" prior finding is obsolete: it predates the
+  ring + fast paths; with helpers inlined and parser state in DRAM it
+  contributes to the −25%/B parse win.
+
+Remaining: #7 (blank-cell ISR fast path — core-1 FX headroom only) and #8
+small cleanups. The pipeline is no longer meaningfully tsm-bound in either
+regime; next bottlenecks are the render ISR's constant cost and the
+network/drain pacing.
 
 ## Rejected ideas (don't revisit without new data)
 

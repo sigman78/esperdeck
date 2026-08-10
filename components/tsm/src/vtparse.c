@@ -2,8 +2,8 @@
  * vtparse.c — VT byte-stream parser
  *
  * Paul Williams state machine + UTF-8 decoder.
- * No heap allocations; no ESP-IDF dependency; ISR-safe to call from any
- * context (uses only the vtparse_t on the caller's stack/data segment).
+ * No heap allocations; no ESP-IDF dependency. Flash-resident (no IRAM_ATTR):
+ * all callers are tasks, and the hot loop's helpers live in flash anyway.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -403,7 +403,7 @@ void vtparse_init(vtparse_t *p, const vt_callbacks_t *cb, void *user)
         p->params[i] = -1;
 }
 
-void IRAM_ATTR vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
+void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
 {
     for (size_t i = 0; i < len; i++) {
         uint8_t b = data[i];
@@ -451,6 +451,23 @@ void IRAM_ATTR vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
                 if (b < 0x20 || b > 0x7E)
                     break;
             }
+            i = j - 1;
+            continue;
+        }
+
+        /* ── CSI parameter fast path ──────────────────────────────────────
+         * Digits, ':' and ';' are the contiguous range 0x30..0x3B and make
+         * up ~90% of SGR-dense streams (truecolor btop). Accumulate the
+         * run with do_param inlined, skipping the anywhere-checks and the
+         * state switch per byte. Any other byte falls back to st_csi_param
+         * on the next pass — which treats 0x30..0x3B identically. */
+        if (p->state == VTP_ST_CSI_PARAM && b >= 0x30 && b <= 0x3B) {
+            size_t j = i;
+            do {
+                do_param(p, b);
+                if (++j >= len) break;
+                b = data[j];
+            } while (b >= 0x30 && b <= 0x3B);
             i = j - 1;
             continue;
         }

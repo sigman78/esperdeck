@@ -589,6 +589,25 @@ void test_utf8_3byte_split_three_feeds(void)
     TEST_ASSERT_EQUAL_UINT32(0x2554u, g_events[0].as_print.cps[0]);
 }
 
+void test_csi_params_split_across_feeds(void)
+{
+    /* Truecolor SGR split mid-parameter: the CSI param fast path must
+     * carry the partial accumulator across feed boundaries. */
+    const char *a = "\x1b[38;2;10;2";
+    const char *b = "0;30m";
+    feed_bytes((const uint8_t *)a, strlen(a));
+    TEST_ASSERT_EQUAL_INT(0, g_event_count);
+    feed_bytes((const uint8_t *)b, strlen(b));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_UINT8('m', g_events[0].as_csi.final);
+    TEST_ASSERT_EQUAL_UINT8(5, g_events[0].as_csi.nparams);
+    TEST_ASSERT_EQUAL_INT32(38, g_events[0].as_csi.params[0]);
+    TEST_ASSERT_EQUAL_INT32(2,  g_events[0].as_csi.params[1]);
+    TEST_ASSERT_EQUAL_INT32(10, g_events[0].as_csi.params[2]);
+    TEST_ASSERT_EQUAL_INT32(20, g_events[0].as_csi.params[3]);
+    TEST_ASSERT_EQUAL_INT32(30, g_events[0].as_csi.params[4]);
+}
+
 void test_utf8_stray_continuation(void)
 {
     /* 0x80 alone (continuation without lead) → U+FFFD */
@@ -915,6 +934,7 @@ int main(void)
     RUN_TEST(test_utf8_4byte_replaced_with_fffd);
     RUN_TEST(test_utf8_split_across_feeds);
     RUN_TEST(test_utf8_3byte_split_three_feeds);
+    RUN_TEST(test_csi_params_split_across_feeds);
     RUN_TEST(test_utf8_stray_continuation);
     RUN_TEST(test_utf8_invalid_overlong_c0);
     RUN_TEST(test_utf8_interrupted_by_esc);

@@ -673,7 +673,7 @@ static void do_c0(tsm_t *t, uint8_t byte)
 
 /* ── Print (GROUND printable) ────────────────────────────────────────────── */
 
-static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
+static void do_print_span_irm(tsm_t *t, const uint32_t *cps, int count)
 {
     for (int i = 0; i < count; i++) {
         uint32_t cp = cps[i];
@@ -686,13 +686,11 @@ static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
 
         if (t->pending_wrap) do_wrap(t);
 
-        if (t->mode.irm) {
-            if (t->cx + 1 < t->cols) {
-                memmove(cell_at(t, t->cx + 1, t->cy),
-                        cell_at(t, t->cx,     t->cy),
-                        (size_t)(t->cols - t->cx - 1) * sizeof(tsm_cell_t));
-                mark_dirty(t, t->cy, t->cx, t->cols - 1);
-            }
+        if (t->cx + 1 < t->cols) {
+            memmove(cell_at(t, t->cx + 1, t->cy),
+                    cell_at(t, t->cx,     t->cy),
+                    (size_t)(t->cols - t->cx - 1) * sizeof(tsm_cell_t));
+            mark_dirty(t, t->cy, t->cx, t->cols - 1);
         }
 
         tsm_cell_t *c = cell_at(t, t->cx, t->cy);
@@ -703,6 +701,51 @@ static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
         c->attrs2 = t->attrs2;
         mark_dirty(t, t->cy, t->cx, t->cx);
         cursor_advance(t);
+    }
+}
+
+/* Batched print: SGR state and the active charset cannot change mid-span
+ * (every ESC and SO/SI flushes the parser's print buffer first), so hoist
+ * them once and write row segments with a per-cell cost of one template
+ * struct copy. Insert mode keeps the per-cell slow path above. */
+static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
+{
+    if (t->mode.irm) { do_print_span_irm(t, cps, count); return; }
+
+    const int  cols = t->cols;
+    const bool gfx  = (t->g[t->gl] == CHARSET_DEC_GFX);
+    tsm_cell_t tmpl = { .cp = 0, .fg = t->fg, .bg = t->bg,
+                        .attrs = t->attrs, .attrs2 = t->attrs2 };
+
+    int i = 0;
+    while (i < count) {
+        if (t->pending_wrap) do_wrap(t);
+        const int cx = t->cx;
+        const int cy = t->cy;
+        int run = count - i;
+        if (run > cols - cx) run = cols - cx;
+
+        tsm_cell_t *c = cell_at(t, cx, cy);
+        for (int k = 0; k < run; k++) {
+            uint32_t cp = cps[i + k];
+            if (cp < 0x80u)
+                tmpl.cp = gfx ? charset_xlat(CHARSET_DEC_GFX, (uint8_t)cp)
+                              : (uint16_t)cp;
+            else
+                tmpl.cp = (cp <= 0xFFFFu) ? (uint16_t)cp : '?';
+            c[k] = tmpl;
+        }
+        mark_dirty(t, cy, cx, cx + run - 1);
+        i += run;
+
+        /* cursor_advance, batched: past the last column the cursor parks at
+         * cols-1; with DECAWM the wrap stays pending until the next cell. */
+        if (cx + run < cols) {
+            t->cx = cx + run;
+        } else {
+            t->cx = cols - 1;
+            if (t->mode.decawm) t->pending_wrap = true;
+        }
     }
 }
 
@@ -766,9 +809,12 @@ static const vt_callbacks_t s_tsm_cb = {
 
 /* tsm's own grids are read/written ONLY from task context (tsm_feed on the
  * SSH read task, the vterm dirty-row copy) — the display ISR reads vterm's
- * separate internal bridge buffer, never these. So they live in PSRAM
- * (SPIRAM-first, internal fallback): 2x24 KB of scarce internal DRAM back,
- * and two fewer large contiguous carves fragmenting the heap. */
+ * separate internal bridge buffer, never these. So the two 24 KB grids live
+ * in PSRAM (SPIRAM-first, internal fallback). The tsm_t struct itself and
+ * the dirty array go the OTHER way: they hold the per-byte-hot parser state
+ * (embedded vtparse_t, print buffer, cursor), and in PSRAM every parsed
+ * byte paid cache misses against the grids' traffic — ~1.3 KB of internal
+ * DRAM buys that back. */
 static void *tsm_calloc(size_t n, size_t sz)
 {
     void *p = heap_caps_calloc(n, sz, MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
@@ -776,16 +822,23 @@ static void *tsm_calloc(size_t n, size_t sz)
     return p;
 }
 
+static void *tsm_calloc_hot(size_t n, size_t sz)
+{
+    void *p = heap_caps_calloc(n, sz, MALLOC_CAP_8BIT | MALLOC_CAP_INTERNAL);
+    if (!p) p = heap_caps_calloc(n, sz, MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
+    return p;
+}
+
 tsm_t *tsm_new(int cols, int rows)
 {
     if (cols <= 0 || rows <= 0) return NULL;
 
-    tsm_t *t = (tsm_t *)tsm_calloc(1, sizeof(tsm_t));
+    tsm_t *t = (tsm_t *)tsm_calloc_hot(1, sizeof(tsm_t));
     if (!t) return NULL;
 
     t->cells     = (tsm_cell_t *)tsm_calloc((size_t)cols * (size_t)rows, sizeof(tsm_cell_t));
     t->alt_cells = (tsm_cell_t *)tsm_calloc((size_t)cols * (size_t)rows, sizeof(tsm_cell_t));
-    t->dirty     = (tsm_row_dirty_t *)tsm_calloc((size_t)rows, sizeof(tsm_row_dirty_t));
+    t->dirty     = (tsm_row_dirty_t *)tsm_calloc_hot((size_t)rows, sizeof(tsm_row_dirty_t));
 
     if (!t->cells || !t->alt_cells || !t->dirty) { tsm_free(t); return NULL; }
 
