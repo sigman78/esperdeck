@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <stdio.h>
+#include <inttypes.h>
 
 #ifdef ESP_PLATFORM
 #include "esp_timer.h"
@@ -266,6 +267,13 @@ static void ssh_read_task(void *arg)
 {
     TickType_t last_stat = xTaskGetTickCount();
 
+    /* Fresh counters per session — otherwise the first 30 s report blends
+     * in everything accumulated since boot. */
+    vterm_bench_reset();
+#ifdef CONFIG_DISPLAY_ISR_BENCH
+    display_render_bench_reset();
+#endif
+
     while (s_connected) {
         size_t  drained = 0;
         int64_t wake_t0 = drain_now_us();
@@ -329,10 +337,31 @@ static void ssh_read_task(void *arg)
 
         if (!s_connected) break;
 
-        /* Periodic memory stat. */
+        /* Periodic memory stat + perf bench dump (vterm/tsm parse-vs-state
+         * split, render-ISR duty). Both bench dumps are no-ops (nothing
+         * printed) when their Kconfig option is off. */
         TickType_t now = xTaskGetTickCount();
         if ((now - last_stat) >= pdMS_TO_TICKS(30000)) {
             ESP_LOGI(TAG, "libssh2 heap: %zu B", s_alloc_bytes);
+
+            vterm_bench_report();
+            vterm_bench_reset();
+
+#ifdef CONFIG_DISPLAY_ISR_BENCH
+            uint32_t elapsed_ms = (uint32_t)(now - last_stat) * portTICK_PERIOD_MS;
+            uint32_t avg_cyc, max_cyc, chunks;
+            display_render_bench_get(&avg_cyc, &max_cyc, &chunks);
+            display_render_bench_reset();
+            uint32_t chunks_per_sec = elapsed_ms ? (chunks * 1000u) / elapsed_ms : 0;
+            /* duty = avg_cycles/chunk * chunks/s / core_hz; tenths of a percent. */
+            uint32_t duty_pct_x10 = (uint32_t)(((uint64_t)avg_cyc * chunks_per_sec * 1000ULL)
+                                                / 240000000ULL);
+            ESP_LOGI("render_bench",
+                "chunks=%" PRIu32 "  avg=%" PRIu32 "cyc  max=%" PRIu32 "cyc  "
+                "chunks/s=%" PRIu32 "  duty=%" PRIu32 ".%" PRIu32 "%%",
+                chunks, avg_cyc, max_cyc, chunks_per_sec,
+                duty_pct_x10 / 10, duty_pct_x10 % 10);
+#endif
             last_stat = now;
         }
 

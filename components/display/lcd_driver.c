@@ -55,12 +55,8 @@ static esp_err_t init_backlight(void)
  * Public API
  * ---------------------------------------------------------------------- */
 
-esp_err_t display_init(void)
+static esp_err_t panel_bringup(void)
 {
-    ESP_LOGI(TAG, "Initializing RGB LCD panel (bounce buffer mode)");
-
-    init_backlight();
-
     esp_lcd_rgb_panel_config_t panel_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT,
         .timings = {
@@ -106,10 +102,48 @@ esp_err_t display_init(void)
      * bounce_buffer_size_px is set — no separate allocation needed here. */
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
 
-    ESP_LOGI(TAG, "LCD initialized: %dx%d, bounce buffer %d bytes",
+    ESP_LOGI(TAG, "LCD initialized: %dx%d, bounce buffer %d bytes, ISR core %d",
              DISPLAY_WIDTH, DISPLAY_HEIGHT,
-             (int)(display_bounce_px() * sizeof(color_t)));
+             (int)(display_bounce_px() * sizeof(color_t)),
+             xPortGetCoreID());
     return ESP_OK;
+}
+
+/* esp_lcd_new_rgb_panel() pins the LCD interrupt to the calling core, and
+ * core 0 already carries WiFi, NimBLE and the SSH ingest path — the bounce
+ * ISR alone eats a third to half of it. Bring the panel up from a transient
+ * core-1 task so the ISR lands on the (near-idle) shell core instead. */
+typedef struct {
+    TaskHandle_t caller;
+    esp_err_t    result;
+} bringup_ctx_t;
+
+static void panel_bringup_task(void *arg)
+{
+    bringup_ctx_t *ctx = arg;
+    ctx->result = panel_bringup();
+    xTaskNotifyGive(ctx->caller);
+    vTaskDelete(NULL);
+}
+
+esp_err_t display_init(void)
+{
+    ESP_LOGI(TAG, "Initializing RGB LCD panel (bounce buffer mode)");
+
+    init_backlight();
+
+    bringup_ctx_t ctx = {
+        .caller = xTaskGetCurrentTaskHandle(),
+        .result = ESP_FAIL,
+    };
+    if (xTaskCreatePinnedToCore(panel_bringup_task, "lcd_init", 4096, &ctx,
+                                10, NULL, 1) != pdPASS) {
+        ESP_LOGW(TAG, "lcd_init task failed; panel ISR stays on core %d",
+                 xPortGetCoreID());
+        return panel_bringup();
+    }
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    return ctx.result;
 }
 
 esp_lcd_panel_handle_t display_get_panel(void)

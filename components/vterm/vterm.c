@@ -214,6 +214,23 @@ void vterm_bench_report(void)
         s_bench.flush_count,
         s_bench.bytes_fed,
         tsm_us, draw_us, total_us);
+
+    /* Parse-vs-state split: tsm_cycles minus the vtable shims left over is
+     * the pure vtparse share. */
+    tsm_bench_t tb;
+    tsm_bench_get(&tb);
+    uint64_t shim_cycles = tb.print_cycles + tb.csi_cycles + tb.c0_cycles + tb.other_cycles;
+    uint64_t parse_cycles = (s_bench.tsm_cycles > shim_cycles)
+                           ? (s_bench.tsm_cycles - shim_cycles) : 0;
+    ESP_LOGI("vterm_bench",
+        "print=%" PRIu32 "us  csi=%" PRIu32 "us  c0=%" PRIu32 "us  other=%" PRIu32 "us  "
+        "parse=%" PRIu32 "us  scroll_up=%" PRIu32 "  scroll_down=%" PRIu32 "  rows_moved=%" PRIu32,
+        (uint32_t)(tb.print_cycles  / 240),
+        (uint32_t)(tb.csi_cycles    / 240),
+        (uint32_t)(tb.c0_cycles     / 240),
+        (uint32_t)(tb.other_cycles  / 240),
+        (uint32_t)(parse_cycles     / 240),
+        tb.scroll_up_calls, tb.scroll_down_calls, (uint32_t)tb.scroll_rows);
 #endif
 }
 
@@ -221,5 +238,6 @@ void vterm_bench_reset(void)
 {
 #ifdef CONFIG_VTERM_BENCH
     memset(&s_bench, 0, sizeof(s_bench));
+    tsm_bench_reset();
 #endif
 }

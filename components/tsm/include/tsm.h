@@ -120,3 +120,26 @@ typedef void (*tsm_response_fn_t)(const char *data, size_t len, void *user);
 
 /* Register (or clear, if cb==NULL) the response callback. */
 void tsm_set_response_cb(tsm_t *tsm, tsm_response_fn_t cb, void *user);
+
+/* Performance instrumentation (CONFIG_VTERM_BENCH) */
+
+/* Parse-vs-state cycle split: cycles spent inside each vtable shim
+ * (other = esc+osc+dcs combined), plus scroll call/row-move counts to size
+ * the memmove volume. tsm_cycles (vterm_bench_t) minus the sum of the four
+ * cycle fields is the pure-vtparse share. */
+typedef struct {
+    uint64_t print_cycles;
+    uint64_t csi_cycles;
+    uint64_t c0_cycles;
+    uint64_t other_cycles;       /* esc + osc + dcs */
+    uint32_t scroll_up_calls;
+    uint32_t scroll_down_calls;
+    uint64_t scroll_rows;        /* rows moved by the scroll memmove, both directions */
+} tsm_bench_t;
+
+/* Drain (read, does not reset) the shim/scroll counters.
+ * All zero when CONFIG_VTERM_BENCH is disabled. */
+void tsm_bench_get(tsm_bench_t *out);
+
+/* Clear the shim/scroll counters. No-op when CONFIG_VTERM_BENCH is disabled. */
+void tsm_bench_reset(void);

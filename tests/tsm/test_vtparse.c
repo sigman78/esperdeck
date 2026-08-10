@@ -14,6 +14,8 @@
  *   - DCS: entry and ESC \-termination stub
  *   - UTF-8: 2-byte, 3-byte, 4-byte (→ U+FFFD), split feeds,
  *             stray continuation, interrupted by ESC, invalid lead
+ *   - GROUND fast-path run scanner: multi-flush, exact-64 boundary, runs
+ *             interrupted by ESC/UTF-8/DEL/C1, CR/LF-separated runs
  *   - State recovery: ESC interrupts CSI, 0x18/0x1A reset to ground
  */
 
@@ -654,6 +656,141 @@ void test_utf8_state_persists_across_writes(void)
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
+ * GROUND fast-path run scanner
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+void test_fastpath_run_multi_flush(void)
+{
+    /* 100 printable bytes in one feed: buffer fills at 64 and flushes
+     * mid-run, then the trailing flush emits the remaining 36 as a second
+     * span. */
+    uint8_t bs[100];
+    for (int i = 0; i < 100; i++)
+        bs[i] = (uint8_t)('A' + (i % 26));
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(2, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[0].type);
+    TEST_ASSERT_EQUAL_INT(64, g_events[0].as_print.ncp);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[1].type);
+    TEST_ASSERT_EQUAL_INT(36, g_events[1].as_print.ncp);
+    for (int i = 0; i < 64; i++)
+        TEST_ASSERT_EQUAL_UINT32(bs[i], g_events[0].as_print.cps[i]);
+    for (int i = 0; i < 36; i++)
+        TEST_ASSERT_EQUAL_UINT32(bs[64 + i], g_events[1].as_print.cps[i]);
+}
+
+void test_fastpath_run_exactly_64(void)
+{
+    /* Exactly VTP_PRINT_BUF bytes fills the buffer with no mid-loop flush
+     * (the full check is before the store); only the trailing flush emits
+     * it, as a single span. */
+    uint8_t bs[VTP_PRINT_BUF];
+    for (int i = 0; i < VTP_PRINT_BUF; i++)
+        bs[i] = (uint8_t)('a' + (i % 26));
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VTP_PRINT_BUF, g_events[0].as_print.ncp);
+    for (int i = 0; i < VTP_PRINT_BUF; i++)
+        TEST_ASSERT_EQUAL_UINT32(bs[i], g_events[0].as_print.cps[i]);
+}
+
+void test_fastpath_interrupted_by_esc(void)
+{
+    /* Run, CSI sequence, run — the scanner must stop exactly at ESC. */
+    uint8_t bs[] = { 'A','A','A','A', 0x1B,'[','A', 'B','B','B','B' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(3, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[0].type);
+    TEST_ASSERT_EQUAL_INT(4, g_events[0].as_print.ncp);
+    TEST_ASSERT_EQUAL_UINT32('A', g_events[0].as_print.cps[0]);
+    TEST_ASSERT_EQUAL_INT(VT_EV_CSI, g_events[1].type);
+    TEST_ASSERT_EQUAL_UINT8('A', g_events[1].as_csi.final);
+    TEST_ASSERT_EQUAL_UINT8(0,   g_events[1].as_csi.nparams);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[2].type);
+    TEST_ASSERT_EQUAL_INT(4, g_events[2].as_print.ncp);
+    TEST_ASSERT_EQUAL_UINT32('B', g_events[2].as_print.cps[0]);
+}
+
+void test_fastpath_interrupted_by_utf8(void)
+{
+    /* Run, UTF-8 lead+continuation, run: all in one span, since no flush
+     * boundary is crossed (mirrors test_utf8_mixed_ascii_and_multibyte). */
+    uint8_t bs[] = { 'A','A','A', 0xC3,0xA9, 'B','B','B' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(7, g_events[0].as_print.ncp);
+    TEST_ASSERT_EQUAL_UINT32('A',     g_events[0].as_print.cps[0]);
+    TEST_ASSERT_EQUAL_UINT32('A',     g_events[0].as_print.cps[1]);
+    TEST_ASSERT_EQUAL_UINT32('A',     g_events[0].as_print.cps[2]);
+    TEST_ASSERT_EQUAL_UINT32(0x00E9u, g_events[0].as_print.cps[3]);
+    TEST_ASSERT_EQUAL_UINT32('B',     g_events[0].as_print.cps[4]);
+    TEST_ASSERT_EQUAL_UINT32('B',     g_events[0].as_print.cps[5]);
+    TEST_ASSERT_EQUAL_UINT32('B',     g_events[0].as_print.cps[6]);
+}
+
+void test_fastpath_interrupted_by_del(void)
+{
+    /* DEL breaks the scan but is itself silently dropped — no flush, so
+     * bytes on either side land in the same span (matches per-byte
+     * st_ground, which does not flush on 0x7F). */
+    uint8_t bs[] = { 'A','A','A', 0x7F, 'B','B','B' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(6, g_events[0].as_print.ncp);
+    TEST_ASSERT_EQUAL_UINT32('A', g_events[0].as_print.cps[0]);
+    TEST_ASSERT_EQUAL_UINT32('A', g_events[0].as_print.cps[1]);
+    TEST_ASSERT_EQUAL_UINT32('A', g_events[0].as_print.cps[2]);
+    TEST_ASSERT_EQUAL_UINT32('B', g_events[0].as_print.cps[3]);
+    TEST_ASSERT_EQUAL_UINT32('B', g_events[0].as_print.cps[4]);
+    TEST_ASSERT_EQUAL_UINT32('B', g_events[0].as_print.cps[5]);
+}
+
+void test_fastpath_interrupted_by_c1(void)
+{
+    /* 0x9B (C1) in GROUND is not a recognised UTF-8 lead → U+FFFD, no
+     * flush; same single-span behaviour as any other unrecognised high
+     * byte. */
+    uint8_t bs[] = { 'A','A','A', 0x9B, 'B','B','B' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(7, g_events[0].as_print.ncp);
+    TEST_ASSERT_EQUAL_UINT32('A',     g_events[0].as_print.cps[0]);
+    TEST_ASSERT_EQUAL_UINT32('A',     g_events[0].as_print.cps[1]);
+    TEST_ASSERT_EQUAL_UINT32('A',     g_events[0].as_print.cps[2]);
+    TEST_ASSERT_EQUAL_UINT32(0xFFFDu, g_events[0].as_print.cps[3]);
+    TEST_ASSERT_EQUAL_UINT32('B',     g_events[0].as_print.cps[4]);
+    TEST_ASSERT_EQUAL_UINT32('B',     g_events[0].as_print.cps[5]);
+    TEST_ASSERT_EQUAL_UINT32('B',     g_events[0].as_print.cps[6]);
+}
+
+void test_fastpath_cr_lf_separated_runs(void)
+{
+    /* CR/LF each flush the current span and emit their own C0 event. */
+    uint8_t bs[] = { 'A','A','A', 0x0D, 0x0A,
+                     'B','B','B', 0x0D, 0x0A,
+                     'C','C','C' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(7, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[0].type);
+    TEST_ASSERT_EQUAL_INT(3, g_events[0].as_print.ncp);
+    TEST_ASSERT_EQUAL_UINT32('A', g_events[0].as_print.cps[0]);
+    TEST_ASSERT_EQUAL_INT(VT_EV_C0, g_events[1].type);
+    TEST_ASSERT_EQUAL_UINT8(0x0D, g_events[1].as_c0.byte);
+    TEST_ASSERT_EQUAL_INT(VT_EV_C0, g_events[2].type);
+    TEST_ASSERT_EQUAL_UINT8(0x0A, g_events[2].as_c0.byte);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[3].type);
+    TEST_ASSERT_EQUAL_INT(3, g_events[3].as_print.ncp);
+    TEST_ASSERT_EQUAL_UINT32('B', g_events[3].as_print.cps[0]);
+    TEST_ASSERT_EQUAL_INT(VT_EV_C0, g_events[4].type);
+    TEST_ASSERT_EQUAL_UINT8(0x0D, g_events[4].as_c0.byte);
+    TEST_ASSERT_EQUAL_INT(VT_EV_C0, g_events[5].type);
+    TEST_ASSERT_EQUAL_UINT8(0x0A, g_events[5].as_c0.byte);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[6].type);
+    TEST_ASSERT_EQUAL_INT(3, g_events[6].as_print.ncp);
+    TEST_ASSERT_EQUAL_UINT32('C', g_events[6].as_print.cps[0]);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
  * State recovery
  * ══════════════════════════════════════════════════════════════════════════ */
 
@@ -783,6 +920,15 @@ int main(void)
     RUN_TEST(test_utf8_interrupted_by_esc);
     RUN_TEST(test_utf8_mixed_ascii_and_multibyte);
     RUN_TEST(test_utf8_state_persists_across_writes);
+
+    /* GROUND fast-path run scanner */
+    RUN_TEST(test_fastpath_run_multi_flush);
+    RUN_TEST(test_fastpath_run_exactly_64);
+    RUN_TEST(test_fastpath_interrupted_by_esc);
+    RUN_TEST(test_fastpath_interrupted_by_utf8);
+    RUN_TEST(test_fastpath_interrupted_by_del);
+    RUN_TEST(test_fastpath_interrupted_by_c1);
+    RUN_TEST(test_fastpath_cr_lf_separated_runs);
 
     /* State recovery */
     RUN_TEST(test_esc_interrupts_csi);

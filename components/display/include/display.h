@@ -165,6 +165,17 @@ esp_err_t display_set_backlight(uint8_t brightness);
  */
 void display_set_cursor(int x, int y, cursor_mode_t mode);
 
+/**
+ * Drain (read, do not reset) the render-ISR per-chunk cycle bench.
+ * avg_cycles/max_cycles cover the samples since the last reset; chunks is
+ * the sample count. All zero when CONFIG_DISPLAY_ISR_BENCH is disabled.
+ * Safe to call from any task — internal SRAM is uncached on the S3.
+ */
+void display_render_bench_get(uint32_t *avg_cycles, uint32_t *max_cycles, uint32_t *chunks);
+
+/** Clear the render-ISR cycle bench accumulators. */
+void display_render_bench_reset(void);
+
 #ifdef BUILD_SIMULATOR
 /** Render one full frame to the SDL2 window; call once per event loop. */
 void display_render_frame(void);

@@ -23,6 +23,14 @@
 #include <stdio.h>
 #include "termstate.h"
 
+/* Bench instrumentation (parse-vs-state split + scroll accounting) — see
+ * tsm.h tsm_bench_t. Host test build never defines CONFIG_VTERM_BENCH, so
+ * this (and esp_cpu.h) compiles away entirely there. */
+#ifdef CONFIG_VTERM_BENCH
+#include "esp_cpu.h"
+static tsm_bench_t s_tsm_bench;
+#endif
+
 /* ── Response helper ─────────────────────────────────────────────────────── */
 
 static void send_response(tsm_t *t, const char *s, int len)
@@ -102,6 +110,9 @@ static void erase_screen(tsm_t *t)
 static void scroll_up(tsm_t *t, int n)
 {
     if (n <= 0) return;
+#ifdef CONFIG_VTERM_BENCH
+    s_tsm_bench.scroll_up_calls++;
+#endif
     int top  = t->scroll_top;
     int bot  = t->scroll_bot;
     int span = bot - top + 1;
@@ -109,6 +120,9 @@ static void scroll_up(tsm_t *t, int n)
     memmove(&t->cells[top * t->cols],
             &t->cells[(top + n) * t->cols],
             (size_t)(span - n) * (size_t)t->cols * sizeof(tsm_cell_t));
+#ifdef CONFIG_VTERM_BENCH
+    s_tsm_bench.scroll_rows += (uint32_t)(span - n);
+#endif
     for (int r = bot - n + 1; r <= bot; r++) erase_row(t, r);
     for (int r = top; r <= bot; r++) mark_row_dirty(t, r);
 }
@@ -117,6 +131,9 @@ static void scroll_up(tsm_t *t, int n)
 static void scroll_down(tsm_t *t, int n)
 {
     if (n <= 0) return;
+#ifdef CONFIG_VTERM_BENCH
+    s_tsm_bench.scroll_down_calls++;
+#endif
     int top  = t->scroll_top;
     int bot  = t->scroll_bot;
     int span = bot - top + 1;
@@ -124,6 +141,9 @@ static void scroll_down(tsm_t *t, int n)
     memmove(&t->cells[(top + n) * t->cols],
             &t->cells[top * t->cols],
             (size_t)(span - n) * (size_t)t->cols * sizeof(tsm_cell_t));
+#ifdef CONFIG_VTERM_BENCH
+    s_tsm_bench.scroll_rows += (uint32_t)(span - n);
+#endif
     for (int r = top; r < top + n; r++) erase_row(t, r);
     for (int r = top; r <= bot; r++) mark_row_dirty(t, r);
 }
@@ -650,23 +670,54 @@ static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
 
 /* ── Per-type vtable callbacks ────────────────────────────────────────────── */
 
+#ifdef CONFIG_VTERM_BENCH
+#define TSM_BENCH_T0()      uint32_t __bt0 = esp_cpu_get_cycle_count()
+#define TSM_BENCH_ADD(field) (s_tsm_bench.field += (esp_cpu_get_cycle_count() - __bt0))
+#else
+#define TSM_BENCH_T0()      ((void)0)
+#define TSM_BENCH_ADD(field) ((void)0)
+#endif
+
 static void on_print(const uint32_t *cps, int ncp, void *user)
-    { do_print_span((tsm_t *)user, cps, ncp); }
+{
+    TSM_BENCH_T0();
+    do_print_span((tsm_t *)user, cps, ncp);
+    TSM_BENCH_ADD(print_cycles);
+}
 static void on_c0(uint8_t byte, void *user)
-    { do_c0((tsm_t *)user, byte); }
+{
+    TSM_BENCH_T0();
+    do_c0((tsm_t *)user, byte);
+    TSM_BENCH_ADD(c0_cycles);
+}
 static void on_esc(uint8_t intermediate, uint8_t final, void *user)
-    { do_esc((tsm_t *)user, intermediate, final); }
+{
+    TSM_BENCH_T0();
+    do_esc((tsm_t *)user, intermediate, final);
+    TSM_BENCH_ADD(other_cycles);
+}
 static void on_csi(uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams, void *user)
-    { do_csi((tsm_t *)user, prefix, intermediate, final, params, nparams); }
+{
+    TSM_BENCH_T0();
+    do_csi((tsm_t *)user, prefix, intermediate, final, params, nparams);
+    TSM_BENCH_ADD(csi_cycles);
+}
 static void on_osc(const uint8_t *data, int len, void *user)
-    { do_osc((tsm_t *)user, data, len); }
+{
+    TSM_BENCH_T0();
+    do_osc((tsm_t *)user, data, len);
+    TSM_BENCH_ADD(other_cycles);
+}
 static void on_dcs(uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams, void *user)
 {
     (void)prefix; (void)intermediate; (void)final;
     (void)params; (void)nparams; (void)user;
 }
+
+#undef TSM_BENCH_T0
+#undef TSM_BENCH_ADD
 
 static const vt_callbacks_t s_tsm_cb = {
     .print = on_print, .c0 = on_c0, .esc = on_esc,
@@ -775,3 +826,20 @@ void tsm_reset(tsm_t *t)
 bool tsm_app_cursor_keys(const tsm_t *t) { return t->mode.decckm; }
 
 bool tsm_sync_update(const tsm_t *t) { return t->mode.sync_update; }
+
+void tsm_bench_get(tsm_bench_t *out)
+{
+    if (!out) return;
+#ifdef CONFIG_VTERM_BENCH
+    *out = s_tsm_bench;
+#else
+    memset(out, 0, sizeof(*out));
+#endif
+}
+
+void tsm_bench_reset(void)
+{
+#ifdef CONFIG_VTERM_BENCH
+    memset(&s_tsm_bench, 0, sizeof(s_tsm_bench));
+#endif
+}

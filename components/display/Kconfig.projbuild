@@ -1,0 +1,12 @@
+menu "display"
+
+    config DISPLAY_ISR_BENCH
+        bool "Enable render-ISR per-chunk cycle bench"
+        default y
+        help
+            Accumulates per-chunk cycle counts (avg/max) around
+            display_render_chunk. ~20 cycles/chunk overhead — cheap enough
+            to leave on. Drain with display_render_bench_get(), then clear
+            with display_render_bench_reset().
+
+endmenu

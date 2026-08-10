@@ -434,6 +434,27 @@ void IRAM_ATTR vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
             /* Fall through to process the current byte normally. */
         }
 
+        /* ── GROUND fast path ─────────────────────────────────────────────
+         * No UTF-8 pending (guaranteed above) and in GROUND: bulk-append a
+         * run of printable ASCII, skipping the per-byte switch and the
+         * out-of-line append_print call.  DEL/C0/C1/UTF-8 leads break the
+         * run and fall to the normal per-byte path below on the next pass. */
+        if (p->state == VTP_ST_GROUND && b >= 0x20 && b <= 0x7E) {
+            size_t j = i;
+            for (;;) {
+                if (unlikely(p->print_len >= VTP_PRINT_BUF))
+                    flush_print(p);
+                p->print_buf[p->print_len++] = b;
+                if (++j >= len)
+                    break;
+                b = data[j];
+                if (b < 0x20 || b > 0x7E)
+                    break;
+            }
+            i = j - 1;
+            continue;
+        }
+
         /* ── "Anywhere" transitions (ASCII control only, UTF-8 mode) ────── */
         if (b == 0x18 || b == 0x1A) {
             flush_print(p);

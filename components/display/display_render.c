@@ -462,7 +462,7 @@ static DRAM_ATTR const uint32_t s_fx_noise[16] = {
  * (8x16) or half of one (10x20, 12x24). pos_px = start scanline ×
  * DISPLAY_WIDTH; n_bytes = band pixel count × sizeof(color_t).
  */
-void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
+static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
 {
     if (!dst) return;
 
@@ -800,3 +800,66 @@ void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
 #undef EMIT_COL_12
 
 #undef RENDER_MAX_COLS
+
+/* -------------------------------------------------------------------------
+ * Public entry — optionally wrapped in a cycle-count bench (CONFIG_
+ * DISPLAY_ISR_BENCH, default y): per-chunk CPU cycles accumulated in DRAM,
+ * drained by display_render_bench_get()/_reset() from any task. ~20
+ * cycles/chunk overhead when enabled.
+ * ---------------------------------------------------------------------- */
+#ifdef CONFIG_DISPLAY_ISR_BENCH
+#include "esp_cpu.h"
+
+/* Cycle total must be 64-bit: a 30 s window at ~113k cycles/chunk is within
+ * 8% of the u32 wrap, and any longer window overflows. The ISR's two-word
+ * add can tear under a cross-core read, so the reader spins until the chunk
+ * count is stable around the read. */
+static DRAM_ATTR volatile uint64_t s_bench_cyc = 0;
+static DRAM_ATTR volatile uint32_t s_bench_n   = 0;
+static DRAM_ATTR volatile uint32_t s_bench_max = 0;
+
+void display_render_bench_get(uint32_t *avg_cycles, uint32_t *max_cycles, uint32_t *chunks)
+{
+    uint64_t cyc;
+    uint32_t n, n2;
+    do {
+        n   = s_bench_n;
+        cyc = s_bench_cyc;
+        n2  = s_bench_n;
+    } while (n != n2);
+    if (avg_cycles) *avg_cycles = n ? (uint32_t)(cyc / n) : 0;
+    if (max_cycles) *max_cycles = s_bench_max;
+    if (chunks)     *chunks     = n;
+}
+
+void display_render_bench_reset(void)
+{
+    s_bench_cyc = 0;
+    s_bench_n   = 0;
+    s_bench_max = 0;
+}
+
+void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
+{
+    const uint32_t t0 = esp_cpu_get_cycle_count();
+    render_chunk_body(dst, pos_px, n_bytes);
+    const uint32_t dt = esp_cpu_get_cycle_count() - t0;
+    s_bench_cyc += dt;
+    s_bench_n++;
+    if (dt > s_bench_max) s_bench_max = dt;
+}
+#else
+void display_render_bench_get(uint32_t *avg_cycles, uint32_t *max_cycles, uint32_t *chunks)
+{
+    if (avg_cycles) *avg_cycles = 0;
+    if (max_cycles) *max_cycles = 0;
+    if (chunks)     *chunks     = 0;
+}
+
+void display_render_bench_reset(void) { }
+
+void IRAM_ATTR display_render_chunk(color_t *dst, int pos_px, int n_bytes)
+{
+    render_chunk_body(dst, pos_px, n_bytes);
+}
+#endif
