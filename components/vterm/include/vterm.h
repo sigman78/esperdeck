@@ -45,6 +45,14 @@ void vterm_feed(const char *data, size_t len);
  */
 void vterm_flush(void);
 
+/*
+ * Re-assert the hardware cursor from current terminal state. Full-screen
+ * overlays park the cursor (ui_no_cursor) and a flush only happens when the
+ * host sends bytes — call this when handing the screen back to the session
+ * so the cursor returns without waiting for input.
+ */
+void vterm_cursor_refresh(void);
+
 /**
  * Register a callback for bytes the terminal state machine needs to
  * send back to the remote (cursor-position reports, DA1 responses, ...).

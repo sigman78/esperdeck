@@ -114,8 +114,7 @@ static void exit_pairing(uint64_t now)
     if (app.cfg.ble && app.cfg.ble->exit_pairing)
         app.cfg.ble->exit_pairing();
     if (ssh_client_is_connected()) {
-        app.state = ST_SESSION;
-        ui_hide();
+        session_resume();
     } else {
         enter_home(now);
     }

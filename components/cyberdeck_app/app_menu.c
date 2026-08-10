@@ -428,8 +428,7 @@ static void menu_back(uint64_t now)
     switch (app.menu.screen) {
     case MS_MAIN:                              /* resume the live session */
         app.menu.armed = false;
-        app.state = ST_SESSION;
-        ui_hide();
+        session_resume();
         break;
     case MS_CONFIG:
         if (app.menu.from_home) enter_home(now);
@@ -501,7 +500,7 @@ static void menu_activate(uint64_t now)
     switch (sc) {
     case MS_MAIN:
         switch (sel) {
-        case 0: app.state = ST_SESSION; ui_hide();        return;  /* resume  */
+        case 0: session_resume();                         return;  /* resume  */
         case 1:                                                    /* discon. */
             ssh_client_disconnect();
             enter_home_after_collapse(now);   /* deliberate CRT power-off */

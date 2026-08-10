@@ -94,10 +94,16 @@ static inline void refresh_display(void)
     uint32_t t1 = esp_cpu_get_cycle_count();
     s_bench.draw_cycles += (t1 - t0);
 #endif
+    vterm_cursor_refresh();
+    tsm_clear_dirty(s_tsm);
+}
+
+void vterm_cursor_refresh(void)
+{
+    if (!s_initialized) return;
     int cx, cy; bool vis;
     tsm_cursor(s_tsm, &cx, &cy, &vis);
     display_set_cursor(cx, cy, vis ? CURSOR_BLOCK : CURSOR_NONE);
-    tsm_clear_dirty(s_tsm);
 }
 
 /* Public API */

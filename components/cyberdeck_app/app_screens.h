@@ -47,6 +47,8 @@ void hostkey_tick(uint64_t now);
 void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 
 /* ---- connect + session (app_connect.c) ---- */
+/** Hand the screen back to a live session: overlay down, cursor restored. */
+void session_resume(void);
 /** Arm a connect to profile @p idx (snapshots it into app.conn.active). */
 void start_connect(int idx, uint64_t not_before, uint64_t now);
 /** Re-arm a connect to the active snapshot, pinning @p fp (hostkey trust). */

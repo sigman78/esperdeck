@@ -8,6 +8,7 @@
 #include "app_widgets.h"
 #include "display_fx.h"
 #include "ssh_client.h"
+#include "vterm.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -167,13 +168,23 @@ void session_dropped(uint64_t now)
     enter_home_after_collapse(now);    /* CRT power-off over the dead screen */
 }
 
+/* Hand the screen back to a live session. Every full-screen modal parks the
+ * terminal cursor (ui_no_cursor) and a vterm flush only happens when the
+ * host sends bytes — without the explicit refresh the cursor stays gone
+ * until the first input after leaving the menu/pairing screen. */
+void session_resume(void)
+{
+    app.state = ST_SESSION;
+    ui_hide();
+    vterm_cursor_refresh();
+}
+
 static void enter_session(uint64_t now)
 {
-    app.state       = ST_SESSION;
     app.conn.session_start = now;
     app.conn.attempt       = 0;   /* a future drop counts retries from 1 again */
     display_fx_wipe();     /* raster-reveal the fresh session */
-    ui_hide();
+    session_resume();
     /* The terminal was cleared inside ssh_client_connect() before the read
      * task spawned — doing it here would race that task inside vterm. */
     static const char *const HELLO[] = {
