@@ -43,8 +43,10 @@ timestamps and input events from the root and calls back into the components.
 main/               device composition root (main.c, splash, Kconfig)
 sim/                 host composition root (SDL event loop)
 components/
-  cyberdeck_app/     THE SHELL — boot→picker→session FSM + overlay TUI
-  display/ + font/   bounce-buffer render core, Terminus 8x16 font
+  cyberdeck_app/     THE SHELL — boot→picker→session FSM + overlay TUI,
+                     one module per screen (app_home/menu/connect/...)
+  display/ + font/   bounce-buffer render core, CRT effects (display_fx),
+                     Terminus font in 8x16 / 10x20 / 12x24 with a bold face
   tsm/               VT100/220/xterm parser + terminal state (cells, SGR)
   vterm/             bridge: tsm grid → display cell buffer
   ssh/               libssh2 client (connect, host-key check, PTY, read task)
@@ -71,30 +73,37 @@ docs/                this document
 
 There is no pixel framebuffer anywhere. An 800×480×2 B RGB565 buffer would cost
 ~750 KB; the ESP32-S3 does not have it to spare. Instead the display is a grid
-of **8-byte cells** (`terminal_cell_t`, 100×30 = 3 KB) plus the resident
-Terminus 8×16 bitmap font, rasterized to pixels on demand.
+of **8-byte cells** — 100×30, 80×24 or 66×20 depending on the selected font
+size (Terminus 8×16 / 10×20 / 12×24, copied from flash to DRAM at boot) —
+rasterized to pixels on demand.
 
 ```
-         cell buffer (100×30 × 8 B)          overlay buffer (shell chrome)
+         cell buffer (cols×rows × 8 B)       overlay buffer (shell chrome)
                   │                                    │
                   ▼                                    ▼
         ┌──────────────────────── display_render_chunk() ───────────────────┐
-        │  one shared glyph→pixel core, IRAM-resident, per 16-scanline band  │
+        │ one shared glyph→pixel core, IRAM-resident, per bounce-buffer band │
         └───────────────────────────────────────────────────────────────────┘
                   │                                    │
         device:   ▼   RGB LCD DMA bounce-buffer        sim: ▼  full SDL frame
-        the ISR asks for the next 16-line band;        display_render_frame()
-        the core fills it and DMA scans it out.        fills an SDL texture.
+        the ISR asks for the next band (one char       display_render_frame()
+        row, or half of one for tall fonts);           fills an SDL texture.
+        the core fills it and DMA scans it out.
 ```
 
 `display_render_chunk()` (in `display_render.c`) is the single implementation of
 "turn cells into pixels for one horizontal band." The device calls it from the
-LCD peripheral's DMA ISR — every band is composed live, so the sim and the
-hardware render *identical* output by construction.
+LCD peripheral's DMA ISR — every band is composed live at the panel's 39 Hz, so
+the sim and the hardware render *identical* output by construction. Optional CRT
+effects (`display_fx`: scanlines, glow, wobble, static, transitions) hook into
+the same band loop and fit inside the ISR's cycle budget.
 
 **Cell layout** (`display.h` / `tsm.h`) is 8 bytes and binary-compatible between
-`tsm` and the display, so `vterm` passes `tsm`'s grid to the ISR with a pointer
-cast — no per-frame copy:
+`tsm` and the display. `vterm` copies **dirty row-spans** from `tsm`'s grid
+(PSRAM; rows live in a scroll *ring*, so consecutive logical rows are not
+contiguous — see `tsm_row()`) into the internal-DRAM bridge buffer the ISR
+reads. That copy doubles as the frame snapshot: withholding it is how DEC
+`?2026` synchronized output presents atomically. The layout:
 
 ```
 offset 0  cp       uint16  BMP codepoint
@@ -120,14 +129,14 @@ The terminal is a one-way pipe from the remote, plus a one-way pipe from the
 keyboard — kept on separate cores on the device.
 
 ```
-  remote host ──► libssh2 ──► ssh_read_task ──► vterm_write ──► tsm parse
+  remote host ──► libssh2 ──► ssh_read_task ──► vterm_feed ──► tsm parse
    (SSH/PTY)                    (core 0)              │            │
-                                                      │      cell buffer + dirty rows
-                                                      │            │
+                                                      │      cells + dirty rows
+                                                      │            │ vterm_flush
                                                       │            ▼
-                                              terminal replies   LCD DMA ISR (IRAM)
-                                              (DA/DSR/CPR) ──┐    renders bands
-                                                             │
+                                              terminal replies   LCD DMA ISR (IRAM,
+                                              (DA/DSR/CPR) ──┐    core 1) renders
+                                                             │    bands
   BLE / touch / UART ──► input_hal queue ──► main_task ──► cyberdeck_app_tick
                                               (core 1)     + _handle_input
                                                              │
@@ -135,11 +144,14 @@ keyboard — kept on separate cores on the device.
                                                        ssh_client_send ──► remote
 ```
 
-- **Remote → screen.** `ssh_read_task` blocks on the libssh2 channel, feeds raw
-  bytes to `vterm_write()`, which drives `tsm`. `tsm` updates cells and tracks
-  per-row dirty spans; `vterm` flushes dirty rows to the display cell buffer
-  (skipped while DEC mode `?2026` synchronized-output is active, to avoid
-  tearing). The ISR renders whatever is currently in the cell buffer.
+- **Remote → screen.** `ssh_read_task` drains the libssh2 channel until EAGAIN
+  (budgeted per wake), feeding raw bytes to `vterm_feed()`, which drives `tsm`.
+  `tsm` updates cells and tracks per-row dirty spans; one `vterm_flush()` per
+  batch copies dirty rows to the display cell buffer (withheld while DEC
+  `?2026` synchronized output is active, to avoid tearing). The ISR renders
+  whatever is currently in the cell buffer. The pipeline is instrumented:
+  in-session `vterm_bench`/`render_bench` log lines every 30 s
+  ([`speedupsall.md`](speedupsall.md) has the tuning history).
 - **Terminal replies.** When `tsm` must answer the host (Device Attributes,
   cursor-position report), it calls a response callback. `ssh_client` registers
   this at connect (`vterm_set_response_cb`) and *buffers* the reply rather than
@@ -156,9 +168,13 @@ keyboard — kept on separate cores on the device.
 | Context | Core | Stack | Job |
 |---------|------|-------|-----|
 | `main_task` | 1 | 12 KB **internal DRAM** | shell tick + input pump; writes flash (profiles, known-hosts) |
-| `ssh_read_task` | 0 | PSRAM (static) | remote read → `vterm_write` |
+| `ssh_read_task` | 0 | PSRAM (static) | remote drain → `vterm_feed`/`vterm_flush` |
 | NimBLE host | 0 | (NimBLE) | BLE HID keyboard |
-| LCD DMA ISR | — | IRAM | rasterize bands from the cell + overlay buffers |
+| LCD DMA ISR | 1 | IRAM | rasterize bands from the cell + overlay buffers (~55% of the core) |
+
+The LCD interrupt is deliberately on core 1: the panel is brought up from a
+transient core-1 task (`lcd_driver.c`) so `esp_intr_alloc` pins it there,
+keeping the render tax off the core that runs WiFi, NimBLE, and the SSH drain.
 
 `main_task`'s stack **must** be internal DRAM: it performs flash I/O (LittleFS
 profile saves, NVS bond persistence), which is forbidden from an external-RAM
@@ -199,14 +215,15 @@ Flow: **BOOT** → **HOME** (profile picker) → **CONNECTING** → **SESSION**,
 
 The device build lives or dies by *where* memory sits.
 
-- **IRAM/DRAM only on the render path.** The LCD RGB ISR keeps running during
-  flash writes (`CONFIG_LCD_RGB_ISR_IRAM_SAFE`), so the ISR wrapper, the render
-  core, the font, and the cell/overlay buffers are all IRAM/DRAM-resident. The
-  cell buffers are allocated with plain internal `malloc` — `CONFIG_SPIRAM_USE_MALLOC`
-  is deliberately **off** so the ISR never reads a buffer that landed in PSRAM.
-- **PSRAM for the big, cold allocations.** libssh2's heap and the SSH read
-  task's stack come from octal PSRAM (`ssh_client.c` supplies SPIRAM allocators
-  to libssh2).
+- **IRAM/DRAM on the render path.** The render core is IRAM; the cell/overlay
+  buffers and the boot-time font copy are internal DRAM, so the ISR never
+  reads through the PSRAM cache. (The ISR is *not* flash-cache-safe: a flash
+  write — profile save, NVS — briefly pauses the bounce refill; the glitch is
+  visible only during saves.)
+- **PSRAM for the big allocations.** libssh2's heap, the SSH read task's
+  stack, and `tsm`'s two cell grids live in octal PSRAM; `tsm`'s *hot* state
+  (the embedded parser, print buffer, dirty spans) is internal-first — every
+  parsed byte touches it.
 - **Internal DRAM for flash-writing tasks.** Any task that touches flash needs
   an internal stack; `main_task` allocates its stack from `MALLOC_CAP_INTERNAL`
   explicitly.
@@ -221,11 +238,16 @@ Connection details are **data, not firmware** (`storage` component). On device
 they live in a LittleFS partition (`partitions.csv`); in the sim, in a
 `sim_storage/` directory. Same INI format both ways:
 
-- `profiles.ini` — SSH profiles (host, port, user, password or `key_id`)
+- `profiles.ini` — SSH profiles (host, port, user, password or key + passphrase)
 - `wifi.ini` — WiFi networks, tried in file order
 - `known_hosts.ini` — pinned host-key fingerprints (see below)
-- `keys/*.pem` — private keys for public-key auth
+- `keys/*.pem` — private keys for public-key auth (encrypted ed25519 supported)
+- `fx.ini` — CRT effect settings; `font.ini` — terminal font size (applied on reboot)
 - BLE bonds live in **NVS** (not LittleFS) — the NimBLE bond store owns them
+
+Profiles and keys are editable three ways: the on-device editor (menu), a web
+manager started from the menu ("Web (PC)", served over the LAN), and the
+SoftAP phone flow for first-time setup (`wifi/ssh_import.c`).
 
 Kconfig `WIFI_*` / `SSH_DEFAULT_*` (or sim argv) provide a `(default)` profile
 only when storage is empty, so a fresh flash still connects somewhere.
