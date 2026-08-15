@@ -1,5 +1,26 @@
 menu "Cyberdeck Configuration"
 
+    config CYBERDECK_BENCH_STRESS
+        bool "Boot into the ISR render bench stress screen (dev tool)"
+        default n
+        help
+            Skip the app shell (and networking/BLE) and continuously repaint
+            the whole grid with worst-case dense colored text, logging the
+            DISPLAY_ISR_BENCH per-chunk cycle counters every 5 s. Used to
+            quantify render/decoder changes — not a user feature.
+
+    choice CYBERDECK_BENCH_STRESS_FONT
+        prompt "Bench font size"
+        depends on CYBERDECK_BENCH_STRESS
+        default CYBERDECK_BENCH_STRESS_FONT_10X20
+        config CYBERDECK_BENCH_STRESS_FONT_8X16
+            bool "8x16"
+        config CYBERDECK_BENCH_STRESS_FONT_10X20
+            bool "10x20"
+        config CYBERDECK_BENCH_STRESS_FONT_12X24
+            bool "12x24"
+    endchoice
+
     menu "Terminal font"
 
     comment "Sizes selectable at runtime (Config > Font, applied on reboot)"

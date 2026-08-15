@@ -108,7 +108,17 @@ int display_text_rows(void)   { return DISPLAY_HEIGHT / s_fh; }
  * every ENABLED font (FONT_MAX_CACHE_BYTES = max cols * glyph_bytes, see
  * font.h). The band scan loop then reads plain decoded rows out of it — no
  * decode and no NULL check in the hot per-pixel path — by indexing
- * s_cc_rows + c * glyph_bytes and casting to the active row type. */
+ * rows + c * glyph_bytes and casting to the active row type.
+ *
+ * ONE bank, rebuilt synchronously on the first chunk of each character row.
+ * The -O2 glyph decoder made the full rebuild cheap enough that the earlier
+ * double-banked look-ahead (splitting the next row's rebuild across the
+ * current row's two chunks) stopped paying for its complexity and ~4.4 KB
+ * of DRAM: measured worst chunks on a dense 100%-painted screen are
+ * 10x20 389 us / 12x24 408 us against 534/640 us chunk periods (banking
+ * bought 311/341 — headroom we don't need). Reusing the cache for a row's
+ * second chunk DOES pay: rebuilding every chunk costs +24%/+19% average
+ * ISR time for no complexity win, so the three validity tags stay. */
 static DRAM_ATTR _Alignas(4) uint8_t s_cc_rows[FONT_MAX_CACHE_BYTES];
 static DRAM_ATTR uint16_t           s_cc_bg[2][RENDER_MAX_COLS];
 static DRAM_ATTR uint16_t           s_cc_xf[2][RENDER_MAX_COLS];
@@ -117,15 +127,12 @@ static DRAM_ATTR uint8_t            s_cc_ul[RENDER_MAX_COLS];
 static DRAM_ATTR uint8_t            s_cc_dim[RENDER_MAX_COLS];
 #endif
 
-/* Cache validity — with sub-row bounce bands (BOUNCE_BUFFER_HEIGHT <
- * FONT_HEIGHT) a character row spans several consecutive bands; only the
- * first band of the row rebuilds the cache, the rest reuse it. */
-static DRAM_ATTR int     s_cc_row     = -1;  /* char row currently cached */
-static DRAM_ATTR int     s_cc_scan_on = 0;   /* dim variant [1] populated? */
-static DRAM_ATTR uint8_t s_cc_frame   = 0;   /* g_fx_frame at build time — a
-                                                band whose row-first band was
-                                                clipped out must not reuse a
-                                                previous frame's cache */
+/* Cache validity: the cache is scanned only when its (row, frame,
+ * scanline-variant) tags all match; anything else (new row, new frame, a
+ * config flip, an effect-clipped band) rebuilds synchronously first. */
+static DRAM_ATTR int     s_cc_row   = -1;  /* char row held, -1 = none */
+static DRAM_ATTR int     s_cc_scan  = 0;   /* dim variant populated?   */
+static DRAM_ATTR uint8_t s_cc_frame = 0;   /* g_fx_frame at build      */
 
 void display_render_set_font(int width, int height)
 {
@@ -148,7 +155,7 @@ void display_render_set_font(int width, int height)
     s_fh     = height;
     s_band   = band;
     s_gb     = (int)font_glyph_bytes();
-    s_cc_row = -1;                   /* stale column cache — force a rebuild */
+    s_cc_row = -1;   /* stale column cache — rebuild */
 }
 
 /* -------------------------------------------------------------------------
@@ -311,7 +318,6 @@ void display_bell(void) { s_bell_frames = BELL_TOTAL; }
 static IRAM_ATTR void build_row_cache(int cr, int scan_on)
 {
     const terminal_cell_t *row_cells = s_cell_buf + cr * s_cell_cols;
-    const int ncols = s_cell_cols;
     const display_overlay_cell_t *ov_row =
         (s_overlay_buf && cr < s_overlay_rows)
         ? (s_overlay_buf + cr * s_overlay_cols) : NULL;
@@ -336,7 +342,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
     }
 #endif
 
-    for (int c = 0; c < ncols; c++) {
+    for (int c = 0; c < s_cell_cols; c++) {
         color_t fg, bg;
         uint8_t *dst = s_cc_rows + (size_t)c * (size_t)s_gb;
         uint8_t underline = 0;
@@ -578,16 +584,18 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
         return;
     }
 
-    /* Per-column cache: only the row's first band rebuilds, later bands
-     * reuse it (DMA feeds bands strictly in order). scan_on is captured at
-     * build time so the fill and the scanline loop always agree. */
+    /* ------------------------------------------------------------------
+     * Column-cache resolution: rebuild synchronously on a row's first
+     * chunk (or after anything that invalidated the tags). A row's second
+     * chunk (10x20/12x24) reuses the cache for free.
+     * ------------------------------------------------------------------ */
     const int scan_on = g_fx_cfg.scanlines ? 1 : 0;
-    if (glyph_row0 == 0 || s_cc_row != char_row || s_cc_scan_on != scan_on
+    if (s_cc_row != char_row || s_cc_scan != scan_on
             || s_cc_frame != g_fx_frame) {
         build_row_cache(char_row, scan_on);
-        s_cc_row     = char_row;
-        s_cc_scan_on = scan_on;
-        s_cc_frame   = g_fx_frame;
+        s_cc_row   = char_row;
+        s_cc_scan  = scan_on;
+        s_cc_frame = g_fx_frame;
     }
     const int ncols = s_cell_cols;
 
@@ -596,6 +604,10 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
     const int margin_words = (DISPLAY_WIDTH - ncols * fw) >> 1;
 
     color_t *dst_base = dst;
+
+    /* Decoded-glyph rows — hoisted so the macro below indexes a plain
+     * pointer. */
+    const uint8_t *const cc_rows = s_cc_rows;
 
     /* One whole band at a FIXED cell width, instantiated per enabled size
      * and selected ONCE per band: width, glyph row type and store count are
@@ -617,13 +629,13 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
             /* glyph_bytes == 2*W*sizeof(ROW_T) for every enabled size, since  \
              * height == 2*width for all three grids — a compile-time-        \
              * constant stride per instantiation, no s_gb load needed here.   \
-             * Rows are decoded plain into s_cc_rows, so they read straight   \
-             * through — no NULL check. */                                    \
+             * Rows are decoded plain into the bank's cache, so they read     \
+             * straight through — no NULL check. */                           \
             int c = 0;                                                         \
             for (; c + 1 < ncols; c += 2) {                                    \
-                const ROW_T *g0 = (const ROW_T *)(s_cc_rows +                  \
+                const ROW_T *g0 = (const ROW_T *)(cc_rows +                    \
                         (size_t)(c    ) * (2u*(W)*sizeof(ROW_T)));             \
-                const ROW_T *g1 = (const ROW_T *)(s_cc_rows +                  \
+                const ROW_T *g1 = (const ROW_T *)(cc_rows +                    \
                         (size_t)(c + 1) * (2u*(W)*sizeof(ROW_T)));             \
                 const ROW_T b0 = g0[gl];                                       \
                 const ROW_T b1 = g1[gl];                                       \
@@ -637,7 +649,7 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
                                                                                \
             /* Trailing odd column (defensive; all three grids are even). */   \
             if (c < ncols) {                                                   \
-                const ROW_T *g0 = (const ROW_T *)(s_cc_rows +                  \
+                const ROW_T *g0 = (const ROW_T *)(cc_rows +                    \
                         (size_t)(c) * (2u*(W)*sizeof(ROW_T)));                 \
                 const ROW_T b0 = g0[gl];                                       \
                 const uint16_t bg0 = bgv[c], xf0 = xfv[c];                     \
@@ -674,7 +686,8 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
                 if (!s_cc_ul[c]) continue;
                 for (int n = ul_first; n < num_scans; n++) {
                     const int sel = n & scan_on & 1;   /* match scanline variant */
-                    const uint16_t fg = (uint16_t)(s_cc_bg[sel][c] ^ s_cc_xf[sel][c]);
+                    const uint16_t fg = (uint16_t)(s_cc_bg[sel][c]
+                                                   ^ s_cc_xf[sel][c]);
                     const uint32_t fg2 = (uint32_t)fg | ((uint32_t)fg << 16);
                     uint32_t *p = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH
                                                + c * fw);
@@ -810,6 +823,7 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
      * row draws its slice (glyph_row0 offsets into the tag bitmap). */
     if (char_row == 0 && s_bell_show && glyph_row0 < 16)
         draw_bell_tag(dst_base, glyph_row0, num_scans);
+
 }
 
 #undef GPAIR

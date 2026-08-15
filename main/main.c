@@ -20,6 +20,7 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 
+#include "bench_stress.h"
 #include "ble_keyboard.h"
 #include "cyberdeck_app.h"
 #include "display.h"
@@ -174,10 +175,12 @@ void app_main(void)
      * the panel comes up, and that geometry follows the cell height. This
      * ordering is why changing the size needs a reboot rather than taking
      * effect live. */
-    font_init(boot_font_size());
+    font_init(bench_stress_font_override(boot_font_size()));
     display_render_set_font(font_width(), font_height());
     display_init();
     vterm_init(display_text_cols(), display_text_rows());
+    if (bench_stress_start())
+        return;   /* bench build: the stress task owns the screen */
     splash_show();
     log_heap("after display+vterm");
 

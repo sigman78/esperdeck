@@ -1,53 +1,123 @@
 #!/usr/bin/env python3
-"""
-gen_terminus.py -- generate components/font/data/terminusWxH[b].bin, the
-compressed glyph blobs ("v1" records in a "CDF1" container -- see
-components/font/terminus_font.h for the record format and
-tools/fontbin2c.py for the container layout). The build expands each blob
-back into its .c translation unit via fontbin2c.py; the repo commits only
-the blobs.
+"""gen_terminus.py -- generate the committed compressed glyph tables.
 
-Per face (regular / bold) of each size the pool holds deduplicated,
-row-cropped glyph records (header + PackBits row stream); ranges[] carries
-one uint16_t byte-offset per covered codepoint into that pool. Regular faces
-merge adjacent ranges whose gap is <= 3 codepoints (gap cps point at the '?'
-record). Bold faces store only the codepoints whose real bold bitmap differs
-from "smear the regular glyph one pixel"; identical ones use the sentinel
-0xFFFF instead of a stored record. 10x20/12x24 (uint16_t rows) additionally
-share a <=255-entry row palette between the regular and bold pools of that
-size, with index 0xFF as an inline 2-byte escape for the long tail.
+One-step pipeline: fetch the upstream Terminus Font release (BDF sources,
+downloaded once into tools/.cache/), compress each size with the "v1"
+record format (crop + dedup + PackBits + row palette -- spec in
+components/font/terminus_font.h), self-verify the encoded pools decode
+pixel-exact against the BDF cells, and emit one .c translation unit per
+size into components/font/. The emitted files are COMMITTED; there is no
+build-time generation step.
 
-Two independent glyph sources feed the same pipeline:
-
-  * BDF   -- the original input format (kept working; no BDFs currently
-             live in the repo, so this path is untested against real data).
-  * "convert" -- reads a pair of CURRENT-format (pre-v1, uncompressed)
-             terminusWxH[b].c files, via regex on the
-             `font_(range|bold)_XXXX_YYYY[]` arrays. This is how the repo's
-             six tables were regenerated: from snapshots of the previous
-             generator's output.
+Coverage: the regular face carries the full Terminus repertoire (~1356
+glyphs); adjacent codepoint ranges whose gap is <= 3 are merged, the gap
+codepoints pointing at the '?' record. The bold face covers BOLD_SUBSET
+only; codepoints whose true bold bitmap equals "smear the regular glyph
+one pixel" are synthesized at decode time (0xFFFF idx sentinel) and only
+the exceptions store a record.
 
 Usage:
-    python gen_terminus.py bdf WxH normal.bdf bold.bdf out.bin out_bold.bin
-    python gen_terminus.py convert WxH ref.c ref_bold.c out.bin out_bold.bin [--verify]
-    python gen_terminus.py verify WxH ref.c ref_bold.c out.bin out_bold.bin
-
-`convert`/`bdf` write the blobs and print byte-size totals. `verify` (or
-`convert ... --verify`) re-parses the EMITTED blobs (not the in-memory
-encoder state) with fontbin2c.parse_blob + a Python reimplementation of the
-decoder, decodes every codepoint the reference covers plus the bold subset
-under the three-way bold semantics, and byte-compares against the reference
-(a pair of pre-v1 uncompressed .c tables). Any mismatch exits 1.
+    python gen_terminus.py                  # all sizes, cached download
+    python gen_terminus.py 8x16 12x24       # only these sizes
+    python gen_terminus.py --src PATH       # local terminus dir or .tar.gz
+    python gen_terminus.py --out DIR        # default: components/font
 """
 
-import re
+import argparse
+import struct
 import sys
+import tarfile
+import urllib.request
 from collections import Counter
 from pathlib import Path
 
+TERMINUS_VERSION = "4.49.1"
+TERMINUS_URL = ("https://sourceforge.net/projects/terminus-font/files/"
+                "terminus-font-{major}/terminus-font-{ver}.tar.gz/download")
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_OUT = REPO_ROOT / "components" / "font"
+CACHE_DIR = Path(__file__).resolve().parent / ".cache"
+
+#           WxH:   (normal BDF,     bold BDF)
+SIZES = {(8, 16):  ("ter-u16n.bdf", "ter-u16b.bdf"),
+         (10, 20): ("ter-u20n.bdf", "ter-u20b.bdf"),
+         (12, 24): ("ter-u24n.bdf", "ter-u24b.bdf")}
+
+# Bold coverage -- subset "A": the scripts a terminal actually bolds.
+# Codepoints outside this fall back to the normal glyph, unsmeared.
+BOLD_SUBSET = [
+    (0x0020, 0x007E),   # ASCII
+    (0x00A0, 0x017F),   # Latin-1 supplement + Extended-A
+    (0x0400, 0x045F),   # Cyrillic (basic Russian + extensions)
+]
+
+# gap*2 < 8 (one FontRange directory entry) <=> gap <= 3
+MAX_MERGE_GAP = 3
+
+# Consistency check pinned to TERMINUS_VERSION -- update these counts (from
+# the tool's own report) when bumping the version.
+EXPECTED_BOLD_EXCEPTIONS = {8: 150, 10: 67, 12: 56}
+
 
 # ---------------------------------------------------------------------------
-# BDF parsing (unchanged from the pre-v1 generator)
+# Fetching the BDF sources
+# ---------------------------------------------------------------------------
+
+def fetch_bdfs(src):
+    """Return a dir containing the six ter-u{16,20,24}{n,b}.bdf files.
+
+    src == None: download the pinned release into tools/.cache/ (once).
+    src == dir:  use its BDFs directly (release checkout or extracted tree).
+    src == .tar.gz: extract the needed BDFs into the cache."""
+    wanted = [f for pair in SIZES.values() for f in pair]
+
+    def bdf_dir_ok(d):
+        return all((d / f).is_file() for f in wanted)
+
+    if src is not None:
+        src = Path(src)
+        if src.is_dir():
+            if bdf_dir_ok(src):
+                return src
+            sub = src / f"terminus-font-{TERMINUS_VERSION}"
+            if sub.is_dir() and bdf_dir_ok(sub):
+                return sub
+            sys.exit(f"{src}: missing one of {', '.join(wanted)}")
+        if not src.is_file():
+            sys.exit(f"{src}: no such file or directory")
+        tarball = src
+    else:
+        CACHE_DIR.mkdir(exist_ok=True)
+        (CACHE_DIR / ".gitignore").write_text("*\n")
+        tarball = CACHE_DIR / f"terminus-font-{TERMINUS_VERSION}.tar.gz"
+        if not tarball.is_file():
+            url = TERMINUS_URL.format(
+                major=".".join(TERMINUS_VERSION.split(".")[:2]),
+                ver=TERMINUS_VERSION)
+            print(f"downloading {url}")
+            req = urllib.request.Request(url, headers={"User-Agent": "gen_terminus"})
+            with urllib.request.urlopen(req) as r:
+                data = r.read()
+            tarball.write_bytes(data)
+            print(f"  -> {tarball} ({len(data)} bytes)")
+
+    out = CACHE_DIR / f"terminus-font-{TERMINUS_VERSION}"
+    if bdf_dir_ok(out):
+        return out
+    out.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(tarball, "r:gz") as tf:
+        for m in tf.getmembers():
+            name = Path(m.name).name
+            if name in wanted and m.isfile():
+                (out / name).write_bytes(tf.extractfile(m).read())
+    if not bdf_dir_ok(out):
+        sys.exit(f"{tarball}: does not contain all of {', '.join(wanted)}")
+    return out
+
+
+# ---------------------------------------------------------------------------
+# BDF parsing
 # ---------------------------------------------------------------------------
 
 def parse_bdf(path):
@@ -108,19 +178,9 @@ def compose_cell(fbb, bbx, hexrows, cp):
     return cell
 
 
-# Bold coverage — subset "A": the scripts a terminal actually bolds.
-# Codepoints outside this fall back to the normal glyph, unsmeared.
-BOLD_SUBSET = [
-    (0x0020, 0x007E),   # ASCII
-    (0x00A0, 0x017F),   # Latin-1 supplement + Extended-A
-    (0x0400, 0x045F),   # Cyrillic (basic Russian + extensions)
-]
-
-# gap*2 < 8 (one FontRange directory entry) <=> gap <= 3
-MAX_MERGE_GAP = 3
-
-EXPECTED_BOLD_EXCEPTIONS = {8: 150, 10: 67, 12: 56}
-
+# ---------------------------------------------------------------------------
+# Range helpers
+# ---------------------------------------------------------------------------
 
 def contiguous_ranges(cps):
     cps = sorted(cps)
@@ -156,44 +216,6 @@ def bold_ranges_for(font_cps):
         if covered:
             out.extend(contiguous_ranges(covered))
     return out
-
-
-# ---------------------------------------------------------------------------
-# Old-format (pre-v1) .c parsing -- the "convert" source and the --verify
-# reference. Reused for both: parse_old_regular / parse_old_bold.
-# ---------------------------------------------------------------------------
-
-def _parse_old_arrays(path, prefix):
-    text = Path(path).read_text(encoding="utf-8")
-    pattern = re.compile(prefix + r"_([0-9A-F]{4})_([0-9A-F]{4})\[\]\s*=\s*\{(.*?)\};", re.S)
-    arrays = {}
-    for m in pattern.finditer(text):
-        lo, hi = int(m.group(1), 16), int(m.group(2), 16)
-        vals = [int(v, 16) for v in re.findall(r"0x[0-9A-Fa-f]+", m.group(3))]
-        arrays[(lo, hi)] = vals
-    return arrays
-
-
-def parse_old_regular(path, height):
-    """Return ({cp: [row_int; height]}, [contiguous (lo, hi) ranges])."""
-    arrays = _parse_old_arrays(path, "font_range")
-    glyphs = {}
-    for (lo, hi), vals in arrays.items():
-        for i, cp in enumerate(range(lo, hi + 1)):
-            glyphs[cp] = vals[i * height:(i + 1) * height]
-    ranges = sorted(arrays.keys())
-    return glyphs, ranges
-
-
-def parse_old_bold(path, height):
-    """Return sparse {cp: [row_int; height]} -- only cps present in the
-    old differ-only bold table (absence there means bold == normal)."""
-    arrays = _parse_old_arrays(path, "font_bold")
-    glyphs = {}
-    for (lo, hi), vals in arrays.items():
-        for i, cp in enumerate(range(lo, hi + 1)):
-            glyphs[cp] = vals[i * height:(i + 1) * height]
-    return glyphs
 
 
 # ---------------------------------------------------------------------------
@@ -265,12 +287,10 @@ def packbits_encode(rows, scost, emit_symbol):
     return out
 
 
-def build_font_data(width, height, normal, get_real_bold):
+def build_font_data(width, height, normal, real_bold):
     """normal: {cp: [row_int; height]} full regular coverage.
-    get_real_bold(cp): the TRUE bold bitmap for cp (a [row_int; height]
-    list) for every cp in bold_ranges_for(normal). Source-agnostic: BDF
-    callers pass the bold BDF dict directly; the .c converter reconstructs
-    it as bold_sparse.get(cp, normal[cp]) (old sparse-table semantics)."""
+    real_bold: {cp: [row_int; height]} from the bold BDF; a cp absent there
+    keeps its normal glyph as the true bold form."""
     rb = 1 if width <= 8 else 2
     font_cps = set(normal)
     reg_ranges = contiguous_ranges(font_cps)
@@ -285,10 +305,10 @@ def build_font_data(width, height, normal, get_real_bold):
 
     exc_crop = {}
     for cp in bold_cps:
-        real_bold = list(get_real_bold(cp))
+        true_bold = real_bold.get(cp, normal[cp])
         smeared = [smear_row(r) for r in normal[cp]]
-        if real_bold != smeared:
-            exc_crop[cp] = crop(real_bold, height)
+        if true_bold != smeared:
+            exc_crop[cp] = crop(true_bold, height)
 
     # --- shared row palette (rb==2 sizes only) ---
     palette = []
@@ -333,26 +353,21 @@ def build_font_data(width, height, normal, get_real_bold):
     def build_pool(crop_map, cp_order):
         pool = bytearray()
         offsets = {}
-        records = []             # (offset, rec, bytes) in first-seen order
-        cps_by_rec = {}
+        n_records = 0
         for cp in cp_order:
             rec = crop_map[cp]
-            cps_by_rec.setdefault(rec, []).append(cp)
             if rec not in offsets:
-                b = encode_record(rec)
                 offsets[rec] = len(pool)
-                records.append((len(pool), rec, b))
-                pool += b
+                pool += encode_record(rec)
+                n_records += 1
         assert len(pool) <= 65534, f"pool too large: {len(pool)} bytes"
-        cps_by_offset = {offsets[rec]: cps for rec, cps in cps_by_rec.items()}
-        return bytes(pool), offsets, records, cps_by_offset
+        return bytes(pool), offsets, n_records
 
-    reg_pool, reg_offsets, reg_records, reg_cps_by_off = build_pool(reg_crop, sorted(reg_crop))
+    reg_pool, reg_offsets, reg_nrec = build_pool(reg_crop, sorted(reg_crop))
     if exc_crop:
-        bold_pool, bold_offsets, bold_records, bold_cps_by_off = build_pool(
-            exc_crop, sorted(exc_crop))
+        bold_pool, bold_offsets, bold_nrec = build_pool(exc_crop, sorted(exc_crop))
     else:
-        bold_pool, bold_offsets, bold_records, bold_cps_by_off = b"", {}, [], {}
+        bold_pool, bold_offsets, bold_nrec = b"", {}, 0
 
     assert 0x3F in reg_crop, "'?' (U+003F) missing from regular coverage"
     q_offset = reg_offsets[reg_crop[0x3F]]
@@ -381,111 +396,22 @@ def build_font_data(width, height, normal, get_real_bold):
 
     return {
         "width": width, "height": height, "rb": rb,
-        "reg_pool": reg_pool, "reg_records": reg_records,
-        "reg_cps_by_off": reg_cps_by_off, "reg_range_data": reg_range_data,
-        "bold_pool": bold_pool, "bold_records": bold_records,
-        "bold_cps_by_off": bold_cps_by_off, "bold_range_data": bold_range_data,
-        "palette": palette, "exception_count": len(exc_crop),
+        "reg_pool": reg_pool, "reg_nrec": reg_nrec,
+        "reg_range_data": reg_range_data,
+        "bold_pool": bold_pool, "bold_nrec": bold_nrec,
+        "bold_range_data": bold_range_data,
+        "palette": palette,
+        "n_glyphs": len(normal), "n_bold_cps": len(bold_cps),
+        "exception_count": len(exc_crop),
         "smear_left": 1 if width == 8 else 0,
     }
 
 
-def check_exception_count(width, count):
-    want = EXPECTED_BOLD_EXCEPTIONS[width]
-    if count != want:
-        sys.exit(f"bold exception count mismatch for width={width}: "
-                  f"got {count}, expected {want}")
-
-
 # ---------------------------------------------------------------------------
-# Emission -- compact "CDF1" blobs (components/font/data/*.bin). The build
-# expands them back into .c translation units with tools/fontbin2c.py, which
-# also owns the container parser (parse_blob) reused by --verify below so
-# verification exercises the exact parser the build runs.
+# Self-verification: decode the encoded pools (a Python mirror of
+# font_renderer.c's decoder) and compare every codepoint against the BDF
+# cells under the exact renderer semantics.
 # ---------------------------------------------------------------------------
-
-import struct
-
-from fontbin2c import parse_blob
-
-
-def _emit_blob(out_path, width, height, face, smear_left, range_data,
-               palette, pool):
-    parts = [b"CDF1",
-             struct.pack("<BBBBBB", 1, width, height, face, smear_left, 0),
-             struct.pack("<HHH", len(range_data), len(palette), len(pool))]
-    for lo, hi, _ in range_data:
-        parts.append(struct.pack("<HH", lo, hi))
-    for lo, hi, idx in range_data:
-        parts.append(struct.pack(f"<{len(idx)}H", *idx))
-    if palette:
-        parts.append(struct.pack(f"<{len(palette)}H", *palette))
-    parts.append(bytes(pool))
-    Path(out_path).write_bytes(b"".join(parts))
-
-
-def emit_regular_blob(out_path, width, height, data):
-    _emit_blob(out_path, width, height, 0, 0, data["reg_range_data"],
-               data["palette"] if data["rb"] == 2 else [], data["reg_pool"])
-
-
-def emit_bold_blob(out_path, width, height, data):
-    _emit_blob(out_path, width, height, 1, data["smear_left"],
-               data["bold_range_data"], [], data["bold_pool"])
-
-
-def report_sizes(width, height, data):
-    rb = data["rb"]
-    reg_pool_b = len(data["reg_pool"])
-    reg_idx_b = sum((hi - lo + 1) * 2 for lo, hi, _ in data["reg_range_data"])
-    reg_ranges_b = len(data["reg_range_data"]) * 8   # sizeof(FontRange), 4B ptr
-    pal_b = len(data["palette"]) * 2 if rb == 2 else 0
-    bold_pool_b = len(data["bold_pool"])
-    bold_idx_b = sum((hi - lo + 1) * 2 for lo, hi, _ in data["bold_range_data"])
-    bold_ranges_b = len(data["bold_range_data"]) * 8
-
-    reg_total = reg_pool_b + reg_idx_b + reg_ranges_b
-    bold_total = bold_pool_b + bold_idx_b + bold_ranges_b
-    grand_total = reg_total + bold_total + pal_b
-
-    print(f"{width}x{height}: regular pool={reg_pool_b}B idx={reg_idx_b}B "
-          f"ranges={reg_ranges_b}B ({len(data['reg_range_data'])}) "
-          f"-> {reg_total}B")
-    if rb == 2:
-        print(f"{width}x{height}: palette={pal_b}B ({len(data['palette'])} entries)")
-    print(f"{width}x{height}: bold    pool={bold_pool_b}B idx={bold_idx_b}B "
-          f"ranges={bold_ranges_b}B ({len(data['bold_range_data'])}) "
-          f"-> {bold_total}B  [{data['exception_count']} exceptions]")
-    print(f"{width}x{height}: TOTAL = {grand_total}B "
-          f"(ranges sized at 8B/entry, 4B pointer)")
-
-
-# ---------------------------------------------------------------------------
-# --verify: reimplement the decoder against the EMITTED blobs (parsed with
-# fontbin2c.parse_blob -- the exact parser the build-time expansion uses)
-# ---------------------------------------------------------------------------
-
-def parse_emitted_regular(path, width, height):
-    blob = parse_blob(path)
-    assert blob["face"] == 0, f"{path}: expected a regular-face blob"
-    assert (blob["width"], blob["height"]) == (width, height), \
-        f"{path}: size mismatch"
-    idx_arrays = {(lo, hi): idx for lo, hi, idx in blob["ranges"]}
-    ranges = sorted(idx_arrays.keys())
-    palette = blob["palette"] or None
-    return list(blob["pool"]), len(blob["pool"]), palette, idx_arrays, ranges
-
-
-def parse_emitted_bold(path, width, height):
-    blob = parse_blob(path)
-    assert blob["face"] == 1, f"{path}: expected a bold-face blob"
-    assert (blob["width"], blob["height"]) == (width, height), \
-        f"{path}: size mismatch"
-    idx_arrays = {(lo, hi): idx for lo, hi, idx in blob["ranges"]}
-    ranges = sorted(idx_arrays.keys())
-    return (list(blob["pool"]), len(blob["pool"]), blob["smear_left"],
-            idx_arrays, ranges)
-
 
 def decode_record(pool, offset, height, rb, palette):
     """Reimplementation of the v1 decoder for one glyph record."""
@@ -545,108 +471,189 @@ def decode_record(pool, offset, height, rb, palette):
     return rows
 
 
-def verify(width, height, ref_reg_path, ref_bold_path, emitted_reg_path, emitted_bold_path):
-    rb = 1 if width <= 8 else 2
-    ref_normal, _ = parse_old_regular(ref_reg_path, height)
-    ref_bold_sparse = parse_old_bold(ref_bold_path, height)
-
-    pool, pool_bytes, palette, idx_arrays, ranges = parse_emitted_regular(
-        emitted_reg_path, width, height)
-    assert pool is not None, "regular pool not found in emitted file"
-    assert pool_bytes == len(pool), f"pool_bytes {pool_bytes} != actual {len(pool)}"
-    assert pool_bytes <= 65534
-
-    cp_offset = {}
-    for lo, hi in ranges:
-        arr = idx_arrays[(lo, hi)]
-        assert len(arr) == hi - lo + 1
-        for i, cp in enumerate(range(lo, hi + 1)):
-            assert arr[i] < pool_bytes, f"U+{cp:04X} idx {arr[i]} >= pool_bytes"
-            cp_offset[cp] = arr[i]
-
-    errors = []
-    checked = 0
-    for cp, want in ref_normal.items():
-        off = cp_offset.get(cp)
-        if off is None:
-            errors.append(f"U+{cp:04X} missing from emitted regular idx")
-            continue
-        got = decode_record(pool, off, height, rb, palette)
-        if got != want:
-            errors.append(f"U+{cp:04X} regular mismatch: got {got} want {want}")
-        checked += 1
-
-    q_off = cp_offset.get(0x3F)
-    if q_off is None:
-        errors.append("U+003F ('?') missing from emitted regular idx")
-
-    gap_cp = None
-    for lo, hi in ranges:
-        for cp in range(lo, hi + 1):
-            if cp not in ref_normal:
-                gap_cp = cp
-                break
-        if gap_cp is not None:
-            break
-    if gap_cp is not None and q_off is not None:
-        got = decode_record(pool, cp_offset[gap_cp], height, rb, palette)
-        want_q = decode_record(pool, q_off, height, rb, palette)
-        if got != want_q:
-            errors.append(f"gap U+{gap_cp:04X} does not decode to '?' record "
-                           f"(got {got} want {want_q})")
-
-    bpool, bpool_bytes, smear_left, bidx_arrays, branges = parse_emitted_bold(
-        emitted_bold_path, width, height)
-    assert bpool is not None, "bold pool not found in emitted file"
-    assert bpool_bytes == len(bpool), f"bold pool_bytes {bpool_bytes} != actual {len(bpool)}"
-    assert bpool_bytes <= 65534
-    want_smear_left = 1 if width == 8 else 0
-    if smear_left != want_smear_left:
-        errors.append(f"bold_smear_left {smear_left} != expected {want_smear_left}")
+def verify_data(data, normal, real_bold):
+    width, height, rb = data["width"], data["height"], data["rb"]
+    palette = data["palette"] or None
+    pool, bpool = data["reg_pool"], data["bold_pool"]
+    q_cell = normal[0x3F]
 
     def smear_row(r):
         return (r | ((r << 1) & 0xFF)) if width == 8 else (r | (r >> 1))
 
-    bcp_offset = {}
-    for lo, hi in branges:
-        arr = bidx_arrays[(lo, hi)]
-        assert len(arr) == hi - lo + 1
+    errors = []
+    cp_off = {}
+    for lo, hi, idx in data["reg_range_data"]:
         for i, cp in enumerate(range(lo, hi + 1)):
-            if arr[i] != 0xFFFF:
-                assert arr[i] < bpool_bytes, f"U+{cp:04X} bold idx {arr[i]} >= bold pool_bytes"
-            bcp_offset[cp] = arr[i]
+            cp_off[cp] = idx[i]
+            want = normal.get(cp, q_cell)     # gap cps decode as '?'
+            got = decode_record(pool, idx[i], height, rb, palette)
+            if got != want:
+                errors.append(f"regular U+{cp:04X}")
 
-    exception_count = 0
-    bold_checked = 0
-    for lo, hi in branges:
-        for cp in range(lo, hi + 1):
-            val = bcp_offset[cp]
-            true_bold = ref_bold_sparse.get(cp, ref_normal[cp])
-            if val == 0xFFFF:
-                reg_off = cp_offset.get(cp)
-                got = [smear_row(r) for r in decode_record(pool, reg_off, height, rb, palette)]
+    for lo, hi, idx in data["bold_range_data"]:
+        for i, cp in enumerate(range(lo, hi + 1)):
+            want = real_bold.get(cp, normal[cp])
+            if idx[i] == 0xFFFF:
+                got = [smear_row(r)
+                       for r in decode_record(pool, cp_off[cp], height, rb, palette)]
             else:
-                exception_count += 1
-                got = decode_record(bpool, val, height, rb, palette)
-            if got != true_bold:
-                errors.append(f"U+{cp:04X} bold mismatch: got {got} want {true_bold}")
-            bold_checked += 1
-
-    want_exc = EXPECTED_BOLD_EXCEPTIONS[width]
-    if exception_count != want_exc:
-        errors.append(f"bold exception count {exception_count} != expected {want_exc}")
+                got = decode_record(bpool, idx[i], height, rb, palette)
+            if got != want:
+                errors.append(f"bold U+{cp:04X}")
 
     if errors:
-        for e in errors[:30]:
+        for e in errors[:20]:
             print("MISMATCH:", e)
-        if len(errors) > 30:
-            print(f"... and {len(errors) - 30} more")
-        sys.exit(f"FAIL {width}x{height}: {len(errors)} error(s)")
+        sys.exit(f"FAIL {width}x{height}: {len(errors)} decode mismatch(es)")
+    print(f"verify {width}x{height}: {len(cp_off)} regular cps + "
+          f"{data['n_bold_cps']} bold cps decode pixel-exact")
 
-    print(f"PASS {width}x{height}: {checked} regular glyphs OK"
-          + (f", gap U+{gap_cp:04X} -> '?' OK" if gap_cp is not None else ", no gap cps")
-          + f"; {bold_checked} bold cps OK ({exception_count} exceptions); "
-          f"pool={len(pool)}B bold_pool={len(bpool)}B")
+
+# ---------------------------------------------------------------------------
+# Stats + C emission
+# ---------------------------------------------------------------------------
+
+def face_stats(range_data, pool, nrec, n_real):
+    idx_cps = sum(hi - lo + 1 for lo, hi, _ in range_data)
+    return {
+        "idx_cps": idx_cps, "n_real": n_real, "nrec": nrec,
+        "pool_b": len(pool), "idx_b": idx_cps * 2,
+        "dir_b": len(range_data) * 8,     # sizeof(FontRange), 4B pointer
+        "n_ranges": len(range_data),
+    }
+
+
+def build_stats(data, real_bold_differs):
+    gb = data["height"] * data["rb"]
+    reg = face_stats(data["reg_range_data"], data["reg_pool"],
+                     data["reg_nrec"], data["n_glyphs"])
+    bold = face_stats(data["bold_range_data"], data["bold_pool"],
+                      data["bold_nrec"], data["exception_count"])
+    pal_b = len(data["palette"]) * 2
+    reg_total = reg["pool_b"] + reg["idx_b"] + reg["dir_b"]
+    bold_total = bold["pool_b"] + bold["idx_b"] + bold["dir_b"]
+    total = reg_total + bold_total + pal_b
+
+    # Flat row-array equivalent: one uncompressed row array over the same
+    # merged ranges + the pre-v1 sparse bold table (true-bold != normal).
+    flat = (reg["idx_cps"] + real_bold_differs) * gb \
+         + reg["dir_b"] + bold["dir_b"]
+
+    lines = [
+        f"regular  {reg['n_real']} glyphs (+{reg['idx_cps'] - reg['n_real']} "
+        f"range-gap cps -> '?') in {reg['n_ranges']} ranges",
+        f"         pool {reg['pool_b']} B / {reg['nrec']} unique records "
+        f"= {reg['pool_b'] / reg['nrec']:.1f} B/record "
+        f"({reg['pool_b'] / reg['n_real']:.1f} B/glyph vs {gb} B flat)",
+        f"         idx {reg['idx_b']} B, range dir {reg['dir_b']} B",
+    ]
+    if pal_b:
+        lines.append(f"palette  {len(data['palette'])} rows, {pal_b} B "
+                     f"(shared regular/bold)")
+    smear = data["n_bold_cps"] - data["exception_count"]
+    lines += [
+        f"bold     {data['n_bold_cps']} cps in {bold['n_ranges']} ranges: "
+        f"{smear} smear-synthesized, {data['exception_count']} stored "
+        f"({bold['nrec']} unique records)",
+        f"         pool {bold['pool_b']} B, idx {bold['idx_b']} B, "
+        f"range dir {bold['dir_b']} B",
+        f"total    {total} B   "
+        f"(flat row tables: {flat} B -> {100.0 * (total - flat) / flat:+.1f}%)",
+    ]
+    return lines, total
+
+
+C_HEADER = """\
+/*
+ * {w}x{h} Terminus glyph tables — compressed format v1 (spec in
+ * terminus_font.h, encoder in tools/gen_terminus.py).
+ *
+ * Derived from the Terminus Font {ver} ({nsrc} + {bsrc}).
+ * Copyright (c) 2020 Dimitar Zhekov <dimitar.zhekov@gmail.com>,
+ * with Reserved Font Name "Terminus Font".
+ * Licensed under the SIL Open Font License, Version 1.1 — full text in
+ * components/font/LICENSE. This file is NOT covered by the repository's
+ * MIT license.
+ *
+ * GENERATED file, but COMMITTED: regenerate with
+ *     python tools/gen_terminus.py {w}x{h}
+ * instead of editing by hand.
+ *
+{stats}
+ */
+#include "terminus_font.h"
+
+#if FONT_RT_{w}X{h}
+
+"""
+
+
+def _hex_lines(vals, fmt, per_line, indent="    "):
+    out = []
+    for i in range(0, len(vals), per_line):
+        chunk = ", ".join(fmt.format(v) for v in vals[i:i + per_line])
+        out.append(f"{indent}{chunk},\n")
+    return out
+
+
+def _emit_face(parts, prefix, range_data, pool):
+    parts.append(f"static const uint8_t {prefix}pool[] = {{\n")
+    parts.extend(_hex_lines(list(pool), "0x{:02X}", 16))
+    parts.append("};\n\n")
+    for lo, hi, idx in range_data:
+        parts.append(f"static const uint16_t {prefix}idx_{lo:04X}_{hi:04X}[] = {{\n")
+        parts.extend(_hex_lines(idx, "0x{:04X}", 8))
+        parts.append("};\n\n")
+    parts.append(f"static const FontRange {prefix}ranges[] = {{\n")
+    for lo, hi, _ in range_data:
+        parts.append(f"    {{0x{lo:04X}, 0x{hi:04X}, {prefix}idx_{lo:04X}_{hi:04X}}},\n")
+    parts.append("};\n\n")
+
+
+def emit_c(out_path, data, stats_lines, nsrc, bsrc):
+    w, h = data["width"], data["height"]
+    base = f"terminus{w}x{h}"
+    has_pal = bool(data["palette"])
+    stats = "\n".join(f" * {ln}".rstrip() for ln in
+                      ["Size stats:"] + ["  " + s for s in stats_lines])
+
+    parts = [C_HEADER.format(w=w, h=h, ver=TERMINUS_VERSION,
+                             nsrc=nsrc, bsrc=bsrc, stats=stats)]
+
+    _emit_face(parts, "r_", data["reg_range_data"], data["reg_pool"])
+
+    if has_pal:
+        parts.append("static const uint16_t pal[] = {\n")
+        parts.extend(_hex_lines(data["palette"], "0x{:04X}", 8))
+        parts.append("};\n\n")
+
+    parts.append(
+        f"const FontFace {base}_regular = {{\n"
+        f"    .ranges      = r_ranges,\n"
+        f"    .pool        = r_pool,\n"
+        f"    .palette     = {'pal' if has_pal else 'NULL'},\n"
+        f"    .num_ranges  = {len(data['reg_range_data'])},\n"
+        f"    .pool_bytes  = {len(data['reg_pool'])},\n"
+        f"    .palette_len = {len(data['palette'])},\n"
+        f"    .smear_left  = 0,\n"
+        f"}};\n\n")
+
+    parts.append("#if FONT_BOLD_ENABLED\n\n")
+    _emit_face(parts, "b_", data["bold_range_data"], data["bold_pool"])
+    parts.append(
+        f"const FontFace {base}_bold = {{\n"
+        f"    .ranges      = b_ranges,\n"
+        f"    .pool        = b_pool,\n"
+        f"    .palette     = {'pal' if has_pal else 'NULL'},\n"
+        f"    .num_ranges  = {len(data['bold_range_data'])},\n"
+        f"    .pool_bytes  = {len(data['bold_pool'])},\n"
+        f"    .palette_len = {len(data['palette'])},\n"
+        f"    .smear_left  = {data['smear_left']},\n"
+        f"}};\n\n"
+        f"#endif /* FONT_BOLD_ENABLED */\n\n"
+        f"#endif /* FONT_RT_{w}X{h} */\n")
+
+    Path(out_path).write_text("".join(parts), encoding="utf-8", newline="\n")
 
 
 # ---------------------------------------------------------------------------
@@ -655,56 +662,55 @@ def verify(width, height, ref_reg_path, ref_bold_path, emitted_reg_path, emitted
 
 def parse_wh(spec):
     w, h = spec.lower().split("x")
-    return int(w), int(h)
+    wh = (int(w), int(h))
+    if wh not in SIZES:
+        sys.exit(f"unknown size {spec}; known: "
+                 + " ".join(f"{a}x{b}" for a, b in SIZES))
+    return wh
 
 
 def main():
-    if len(sys.argv) < 2:
-        sys.exit(__doc__)
-    mode = sys.argv[1]
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("sizes", nargs="*", default=[],
+                    help="sizes to generate (default: all): 8x16 10x20 12x24")
+    ap.add_argument("--src", metavar="PATH",
+                    help="local terminus dir or .tar.gz (default: cached download)")
+    ap.add_argument("--out", metavar="DIR", type=Path, default=DEFAULT_OUT,
+                    help="output directory (default: components/font)")
+    args = ap.parse_args()
 
-    if mode == "convert" and len(sys.argv) >= 7:
-        width, height = parse_wh(sys.argv[2])
-        ref_reg, ref_bold, out_reg, out_bold = sys.argv[3:7]
-        do_verify = "--verify" in sys.argv[7:]
+    sizes = [parse_wh(s) for s in args.sizes] or list(SIZES)
+    bdf_dir = fetch_bdfs(args.src)
 
-        normal, _ = parse_old_regular(ref_reg, height)
-        bold_sparse = parse_old_bold(ref_bold, height)
-        get_real_bold = lambda cp: bold_sparse.get(cp, normal[cp])  # noqa: E731
+    for wh in sizes:
+        w, h = wh
+        nsrc, bsrc = SIZES[wh]
+        nw, nh, normal = parse_bdf(bdf_dir / nsrc)
+        bw, bh, bold = parse_bdf(bdf_dir / bsrc)
+        if (nw, nh) != wh or (bw, bh) != wh:
+            sys.exit(f"{nsrc}/{bsrc}: size mismatch (normal {nw}x{nh}, "
+                     f"bold {bw}x{bh}, expected {w}x{h})")
 
-        data = build_font_data(width, height, normal, get_real_bold)
-        check_exception_count(width, data["exception_count"])
-        emit_regular_blob(out_reg, width, height, data)
-        emit_bold_blob(out_bold, width, height, data)
-        report_sizes(width, height, data)
+        data = build_font_data(w, h, normal, bold)
+        want_exc = EXPECTED_BOLD_EXCEPTIONS[w]
+        if data["exception_count"] != want_exc:
+            sys.exit(f"bold exception count mismatch for {w}x{h}: got "
+                     f"{data['exception_count']}, expected {want_exc} — update "
+                     f"EXPECTED_BOLD_EXCEPTIONS if TERMINUS_VERSION changed")
 
-        if do_verify:
-            verify(width, height, ref_reg, ref_bold, out_reg, out_bold)
-        return
+        verify_data(data, normal, bold)
 
-    if mode == "verify" and len(sys.argv) >= 7:
-        width, height = parse_wh(sys.argv[2])
-        ref_reg, ref_bold, out_reg, out_bold = sys.argv[3:7]
-        verify(width, height, ref_reg, ref_bold, out_reg, out_bold)
-        return
+        real_bold_differs = sum(
+            1 for lo, hi, _ in data["bold_range_data"]
+            for cp in range(lo, hi + 1) if bold.get(cp, normal[cp]) != normal[cp])
+        stats_lines, total = build_stats(data, real_bold_differs)
 
-    if mode == "bdf" and len(sys.argv) >= 7:
-        width, height = parse_wh(sys.argv[2])
-        nbdf, bbdf, out_reg, out_bold = sys.argv[3:7]
-        nw, nh, normal = parse_bdf(nbdf)
-        bw, bh, bold = parse_bdf(bbdf)
-        if (nw, nh) != (width, height) or (bw, bh) != (width, height):
-            sys.exit(f"bdf: size mismatch (normal {nw}x{nh}, bold {bw}x{bh}, "
-                      f"expected {width}x{height})")
-        get_real_bold = lambda cp: bold.get(cp, normal[cp])  # noqa: E731
-        data = build_font_data(width, height, normal, get_real_bold)
-        check_exception_count(width, data["exception_count"])
-        emit_regular_blob(out_reg, width, height, data)
-        emit_bold_blob(out_bold, width, height, data)
-        report_sizes(width, height, data)
-        return
-
-    sys.exit(__doc__)
+        out_path = args.out / f"terminus{w}x{h}.c"
+        emit_c(out_path, data, stats_lines, nsrc, bsrc)
+        print(f"wrote {out_path} ({total} B of table data)")
+        for ln in stats_lines:
+            print(f"  {ln}")
 
 
 if __name__ == "__main__":

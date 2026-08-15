@@ -125,6 +125,54 @@ behind a modal. Because chrome lives in the overlay, it never corrupts the
 `vterm` cell buffer — a full-screen remote app (vim, htop) stays intact behind a
 menu.
 
+### Glyph tables & the row cache
+
+The Terminus glyph tables are **compressed** ("format v1": per-glyph row
+cropping, record dedup, PackBits row-RLE, and for the 16-bit-row sizes a
+shared 255-entry row palette; bold is synthesized by smearing the regular
+glyph one pixel, with only the ~60–150 real exceptions stored). That takes
+17.2 / 19.2 / 20.8 KB per size against 30.8 / 76.0 / 91.1 KB flat — the boot
+copy of the selected size is what lives in internal DRAM.
+
+The tables are **committed generated sources** (`components/font/terminusWxH.c`),
+emitted by `tools/gen_terminus.py`, which downloads the pinned upstream
+Terminus BDF release (cached under `tools/.cache/`), encodes, self-verifies
+every codepoint decodes pixel-exact against the BDF cells, and writes each
+file with size stats in its header. *Decision:* an earlier pipeline committed
+binary blobs and expanded them to `.c` at build time; that src→bin→src round
+trip added a build step, a container format and a second tool for no benefit —
+regeneration is rare (a font-version bump or a subset change), so the repo
+now commits what the compiler eats. Regenerate with `python
+tools/gen_terminus.py`; `tests/font` (golden CRCs per codepoint, captured
+from the original uncompressed tables) proves any regeneration is still
+pixel-exact.
+
+Because the records are variable-length, the ISR cannot point at a glyph —
+it **decodes**. `font_decode_glyph()` (IRAM, compiled `-O2` against the
+project's `-Os`; that alone halves decode time) expands a record into plain
+rows. The band loop never decodes per pixel: `build_row_cache()` decodes each
+column's glyph **once per character row** into a flat DRAM cache, rebuilt
+synchronously on a row's first band and reused by the second (tall fonts
+render two bands per row).
+
+*Decision — measured, not assumed* (dense 100%-painted stress screen,
+`CONFIG_DISPLAY_ISR_BENCH`, worst chunk in µs vs the chunk period):
+
+| row-cache strategy       | 10x20 (534 µs)   | 12x24 (640 µs)   |
+|--------------------------|------------------|------------------|
+| double-banked look-ahead | 311 (58%)        | 341 (53%)        |
+| **sync rebuild (current)** | **389 (73%)**  | **408 (64%)**    |
+| no reuse, rebuild per band | 395 + 24% avg  | 409 + 19% avg    |
+
+The double-banked look-ahead (split the next row's rebuild across the current
+row's two bands) was written when the `-Os` decoder overran the 10x20 period
+(607 µs worst). With the `-O2` decoder the synchronous rebuild fits with
+≥27% headroom, so the banking's ~60 lines of ISR state machine and ~4.4 KB of
+DRAM were retired. Dropping the cache entirely, however, costs 19–24% *average*
+ISR time for zero simplification — the per-row cache stays. To re-run the
+numbers after render/decoder work: enable `CYBERDECK_BENCH_STRESS`
+(+ `DISPLAY_ISR_BENCH`), flash, and read the 5-second `bench_stress` log lines.
+
 ---
 
 ## Runtime data flow

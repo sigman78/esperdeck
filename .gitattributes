@@ -3,6 +3,3 @@
 # lines break `git apply`).
 *.sh    text eol=lf
 *.patch text eol=lf
-
-# Compressed glyph blobs (expanded to .c at build time by fontbin2c.py)
-*.bin   binary

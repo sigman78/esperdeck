@@ -1,13 +1,12 @@
 /*
  * Font rendering implementation — compressed glyph table format ("v1").
  *
- * Glyph tables are no longer flat per-codepoint row arrays: each face has a
- * range/idx table (unchanged layout) whose idx entries are BYTE OFFSETS into
- * a compact "pool" of variable-length PackBits-encoded glyph records (see
- * terminus_font.h for the exact wire format). Rendering therefore always
- * goes through font_decode_glyph(), which expands a record into a plain
- * row buffer on every call — there is no cached pointer to a ready-made
- * glyph any more.
+ * Glyph tables are not flat per-codepoint row arrays: each face has a
+ * range/idx table whose idx entries are BYTE OFFSETS into a compact "pool"
+ * of variable-length PackBits-encoded glyph records (see terminus_font.h
+ * for the exact wire format). Rendering therefore always goes through
+ * font_decode_glyph(), which expands a record into a plain row buffer on
+ * every call — there is no cached pointer to a ready-made glyph.
  */
 
 #include "font.h"
@@ -23,170 +22,46 @@
 static const char *TAG = "font_renderer";
 
 /* Every size this build can select, in font_size_t order. A compiled-out
- * size leaves NULL `ranges`/`pool` — font_init() skips those when honouring
- * (or falling back from) the stored setting. Flash-resident; consulted only
- * during init, never from the ISR. Only POINTERS live here: the `const int`
- * / `const uint16_t` count and size objects are not constant expressions,
- * so they cannot sit in this static initializer — they are fetched via the
- * variant_*() switch functions below instead. */
+ * size leaves NULL faces — font_init() skips those when honouring (or
+ * falling back from) the stored setting. Flash-resident; consulted only
+ * during init, never from the ISR. */
 typedef struct {
-    uint8_t           width;
-    uint8_t           height;
-    const char       *name;
-    const FontRange  *ranges;       /* NULL when this size is compiled out */
-    const uint8_t    *pool;
-    const uint16_t   *palette;      /* rb==2 sizes only; NULL for 8x16 */
-    const FontRange  *bold_ranges;
-    const uint8_t    *bold_pool;
+    uint8_t         width;
+    uint8_t         height;
+    const char     *name;
+    const FontFace *regular;    /* NULL when this size is compiled out */
+    const FontFace *bold;       /* NULL when bold is compiled out      */
 } font_variant_t;
 
 static const font_variant_t s_variants[FONT_SIZE_COUNT] = {
     [FONT_SIZE_8X16] = {
         .width = 8, .height = 16, .name = "8x16",
 #if FONT_RT_8X16
-        .ranges = terminus8x16_ranges,
-        .pool   = terminus8x16_pool,
+        .regular = &terminus8x16_regular,
 #if FONT_BOLD_ENABLED
-        .bold_ranges = terminus8x16_bold_ranges,
-        .bold_pool   = terminus8x16_bold_pool,
+        .bold    = &terminus8x16_bold,
 #endif
 #endif
     },
     [FONT_SIZE_10X20] = {
         .width = 10, .height = 20, .name = "10x20",
 #if FONT_RT_10X20
-        .ranges  = terminus10x20_ranges,
-        .pool    = terminus10x20_pool,
-        .palette = terminus10x20_palette,
+        .regular = &terminus10x20_regular,
 #if FONT_BOLD_ENABLED
-        .bold_ranges = terminus10x20_bold_ranges,
-        .bold_pool   = terminus10x20_bold_pool,
+        .bold    = &terminus10x20_bold,
 #endif
 #endif
     },
     [FONT_SIZE_12X24] = {
         .width = 12, .height = 24, .name = "12x24",
 #if FONT_RT_12X24
-        .ranges  = terminus12x24_ranges,
-        .pool    = terminus12x24_pool,
-        .palette = terminus12x24_palette,
+        .regular = &terminus12x24_regular,
 #if FONT_BOLD_ENABLED
-        .bold_ranges = terminus12x24_bold_ranges,
-        .bold_pool   = terminus12x24_bold_pool,
+        .bold    = &terminus12x24_bold,
 #endif
 #endif
     },
 };
-
-static int variant_num_ranges(font_size_t s)
-{
-    switch (s) {
-#if FONT_RT_8X16
-    case FONT_SIZE_8X16:  return terminus8x16_num_ranges;
-#endif
-#if FONT_RT_10X20
-    case FONT_SIZE_10X20: return terminus10x20_num_ranges;
-#endif
-#if FONT_RT_12X24
-    case FONT_SIZE_12X24: return terminus12x24_num_ranges;
-#endif
-    default: return 0;
-    }
-}
-
-static int variant_num_bold(font_size_t s)
-{
-#if FONT_BOLD_ENABLED
-    switch (s) {
-#if FONT_RT_8X16
-    case FONT_SIZE_8X16:  return terminus8x16_num_bold_ranges;
-#endif
-#if FONT_RT_10X20
-    case FONT_SIZE_10X20: return terminus10x20_num_bold_ranges;
-#endif
-#if FONT_RT_12X24
-    case FONT_SIZE_12X24: return terminus12x24_num_bold_ranges;
-#endif
-    default: return 0;
-    }
-#else
-    (void)s;
-    return 0;
-#endif
-}
-
-static uint16_t variant_pool_bytes(font_size_t s)
-{
-    switch (s) {
-#if FONT_RT_8X16
-    case FONT_SIZE_8X16:  return terminus8x16_pool_bytes;
-#endif
-#if FONT_RT_10X20
-    case FONT_SIZE_10X20: return terminus10x20_pool_bytes;
-#endif
-#if FONT_RT_12X24
-    case FONT_SIZE_12X24: return terminus12x24_pool_bytes;
-#endif
-    default: return 0;
-    }
-}
-
-static uint16_t variant_bold_pool_bytes(font_size_t s)
-{
-#if FONT_BOLD_ENABLED
-    switch (s) {
-#if FONT_RT_8X16
-    case FONT_SIZE_8X16:  return terminus8x16_bold_pool_bytes;
-#endif
-#if FONT_RT_10X20
-    case FONT_SIZE_10X20: return terminus10x20_bold_pool_bytes;
-#endif
-#if FONT_RT_12X24
-    case FONT_SIZE_12X24: return terminus12x24_bold_pool_bytes;
-#endif
-    default: return 0;
-    }
-#else
-    (void)s;
-    return 0;
-#endif
-}
-
-/* rb==2 sizes only (10x20, 12x24); 8x16 has no palette and falls to the
- * default case. */
-static uint16_t variant_palette_len(font_size_t s)
-{
-    switch (s) {
-#if FONT_RT_10X20
-    case FONT_SIZE_10X20: return terminus10x20_palette_len;
-#endif
-#if FONT_RT_12X24
-    case FONT_SIZE_12X24: return terminus12x24_palette_len;
-#endif
-    default: return 0;
-    }
-}
-
-static uint8_t variant_bold_smear_left(font_size_t s)
-{
-#if FONT_BOLD_ENABLED
-    switch (s) {
-#if FONT_RT_8X16
-    case FONT_SIZE_8X16:  return terminus8x16_bold_smear_left;
-#endif
-#if FONT_RT_10X20
-    case FONT_SIZE_10X20: return terminus10x20_bold_smear_left;
-#endif
-#if FONT_RT_12X24
-    case FONT_SIZE_12X24: return terminus12x24_bold_smear_left;
-#endif
-    default: return 0;
-    }
-#else
-    (void)s;
-    return 0;
-#endif
-}
 
 /* DRAM-resident active state — must be readable from the ISR with the flash
  * cache disabled, so every field the decode path touches lives here. */
@@ -200,7 +75,6 @@ static DRAM_ATTR const uint8_t   *s_bold_pool      = NULL;
 static DRAM_ATTR uint8_t          s_bold_smear_left = 0;
 
 static DRAM_ATTR const uint16_t  *s_palette        = NULL;
-static DRAM_ATTR uint16_t         s_palette_len    = 0;
 
 static DRAM_ATTR int              s_width          = 8;
 static DRAM_ATTR int              s_height         = 16;
@@ -215,24 +89,24 @@ static font_size_t                s_active         = FONT_SIZE_8X16;
  * writes). idx arrays are always uint16_t regardless of row width — they
  * hold pool byte offsets, not rows. Returns false when DRAM is exhausted
  * (caller keeps the flash-resident tables for this face). */
-static bool load_face(const FontRange *src_ranges, int n,
-                       const uint8_t *src_pool, uint16_t pool_bytes,
-                       const FontRange **out_ranges, const uint8_t **out_pool)
+static bool load_face(const FontFace *src,
+                      const FontRange **out_ranges, const uint8_t **out_pool)
 {
+    const int n = src->num_ranges;
     size_t idx_total = 0;
     for (int i = 0; i < n; i++)
-        idx_total += (size_t)(src_ranges[i].last_char - src_ranges[i].first_char + 1)
+        idx_total += (size_t)(src->ranges[i].last_char - src->ranges[i].first_char + 1)
                    * sizeof(uint16_t);
 
     uint8_t   *idx_buf   = heap_caps_malloc(idx_total, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     FontRange *range_buf = heap_caps_malloc((size_t)n * sizeof(FontRange),
                                              MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    uint8_t   *pool_buf  = pool_bytes
-        ? heap_caps_malloc(pool_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+    uint8_t   *pool_buf  = src->pool_bytes
+        ? heap_caps_malloc(src->pool_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
         : NULL;
-    if (!idx_buf || !range_buf || (pool_bytes && !pool_buf)) {
+    if (!idx_buf || !range_buf || (src->pool_bytes && !pool_buf)) {
         ESP_LOGE(TAG, "No DRAM for font face (%zu B idx + %u B pool)",
-                 idx_total, (unsigned)pool_bytes);
+                 idx_total, (unsigned)src->pool_bytes);
         heap_caps_free(idx_buf);
         heap_caps_free(range_buf);
         heap_caps_free(pool_buf);
@@ -241,19 +115,19 @@ static bool load_face(const FontRange *src_ranges, int n,
 
     uint8_t *dst = idx_buf;
     for (int i = 0; i < n; i++) {
-        size_t nbytes = (size_t)(src_ranges[i].last_char - src_ranges[i].first_char + 1)
+        size_t nbytes = (size_t)(src->ranges[i].last_char - src->ranges[i].first_char + 1)
                        * sizeof(uint16_t);
-        memcpy(dst, src_ranges[i].idx, nbytes);
-        range_buf[i].first_char = src_ranges[i].first_char;
-        range_buf[i].last_char  = src_ranges[i].last_char;
+        memcpy(dst, src->ranges[i].idx, nbytes);
+        range_buf[i].first_char = src->ranges[i].first_char;
+        range_buf[i].last_char  = src->ranges[i].last_char;
         range_buf[i].idx        = (const uint16_t *)dst;
         dst += nbytes;
     }
-    if (pool_bytes)
-        memcpy(pool_buf, src_pool, pool_bytes);
+    if (src->pool_bytes)
+        memcpy(pool_buf, src->pool, src->pool_bytes);
 
     ESP_LOGI(TAG, "Font face loaded: %d ranges, %zu B idx, %u B pool",
-             n, idx_total, (unsigned)pool_bytes);
+             n, idx_total, (unsigned)src->pool_bytes);
     *out_ranges = range_buf;
     *out_pool   = pool_buf;
     return true;
@@ -282,7 +156,7 @@ static bool load_palette(const uint16_t *src, uint16_t len, const uint16_t **out
 
 bool font_size_available(font_size_t size)
 {
-    return size >= 0 && size < FONT_SIZE_COUNT && s_variants[size].ranges != NULL;
+    return size >= 0 && size < FONT_SIZE_COUNT && s_variants[size].regular != NULL;
 }
 
 const char *font_size_name(font_size_t size)
@@ -320,71 +194,59 @@ void font_init(font_size_t size)
         size = fallback;
     }
 
-    const font_variant_t *v = &s_variants[size];
+    const font_variant_t *v   = &s_variants[size];
+    const FontFace *reg  = v->regular;
+    const FontFace *bold = v->bold;
     s_active      = size;
     s_width       = v->width;
     s_height      = v->height;
     s_rb          = (int)FONT_ROW_BYTES(v->width);
     s_glyph_bytes = FONT_GLYPH_BYTES(v->width, v->height);
-
-    const int      n_ranges        = variant_num_ranges(size);
-    const int      n_bold          = variant_num_bold(size);
-    const uint16_t pool_bytes      = variant_pool_bytes(size);
-    const uint16_t bold_pool_bytes = variant_bold_pool_bytes(size);
-    const uint16_t palette_len     = variant_palette_len(size);
-    s_bold_smear_left = variant_bold_smear_left(size);
+    s_bold_smear_left = bold ? bold->smear_left : 0;
 
 #ifndef BUILD_SIMULATOR
     /* Fall back to the flash-resident tables on DRAM exhaustion: renders
      * fine except while the flash cache is disabled (e.g. during NVS
      * writes). Better than a NULL dereference. */
-    if (!load_face(v->ranges, n_ranges, v->pool, pool_bytes, &s_ranges, &s_pool)) {
-        s_ranges = v->ranges;
-        s_pool   = v->pool;
+    if (!load_face(reg, &s_ranges, &s_pool)) {
+        s_ranges = reg->ranges;
+        s_pool   = reg->pool;
     }
-    s_num_ranges = n_ranges;
+    s_num_ranges = reg->num_ranges;
 
-#if FONT_BOLD_ENABLED
-    if (v->bold_ranges) {
-        if (!load_face(v->bold_ranges, n_bold, v->bold_pool, bold_pool_bytes,
-                        &s_bold_ranges, &s_bold_pool)) {
-            s_bold_ranges = v->bold_ranges;
-            s_bold_pool   = v->bold_pool;
+    if (bold) {
+        if (!load_face(bold, &s_bold_ranges, &s_bold_pool)) {
+            s_bold_ranges = bold->ranges;
+            s_bold_pool   = bold->pool;
         }
-        s_num_bold = n_bold;
+        s_num_bold = bold->num_ranges;
     } else {
         s_bold_ranges = NULL;
         s_bold_pool   = NULL;
         s_num_bold    = 0;
     }
-#endif
 
-    if (v->palette) {
-        if (!load_palette(v->palette, palette_len, &s_palette))
-            s_palette = v->palette;
-        s_palette_len = palette_len;
+    if (reg->palette) {
+        if (!load_palette(reg->palette, reg->palette_len, &s_palette))
+            s_palette = reg->palette;
     } else {
-        s_palette     = NULL;
-        s_palette_len = 0;
+        s_palette = NULL;
     }
 
     ESP_LOGI(TAG, "Font %s ready: %d ranges/%u B pool, %d bold ranges/%u B pool, %u palette entries",
-             v->name, s_num_ranges, (unsigned)pool_bytes, s_num_bold,
-             (unsigned)bold_pool_bytes, (unsigned)palette_len);
+             v->name, s_num_ranges, (unsigned)reg->pool_bytes, s_num_bold,
+             (unsigned)(bold ? bold->pool_bytes : 0), (unsigned)reg->palette_len);
 #else
     /* Simulator: data already in normal RAM, no copy needed */
-    s_ranges     = v->ranges;
-    s_pool       = v->pool;
-    s_num_ranges = n_ranges;
-#if FONT_BOLD_ENABLED
-    s_bold_ranges = v->bold_ranges;
-    s_bold_pool   = v->bold_pool;
-    s_num_bold    = n_bold;
-#endif
-    s_palette     = v->palette;
-    s_palette_len = palette_len;
+    s_ranges      = reg->ranges;
+    s_pool        = reg->pool;
+    s_num_ranges  = reg->num_ranges;
+    s_bold_ranges = bold ? bold->ranges : NULL;
+    s_bold_pool   = bold ? bold->pool : NULL;
+    s_num_bold    = bold ? bold->num_ranges : 0;
+    s_palette     = reg->palette;
     ESP_LOGI(TAG, "Font system initialized (simulator, %s, %d ranges + %d bold, %u palette entries)",
-             v->name, s_num_ranges, s_num_bold, (unsigned)palette_len);
+             v->name, s_num_ranges, s_num_bold, (unsigned)reg->palette_len);
 #endif
 }
 

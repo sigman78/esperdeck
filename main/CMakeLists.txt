@@ -3,6 +3,7 @@ idf_component_register(
     SRCS
         "main.c"
         "splash.c"
+        "bench_stress.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

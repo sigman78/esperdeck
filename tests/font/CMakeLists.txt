@@ -14,11 +14,6 @@ CPMAddPackage(
 
 set(FONT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../components/font)
 
-# Expand the committed glyph blobs (data/*.bin) into .c sources in the
-# build tree — same generation step the device and simulator builds run.
-include(${FONT_DIR}/font_data.cmake)
-cyberdeck_font_generate(FONT_GEN_SRCS)
-
 add_subdirectory(../../idfsim ${CMAKE_CURRENT_BINARY_DIR}/idfsim)
 
 # One executable per font size: the simulator build is single-size at
@@ -29,8 +24,7 @@ function(add_font_test SIZE UPPER)
     add_executable(${tgt}
         test_font.c
         ${FONT_DIR}/font_renderer.c
-        ${CMAKE_CURRENT_BINARY_DIR}/font_gen/terminus${SIZE}.c
-        ${CMAKE_CURRENT_BINARY_DIR}/font_gen/terminus${SIZE}b.c
+        ${FONT_DIR}/terminus${SIZE}.c
     )
     target_include_directories(${tgt} PRIVATE
         ${FONT_DIR}/include
