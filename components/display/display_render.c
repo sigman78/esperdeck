@@ -73,6 +73,8 @@ static DRAM_ATTR bool          s_cursor_visible = true;
 static DRAM_ATTR int s_fw   = 8;    /* cell width  */
 static DRAM_ATTR int s_fh   = 16;   /* cell height */
 static DRAM_ATTR int s_band = 16;   /* bounce band height, in scanlines */
+static DRAM_ATTR int s_gb   = 16;   /* active glyph stride in s_cc_rows, bytes
+                                      * (font_glyph_bytes() of the active size) */
 
 int display_band_height(void) { return s_band; }
 int display_bounce_px(void)   { return DISPLAY_WIDTH * s_band; }
@@ -99,9 +101,15 @@ int display_text_rows(void)   { return DISPLAY_HEIGHT / s_fh; }
 
 /* Column cache as parallel arrays. bg/xf carry TWO variants selected per
  * scanline ([0] normal, [1] scanline-dimmed) so the hot loop pays no
- * per-pixel effect cost. Glyph is void *: the row type follows the active
- * size; the band loop casts after switching on width. */
-static DRAM_ATTR const void        *s_cc_glyph[RENDER_MAX_COLS];
+ * per-pixel effect cost. Glyphs are no longer cached by pointer — the font
+ * tables are compressed (PackBits row-RLE), so there is nothing to point AT.
+ * Instead build_row_cache() decodes each column's glyph ONCE per character
+ * row into a flat byte cache (s_cc_rows), sized for the worst case across
+ * every ENABLED font (FONT_MAX_CACHE_BYTES = max cols * glyph_bytes, see
+ * font.h). The band scan loop then reads plain decoded rows out of it — no
+ * decode and no NULL check in the hot per-pixel path — by indexing
+ * s_cc_rows + c * glyph_bytes and casting to the active row type. */
+static DRAM_ATTR _Alignas(4) uint8_t s_cc_rows[FONT_MAX_CACHE_BYTES];
 static DRAM_ATTR uint16_t           s_cc_bg[2][RENDER_MAX_COLS];
 static DRAM_ATTR uint16_t           s_cc_xf[2][RENDER_MAX_COLS];
 static DRAM_ATTR uint8_t            s_cc_ul[RENDER_MAX_COLS];
@@ -139,6 +147,7 @@ void display_render_set_font(int width, int height)
     s_fw     = width;
     s_fh     = height;
     s_band   = band;
+    s_gb     = (int)font_glyph_bytes();
     s_cc_row = -1;                   /* stale column cache — force a rebuild */
 }
 
@@ -329,7 +338,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
 
     for (int c = 0; c < ncols; c++) {
         color_t fg, bg;
-        const void *glyph;
+        uint8_t *dst = s_cc_rows + (size_t)c * (size_t)s_gb;
         uint8_t underline = 0;
         uint8_t bold      = 0;
 #if OVERLAY_DIM_DITHER
@@ -361,8 +370,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
                 bg = (color_t)(((bg >> 1) & 0x7BEF) + 0x7BEF);
             /* `bold` stays 0: bold-pop is a terminal effect and must not
              * recolor overlay chrome. */
-            glyph = (ov_attrs & OVERLAY_ATTR_BOLD)
-                  ? font_get_glyph_bold(ov_cp) : font_get_glyph(ov_cp);
+            font_decode_glyph(ov_cp, (ov_attrs & OVERLAY_ATTR_BOLD) != 0, dst);
         } else {
             const terminal_cell_t *cell = &row_cells[c];
             fg = cell->fg_color;
@@ -370,12 +378,15 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
             if (cell->attrs & ATTR_REVERSE) { color_t t = fg; fg = bg; bg = t; }
             underline = cell->attrs & ATTR_UNDERLINE;
             bold      = cell->attrs & ATTR_BOLD;
-            /* Blanks skip the lookup: the band loop renders a NULL glyph as
-             * all-zero bits and U+0020 is blank in Terminus, and screens run
-             * well over half blank. */
-            glyph = (cell->cp == 0x20 || cell->cp == 0) ? NULL
-                  : bold ? font_get_glyph_bold(cell->cp)
-                         : font_get_glyph(cell->cp);
+            /* Blanks skip the decode: U+0020 is blank in Terminus and
+             * screens run well over half blank, so a plain zero-fill loop
+             * (no memset — ISR runs with the flash cache disabled) beats
+             * decoding an all-zero glyph. */
+            if (cell->cp == 0x20 || cell->cp == 0) {
+                for (int i = 0; i < s_gb; i++) dst[i] = 0;
+            } else {
+                font_decode_glyph(cell->cp, bold != 0, dst);
+            }
 #if DISPLAY_FX_ROW_GLOW
             /* Back glow tints the terminal bg toward the warm accent,
              * before any scrim dim so a modal's scrim also dims the glow. */
@@ -404,7 +415,6 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
         if (bold && bold_pop)
             fg |= (uint16_t)((fg >> 1) & 0x7BEF);
 
-        s_cc_glyph[c] = glyph;
         s_cc_bg[0][c] = bg;
         s_cc_xf[0][c] = (uint16_t)(fg ^ bg);
         s_cc_ul[c]    = underline;
@@ -604,12 +614,19 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
             const uint16_t *xfv = s_cc_xf[sel];                                \
             uint32_t *d = (uint32_t *)(dst_base + (unsigned)n * DISPLAY_WIDTH);\
                                                                                \
+            /* glyph_bytes == 2*W*sizeof(ROW_T) for every enabled size, since  \
+             * height == 2*width for all three grids — a compile-time-        \
+             * constant stride per instantiation, no s_gb load needed here.   \
+             * Rows are decoded plain into s_cc_rows, so they read straight   \
+             * through — no NULL check. */                                    \
             int c = 0;                                                         \
             for (; c + 1 < ncols; c += 2) {                                    \
-                const ROW_T *g0 = (const ROW_T *)s_cc_glyph[c    ];            \
-                const ROW_T *g1 = (const ROW_T *)s_cc_glyph[c + 1];            \
-                const ROW_T b0 = g0 ? g0[gl] : (ROW_T)0;                       \
-                const ROW_T b1 = g1 ? g1[gl] : (ROW_T)0;                       \
+                const ROW_T *g0 = (const ROW_T *)(s_cc_rows +                  \
+                        (size_t)(c    ) * (2u*(W)*sizeof(ROW_T)));             \
+                const ROW_T *g1 = (const ROW_T *)(s_cc_rows +                  \
+                        (size_t)(c + 1) * (2u*(W)*sizeof(ROW_T)));             \
+                const ROW_T b0 = g0[gl];                                       \
+                const ROW_T b1 = g1[gl];                                       \
                 const uint16_t bg0 = bgv[c    ], xf0 = xfv[c    ];             \
                 const uint16_t bg1 = bgv[c + 1], xf1 = xfv[c + 1];             \
                                                                                \
@@ -620,8 +637,9 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
                                                                                \
             /* Trailing odd column (defensive; all three grids are even). */   \
             if (c < ncols) {                                                   \
-                const ROW_T *g0 = (const ROW_T *)s_cc_glyph[c];                \
-                const ROW_T b0 = g0 ? g0[gl] : (ROW_T)0;                       \
+                const ROW_T *g0 = (const ROW_T *)(s_cc_rows +                  \
+                        (size_t)(c) * (2u*(W)*sizeof(ROW_T)));                 \
+                const ROW_T b0 = g0[gl];                                       \
                 const uint16_t bg0 = bgv[c], xf0 = xfv[c];                     \
                 EMIT(d, b0, bg0, xf0);                                         \
                 d += CW;                                                       \

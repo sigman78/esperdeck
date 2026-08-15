@@ -68,6 +68,24 @@ typedef enum {
 #define FONT_MAX_ROWS   30    /* 480 / 16 */
 #define FONT_MAX_BAND   16    /* 8x16 renders full-row bands; taller ones half */
 
+/* Bytes per glyph row / per whole (decoded) glyph, for a given cell size. */
+#define FONT_ROW_BYTES(w)         ((size_t)((w) <= 8 ? 1 : 2))
+#define FONT_GLYPH_BYTES(w, h)    ((size_t)(h) * FONT_ROW_BYTES(w))
+
+/*
+ * Renderer row-cache size: max over the ENABLED sizes of cols x glyph_bytes
+ * (8x16: 100x16, 10x20: 80x40, 12x24: 66x48). The display ISR decodes each
+ * column's glyph into this cache once per character row; the band scan loop
+ * reads decoded rows with plain indexing.
+ */
+#if FONT_RT_10X20
+#define FONT_MAX_CACHE_BYTES  3200
+#elif FONT_RT_12X24
+#define FONT_MAX_CACHE_BYTES  3168
+#else
+#define FONT_MAX_CACHE_BYTES  1600
+#endif
+
 /*
  * Real bold glyphs (Terminus bold face, sparse subset A: ASCII,
  * Latin-1/Extended-A, Cyrillic). Device builds can opt out via Kconfig to
@@ -103,22 +121,27 @@ const char *font_size_name(font_size_t size);
 int font_width(void);
 int font_height(void);
 
-/**
- * Glyph bitmap — IRAM_ATTR, safe to call from the ISR.
- *
- * Returns font_height() rows of FONT_ROW_BYTES(font_width()) bytes each; the
- * caller knows the width and casts to uint8_t/uint16_t accordingly.
- *
- * @param cp Unicode codepoint (BMP, U+0000..U+FFFF)
- * @return   Pointer to the glyph rows, or the fallback glyph.
- */
-const void *font_get_glyph(uint16_t cp);
+/** Decoded glyph size of the active font: font_height() rows of
+ *  FONT_ROW_BYTES(font_width()) bytes. Valid after font_init(). */
+size_t font_glyph_bytes(void);
 
 /**
- * BOLD glyph bitmap — IRAM_ATTR, safe to call from the ISR.
- * Falls back to the regular glyph when the codepoint has no stored bold form
- * (identical to normal, outside the bold subset, or bold disabled).
+ * Decode a glyph's bitmap into @p out — IRAM_ATTR, safe to call from the
+ * ISR. The tables are compressed (crop + PackBits row-RLE, see
+ * terminus_font.h); this is the only way to obtain glyph rows.
+ *
+ * Writes font_glyph_bytes() bytes: font_height() rows of
+ * FONT_ROW_BYTES(font_width()) bytes each (u16 rows assume @p out is
+ * 2-aligned). Unknown codepoints decode the '?' fallback; if even that is
+ * missing, all-zero rows.
+ *
+ * @param cp   Unicode codepoint (BMP, U+0000..U+FFFF)
+ * @param bold Decode the bold form: a stored bold exception glyph, or the
+ *             regular glyph smeared one pixel (pixel-identical to the real
+ *             Terminus bold). Outside the bold subset — or with bold
+ *             compiled out — decodes the regular glyph unchanged.
+ * @param out  Destination for the decoded rows.
  */
-const void *font_get_glyph_bold(uint16_t cp);
+void font_decode_glyph(uint16_t cp, bool bold, void *out);
 
 #endif // FONT_H

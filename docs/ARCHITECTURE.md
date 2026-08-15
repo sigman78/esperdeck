@@ -46,7 +46,11 @@ components/
   cyberdeck_app/     THE SHELL — boot→picker→session FSM + overlay TUI,
                      one module per screen (app_home/menu/connect/...)
   display/ + font/   bounce-buffer render core, CRT effects (display_fx),
-                     Terminus font in 8x16 / 10x20 / 12x24 with a bold face
+                     Terminus font in 8x16 / 10x20 / 12x24 with a bold face;
+                     glyph tables are compressed (crop + PackBits row-RLE +
+                     row palette, bold synthesized with stored exceptions —
+                     see terminus_font.h) and decoded per character row into
+                     the render column cache
   tsm/               VT100/220/xterm parser + terminal state (cells, SGR)
   vterm/             bridge: tsm grid → display cell buffer
   ssh/               libssh2 client (connect, host-key check, PTY, read task)
