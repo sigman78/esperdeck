@@ -136,6 +136,23 @@ static int font_menu_items(const char *out[], const char *bodies[])
 
 /* Step the EFFECTS tunable at @p sel, persist, and (for the event effects)
  * arm a one-shot preview so the change is seen immediately. */
+/* fx changes apply live (display_fx_set) but the fx.ini flash write is
+ * DEFERRED until the user leaves the EFFECTS page: a write per toggle
+ * paused the render ISR for the flash-cache-off window, landing a visible
+ * hiccup exactly on the keypress. menu_fx_flush() runs from the app tick,
+ * so forced exits (session drop, home) still save. */
+static bool s_fx_dirty = false;
+
+void menu_fx_flush(void)
+{
+    if (!s_fx_dirty) return;
+    if (app.state == ST_MENU && app.menu.screen == MS_EFFECTS) return;
+    s_fx_dirty = false;
+    display_fx_cfg_t c;
+    display_fx_get(&c);
+    storage_fx_save(&c);
+}
+
 static void fx_menu_cycle(int sel)
 {
     display_fx_cfg_t c;
@@ -175,7 +192,7 @@ static void fx_menu_cycle(int sel)
     default: return;
     }
     display_fx_set(&c);
-    storage_fx_save(&c);
+    s_fx_dirty = true;   /* fx.ini write deferred — see menu_fx_flush() */
     if (sel == FXM_WIPE && c.wipe)             display_fx_wipe();
     if (sel == FXM_COLLAPSE && c.collapse)     display_fx_collapse();
     if (sel == FXM_STATIC && c.static_burst)   display_fx_static();

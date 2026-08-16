@@ -22,8 +22,7 @@ static const char *TAG = "lcd_driver";
 
 static esp_lcd_panel_handle_t panel_handle  = NULL;
 
-/* Bounce-buffer fill callback — ISR context; all rendering logic is in
- * display_render_chunk(). */
+/* Bounce-buffer fill callback — ISR context. */
 static IRAM_ATTR bool on_bounce_empty(esp_lcd_panel_handle_t panel,
                                       void *buf,
                                       int   pos_px,
@@ -34,10 +33,6 @@ static IRAM_ATTR bool on_bounce_empty(esp_lcd_panel_handle_t panel,
     display_render_chunk((color_t *)buf, pos_px, len_bytes);
     return false;
 }
-
-/* -------------------------------------------------------------------------
- * Hardware init helpers
- * ---------------------------------------------------------------------- */
 
 static esp_err_t init_backlight(void)
 {
@@ -50,10 +45,6 @@ static esp_err_t init_backlight(void)
     ESP_LOGI(TAG, "Backlight initialized (GPIO %d)", PIN_NUM_BK_LIGHT);
     return ESP_OK;
 }
-
-/* -------------------------------------------------------------------------
- * Public API
- * ---------------------------------------------------------------------- */
 
 static esp_err_t panel_bringup(void)
 {

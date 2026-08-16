@@ -20,7 +20,7 @@ logic in one file and the platform half in a `*_sim.c` / `*_dev.c` sibling:
 
 | Component | Shared | Device backend | Sim backend |
 |-----------|--------|----------------|-------------|
-| `display` | `display_render.c` (glyph→pixel core) | `lcd_driver.c` (RGB DMA ISR) | `display_sdl.c` (SDL texture) |
+| `display` | `display_render.c` + `render_*.c` (glyph→pixel core) | `lcd_driver.c` (RGB DMA ISR) | `display_sdl.c` (SDL texture) |
 | `storage` | `storage.c` (INI parse, key blobs) | `storage_dev.c` (LittleFS) | `storage_sim.c` (host FS) |
 | `wifi`    | — | `wifi_manager.c` + `wifi_provision.c` | `wifi_manager_sim.c` + `wifi_provision_sim.c` |
 | `input`   | `input_hal.c` (event queue) | `ble_keyboard.c`, `touch_input.c`, `input_uart.c` | SDL keyboard/mouse in `sim/main.c` |
@@ -95,12 +95,19 @@ rasterized to pixels on demand.
         the core fills it and DMA scans it out.
 ```
 
-`display_render_chunk()` (in `display_render.c`) is the single implementation of
-"turn cells into pixels for one horizontal band." The device calls it from the
-LCD peripheral's DMA ISR — every band is composed live at the panel's 39 Hz, so
-the sim and the hardware render *identical* output by construction. Optional CRT
-effects (`display_fx`: scanlines, glow, wobble, static, transitions) hook into
-the same band loop and fit inside the ISR's cycle budget.
+`display_render_chunk()` is the single implementation of "turn cells into
+pixels for one horizontal band." The device calls it from the LCD peripheral's
+DMA ISR — every band is composed live at the panel's 39 Hz, so the sim and the
+hardware render *identical* output by construction. The render core is four
+single-concern modules (`render_internal.h` is the map): `display_render.c`
+holds the pipeline skeleton and public API, `render_cache.c` the per-row
+column cache, `render_scan.c` the hot per-size scan loop — one plain-C body
+in `render_scan.inc` instantiated per font width, the C analog of a size
+template — and `render_fx_pass.c` the effect application. Optional CRT
+effects (`display_fx`: scanlines, glow, wobble, static, transitions) hook
+into the same band loop and fit inside the ISR's cycle budget; the renderer
+reads a per-frame *snapshot* of the effect config, so a toggle always lands
+on a frame boundary (no mid-frame seam, no torn reads).
 
 **Cell layout** (`display.h` / `tsm.h`) is 8 bytes and binary-compatible between
 `tsm` and the display. `vterm` copies **dirty row-spans** from `tsm`'s grid
@@ -172,6 +179,23 @@ DRAM were retired. Dropping the cache entirely, however, costs 19–24% *average
 ISR time for zero simplification — the per-row cache stays. To re-run the
 numbers after render/decoder work: enable `CYBERDECK_BENCH_STRESS`
 (+ `DISPLAY_ISR_BENCH`), flash, and read the 5-second `bench_stress` log lines.
+
+Two follow-up smoothing ideas were measured (branch `research/prebuild-task`):
+
+- *Splitting the rebuild within a row* (band 1 decodes only the rows it
+  scans, band 2 completes) is a measured dead end: Terminus glyph content is
+  top-heavy and the per-glyph fixed costs don't split, so band 1's floor is
+  382/399 µs (≤3% below the spike) — and the row-limit branch alone slowed
+  the `-O2` decode loop ~20%.
+- *A lock-step prebuild task* (core-1 task, priority above `main_task`,
+  builds the next row's whole cache into a spare bank on an ISR doorbell;
+  the ISR flips banks or falls back to a sync rebuild) removes the burst
+  from the ISR entirely — measured worst chunks 399/241/272 µs at
+  8x16/10x20/12x24 (47/45/43% of period), avg==max within 2%, zero
+  fallbacks in steady state, −23% average ISR CPU; costs ~4.3 KB DRAM +
+  the task handshake. Kept unmerged as commit `a956418` on that branch —
+  it strictly dominates the retired banking, so if ISR headroom is ever
+  needed, land *that*, don't resurrect the look-ahead.
 
 ---
 
@@ -269,9 +293,12 @@ The device build lives or dies by *where* memory sits.
 
 - **IRAM/DRAM on the render path.** The render core is IRAM; the cell/overlay
   buffers and the boot-time font copy are internal DRAM, so the ISR never
-  reads through the PSRAM cache. (The ISR is *not* flash-cache-safe: a flash
-  write — profile save, NVS — briefly pauses the bounce refill; the glitch is
-  visible only during saves.)
+  reads through the PSRAM or flash caches. That makes the ISR fully
+  flash-cache-safe: with `LCD_RGB_ISR_IRAM_SAFE=y` it keeps rendering while
+  a flash write (profile save, NVS) has the cache disabled — saves no longer
+  glitch the picture. The discipline is *enforced*: `tools/check_iram.py`
+  runs after every device link and fails the build if an ISR-path function
+  (or an ISR-read table) lands in flash.
 - **PSRAM for the big allocations.** libssh2's heap, the SSH read task's
   stack, and `tsm`'s two cell grids live in octal PSRAM; `tsm`'s *hot* state
   (the embedded parser, print buffer, dirty spans) is internal-first — every
@@ -294,7 +321,9 @@ they live in a LittleFS partition (`partitions.csv`); in the sim, in a
 - `wifi.ini` — WiFi networks, tried in file order
 - `known_hosts.ini` — pinned host-key fingerprints (see below)
 - `keys/*.pem` — private keys for public-key auth (encrypted ed25519 supported)
-- `fx.ini` — CRT effect settings; `font.ini` — terminal font size (applied on reboot)
+- `fx.ini` — CRT effect settings (toggles apply live; the file is written
+  once, on leaving the EFFECTS page); `font.ini` — terminal font size
+  (applied on reboot)
 - BLE bonds live in **NVS** (not LittleFS) — the NimBLE bond store owns them
 
 Profiles and keys are editable three ways: the on-device editor (menu), a web

@@ -221,6 +221,7 @@ void cyberdeck_app_tick(uint64_t now)
     ui_frame(app.anim_frame);   /* marquee clock for ui_tile */
 
     status_toasts(now);
+    menu_fx_flush();   /* deferred fx.ini save, once the EFFECTS page is left */
 
     if (app.state < ST_COUNT && SCREENS[app.state].tick)
         SCREENS[app.state].tick(now);

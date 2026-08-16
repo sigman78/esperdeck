@@ -33,6 +33,20 @@ which font sizes are *linked into the build* is a Kconfig choice
 (`CYBERDECK_FONT`). The sim picks its font at configure time
 (`-DFONT_SIZE=8x16|10x20|12x24`).
 
+Every device link ends with `check_iram` (`tools/check_iram.py`): the render
+ISR keeps running while the flash cache is disabled
+(`LCD_RGB_ISR_IRAM_SAFE`), so any ISR-path function or ISR-read table that
+the linker places in flash would be a Cache exception during a settings
+save — the audit fails the build instead, naming the symbol. When adding
+ISR-path code, keep names within the script's patterns (`render_fx_*`,
+`scan_band_*`, …) or extend them.
+
+For render/ISR timing work there is a boot-into-bench mode:
+`CYBERDECK_BENCH_STRESS` (Kconfig, default off) skips the shell and
+repaints a worst-case dense screen while logging per-chunk
+`DISPLAY_ISR_BENCH` cycle counters every 5 s — the numbers behind the
+row-cache decisions in ARCHITECTURE.md were measured with it.
+
 ## Tests
 
 The `tsm` terminal engine has a host-compiled Unity suite (no ESP-IDF

@@ -20,10 +20,6 @@ static SDL_Renderer *s_renderer = NULL;
 static SDL_Texture  *s_texture  = NULL;
 static int           s_scale    = 1;   /* 1 or 2 */
 
-/* -------------------------------------------------------------------------
- * display.h public API
- * ---------------------------------------------------------------------- */
-
 esp_err_t display_init(void)
 {
     ESP_LOGI(TAG, "Initializing SDL2 display (%dx%d)", DISPLAY_WIDTH, DISPLAY_HEIGHT);
@@ -66,11 +62,7 @@ esp_err_t display_set_backlight(uint8_t brightness)
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * Simulator-only: render one full frame using display_render_chunk.
- * Called from sim/main.c each iteration of the event loop.
- * ---------------------------------------------------------------------- */
-
+/* Render one full frame; called from sim/main.c each event-loop pass. */
 void display_render_frame(void)
 {
     void *pixels = NULL;

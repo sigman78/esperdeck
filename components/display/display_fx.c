@@ -8,9 +8,7 @@
 #include <math.h>
 #include <string.h>
 
-/* -------------------------------------------------------------------------
- * Shared state (see display_fx_internal.h)
- * ---------------------------------------------------------------------- */
+/* Shared state — see display_fx_internal.h for the field contracts. */
 DRAM_ATTR display_fx_cfg_t g_fx_cfg = {
     .scanlines       = 1,
     .bold_pop        = 1,
@@ -28,7 +26,8 @@ DRAM_ATTR display_fx_cfg_t g_fx_cfg = {
     .wobble          = 2,    /* medium ±4 px — prototype default, on trial */
 };
 
-DRAM_ATTR volatile uint8_t g_fx_frame = 0;
+DRAM_ATTR volatile uint8_t g_fx_frame   = 0;
+DRAM_ATTR volatile uint8_t g_fx_cfg_gen = 0;
 
 /* Wobble LUT starts flat (matches .wobble = 0); display_fx_set rebuilds it
  * whenever a config is applied. */
@@ -59,10 +58,6 @@ static uint8_t clamp_u8(uint8_t v, uint8_t lo, uint8_t hi)
 {
     return v < lo ? lo : v > hi ? hi : v;
 }
-
-/* -------------------------------------------------------------------------
- * Public API
- * ---------------------------------------------------------------------- */
 
 void display_fx_defaults(display_fx_cfg_t *out)
 {
@@ -103,14 +98,15 @@ void display_fx_set(const display_fx_cfg_t *cfg)
     c.static_lines    = clamp_u8(c.static_lines, 1, 4);
     c.wobble          = clamp_u8(c.wobble, 0, 3);
 
-    /* Rebuild the wobble LUT for the active amplitude (task context — the
-     * ISR reads single bytes, so a mid-rebuild frame shows at worst a
-     * one-frame ripple). Amplitude = 2 px per level. */
+    /* Rebuild the wobble LUT (2 px per level). The ISR reads single bytes,
+     * so a mid-rebuild frame is at worst a one-frame ripple. */
     for (int i = 0; i < 256; i++)
         g_fx_wobble_lut[i] = (int8_t)lrintf(
             2.0f * (float)c.wobble * sinf((float)i * (6.2831853f / 256.0f)));
 
-    g_fx_cfg = c;   /* byte fields; a torn update is a one-frame glitch */
+    g_fx_cfg_gen++;   /* odd: write in flight — the frame snapshot skips */
+    g_fx_cfg = c;
+    g_fx_cfg_gen++;   /* even: consistent — picked up at the next frame  */
 }
 
 void display_fx_wipe(void)
