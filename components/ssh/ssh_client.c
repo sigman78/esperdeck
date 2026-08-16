@@ -263,6 +263,28 @@ static void log_last_error(const char *context)
  * call: keepalive.c sends from a stack-local buffer and a blocked send is
  * only reissued correctly from the same call path.
  * ---------------------------------------------------------------------- */
+/* net_bench: arrival-gap diagnostics for stutter hunting. A "data wake" is
+ * a drain-loop pass that yielded bytes; the gap between consecutive data
+ * wakes is how long the screen had nothing new. During a steady stream
+ * (btop at 100 ms) gaps above ~250 ms are stalls — the counters say whether
+ * they exist and how bad, the burst size says whether data was queued up
+ * behind the stall (network hiccup) or trickled in late (sender paused). */
+static int64_t  s_nb_last_data_us;
+static uint32_t s_nb_gap_max_ms;
+static uint32_t s_nb_gaps_250;      /* gaps in (250, 500] ms */
+static uint32_t s_nb_gaps_500;      /* gaps > 500 ms */
+static uint32_t s_nb_burst_max;     /* largest single-wake drain, bytes */
+static uint32_t s_nb_data_wakes;
+
+static void net_bench_reset(void)
+{
+    s_nb_gap_max_ms = 0;
+    s_nb_gaps_250   = 0;
+    s_nb_gaps_500   = 0;
+    s_nb_burst_max  = 0;
+    s_nb_data_wakes = 0;
+}
+
 static void ssh_read_task(void *arg)
 {
     TickType_t last_stat = xTaskGetTickCount();
@@ -273,6 +295,8 @@ static void ssh_read_task(void *arg)
 #ifdef CONFIG_DISPLAY_ISR_BENCH
     display_render_bench_reset();
 #endif
+    net_bench_reset();
+    s_nb_last_data_us = 0;
 
     while (s_connected) {
         size_t  drained = 0;
@@ -337,30 +361,56 @@ static void ssh_read_task(void *arg)
 
         if (!s_connected) break;
 
-        /* Periodic memory stat + perf bench dump (vterm/tsm parse-vs-state
-         * split, render-ISR duty). Both bench dumps are no-ops (nothing
-         * printed) when their Kconfig option is off. */
-        TickType_t now = xTaskGetTickCount();
-        if ((now - last_stat) >= pdMS_TO_TICKS(30000)) {
-            ESP_LOGI(TAG, "libssh2 heap: %zu B", s_alloc_bytes);
+        /* net_bench accounting: gaps between data-yielding wakes. */
+        if (drained > 0) {
+            if (s_nb_last_data_us) {
+                uint32_t gap_ms = (uint32_t)((wake_t0 - s_nb_last_data_us) / 1000);
+                if (gap_ms > s_nb_gap_max_ms) s_nb_gap_max_ms = gap_ms;
+                if      (gap_ms > 500) s_nb_gaps_500++;
+                else if (gap_ms > 250) s_nb_gaps_250++;
+            }
+            s_nb_last_data_us = wake_t0;
+            if (drained > s_nb_burst_max) s_nb_burst_max = (uint32_t)drained;
+            s_nb_data_wakes++;
+        }
 
-            vterm_bench_report();
+        /* Periodic bench dump (vterm parse split, arrival gaps, render-ISR
+         * duty). Each line blocks this task on the UART (~9 ms/100 chars),
+         * so print on an idle wake — forced out once 5 s overdue — and skip
+         * the lines that would be all zeros. */
+        TickType_t now = xTaskGetTickCount();
+        if ((now - last_stat) >= pdMS_TO_TICKS(30000) &&
+            (drained == 0 || (now - last_stat) >= pdMS_TO_TICKS(35000))) {
+
+            vterm_bench_report();      /* one line; silent when nothing fed */
             vterm_bench_reset();
 
+            if (s_nb_data_wakes) {
+                int rssi = 0;
+#ifdef ESP_PLATFORM
+                wifi_ap_record_t ap;
+                if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
+#endif
+                ESP_LOGI("net_bench",
+                    "gap_max=%" PRIu32 "ms n250=%" PRIu32 " n500=%" PRIu32
+                    " burst=%" PRIu32 "B wakes=%" PRIu32 " rssi=%d heap=%zu",
+                    s_nb_gap_max_ms, s_nb_gaps_250, s_nb_gaps_500,
+                    s_nb_burst_max, s_nb_data_wakes, rssi, s_alloc_bytes);
+                net_bench_reset();     /* last_data_us survives the window */
+            }
+
 #ifdef CONFIG_DISPLAY_ISR_BENCH
-            uint32_t elapsed_ms = (uint32_t)(now - last_stat) * portTICK_PERIOD_MS;
             uint32_t avg_cyc, max_cyc, chunks;
             display_render_bench_get(&avg_cyc, &max_cyc, &chunks);
             display_render_bench_reset();
+            uint32_t elapsed_ms = (uint32_t)(now - last_stat) * portTICK_PERIOD_MS;
             uint32_t chunks_per_sec = elapsed_ms ? (chunks * 1000u) / elapsed_ms : 0;
             /* duty = avg_cycles/chunk * chunks/s / core_hz; tenths of a percent. */
             uint32_t duty_pct_x10 = (uint32_t)(((uint64_t)avg_cyc * chunks_per_sec * 1000ULL)
                                                 / 240000000ULL);
             ESP_LOGI("render_bench",
-                "chunks=%" PRIu32 "  avg=%" PRIu32 "cyc  max=%" PRIu32 "cyc  "
-                "chunks/s=%" PRIu32 "  duty=%" PRIu32 ".%" PRIu32 "%%",
-                chunks, avg_cyc, max_cyc, chunks_per_sec,
-                duty_pct_x10 / 10, duty_pct_x10 % 10);
+                "avg=%" PRIu32 " max=%" PRIu32 " duty=%" PRIu32 ".%" PRIu32 "%%",
+                avg_cyc, max_cyc, duty_pct_x10 / 10, duty_pct_x10 % 10);
 #endif
             last_stat = now;
         }

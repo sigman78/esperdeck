@@ -44,8 +44,7 @@ static void render_hostkey(void)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    draw_titlebar(2, app.hostkey.mismatch ? "HOST KEY ALERT" : "NEW HOST KEY",
-                  app.anim_frame);
+    draw_titlebar(2, app.hostkey.mismatch ? "HOST KEY ALERT" : "NEW HOST KEY");
 
     if (app.hostkey.mismatch) {
         /* Blink via INVERSE (ui_puts emits Latin-1 bytes — no UTF-8 here). */

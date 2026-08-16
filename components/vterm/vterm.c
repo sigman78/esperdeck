@@ -211,15 +211,9 @@ bool vterm_app_cursor_keys(void)
 void vterm_bench_report(void)
 {
 #ifdef CONFIG_VTERM_BENCH
-    uint32_t tsm_us   = (uint32_t)(s_bench.tsm_cycles  / 240);
-    uint32_t draw_us  = (uint32_t)(s_bench.draw_cycles / 240);
-    uint32_t total_us = tsm_us + draw_us;
-    ESP_LOGI("vterm_bench",
-        "flushes=%" PRIu32 "  bytes=%" PRIu32 "  "
-        "tsm=%" PRIu32 "us  draw=%" PRIu32 "us  total=%" PRIu32 "us",
-        s_bench.flush_count,
-        s_bench.bytes_fed,
-        tsm_us, draw_us, total_us);
+    /* Silent when nothing was fed: the stat block runs every 30 s and each
+     * log line blocks the read task on the UART (~9 ms/100 chars). */
+    if (s_bench.bytes_fed == 0) return;
 
     /* Parse-vs-state split: tsm_cycles minus the vtable shims left over is
      * the pure vtparse share. */
@@ -229,13 +223,17 @@ void vterm_bench_report(void)
     uint64_t parse_cycles = (s_bench.tsm_cycles > shim_cycles)
                            ? (s_bench.tsm_cycles - shim_cycles) : 0;
     ESP_LOGI("vterm_bench",
-        "print=%" PRIu32 "us  csi=%" PRIu32 "us  c0=%" PRIu32 "us  other=%" PRIu32 "us  "
-        "parse=%" PRIu32 "us  scroll_up=%" PRIu32 "  scroll_down=%" PRIu32 "  rows_moved=%" PRIu32,
-        (uint32_t)(tb.print_cycles  / 240),
-        (uint32_t)(tb.csi_cycles    / 240),
-        (uint32_t)(tb.c0_cycles     / 240),
-        (uint32_t)(tb.other_cycles  / 240),
-        (uint32_t)(parse_cycles     / 240),
+        "KB=%" PRIu32 " fl=%" PRIu32 " tsm=%" PRIu32 "ms dr=%" PRIu32
+        " pr=%" PRIu32 " csi=%" PRIu32 " c0=%" PRIu32 " par=%" PRIu32
+        " scr=%" PRIu32 "/%" PRIu32 " rows=%" PRIu32,
+        s_bench.bytes_fed / 1024u,
+        s_bench.flush_count,
+        (uint32_t)(s_bench.tsm_cycles  / 240000),
+        (uint32_t)(s_bench.draw_cycles / 240000),
+        (uint32_t)(tb.print_cycles     / 240000),
+        (uint32_t)(tb.csi_cycles       / 240000),
+        (uint32_t)(tb.c0_cycles        / 240000),
+        (uint32_t)(parse_cycles        / 240000),
         tb.scroll_up_calls, tb.scroll_down_calls, (uint32_t)tb.scroll_rows);
 #endif
 }

@@ -28,7 +28,7 @@ tilegrid_t picker_grid(int count);
 /* ------------------------------------------------------------ chrome */
 
 /** Animated cyan ░▒▓█ comet sweeping an otherwise empty row. */
-void draw_rule_scan(int row, uint32_t frame);
+void draw_rule(int row);
 
 /** 8-frame braille spinner glyph. */
 uint16_t spinner_glyph(uint32_t frame);
@@ -39,15 +39,15 @@ uint16_t braille_noise(uint32_t h);
 /** Wall-clock "HH:MM" once SNTP/host time exists; false until then. */
 bool clock_str(char *buf, size_t sz);
 
-/** Title chip framed by an animated shade gradient, drawn on row 0. */
-void draw_titlebar(int x0, const char *text, uint32_t frame);
+/** Title chip framed by a shade gradient, drawn on row 0. */
+void draw_titlebar(int x0, const char *text);
 
 /** Footer hint riding a cyan powerline chip; @p limit = first column to
  *  stay clear of (right-aligned toast), or -1 for full width. */
 void draw_footer_lim(const char *hint, int limit);
 void draw_footer(const char *hint);
 
-/** Standard modal header: titlebar chip + right-aligned "// tag" + comet. */
+/** Standard modal header: titlebar chip + right-aligned "// tag" + rule. */
 void draw_screen_header(const char *title, const char *tag);
 
 /** Free-RAM summary for the header. */

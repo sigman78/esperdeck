@@ -20,11 +20,11 @@ static void render_sshimport(uint64_t now)
     ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
-    draw_titlebar(2, "SSH IMPORT", app.anim_frame);
+    draw_titlebar(2, "SSH IMPORT");
     ui_pen(OVERLAY_COL_BLUE);
     ui_puts(ui_cols() - 10, 0, web ? "// Web/PC" : "// SoftAP", 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    draw_rule_scan(3, app.anim_frame);
+    draw_rule(3);
 
     /* QR first — its column bounds the step text on narrow grids. */
     int qx = draw_qr_panel(ssh_import_qr_size(), ssh_import_qr_module,

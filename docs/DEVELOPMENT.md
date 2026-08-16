@@ -24,9 +24,34 @@ go in the gitignored `sdkconfig`.
 Two flash targets matter:
 
 - `idf.py app-flash` — writes only the application. **Use this for iteration.**
-- `idf.py flash` — also writes the storage partition image built from the
-  repo, wiping profiles, imported keys, and pinned host keys saved on the
-  device. Use only to deliberately reprovision.
+- `idf.py flash` — also writes the storage partition image, wiping
+  profiles, imported keys, and pinned host keys saved on the device. Use
+  only to deliberately reprovision — and keep your own data in
+  `sim_storage/` (below) so a reprovision restores it instead of erasing it.
+
+### Your profiles and keys in the flash image
+
+The storage partition image is built from **`sim_storage/`** (gitignored —
+it holds real credentials and never reaches the repo) when the directory
+exists, falling back to the tracked `sim_storage.example/` skeleton with a
+CMake warning otherwise. To make a full flash carry *your* provisioning:
+
+```
+cp -r sim_storage.example sim_storage      # once, then edit
+sim_storage/
+  profiles.ini       # connection profiles (host/user/auth per section)
+  wifi.ini           # WiFi credentials
+  fx.ini             # CRT effect settings (optional)
+  known_hosts.ini    # pinned host-key fingerprints (optional)
+  keys/              # SSH private keys (PEM) + optional .pub companions,
+                     # referenced from profiles.ini by file name
+```
+
+The simulator reads the same directory live, so sim and device provision
+from one source. Note the seeding is one-way: profiles created or edited
+**on the device** live only in its littlefs partition — mirror them into
+`sim_storage/` by hand if they must survive a full reflash (`app-flash`
+never touches them).
 
 The terminal font size is a menu setting (`font.ini`) applied on reboot;
 which font sizes are *linked into the build* is a Kconfig choice

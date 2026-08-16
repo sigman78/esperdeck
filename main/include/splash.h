@@ -1,12 +1,14 @@
 /*
- * splash.h — Splash screen and status line helpers.
- *
- * All output goes through vterm_write() using ANSI escape sequences.
+ * splash.h — boot splash (ANSI color test card). Only compiled and shown
+ * when CONFIG_CYBERDECK_BOOT_SPLASH is enabled.
  */
 
 #pragma once
 
+#include "sdkconfig.h"
+
+#if CONFIG_CYBERDECK_BOOT_SPLASH
 void splash_show(void);
-void splash_status_info(const char *msg);
-void splash_status_ok(const char *msg);
-void splash_status_fail(const char *msg);
+#else
+static inline void splash_show(void) {}
+#endif

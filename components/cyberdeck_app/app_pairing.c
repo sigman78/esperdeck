@@ -24,7 +24,7 @@ static void render_pairing(uint64_t now)
     ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
-    draw_titlebar(2, "PAIR KEYBOARD", app.anim_frame);
+    draw_titlebar(2, "PAIR KEYBOARD");
     ui_pen(app.pair.ndevs ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER);
     ui_putch(2, 1, app.pair.ndevs ? UI_LED_ON : spinner_glyph(app.anim_frame), 0);
     ui_pen(OVERLAY_COL_DEFAULT);
@@ -42,7 +42,7 @@ static void render_pairing(uint64_t now)
         ui_printf(ui_cols() - 15, 1, 0, "closing in %2us", left);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
-    draw_rule_scan(3, app.anim_frame);
+    draw_rule(3);
 
     /* Devices, then "Forget bonds" and Cancel (always the last two).
      * Cap devices so both special tiles fit on the page. */

@@ -1,5 +1,13 @@
 menu "Cyberdeck Configuration"
 
+    config CYBERDECK_BOOT_SPLASH
+        bool "Show the boot splash (ANSI color test card)"
+        default n
+        help
+            Draw a color-capability test card through the terminal pipeline
+            while the system brings up WiFi/BLE/SSH. Purely cosmetic; the
+            layout adapts to the active font's character grid.
+
     config CYBERDECK_BENCH_STRESS
         bool "Boot into the ISR render bench stress screen (dev tool)"
         default n

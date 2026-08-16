@@ -100,18 +100,13 @@ tilegrid_t picker_grid(int count)
     return g;
 }
 
-/* Animated scanner: a cyan ░▒▓█ "comet" sweeps left→right along an
- * otherwise empty row. */
-void draw_rule_scan(int row, uint32_t frame)
+/* Full-width horizontal rule under a header. */
+void draw_rule(int row)
 {
-    int W = ui_cols();
-    static const uint16_t comet[4] = { UI_SHADE1, UI_SHADE2, UI_SHADE3, UI_BLOCK };
-    int head = (int)((frame * 2u) % (uint32_t)W);   /* 2 cells/frame */
-    ui_pen(OVERLAY_COL_CYAN);
-    for (int k = 0; k < 4; k++) {
-        int x = head - (3 - k);
-        if (x >= 0 && x < W) ui_putch(x, row, comet[k], 0);
-    }
+    const int W = ui_cols();
+    ui_pen(OVERLAY_COL_BLUE);
+    for (int x = 0; x < W; x++)
+        ui_putch(x, row, UI_BOX_H, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
@@ -148,27 +143,24 @@ bool clock_str(char *buf, size_t sz)
     return true;
 }
 
-/* Title chip framed by a shade gradient: ░▒▓█ TEXT █▓▒░ on row 0, with a
- * cyan "spark" traveling the flanks. Total width strlen(text)+10. */
-void draw_titlebar(int x0, const char *text, uint32_t frame)
+/* Title chip framed by a static shade gradient: ░▒▓█ TEXT █▓▒░ on row 0.
+ * Total width strlen(text)+10. */
+void draw_titlebar(int x0, const char *text)
 {
-    int spark = (int)((frame / 3u) % 4u);
     int x = x0;
     static const uint16_t lg[4] = { UI_SHADE1, UI_SHADE2, UI_SHADE3, UI_BLOCK };
-    for (int i = 0; i < 4; i++) {
-        ui_pen(i == spark ? OVERLAY_COL_CYAN : OVERLAY_COL_MAGENTA);
+    ui_pen(OVERLAY_COL_MAGENTA);
+    for (int i = 0; i < 4; i++)
         ui_putch(x++, 0, lg[i], 0);
-    }
     ui_pen(OVERLAY_COL_CYAN);
     ui_putch(x++, 0, ' ', OVERLAY_ATTR_INVERSE);
     ui_puts (x, 0, text, OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD);
     x += (int)strlen(text);
     ui_putch(x++, 0, ' ', OVERLAY_ATTR_INVERSE);
     static const uint16_t rg[4] = { UI_BLOCK, UI_SHADE3, UI_SHADE2, UI_SHADE1 };
-    for (int i = 0; i < 4; i++) {
-        ui_pen((3 - i) == spark ? OVERLAY_COL_CYAN : OVERLAY_COL_MAGENTA);
+    ui_pen(OVERLAY_COL_MAGENTA);
+    for (int i = 0; i < 4; i++)
         ui_putch(x++, 0, rg[i], 0);
-    }
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
@@ -196,15 +188,15 @@ void draw_footer_lim(const char *hint, int limit)
 
 void draw_footer(const char *hint) { draw_footer_lim(hint, -1); }
 
-/* Standard modal header: animated titlebar chip, a right-aligned "// tag"
- * in blue, and the comet rule on row 3. Shared by CONNECTING / NEW PROFILE. */
+/* Standard modal header: titlebar chip, a right-aligned "// tag" in blue,
+ * and a rule on row 3. Shared by CONNECTING / NEW PROFILE. */
 void draw_screen_header(const char *title, const char *tag)
 {
-    draw_titlebar(2, title, app.anim_frame);
+    draw_titlebar(2, title);
     ui_pen(OVERLAY_COL_BLUE);
     ui_puts(ui_cols() - (int)strlen(tag) - 1, 0, tag, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    draw_rule_scan(3, app.anim_frame);
+    draw_rule(3);
 }
 
 /* Free-RAM summary for the header. */

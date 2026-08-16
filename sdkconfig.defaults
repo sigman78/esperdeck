@@ -78,3 +78,6 @@ CONFIG_SSH_IMPORT_POP_DISABLED=y
 # with the flash cache disabled instead of re-scanning stale bounce
 # buffers for the erase/program window.
 CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
+
+# Boot splash: option defaults to off; keep it on for now.
+CONFIG_CYBERDECK_BOOT_SPLASH=y
