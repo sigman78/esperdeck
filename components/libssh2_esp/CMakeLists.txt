@@ -1,5 +1,6 @@
-# libssh2 as an ESP-IDF component (device, mbedTLS) and a plain static library
-# (simulator, WinCNG). Vendored wrapper — originally skuodi/libssh2_esp.
+# libssh2 as an ESP-IDF component (device) and a plain static library
+# (simulator), both on the mbedTLS backend. Vendored wrapper — originally
+# skuodi/libssh2_esp.
 #
 # libssh2 itself is CLONED by CMake at configure time and patched (RAM diet +
 # private-key error reporting: upstream masks the OpenSSH-format parser's error
@@ -49,24 +50,35 @@ set(_libssh2_units
     hostkey keepalive kex knownhost mac misc packet pem poly1305 publickey
     scp session sftp transport userauth userauth_kbd_packet version blowfish)
 
-# ── Simulator: static library, WinCNG (Windows Crypto API) ──────────────────
+# ── Simulator: static library, mbedTLS (same backend as the device) ─────────
+# WinCNG (the old sim backend) has LIBSSH2_ED25519 0 — no ssh-ed25519 hostkeys
+# and no ed25519 userauth — so ed25519-only servers failed KEX and ed25519 keys
+# failed auth in the sim while working on-device. Building the fork's mbedTLS
+# backend (+ vendored Monocypher) gives the sim crypto parity: same negotiated
+# hostkey types, same key support, same known_hosts pins as the device.
 if(BUILD_SIMULATOR)
+    include(${PROJECT_DIR}/cmake/get_cpm.cmake)
+    CPMAddPackage(
+        NAME       mbedtls
+        GITHUB_REPOSITORY Mbed-TLS/mbedtls
+        GIT_TAG    v3.6.7   # 3.6 LTS — same major/minor line as ESP-IDF 5.5
+        OPTIONS "ENABLE_PROGRAMS OFF" "ENABLE_TESTING OFF"
+                "MBEDTLS_FATAL_WARNINGS OFF"
+    )
+
     set(_srcs "")
-    foreach(u ${_libssh2_units} wincng)
+    foreach(u ${_libssh2_units} mbedtls monocypher monocypher-ed25519)
         list(APPEND _srcs ${LIBSSH2_DIR}/src/${u}.c)
     endforeach()
 
     add_library(libssh2_esp STATIC ${_srcs})
     target_compile_definitions(libssh2_esp PRIVATE
-        LIBSSH2_WINCNG    # no HAVE_CONFIG_H → libssh2_setup.h uses its _WIN32 branch
-        LIBSSH2_ECDSA_WINCNG)  # ECDSA hostkeys + ecdh-sha2-nistp* KEX; without it
-                               # WinCNG only has classic DH, which hardened servers
-                               # (kex: curve25519/ecdh only) no longer offer
+        LIBSSH2_MBEDTLS)  # no HAVE_CONFIG_H → libssh2_setup.h uses its _WIN32 branch
     target_include_directories(libssh2_esp PUBLIC
         ${LIBSSH2_DIR}/src
         ${LIBSSH2_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(libssh2_esp PRIVATE idfsim bcrypt ws2_32 crypt32)
+    target_link_libraries(libssh2_esp PRIVATE idfsim mbedcrypto ws2_32)
     if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(libssh2_esp PRIVATE
             -Wno-format -Wno-uninitialized -Wno-narrowing -Wno-error)
