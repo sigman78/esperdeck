@@ -1,11 +1,12 @@
 include(${PROJECT_DIR}/cmake/cyberdeck_component.cmake)
 
 cyberdeck_component_register(
-    SRCS         storage.c
+    SRCS         storage.c keystore.c
     SRCS_DEV     storage_dev.c
     SRCS_SIM     storage_sim.c
     INCLUDE_DIRS include
     REQUIRES     display            # display_fx.h (fx.ini settings struct)
+                 libssh2_esp        # monocypher.h/.c (keystore crypto)
     REQUIRES_DEV nvs_flash          # littlefs auto-required via idf_component.yml
 )
 

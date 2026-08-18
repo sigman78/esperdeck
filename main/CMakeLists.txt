@@ -4,6 +4,7 @@ idf_component_register(
         "main.c"
         "splash.c"
         "bench_stress.c"
+        "bench_argon2.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

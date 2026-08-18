@@ -24,6 +24,7 @@
 #include "display.h"
 #include "display_fx.h"
 #include "font.h"
+#include "keystore_cli.h"
 #include "ssh_client.h"
 #include "storage.h"
 #include "vterm.h"
@@ -199,6 +200,11 @@ static void drive_tick(uint64_t now)
 
 int main(int argc, char *argv[])
 {
+    /* Keystore provisioning commands run headless and exit (see
+     * keystore_cli.c); returns -1 when none is present. */
+    int cli_rc = keystore_cli_main(argc, argv);
+    if (cli_rc >= 0) return cli_rc;
+
     /* --drive <script> is consumed first (scripted-input test hook); the
      * remaining positionals: host [port [user [password]]] become the
      * "(default)" entry in the profile picker. */

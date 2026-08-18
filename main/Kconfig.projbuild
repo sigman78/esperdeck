@@ -17,6 +17,16 @@ menu "Cyberdeck Configuration"
             DISPLAY_ISR_BENCH per-chunk cycle counters every 5 s. Used to
             quantify render/decoder changes — not a user feature.
 
+    config CYBERDECK_BENCH_ARGON2
+        bool "Run the Argon2id KDF parameter sweep at boot (dev tool)"
+        default n
+        help
+            Time the keystore KDF (Monocypher Argon2id, PSRAM work area) at a
+            grid of (memory, passes) points right after storage init, logging
+            ms per derivation. Used to tune KS_ARGON2_* in keystore.c toward
+            the ~1 s unlock target (docs/storage_auth.md). Adds several
+            seconds to boot; normal startup continues after the sweep.
+
     choice CYBERDECK_BENCH_STRESS_FONT
         prompt "Bench font size"
         depends on CYBERDECK_BENCH_STRESS

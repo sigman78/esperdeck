@@ -46,11 +46,20 @@ void hostkey_open(bool mismatch);
 void hostkey_tick(uint64_t now);
 void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 
+/* ---- unlock (app_unlock.c) ---- */
+/** Enter the keystore PIN pad. @p resume_connect: re-arm the connect to
+ *  app.conn.active once unlocked (the lazy on-first-key-use trigger). */
+void unlock_open(uint64_t now, bool resume_connect);
+void unlock_tick(uint64_t now);
+void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
+
 /* ---- connect + session (app_connect.c) ---- */
 /** Hand the screen back to a live session: overlay down, cursor restored. */
 void session_resume(void);
 /** Arm a connect to profile @p idx (snapshots it into app.conn.active). */
 void start_connect(int idx, uint64_t not_before, uint64_t now);
+/** Re-arm a connect to the ACTIVE snapshot (unlock-screen resume). */
+void connect_resume_active(uint64_t now);
 /** Re-arm a connect to the active snapshot, pinning @p fp (hostkey trust). */
 void connect_arm_pinned(const char *fp, uint64_t now);
 /** Session died and we are NOT auto-reconnecting: NO CARRIER + collapse. */

@@ -25,6 +25,7 @@ typedef enum {
     ST_WIFIPROV,    /* SoftAP WiFi onboarding (modal)                */
     ST_PROFILE,     /* on-device profile editor (modal)              */
     ST_SSHIMPORT,   /* SoftAP + HTTP SSH-profile import (modal)      */
+    ST_UNLOCK,      /* keystore PIN pad (modal)                      */
     ST_COUNT,
 } app_state_t;
 
@@ -150,6 +151,17 @@ typedef struct {                    /* app_sshimport.c */
     char     last[32];              /* snapshot of the last imported name   */
 } import_state_t;
 
+typedef struct {                    /* app_unlock.c */
+    char     code[65];              /* typed code, KEYSTORE_PIN_MAX + 1;
+                                     * app is .bss = internal SRAM; wiped
+                                     * on submit/leave                     */
+    int      len;
+    uint8_t  expected;              /* auto-submit length (0 = Enter only) */
+    bool     deriving;              /* KDF worker running; input swallowed */
+    bool     resume;                /* re-arm app.conn.active on success   */
+    uint64_t denied_until;          /* "ACCESS DENIED" flash window        */
+} unlock_state_t;
+
 struct app_state {
     cyberdeck_app_config_t cfg;
     app_state_t state;
@@ -184,6 +196,7 @@ struct app_state {
     pf_state_t      pf;
     prov_state_t    prov;
     import_state_t  imp;
+    unlock_state_t  unlock;
 };
 
 extern struct app_state app;

@@ -20,6 +20,7 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 
+#include "bench_argon2.h"
 #include "bench_stress.h"
 #include "ble_keyboard.h"
 #include "cyberdeck_app.h"
@@ -167,6 +168,7 @@ void app_main(void)
     if (storage_init() != ESP_OK) {
         ESP_LOGW(TAG, "Storage init failed — using Kconfig defaults");
     }
+    bench_argon2_run();   /* no-op unless CONFIG_CYBERDECK_BENCH_ARGON2 */
 
     init_network();
     log_heap("after netif_init");

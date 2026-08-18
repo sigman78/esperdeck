@@ -8,6 +8,8 @@
  */
 
 #include "storage.h"
+#include "storage_priv.h"
+#include "keystore.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
@@ -682,6 +684,25 @@ esp_err_t storage_get_key(const char *key_id,
     if (!key_id || !buf || buf_len == 0 || !written)
         return ESP_ERR_INVALID_ARG;
 
+    /* Wrapped key takes precedence: keys/<id>.kw1 (see keystore.h). While
+     * the store is locked this reports ESP_ERR_INVALID_STATE so the caller
+     * can bounce to an unlock prompt instead of "key unreadable". */
+    if (keystore_is_wrapped(key_id)) {
+        size_t n = 0;
+        uint8_t ctype = 0;
+        esp_err_t e = keystore_unwrap(key_id, buf, buf_len - 1, &n, &ctype);
+        if (e != ESP_OK) {
+            ESP_LOGE(TAG, "Wrapped key '%s': %s", key_id,
+                     e == ESP_ERR_INVALID_STATE ? "store locked" : "unwrap failed");
+            return e;
+        }
+        if (ctype != KEYSTORE_CONTENT_PEM) return ESP_ERR_INVALID_CRC;
+        buf[n] = '\0';
+        *written = n;
+        ESP_LOGI(TAG, "Unwrapped key '%s' (%zu bytes)", key_id, n);
+        return ESP_OK;
+    }
+
     char path[160];
     key_path(key_id, path, sizeof(path));
 
@@ -718,6 +739,16 @@ esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
     char path[160];
     key_path(key_id, path, sizeof(path));
 
+    /* Unlocked store: wrap immediately — plaintext only ever exists in RAM
+     * (provisioning door 2, docs/storage_auth.md). A locked-but-present
+     * store still writes plaintext; adopt-on-unlock migrates it later. */
+    if (keystore_state() == KEYSTORE_UNLOCKED) {
+        esp_err_t e = keystore_wrap(key_id, KEYSTORE_CONTENT_PEM, pem, len);
+        if (e != ESP_OK) return e;
+        remove(path);                    /* drop any stale plaintext copy */
+        return ESP_OK;
+    }
+
     /* tmp+rename like the INI writers: a power cut mid-write must never turn
      * an existing, working key into a truncated one. */
     atomic_file_t af;
@@ -744,6 +775,9 @@ esp_err_t storage_delete_key(const char *key_id)
     char path[160];
     key_path(key_id, path, sizeof(path));                     /* .pem */
     remove(path);
+    snprintf(path, sizeof(path), "%s/keys/%s.kw1",
+             storage_platform_mount_point(), key_id);         /* wrapped     */
+    remove(path);
     snprintf(path, sizeof(path), "%s/keys/%s.pub",
              storage_platform_mount_point(), key_id);         /* .pub, if any */
     remove(path);
@@ -760,28 +794,44 @@ static int cmp_key_id(const void *a, const void *b)
     return strcmp((const char *)a, (const char *)b);
 }
 
-esp_err_t storage_list_keys(char (*out)[STORAGE_KEY_ID_LEN], int max,
-                            int *count)
+/* Append the stem of @name (known to end in @ext) to @out unless it's
+ * already there or doesn't fit. */
+static void scan_add(const char *name, size_t ext_len,
+                     char (*out)[STORAGE_KEY_ID_LEN], int max, int *count)
 {
-    if (!out || !count || max <= 0) return ESP_ERR_INVALID_ARG;
-    *count = 0;
+    size_t nl = strlen(name);
+    if (nl <= ext_len || nl - ext_len >= STORAGE_KEY_ID_LEN) return;
+    if (*count >= max) return;
+    char stem[STORAGE_KEY_ID_LEN];
+    snprintf(stem, sizeof(stem), "%.*s", (int)(nl - ext_len), name);
+    for (int i = 0; i < *count; i++)
+        if (strcmp(out[i], stem) == 0) return;
+    memcpy(out[*count], stem, sizeof(stem));
+    (*count)++;
+}
+
+esp_err_t storage_scan_key_ext(const char *ext,
+                               char (*out)[STORAGE_KEY_ID_LEN], int max,
+                               int *count)
+{
+    if (!ext || !out || !count || max <= 0) return ESP_ERR_INVALID_ARG;
+    size_t ext_len = strlen(ext);
 
     char dir[128];
     snprintf(dir, sizeof(dir), "%s/keys", storage_platform_mount_point());
 
 #ifdef _WIN32
     char pat[160];
-    snprintf(pat, sizeof(pat), "%s/*.pem", dir);
+    snprintf(pat, sizeof(pat), "%s/*%s", dir, ext);
     struct _finddata_t fd;
     intptr_t h = _findfirst(pat, &fd);
     if (h != -1) {
         do {
-            size_t nl = strlen(fd.name);          /* pattern guarantees .pem */
-            if (nl <= 4 || nl - 4 >= STORAGE_KEY_ID_LEN) continue;
-            if (*count >= max) break;
-            snprintf(out[*count], STORAGE_KEY_ID_LEN, "%.*s",
-                     (int)(nl - 4), fd.name);
-            (*count)++;
+            /* _findfirst matches 8.3 short names too — recheck the suffix */
+            size_t nl = strlen(fd.name);
+            if (nl <= ext_len || _stricmp(fd.name + nl - ext_len, ext) != 0)
+                continue;
+            scan_add(fd.name, ext_len, out, max, count);
         } while (_findnext(h, &fd) == 0);
         _findclose(h);
     }
@@ -790,19 +840,24 @@ esp_err_t storage_list_keys(char (*out)[STORAGE_KEY_ID_LEN], int max,
     if (d) {
         struct dirent *e;
         while ((e = readdir(d)) != NULL) {
-            const char *nm = e->d_name;
-            size_t nl = strlen(nm);
-            if (nl <= 4 || strcmp(nm + nl - 4, ".pem") != 0) continue;
-            if (nl - 4 >= STORAGE_KEY_ID_LEN) continue;   /* stem too long */
-            if (*count >= max) break;
-            snprintf(out[*count], STORAGE_KEY_ID_LEN, "%.*s",
-                     (int)(nl - 4), nm);
-            (*count)++;
+            size_t nl = strlen(e->d_name);
+            if (nl <= ext_len || strcmp(e->d_name + nl - ext_len, ext) != 0)
+                continue;
+            scan_add(e->d_name, ext_len, out, max, count);
         }
         closedir(d);
     }
 #endif
+    return ESP_OK;
+}
 
+esp_err_t storage_list_keys(char (*out)[STORAGE_KEY_ID_LEN], int max,
+                            int *count)
+{
+    if (!out || !count || max <= 0) return ESP_ERR_INVALID_ARG;
+    *count = 0;
+    storage_scan_key_ext(".pem", out, max, count);   /* legacy plaintext */
+    storage_scan_key_ext(".kw1", out, max, count);   /* wrapped          */
     qsort(out, (size_t)*count, STORAGE_KEY_ID_LEN, cmp_key_id);
     return ESP_OK;
 }
@@ -899,7 +954,7 @@ esp_err_t storage_factory_reset(void)
     const char *mp = storage_platform_mount_point();
     static const char *files[] = {
         "profiles.ini", "wifi.ini", "known_hosts.ini", "ble_devices.ini",
-        "fx.ini",
+        "fx.ini", "keystore.kv1",
     };
     char path[160];
     for (int i = 0; i < (int)(sizeof(files) / sizeof(files[0])); i++) {
@@ -907,6 +962,7 @@ esp_err_t storage_factory_reset(void)
         remove(path);
     }
     wipe_keys_dir();
+    keystore_reset_cache();   /* wipe the in-RAM MK + stale header cache */
     ESP_LOGW(TAG, "Factory reset: all storage wiped");
     return ESP_OK;
 }

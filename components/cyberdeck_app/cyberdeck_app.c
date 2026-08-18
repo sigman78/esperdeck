@@ -177,6 +177,7 @@ static const screen_ops_t SCREENS[ST_COUNT] = {
     [ST_WIFIPROV]   = { wifiprov_tick,   wifiprov_input   },
     [ST_PROFILE]    = { profile_tick,    profile_input    },
     [ST_SSHIMPORT]  = { sshimport_tick,  sshimport_input  },
+    [ST_UNLOCK]     = { unlock_tick,     unlock_input     },
 };
 
 /* ---------------------------------------------------------- public API */

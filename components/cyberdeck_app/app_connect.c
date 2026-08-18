@@ -7,6 +7,7 @@
 #include "app_screens.h"
 #include "app_widgets.h"
 #include "display_fx.h"
+#include "keystore.h"
 #include "ssh_client.h"
 #include "vterm.h"
 
@@ -128,7 +129,22 @@ void start_connect(int idx, uint64_t not_before, uint64_t now)
     app.conn.attempt = 0;
     app.conn.active  = app.profiles[idx];
     load_pinned_fp();
+    /* Key profile, wrapped key, locked store: unlock first — the PIN pad
+     * re-arms this connect on success (the lazy on-first-key-use trigger). */
+    if (app.conn.active.auth == STORAGE_AUTH_KEY &&
+        keystore_is_wrapped(app.conn.active.key_id) &&
+        keystore_state() == KEYSTORE_LOCKED) {
+        unlock_open(now, true);
+        return;
+    }
     arm_connect(not_before, now);
+}
+
+/* Re-arm a connect to the ACTIVE snapshot (unlock-screen resume). */
+void connect_resume_active(uint64_t now)
+{
+    app.conn.attempt = 0;
+    arm_connect(now, now);
 }
 
 /* Re-arm a connect to the active snapshot with @p fp pre-pinned — the
@@ -219,8 +235,15 @@ static void do_connect_start(uint64_t now)
         if (!key_pem) key_pem = heap_caps_malloc(KEY_PEM_MAX, MALLOC_CAP_SPIRAM);
         if (!pub_pem) pub_pem = heap_caps_malloc(PUB_PEM_MAX, MALLOC_CAP_SPIRAM);
         size_t klen = 0;
-        if (!key_pem || !pub_pem ||
-            storage_get_key(p->key_id, key_pem, KEY_PEM_MAX, &klen) != ESP_OK) {
+        esp_err_t ge = (!key_pem || !pub_pem) ? ESP_ERR_NO_MEM
+                     : storage_get_key(p->key_id, key_pem, KEY_PEM_MAX, &klen);
+        if (ge == ESP_ERR_INVALID_STATE) {
+            /* Locked store slipped past the start_connect gate (e.g. an
+             * auto-reconnect after a future lock trigger): same bounce. */
+            unlock_open(now, true);
+            return;
+        }
+        if (ge != ESP_OK) {
             toast(now, "key '%s' unreadable", p->key_id);
             enter_home(now);
             return;
