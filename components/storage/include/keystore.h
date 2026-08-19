@@ -18,6 +18,8 @@
  *   ESP_FAIL               — wrong PIN (no slot unwrapped; header itself ok)
  *   ESP_ERR_INVALID_CRC    — corrupt/tampered store header or key file
  *   ESP_ERR_INVALID_SIZE   — caller buffer too small for the plaintext
+ *   KEYSTORE_ERR_BACKOFF   — failed-attempt wait active; retry after
+ *                            keystore_backoff_ms()
  */
 
 #ifndef KEYSTORE_H
@@ -38,6 +40,10 @@ extern "C" {
 /* PIN/passphrase length accepted by unlock/create (bytes, not digits) */
 #define KEYSTORE_PIN_MIN 1
 #define KEYSTORE_PIN_MAX 64
+
+/* Returned by unlock/change_pin/remove while a failed-attempt wait is
+ * active (ESP_FAIL is -1; this is deliberately outside the ESP_ERR_ set). */
+#define KEYSTORE_ERR_BACKOFF ((esp_err_t)-2)
 
 typedef enum {
     KEYSTORE_ABSENT = 0,     /* no keystore.kv1 — feature off              */
@@ -122,6 +128,19 @@ void keystore_reset_cache(void);
  * compiler cannot elide, unlike a trailing memset.
  */
 void keystore_wipe(void *buf, size_t len);
+
+/**
+ * Remaining failed-attempt wait in ms; 0 = attempts allowed now. The
+ * counter (backoff.cnt) survives reboots; the wait itself runs on
+ * monotonic uptime, so a reboot re-arms the current delay in full.
+ */
+uint32_t keystore_backoff_ms(void);
+
+/**
+ * Test seam: replace the monotonic-uptime source (NULL restores the real
+ * one). Resets the cached backoff state so the boot penalty re-derives.
+ */
+void keystore_set_uptime_hook(uint64_t (*fn)(void));
 
 #ifdef __cplusplus
 }

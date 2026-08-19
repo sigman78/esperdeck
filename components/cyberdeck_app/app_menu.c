@@ -173,6 +173,48 @@ static int ks_menu_items(const char *out[], const char *bodies[])
     return n;
 }
 
+/* --------------------------------------------------------------- SYSTEM */
+
+#define SYS_MENU_TILES 4
+
+/* Saver timeout steps (minutes) — the saver engage also wipes the MK, so
+ * this doubles as the auto-lock interval. */
+static const uint8_t SAVER_STEPS[] = { 1, 3, 5, 10, 30 };
+
+static int sys_menu_items(const char *out[], const char *bodies[],
+                          char *saverbuf, size_t bufsz)
+{
+    snprintf(saverbuf, bufsz, "%u min",
+             (unsigned)(app.saver.idle_ms / 60000u));
+    out[0]    = "Saver + lock after";
+    bodies[0] = saverbuf;
+    out[1]    = "Clear host keys";
+    bodies[1] = "";
+    out[2]    = "Factory reset";
+    bodies[2] = "";
+    out[3]    = "Back";
+    bodies[3] = "";
+    return SYS_MENU_TILES;
+}
+
+/* saver.ini write DEFERRED like fx.ini — a flash write pauses the render
+ * ISR for the cache-off window, landing a visible hiccup on the keypress.
+ * Flushed by menu_fx_flush() once the user leaves the page. */
+static bool s_saver_dirty = false;
+
+static void sys_saver_cycle(void)
+{
+    const uint32_t cur = app.saver.idle_ms / 60000u;
+    int next = 0;                        /* unknown (hand-edited): snap */
+    for (int k = 0; k < (int)NELEM(SAVER_STEPS); k++)
+        if (SAVER_STEPS[k] == cur) {
+            next = (k + 1) % (int)NELEM(SAVER_STEPS);
+            break;
+        }
+    app.saver.idle_ms = (uint32_t)SAVER_STEPS[next] * 60000u;
+    s_saver_dirty = true;
+}
+
 /* Step the EFFECTS tunable at @p sel, persist, and (for the event effects)
  * arm a one-shot preview so the change is seen immediately. */
 /* fx changes apply live (display_fx_set) but the fx.ini flash write is
@@ -184,6 +226,11 @@ static bool s_fx_dirty = false;
 
 void menu_fx_flush(void)
 {
+    if (s_saver_dirty &&
+        !(app.state == ST_MENU && app.menu.screen == MS_SYSTEM)) {
+        s_saver_dirty = false;
+        storage_saver_save(app.saver.idle_ms / 60000u);
+    }
     if (!s_fx_dirty) return;
     if (app.state == ST_MENU && app.menu.screen == MS_EFFECTS) return;
     s_fx_dirty = false;
@@ -278,10 +325,14 @@ static void render_menu(void)
     const char *fntb[FONT_MENU_TILES];
     const char *ksi[KS_MENU_TILES];
     const char *ksb[KS_MENU_TILES];
+    const char *sysi[SYS_MENU_TILES];
+    const char *sysb[SYS_MENU_TILES];
+    char sysbuf[12];
     const bool picker = menu_is_picker(sc);
     const bool fxpage = (sc == MS_EFFECTS);
     const bool fntpage = (sc == MS_FONT);
     const bool kspage = (sc == MS_KEYSTORE);
+    const bool syspage = (sc == MS_SYSTEM);
     if (picker) {
         title = sc == MS_DELPROFILE  ? "DELETE PROFILE"
               : sc == MS_EDITPROFILE ? "EDIT PROFILE"
@@ -308,6 +359,12 @@ static void render_menu(void)
         items  = ksi;
         bodies = ksb;
         cols   = NULL;
+    } else if (syspage) {
+        title  = "SYSTEM";
+        count  = sys_menu_items(sysi, sysb, sysbuf, sizeof(sysbuf));
+        items  = sysi;
+        bodies = sysb;
+        cols   = NULL;                      /* colored per-tile below */
     } else {
         menu_def_t d = menu_def(sc);
         title = d.title; items = d.items; cols = d.cols; count = d.count;
@@ -377,6 +434,9 @@ static void render_menu(void)
                                                              : OVERLAY_COL_CYAN;
         else if (kspage)  col = i == g.count - 1 ? OVERLAY_COL_BLUE
                                                  : OVERLAY_COL_CYAN;
+        else if (syspage) col = i == 0           ? OVERLAY_COL_CYAN
+                              : i == g.count - 1 ? OVERLAY_COL_BLUE
+                                                 : OVERLAY_COL_RED;
         else              col = cols[i];
         ui_pen(col);
         /* Focus is carried by the tile itself (washed bar + lit rail);
@@ -721,7 +781,10 @@ static void menu_activate(uint64_t now)
 
     case MS_SYSTEM:
         switch (sel) {
-        case 0:                                   /* clear host keys (2-step) */
+        case 0:                                   /* saver/auto-lock timeout */
+            sys_saver_cycle();
+            break;
+        case 1:                                   /* clear host keys (2-step) */
             if (!was_armed) {
                 app.menu.armed = true;
                 menu_note(now, 0, false, "activate again to clear");
@@ -731,7 +794,7 @@ static void menu_activate(uint64_t now)
                           e == ESP_OK ? "host keys cleared" : "nothing to clear");
             }
             break;
-        case 1:                                   /* factory reset (2-step) */
+        case 2:                                   /* factory reset (2-step) */
             if (!was_armed) {
                 app.menu.armed = true;
                 menu_note(now, 0, false, "activate again to WIPE ALL");
@@ -742,7 +805,7 @@ static void menu_activate(uint64_t now)
                 menu_note(now, MENU_MSG_MS, false, "wiped - reboot advised");
             }
             break;
-        case 2: menu_back(now); return;           /* Back */
+        case 3: menu_back(now); return;           /* Back */
         }
         break;
 

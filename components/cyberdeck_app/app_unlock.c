@@ -129,6 +129,15 @@ static void render_unlock(void)
         ui_pen(OVERLAY_COL_AMBER);
         ui_puts((ui_cols() - (int)strlen(app.unlock.note)) / 2, dots_row,
                 app.unlock.note, blink);
+    } else if (keystore_backoff_ms() > 0) {
+        /* Failed-attempt wait: a live countdown owns the entry row (the
+         * ~10 Hz re-render keeps it ticking; submits are refused anyway). */
+        char msg[32];
+        snprintf(msg, sizeof(msg), "LOCKED \xB7 RETRY IN %u s",
+                 (unsigned)((keystore_backoff_ms() + 999) / 1000));
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_puts((ui_cols() - (int)strlen(msg)) / 2, dots_row, msg,
+                OVERLAY_ATTR_BOLD);
     } else {
         /* Entry cells — prominent <●> filled / <○> empty brackets; the
          * newest entry briefly reveals its character while defining a
@@ -211,6 +220,16 @@ static void flash_note(uint64_t now, const char *msg)
     app.next_anim = 0;
 }
 
+/* Failed-attempt wait flash — the one dynamic note (static backing). */
+static char s_bk_note[24];
+
+static void flash_backoff(uint64_t now)
+{
+    snprintf(s_bk_note, sizeof(s_bk_note), "WAIT %u s",
+             (unsigned)((keystore_backoff_ms() + 999) / 1000));
+    flash_note(now, s_bk_note);
+}
+
 static void wipe_entry(void)
 {
     memset(app.unlock.code, 0, sizeof(app.unlock.code));
@@ -285,6 +304,13 @@ static void enter_phase(uint8_t mode, uint8_t expected)
 static void submit(uint64_t now)
 {
     if (app.unlock.len == 0 || app.unlock.deriving) return;
+    /* Current-code phases refuse to burn a derivation during the wait. */
+    if ((app.unlock.mode == UM_UNLOCK || app.unlock.mode == UM_OLD ||
+         app.unlock.mode == UM_REMOVE) && keystore_backoff_ms() > 0) {
+        wipe_entry();
+        flash_backoff(now);
+        return;
+    }
     switch (app.unlock.mode) {
     case UM_OLD:                       /* stash, then ask for the new code */
         memcpy(s_old, app.unlock.code, sizeof(s_old));
@@ -392,6 +418,11 @@ void unlock_open_remove(uint64_t now)
 /* The worker finished — route the result by op. */
 static void worker_result(uint64_t now, esp_err_t r)
 {
+    if (r == KEYSTORE_ERR_BACKOFF) {   /* wait armed mid-flow; nothing ran */
+        if (s_op == OP_CHANGE) enter_phase(UM_OLD, keystore_pin_len());
+        flash_backoff(now);
+        return;
+    }
     if (s_op == OP_UNLOCK) {
         if (r == ESP_OK) {
             toast(now, app.unlock.gate ? "deck unlocked"

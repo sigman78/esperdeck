@@ -160,6 +160,14 @@ esp_err_t storage_font_load(char *buf, size_t buf_len);
  */
 esp_err_t storage_font_save(const char *name);
 
+/**
+ * Screensaver idle timeout in minutes (saver.ini) — doubles as the
+ * auto-lock interval. Load always outputs a value (default 3, range
+ * clamped 1..60); ESP_ERR_NOT_FOUND when no file exists yet.
+ */
+esp_err_t storage_saver_load(uint32_t *idle_min);
+esp_err_t storage_saver_save(uint32_t idle_min);
+
 /* -------------------------------------------------------------------------
  * Known SSH host keys (TOFU pinning)
  * ---------------------------------------------------------------------- */

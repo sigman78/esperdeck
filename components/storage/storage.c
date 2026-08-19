@@ -496,6 +496,54 @@ esp_err_t storage_font_save(const char *name)
 }
 
 /* -------------------------------------------------------------------------
+ * Screensaver idle timeout — saver.ini ("idle_min=3"); doubles as the
+ * auto-lock interval (the deck locks when the saver engages).
+ * ---------------------------------------------------------------------- */
+
+static void saver_path(char *buf, size_t bufsz)
+{
+    snprintf(buf, bufsz, "%s/saver.ini", storage_platform_mount_point());
+}
+
+esp_err_t storage_saver_load(uint32_t *idle_min)
+{
+    if (!idle_min) return ESP_ERR_INVALID_ARG;
+    *idle_min = 3;                              /* default: 3 minutes */
+
+    char path[128];
+    saver_path(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) return ESP_ERR_NOT_FOUND;
+
+    char line[64];
+    while (fgets(line, sizeof(line), f)) {
+        rtrim(line);
+        char key[32], val[32];
+        if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
+        if (strcmp(key, "idle_min") == 0) {
+            unsigned v = (unsigned)strtoul(val, NULL, 10);
+            if (v >= 1 && v <= 60) *idle_min = v;
+        }
+    }
+    fclose(f);
+    return ESP_OK;
+}
+
+esp_err_t storage_saver_save(uint32_t idle_min)
+{
+    char path[128];
+    saver_path(path, sizeof(path));
+
+    atomic_file_t af;
+    FILE *f = atomic_open(&af, path);
+    if (!f) return ESP_FAIL;
+    fprintf(f, "idle_min=%u\n", (unsigned)idle_min);
+    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    ESP_LOGI(TAG, "Saved saver timeout (%u min)", (unsigned)idle_min);
+    return ESP_OK;
+}
+
+/* -------------------------------------------------------------------------
  * Known SSH host keys — known_hosts.ini, flat "host:port=fp" lines
  * ---------------------------------------------------------------------- */
 
@@ -977,7 +1025,7 @@ esp_err_t storage_factory_reset(void)
      * (best-effort, see storage_shred_file); the rest is not sensitive. */
     static const char *files[] = {
         "profiles.ini", "wifi.ini", "known_hosts.ini", "ble_devices.ini",
-        "fx.ini", "keystore.kv1", "lock.ini",
+        "fx.ini", "keystore.kv1", "lock.ini", "backoff.cnt", "saver.ini",
     };
     char path[160];
     for (int i = 0; i < (int)(sizeof(files) / sizeof(files[0])); i++) {

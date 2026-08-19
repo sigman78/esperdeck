@@ -29,6 +29,11 @@
 
 #ifdef ESP_PLATFORM
 #include "esp_random.h"
+#include "esp_timer.h"
+#elif defined(_WIN32)
+#include <windows.h>
+#else
+#include <time.h>
 #endif
 
 static const char *TAG = "keystore";
@@ -392,6 +397,113 @@ uint8_t keystore_pin_len(void)
     return 0;
 }
 
+/* -------------------------------------------------------------------------
+ * Failed-attempt backoff (docs/storage_auth.md roadmap step 4)
+ *
+ * The device gate made brute force a visible surface: without this, each
+ * guess costs only the ~1 s Argon2 derivation. The failure counter is
+ * persisted in <mount>/backoff.cnt; the first failures are free, then the
+ * wait doubles from KS_BACKOFF_BASE_MS to a KS_BACKOFF_CAP_MS ceiling.
+ * Time is MONOTONIC UPTIME — the deck has no battery-backed wall clock —
+ * so a reboot re-arms the CURRENT delay in full (the counter survives,
+ * uptime doesn't): power-cycling through the wait costs more than waiting.
+ * ---------------------------------------------------------------------- */
+
+#define KS_BACKOFF_FILE    "backoff.cnt"
+#define KS_BACKOFF_FREE    5         /* delay starts at the 5th failure */
+#define KS_BACKOFF_BASE_MS 30000u    /* 5th failure: 30 s               */
+#define KS_BACKOFF_CAP_MS  900000u   /* 15 min ceiling                  */
+
+static uint64_t ks_uptime_default(void)
+{
+#if defined(ESP_PLATFORM)
+    return (uint64_t)(esp_timer_get_time() / 1000);
+#elif defined(_WIN32)
+    return (uint64_t)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)(ts.tv_nsec / 1000000);
+#endif
+}
+
+static uint64_t (*s_uptime)(void) = ks_uptime_default;
+static bool     s_bk_loaded = false;
+static uint32_t s_bk_count  = 0;
+static uint64_t s_bk_until  = 0;     /* uptime ms; 0 = no active wait */
+
+void keystore_set_uptime_hook(uint64_t (*fn)(void))
+{
+    s_uptime    = fn ? fn : ks_uptime_default;
+    s_bk_loaded = false;             /* re-derive the boot penalty */
+}
+
+static void bk_path(char *buf, size_t bufsz)
+{
+    snprintf(buf, bufsz, "%s/" KS_BACKOFF_FILE, storage_platform_mount_point());
+}
+
+static uint32_t bk_delay_ms(uint32_t count)
+{
+    if (count < KS_BACKOFF_FREE) return 0;
+    uint32_t shift = count - KS_BACKOFF_FREE;
+    if (shift > 5) shift = 5;        /* 30 s << 5 already tops the cap */
+    uint32_t d = KS_BACKOFF_BASE_MS << shift;
+    return d > KS_BACKOFF_CAP_MS ? KS_BACKOFF_CAP_MS : d;
+}
+
+static void bk_load(void)
+{
+    if (s_bk_loaded) return;
+    s_bk_loaded = true;
+    s_bk_count  = 0;
+    s_bk_until  = 0;
+    char path[160];
+    bk_path(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    unsigned n = 0;
+    if (fscanf(f, "%u", &n) == 1) s_bk_count = n;
+    fclose(f);
+    uint32_t d = bk_delay_ms(s_bk_count);   /* boot pays the full delay */
+    if (d) s_bk_until = s_uptime() + d;
+}
+
+static void bk_fail(void)
+{
+    bk_load();
+    s_bk_count++;
+    char path[160];
+    bk_path(path, sizeof(path));
+    FILE *f = fopen(path, "w");
+    if (f) { fprintf(f, "%u\n", (unsigned)s_bk_count); fclose(f); }
+    uint32_t d = bk_delay_ms(s_bk_count);
+    if (d) {
+        s_bk_until = s_uptime() + d;
+        ESP_LOGW(TAG, "Failed attempt %u — next try in %u s",
+                 (unsigned)s_bk_count, (unsigned)(d / 1000));
+    }
+}
+
+static void bk_clear(void)
+{
+    s_bk_loaded = true;
+    s_bk_count  = 0;
+    s_bk_until  = 0;
+    char path[160];
+    bk_path(path, sizeof(path));
+    remove(path);
+}
+
+uint32_t keystore_backoff_ms(void)
+{
+    bk_load();
+    if (!s_bk_until) return 0;
+    uint64_t now = s_uptime();
+    if (now >= s_bk_until) { s_bk_until = 0; return 0; }
+    return (uint32_t)(s_bk_until - now);
+}
+
 static void ks_adopt_plaintext(void);
 
 esp_err_t keystore_create(const char *pin)
@@ -424,6 +536,7 @@ esp_err_t keystore_create(const char *pin)
     }
     s_ks.hdr_loaded = true;
     s_ks.unlocked   = true;
+    bk_clear();                    /* stale counter from a removed store */
     ESP_LOGI(TAG, "Keystore created (slot 0: %s)",
              s_ks.hdr.slot[0].type == KS_SLOT_PIN ? "pin" : "passphrase");
     /* Adopt existing bare keys NOW — a fresh store must protect what's
@@ -471,6 +584,7 @@ esp_err_t keystore_unlock(const char *pin)
 {
     if (s_ks.unlocked) return ESP_OK;
     if (!pin_ok(pin)) return ESP_ERR_INVALID_ARG;
+    if (keystore_backoff_ms() > 0) return KEYSTORE_ERR_BACKOFF;
 
     esp_err_t e = ks_load();
     if (e != ESP_OK) return e;    /* NOT_FOUND or INVALID_CRC */
@@ -484,11 +598,13 @@ esp_err_t keystore_unlock(const char *pin)
         if (e == ESP_OK) {
             s_ks.unlocked = true;
             ESP_LOGI(TAG, "Unlocked via slot %d", i);
+            bk_clear();
             ks_adopt_plaintext();
             return ESP_OK;
         }
     }
     crypto_wipe(s_ks.mk, sizeof(s_ks.mk));
+    bk_fail();
     return ESP_FAIL;              /* wrong PIN: no slot's tag verified */
 }
 
@@ -502,6 +618,7 @@ void keystore_reset_cache(void)
 {
     crypto_wipe(s_ks.mk, sizeof(s_ks.mk));
     memset(&s_ks, 0, sizeof(s_ks));
+    s_bk_loaded = false;   /* re-read backoff.cnt (factory reset drops it) */
 }
 
 void keystore_wipe(void *buf, size_t len)
@@ -512,6 +629,7 @@ void keystore_wipe(void *buf, size_t len)
 esp_err_t keystore_change_pin(const char *old_pin, const char *new_pin)
 {
     if (!pin_ok(old_pin) || !pin_ok(new_pin)) return ESP_ERR_INVALID_ARG;
+    if (keystore_backoff_ms() > 0) return KEYSTORE_ERR_BACKOFF;
 
     esp_err_t e = ks_load();
     if (e != ESP_OK) return e;
@@ -530,7 +648,8 @@ esp_err_t keystore_change_pin(const char *old_pin, const char *new_pin)
         if (e == ESP_ERR_NO_MEM) return e;
         if (e == ESP_OK) { idx = i; break; }
     }
-    if (idx < 0) return ESP_FAIL;
+    if (idx < 0) { bk_fail(); return ESP_FAIL; }
+    bk_clear();
 
     /* slot_wrap_mk works on s_ks.mk; install the recovered MK there. */
     memcpy(s_ks.mk, mk, 32);
@@ -686,6 +805,7 @@ bool keystore_is_wrapped(const char *key_id)
 esp_err_t keystore_remove(const char *pin)
 {
     if (!pin_ok(pin)) return ESP_ERR_INVALID_ARG;
+    if (keystore_backoff_ms() > 0) return KEYSTORE_ERR_BACKOFF;
 
     esp_err_t e = ks_load();
     if (e != ESP_OK) return e;         /* NOT_FOUND / INVALID_CRC */
@@ -703,7 +823,8 @@ esp_err_t keystore_remove(const char *pin)
         if (e == ESP_ERR_NO_MEM) return e;
         if (e == ESP_OK) { idx = i; break; }
     }
-    if (idx < 0) return ESP_FAIL;
+    if (idx < 0) { bk_fail(); return ESP_FAIL; }
+    bk_clear();
     memcpy(s_ks.mk, mk, 32);
     crypto_wipe(mk, sizeof(mk));
     s_ks.unlocked = true;

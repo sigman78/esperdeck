@@ -10,7 +10,9 @@
 
 #include <string.h>
 
-#define SAVER_IDLE_MS  (3 * 60 * 1000)   /* HOME idle before the rain */
+/* Idle before the rain — configurable (SYSTEM menu, saver.ini), and it
+ * doubles as the auto-lock interval since engage wipes the MK. */
+#define SAVER_IDLE_MS  (app.saver.idle_ms)
 
 /* Bold 6x7 block font (2-px strokes) for the screensaver clock, bit 5 =
  * leftmost column. Digits 0-9 plus ':' at index 10 (blinked by clk_mask). */

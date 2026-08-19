@@ -489,6 +489,78 @@ static void test_remove_requires_code_even_when_unlocked(void)
     TEST_ASSERT_EQUAL_INT(KEYSTORE_ABSENT, keystore_state());
 }
 
+/* ------------------------------------------------------------------
+ * Failed-attempt backoff
+ * ---------------------------------------------------------------- */
+
+static uint64_t s_fake_ms;
+static uint64_t fake_uptime(void) { return s_fake_ms; }
+
+static void test_backoff_after_failures(void)
+{
+    keystore_set_uptime_hook(fake_uptime);
+    s_fake_ms = 1000;
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));
+    keystore_lock();
+
+    /* The first four failures are free */
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT_EQUAL_UINT(0, keystore_backoff_ms());
+        TEST_ASSERT_EQUAL_INT(ESP_FAIL, keystore_unlock("0000"));
+    }
+    TEST_ASSERT_EQUAL_UINT(0, keystore_backoff_ms());
+
+    /* The 5th arms 30 s and blocks EVERY verifying op — right PIN too */
+    TEST_ASSERT_EQUAL_INT(ESP_FAIL, keystore_unlock("0000"));
+    TEST_ASSERT_TRUE(keystore_backoff_ms() > 0);
+    TEST_ASSERT_EQUAL_INT(KEYSTORE_ERR_BACKOFF, keystore_unlock("1234"));
+    TEST_ASSERT_EQUAL_INT(KEYSTORE_ERR_BACKOFF,
+                          keystore_change_pin("1234", "5678"));
+    TEST_ASSERT_EQUAL_INT(KEYSTORE_ERR_BACKOFF, keystore_remove("1234"));
+
+    s_fake_ms += 30000;                        /* the wait passes */
+    TEST_ASSERT_EQUAL_UINT(0, keystore_backoff_ms());
+
+    /* The 6th failure doubles the wait */
+    TEST_ASSERT_EQUAL_INT(ESP_FAIL, keystore_unlock("0000"));
+    uint32_t d = keystore_backoff_ms();
+    TEST_ASSERT_TRUE(d > 30000 && d <= 60000);
+
+    /* Success clears the counter; failures are free again */
+    s_fake_ms += 60000;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_unlock("1234"));
+    TEST_ASSERT_EQUAL_UINT(0, keystore_backoff_ms());
+    keystore_lock();
+    TEST_ASSERT_EQUAL_INT(ESP_FAIL, keystore_unlock("0000"));
+    TEST_ASSERT_EQUAL_UINT(0, keystore_backoff_ms());
+
+    keystore_set_uptime_hook(NULL);
+}
+
+static void test_backoff_survives_reboot(void)
+{
+    keystore_set_uptime_hook(fake_uptime);
+    s_fake_ms = 1000;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));
+    keystore_lock();
+    for (int i = 0; i < 5; i++)
+        TEST_ASSERT_EQUAL_INT(ESP_FAIL, keystore_unlock("0000"));
+    TEST_ASSERT_TRUE(keystore_backoff_ms() > 0);
+
+    /* "Reboot": cached state dropped, uptime restarts at zero — the
+     * persisted counter re-arms the CURRENT delay in full, so
+     * power-cycling never skips the wait. */
+    keystore_reset_cache();
+    s_fake_ms = 0;
+    TEST_ASSERT_TRUE(keystore_backoff_ms() >= 29000);
+    TEST_ASSERT_EQUAL_INT(KEYSTORE_ERR_BACKOFF, keystore_unlock("1234"));
+    s_fake_ms += 30000;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_unlock("1234"));
+
+    keystore_set_uptime_hook(NULL);
+}
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
@@ -516,5 +588,7 @@ int main(void)
     RUN_TEST(test_remove_restores_plaintext);
     RUN_TEST(test_create_adopts_existing_plaintext);
     RUN_TEST(test_remove_requires_code_even_when_unlocked);
+    RUN_TEST(test_backoff_after_failures);
+    RUN_TEST(test_backoff_survives_reboot);
     return UNITY_END();
 }

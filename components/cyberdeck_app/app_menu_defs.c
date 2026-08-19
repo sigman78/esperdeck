@@ -38,8 +38,8 @@ static const uint8_t wifi_cols[]    = { OVERLAY_COL_CYAN, OVERLAY_COL_CYAN, OVER
 static const char *kbd_items[]      = { "Pair keyboard", "Forget bonds", "Back" };
 static const uint8_t kbd_cols[]     = { OVERLAY_COL_CYAN, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
 
-static const char *system_items[]   = { "Clear host keys", "Factory reset", "Back" };
-static const uint8_t system_cols[]  = { OVERLAY_COL_RED, OVERLAY_COL_RED, OVERLAY_COL_BLUE };
+/* SYSTEM is built dynamically (sys_menu_items in app_menu.c) — the saver
+ * timeout tile carries a live value body. */
 
 /* Static definition for a screen; the profile pickers are built dynamically. */
 menu_def_t menu_def(int sc)
@@ -51,7 +51,6 @@ menu_def_t menu_def(int sc)
     case MS_IMPORT:   return (menu_def_t){ "IMPORT",        import_items,   import_cols,   NELEM(import_items) };
     case MS_WIFI:     return (menu_def_t){ "WIFI",          wifi_items,     wifi_cols,     NELEM(wifi_items) };
     case MS_KEYBOARD: return (menu_def_t){ "KEYBOARD",      kbd_items,      kbd_cols,      NELEM(kbd_items) };
-    case MS_SYSTEM:   return (menu_def_t){ "SYSTEM",        system_items,   system_cols,   NELEM(system_items) };
     default:          return (menu_def_t){ "", NULL, NULL, 0 };
     }
 }
@@ -67,8 +66,8 @@ bool menu_is_picker(int sc)
 const char *menu_confirm(int sc, int sel)
 {
     if (sc == MS_KEYBOARD   && sel == 1) return "CONFIRM forget bonds?";
-    if (sc == MS_SYSTEM     && sel == 0) return "CONFIRM clear host keys?";
-    if (sc == MS_SYSTEM     && sel == 1) return "CONFIRM FACTORY RESET?";
+    if (sc == MS_SYSTEM     && sel == 1) return "CONFIRM clear host keys?";
+    if (sc == MS_SYSTEM     && sel == 2) return "CONFIRM FACTORY RESET?";
     if (sc == MS_DELPROFILE && sel < app.stored_count) return "CONFIRM delete?";
     return NULL;
 }

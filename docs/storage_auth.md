@@ -281,8 +281,19 @@ littlefs image never needs plaintext:
   and deletes `keystore.kv1` — the documented "absent = feature off" state.
   Any unwrap failure aborts before the header is deleted; a crash mid-way
   leaves `.pem` + store side by side and the next unlock re-adopts them.
-- **Failed attempts** (not yet implemented): exponential backoff after 5,
-  counter persisted across reboots. No auto-wipe.
+- **Failed attempts — exponential backoff** (roadmap step 4, landed): the
+  counter persists in `backoff.cnt`; the first four failures are free, the
+  5th arms 30 s and each further failure doubles it to a 15-min ceiling.
+  Every code-verifying op (`unlock`/`change_pin`/`remove`) returns
+  `KEYSTORE_ERR_BACKOFF` during the wait — the right code included. Time
+  is MONOTONIC UPTIME (no battery-backed clock): a reboot re-arms the
+  current delay in full, so power-cycling costs more than waiting. The
+  pad shows a live "LOCKED · RETRY IN n s" countdown and refuses to burn
+  a derivation meanwhile. Success clears the counter. No auto-wipe.
+- **Saver timeout / auto-lock interval** — SYSTEM menu "Saver + lock
+  after": 1 / 3 / 5 / 10 / 30 min (`saver.ini`, default 3). One knob on
+  purpose: the saver engaging IS the auto-lock (it wipes the MK), so the
+  rain delay and the lock delay cannot drift apart.
 - Empty/absent keystore = feature off, zero behavior change.
 
 ### RAM hygiene
@@ -330,7 +341,10 @@ of stack headroom, never inline in a UI tick.
    largest security jump per line of code (kills offline brute-force
    outright), removes the unlock-time RAM/stack pressure, and commits only
    one eFuse block. Includes the HMAC-iteration bench and slot adoption.
-4. Failed-attempt backoff (exponential after 5, NVS-persisted counter).
+4. ~~Failed-attempt backoff.~~ **Done** (exponential after 5, counter in
+   `backoff.cnt`, monotonic-uptime waits — a reboot re-arms the delay;
+   NVS was considered for reflash-survival but the bound slot is the real
+   answer to an attacker who can reflash).
 5. Wrap profile passwords / WiFi PSK via `content_type`.
 6. Flash encryption + secure boot — still the endgame, now scoped to what
    the bound slot cannot cover: adopt-path remnants in reclaimed LittleFS

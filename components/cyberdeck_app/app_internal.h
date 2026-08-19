@@ -80,6 +80,7 @@ typedef struct {                    /* app_saver.c */
     uint64_t last_input;            /* any key/touch; drives the idle timer  */
     bool     on;                    /* rain actually on screen (not derived) */
     uint64_t since;                 /* when the rain went up (wake grace)    */
+    uint32_t idle_ms;               /* saver.ini idle timeout (= auto-lock) */
 } saver_state_t;
 
 #define PAIR_MAX  STORAGE_BLE_MAX
