@@ -33,8 +33,10 @@
 
 static const char *TAG = "ssh_import";
 
-/* Body cap; the private-key decode buffer is sized to match so a key field
- * can never be silently truncated within an accepted body. */
+/* Body cap. The private-key decode buffer is sized from the ACTUAL body
+ * length rather than from this ceiling — decoding only ever shrinks, so the
+ * body bounds every field decoded out of it and a key still cannot be
+ * silently truncated within an accepted body (see alloc_secret). */
 #define BODY_MAX 16384
 
 static volatile int s_state = SSH_IMPORT_ST_IDLE;
@@ -386,6 +388,30 @@ static void wipe_free(void *p, size_t len)
     free(p);
 }
 
+/* Private key material belongs in INTERNAL SRAM — the external bus is
+ * probeable (docs/storage_auth.md "RAM hygiene"), which is why app_connect
+ * keeps its PEM buffer internal. Import used to allocate SPIRAM-only,
+ * because a fixed 2 x BODY_MAX (32 KB) plainly would not fit.
+ *
+ * Measured on the S3 with the import server live (largest free INTERNAL
+ * block, all three modes): 31,744 B. One 16 KB buffer fits, two never do —
+ * the ceiling is structural, not fragmentation luck. But the fixed sizing
+ * was the real problem: a decoded form field can never exceed the encoded
+ * body it came from (url_decode only ever shrinks: %XX -> 1 byte, '+' -> ' '),
+ * so content_len bounds the key buffer too. A real ed25519 upload measured
+ * content_len=569, key=418 bytes — the old code reserved 16 KB for it.
+ *
+ * Right-sized, both buffers together are ~1.1 KB and internal serves them
+ * comfortably. The SPIRAM fallback covers the pathological end of the range
+ * (a body near the 16 KB cap, where the second allocation would fail): key
+ * material lands on the external bus only when it genuinely cannot fit,
+ * instead of always. */
+static void *alloc_secret(size_t len)
+{
+    void *p = heap_caps_malloc(len, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    return p ? p : heap_caps_malloc(len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+
 #define PROFILE_SET_BYTES (sizeof(conn_profile_t) * (IMPORT_PROFILE_MAX + 1))
 
 /* Load the current profile set into a fresh SPIRAM array. Passwords come back
@@ -567,18 +593,22 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
             snprintf(pf->password, sizeof(pf->password), "%s",
                      sc->old.password);
 
-        char *key    = heap_caps_malloc(BODY_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        char *pubkey = heap_caps_malloc(4096,     MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        /* The body bounds any field decoded out of it, so this is the
+         * smallest cap that still cannot truncate a key (alloc_secret). */
+        size_t key_cap = (size_t)req->content_len + 1;
+
+        char *key    = alloc_secret(key_cap);
+        char *pubkey = heap_caps_malloc(4096, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!key || !pubkey) {
-            wipe_free(key, BODY_MAX); free(pubkey); free_profile_set(list);
+            wipe_free(key, key_cap); free(pubkey); free_profile_set(list);
             set_err("out of memory for key");
             httpd_resp_set_status(req, "500 Internal Server Error");
             return ok_page(req, "&#10007; Out of memory", "Try a smaller key.");
         }
-        int kr = form_field(body, "key",    key,    BODY_MAX);
+        int kr = form_field(body, "key",    key,    (int)key_cap);
         int pr = form_field(body, "pubkey", pubkey, 4096);
         if (kr < 0 || pr < 0) {          /* decoded value hit the buffer cap */
-            wipe_free(key, BODY_MAX); free(pubkey); free_profile_set(list);
+            wipe_free(key, key_cap); free(pubkey); free_profile_set(list);
             set_err("key too large");
             httpd_resp_set_status(req, "413 Payload Too Large");
             return ok_page(req, "&#10007; Key too large", "The key did not fit.");
@@ -599,7 +629,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
                     if (strcmp(ids[i], keyid) == 0) { known = true; break; }
                 free(ids);
             }
-            wipe_free(key, BODY_MAX); free(pubkey);
+            wipe_free(key, key_cap); free(pubkey);
             if (!known) {
                 free_profile_set(list);
                 set_err("unknown key id");
@@ -611,7 +641,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
         } else if (key[0]) {
             /* Upload a new key blob. */
             if (!strstr(key, "PRIVATE KEY")) {
-                wipe_free(key, BODY_MAX); free(pubkey); free_profile_set(list);
+                wipe_free(key, key_cap); free(pubkey); free_profile_set(list);
                 set_err("not a PEM private key");
                 httpd_resp_set_status(req, "400 Bad Request");
                 return ok_page(req, "&#10007; Bad key",
@@ -620,7 +650,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
             char key_id[32];
             sanitize_key_id(name, key_id, sizeof(key_id));
             if (!key_id[0]) {
-                wipe_free(key, BODY_MAX); free(pubkey); free_profile_set(list);
+                wipe_free(key, key_cap); free(pubkey); free_profile_set(list);
                 set_err("name has no usable characters");
                 httpd_resp_set_status(req, "400 Bad Request");
                 return ok_page(req, "&#10007; Bad name",
@@ -632,7 +662,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
             esp_err_t e = storage_set_key(key_id, key, strlen(key));
             if (e == ESP_OK && pubkey[0])
                 write_pubkey(key_id, pubkey, (int)strlen(pubkey));
-            wipe_free(key, BODY_MAX); free(pubkey);
+            wipe_free(key, key_cap); free(pubkey);
             if (e != ESP_OK) {
                 free_profile_set(list);
                 set_err("failed to store key");
@@ -643,7 +673,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
             snprintf(pf->key_id, sizeof(pf->key_id), "%s", key_id);
         } else {
             /* No key material at all: an update may keep the stored key. */
-            wipe_free(key, BODY_MAX); free(pubkey);
+            wipe_free(key, key_cap); free(pubkey);
             if (sc->old.auth != STORAGE_AUTH_KEY || !sc->old.key_id[0]) {
                 free_profile_set(list);
                 set_err("key required");
@@ -880,7 +910,7 @@ static esp_err_t post_save(httpd_req_t *req)
         return ok_page(req, "&#10007; Too large", "Payload exceeds 16 KB.");
     }
 
-    char *body = heap_caps_malloc(total + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    char *body = alloc_secret((size_t)total + 1);
     if (!body) {
         httpd_resp_set_status(req, "500 Internal Server Error");
         return ok_page(req, "&#10007; Out of memory", "The deck is low on RAM.");

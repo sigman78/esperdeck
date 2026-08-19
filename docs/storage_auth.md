@@ -385,6 +385,29 @@ custom allocator is SPIRAM-first, so the *parsed* key inside mbedTLS and the
 session's traffic keys can land in PSRAM for the session's lifetime —
 noted for the flash-encryption endgame, not fixable at the app layer.
 
+Web import (`ssh_import.c`) allocates the POST body and the private-key
+decode buffer through `alloc_secret()` — internal SRAM first, SPIRAM only as
+a fallback. It used to be SPIRAM-only because a fixed `2 x BODY_MAX` (32 KB)
+plainly would not fit. **Measured on the S3 with the import server live**
+(largest free *contiguous* internal block, probed at import-up and mid-POST):
+
+| Mode | free internal | largest block | 1st 16 KB | 2nd 16 KB |
+|------|--------------:|--------------:|-----------|-----------|
+| SoftAP | 50,960 | 31,744 | ok | **fail** |
+| Web    | 55,628 | 31,744 | ok | **fail** |
+| mid-POST | 54,724 | 31,744 | ok | **fail** |
+
+The 31,744 ceiling is structural, not fragmentation — it does not move
+between modes, and display+vterm (~95 KB) plus input+ssh+shell (~100 KB) are
+what consume the rest. So two 16 KB buffers can never both be internal. The
+fix was the *sizing*, not the pool: `url_decode` only shrinks (`%XX` → 1 byte,
+`+` → space), so `content_len` bounds any field decoded out of the body, and
+the key buffer is sized from it instead of from `BODY_MAX`. Real uploads
+measured `content_len` 569 B (ed25519, 418 B key) and 2,448 B (2,449 B cap,
+1,706 B key) against the old fixed 16,384 — right-sized, both buffers are
+~1–5 KB and land internal, confirmed on device. The SPIRAM fallback only
+engages for a body near the 16 KB cap.
+
 One measured constraint for the unlock worker: `crypto_argon2` keeps a
 ~1 KiB working block (plus hash state) on the caller's stack — it overflowed
 the 3.5 KB main task during the bench. Unlock must run on a task with ≥4 KB
