@@ -5,6 +5,7 @@
 #include "wifi_provision.h"
 #include "wifi_manager.h"
 #include "storage.h"
+#include "keystore.h"       /* keystore_wipe — PSKs must not linger in .bss */
 
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -92,6 +93,13 @@ static void save_creds(void)
         ESP_LOGI(TAG, "Saved '%s' to wifi.ini (%d profile(s))", s_got_ssid, w);
     else
         ESP_LOGE(TAG, "Failed to save wifi.ini");
+
+    /* Both arrays hold every stored PSK in the clear on the event task's
+     * stack, and s_got_pass would otherwise sit in .bss for the rest of the
+     * boot. storage_wifi_save() has taken its copy — scrub all three. */
+    keystore_wipe(old,    sizeof(old));
+    keystore_wipe(merged, sizeof(merged));
+    keystore_wipe(s_got_pass, sizeof(s_got_pass));
 }
 
 static void prov_event_handler(void *arg, esp_event_base_t base,

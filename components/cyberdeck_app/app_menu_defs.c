@@ -7,6 +7,10 @@
 #include "app_menu_defs.h"
 #include "app_internal.h"
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"       /* CONFIG_CYBERDECK_KEYSTORE (sim: -D flag) */
+#endif
+
 /* Menu color law — one color per KIND of item, not per item (a page of
  * many-colored bars reads as motley):
  *   CYAN  = normal action / navigation      GREEN = go / primary
@@ -79,6 +83,12 @@ bool menu_item_dim(int sc, int sel)
      * lists the same three, but visibly unavailable. */
     if (sc == MS_FONT)
         return sel < FONT_SIZE_COUNT && !font_size_available((font_size_t)sel);
+
+#if !CONFIG_CYBERDECK_KEYSTORE
+    /* Vault excluded from this build: the entry stays (stable indices),
+     * visibly unavailable — same pattern as absent BLE / font sizes. */
+    if (sc == MS_CONFIG && sel == CFG_KEYSTORE) return true;
+#endif
 
     if (app.cfg.ble) return false;
     return (sc == MS_CONFIG && sel == CFG_KEYBOARD) || (sc == MS_KEYBOARD);

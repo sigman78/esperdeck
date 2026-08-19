@@ -29,6 +29,7 @@ typedef enum {
 } menu_screen_t;
 
 #define CFG_KEYBOARD 2   /* MS_CONFIG index of "Keyboard >" (needs BLE) */
+#define CFG_KEYSTORE 5   /* MS_CONFIG index of "Keystore >" (excludable) */
 
 typedef struct {
     const char        *title;

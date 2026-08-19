@@ -58,6 +58,14 @@ esp_err_t wifi_manager_adopt(const wifi_profile_t *profiles, int count,
     return ESP_OK;
 }
 
+bool wifi_manager_take_nvs_cred(wifi_profile_t *out)
+{
+    (void)out;                    /* the host has no driver NVS */
+    return false;
+}
+
+void wifi_manager_clear_nvs_cred(void) {}
+
 wifi_mgr_state_t wifi_manager_get_state(void) { return s_state; }
 bool wifi_manager_is_connected(void) { return s_state == WIFI_MGR_CONNECTED; }
 const char *wifi_manager_get_ip(void)   { return "127.0.0.1"; }

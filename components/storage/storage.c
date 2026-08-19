@@ -41,6 +41,16 @@ static void key_path(const char *key_id, char *buf, size_t bufsz)
              storage_platform_mount_point(), key_id);
 }
 
+/* Path-safety gate for every key id that reaches a filename — see the
+ * rationale in storage_priv.h. Lives here rather than in keystore.c because
+ * the vault is strippable (keystore_stub.c) and these checks are not. */
+bool storage_key_id_ok(const char *key_id)
+{
+    if (!key_id || !key_id[0]) return false;
+    if (strlen(key_id) >= STORAGE_KEY_ID_LEN) return false;
+    return strpbrk(key_id, "/\\:") == NULL;
+}
+
 /* -------------------------------------------------------------------------
  * INI parse helpers
  * ---------------------------------------------------------------------- */
@@ -208,6 +218,24 @@ esp_err_t storage_load_profiles(conn_profile_t *out, int *count, int max)
     }
 
     fclose(f);
+
+    /* Secrets-under-MK: rows carrying the @bundle marker come back
+     * hydrated whenever the store is open — callers never notice the
+     * split. Plaintext-era rows keep their ini value untouched; a marker
+     * with no bundle entry (edited by hand) degrades to empty. */
+    if (keystore_state() == KEYSTORE_UNLOCKED) {
+        char skey[48], val[sizeof(out->password)];
+        for (int i = 0; i < *count; i++) {
+            if (strcmp(out[i].password, STORAGE_PW_BUNDLED) != 0) continue;
+            snprintf(skey, sizeof(skey), "profile:%s", out[i].name);
+            if (keystore_secret_get(skey, val, sizeof(val)) == ESP_OK)
+                snprintf(out[i].password, sizeof(out[i].password), "%s", val);
+            else
+                out[i].password[0] = '\0';
+        }
+        keystore_wipe(val, sizeof(val));
+    }
+
     ESP_LOGI(TAG, "Loaded %d profile(s) from '%s'", *count, path);
     return ESP_OK;
 }
@@ -216,7 +244,7 @@ esp_err_t storage_load_profiles(conn_profile_t *out, int *count, int max)
  * Profile save
  * ---------------------------------------------------------------------- */
 
-esp_err_t storage_save_profiles(const conn_profile_t *profiles, int count)
+esp_err_t storage_profiles_write_raw(const conn_profile_t *profiles, int count)
 {
     if (!profiles && count > 0) return ESP_ERR_INVALID_ARG;
 
@@ -250,6 +278,55 @@ esp_err_t storage_save_profiles(const conn_profile_t *profiles, int count)
     if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
     ESP_LOGI(TAG, "Saved %d profile(s) to '%s'", count, path);
     return ESP_OK;
+}
+
+storage_cred_scratch_t *storage_cred_scratch(void)
+{
+    static storage_cred_scratch_t s;    /* .bss, internal SRAM */
+    return &s;
+}
+
+/* The save-layer's OWN staging union — deliberately separate from
+ * storage_cred_scratch(): the diverting saves below are called with that
+ * buffer as their SOURCE (adoption, restore, migration). */
+static union {
+    conn_profile_t profiles[STORAGE_MAX_PROFILES];
+    wifi_profile_t nets[STORAGE_WIFI_MAX];
+} s_save_tmp;
+
+esp_err_t storage_save_profiles(const conn_profile_t *profiles, int count)
+{
+    /* Secrets-under-MK: with an UNLOCKED store, passwords divert into the
+     * wrapped bundle and the ini keeps metadata only; stale bundle entries
+     * (deleted/renamed profiles) are pruned against the saved list. With
+     * the store locked or absent, plaintext is written as before and
+     * adopted at the next unlock (ks_adopt_secrets). */
+    if (keystore_state() != KEYSTORE_UNLOCKED)
+        return storage_profiles_write_raw(profiles, count);
+
+    conn_profile_t *s_tmp = s_save_tmp.profiles;
+    const char *names[STORAGE_MAX_PROFILES];
+    int n = count > STORAGE_MAX_PROFILES ? STORAGE_MAX_PROFILES : count;
+    if (n > 0) memcpy(s_tmp, profiles, (size_t)n * sizeof(*profiles));
+
+    char skey[48];
+    for (int i = 0; i < n; i++) {
+        names[i] = profiles[i].name;
+        if (!s_tmp[i].password[0] ||
+            strcmp(s_tmp[i].password, STORAGE_PW_BUNDLED) == 0)
+            continue;
+        snprintf(skey, sizeof(skey), "profile:%s", s_tmp[i].name);
+        if (keystore_secret_set(skey, s_tmp[i].password) == ESP_OK) {
+            keystore_wipe(s_tmp[i].password, sizeof(s_tmp[i].password));
+            snprintf(s_tmp[i].password, sizeof(s_tmp[i].password), "%s",
+                     STORAGE_PW_BUNDLED);   /* diverted ≠ genuinely empty */
+        }
+        /* set failure: leave the password in the ini — never drop it */
+    }
+    keystore_secrets_prune("profile:", names, n);
+    esp_err_t e = storage_profiles_write_raw(s_tmp, n);
+    keystore_wipe(s_tmp, (size_t)n * sizeof(*s_tmp));
+    return e;
 }
 
 /* -------------------------------------------------------------------------
@@ -320,11 +397,25 @@ esp_err_t storage_wifi_load(wifi_profile_t *out, int *count, int max)
     }
     *count = w;
 
+    /* Hydrate diverted PSKs from the bundle (see storage_load_profiles). */
+    if (keystore_state() == KEYSTORE_UNLOCKED) {
+        char skey[48], val[sizeof(out->password)];
+        for (int i = 0; i < *count; i++) {
+            if (strcmp(out[i].password, STORAGE_PW_BUNDLED) != 0) continue;
+            snprintf(skey, sizeof(skey), "wifi:%s", out[i].ssid);
+            if (keystore_secret_get(skey, val, sizeof(val)) == ESP_OK)
+                snprintf(out[i].password, sizeof(out[i].password), "%s", val);
+            else
+                out[i].password[0] = '\0';
+        }
+        keystore_wipe(val, sizeof(val));
+    }
+
     ESP_LOGI(TAG, "Loaded %d WiFi profile(s)", *count);
     return ESP_OK;
 }
 
-esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count)
+esp_err_t storage_wifi_write_raw(const wifi_profile_t *profiles, int count)
 {
     if (!profiles && count > 0) return ESP_ERR_INVALID_ARG;
 
@@ -345,6 +436,66 @@ esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count)
     if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
     ESP_LOGI(TAG, "Saved %d WiFi profile(s)", count);
     return ESP_OK;
+}
+
+esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count)
+{
+    /* Same diversion as storage_save_profiles: PSKs (pre-shared keys) ride
+     * the bundle under "wifi:<ssid>" while the store is open. */
+    if (keystore_state() != KEYSTORE_UNLOCKED)
+        return storage_wifi_write_raw(profiles, count);
+
+    wifi_profile_t *s_tmp = s_save_tmp.nets;
+    const char *names[STORAGE_WIFI_MAX];
+    int n = count > STORAGE_WIFI_MAX ? STORAGE_WIFI_MAX : count;
+    if (n > 0) memcpy(s_tmp, profiles, (size_t)n * sizeof(*profiles));
+
+    char skey[48];
+    for (int i = 0; i < n; i++) {
+        names[i] = profiles[i].ssid;
+        if (!s_tmp[i].password[0] ||
+            strcmp(s_tmp[i].password, STORAGE_PW_BUNDLED) == 0)
+            continue;
+        snprintf(skey, sizeof(skey), "wifi:%s", s_tmp[i].ssid);
+        if (keystore_secret_set(skey, s_tmp[i].password) == ESP_OK) {
+            keystore_wipe(s_tmp[i].password, sizeof(s_tmp[i].password));
+            snprintf(s_tmp[i].password, sizeof(s_tmp[i].password), "%s",
+                     STORAGE_PW_BUNDLED);
+        }
+    }
+    keystore_secrets_prune("wifi:", names, n);
+    esp_err_t e = storage_wifi_write_raw(s_tmp, n);
+    keystore_wipe(s_tmp, (size_t)n * sizeof(*s_tmp));
+    return e;
+}
+
+/* Any non-empty plaintext password= left in either ini? (Raw scan — the
+ * bundle-adoption trigger; see ks_adopt_secrets in keystore.c.) */
+static bool ini_has_plaintext_password(const char *path)
+{
+    FILE *f = fopen(path, "r");
+    if (!f) return false;
+    char line[256];
+    bool found = false;
+    while (!found && fgets(line, sizeof(line), f)) {
+        rtrim(line);
+        char key[32], val[224];
+        if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
+        if (strcmp(key, "password") == 0 && val[0] &&
+            strcmp(val, STORAGE_PW_BUNDLED) != 0)   /* marker ≠ plaintext */
+            found = true;
+    }
+    fclose(f);
+    return found;
+}
+
+bool storage_secrets_pending(void)
+{
+    char path[128];
+    profiles_path(path, sizeof(path));
+    if (ini_has_plaintext_password(path)) return true;
+    wifi_path(path, sizeof(path));
+    return ini_has_plaintext_password(path);
 }
 
 /* -------------------------------------------------------------------------
@@ -729,7 +880,7 @@ esp_err_t storage_get_key(const char *key_id,
                            size_t      buf_len,
                            size_t     *written)
 {
-    if (!key_id || !buf || buf_len == 0 || !written)
+    if (!storage_key_id_ok(key_id) || !buf || buf_len == 0 || !written)
         return ESP_ERR_INVALID_ARG;
 
     /* Wrapped key takes precedence: keys/<id>.kw1 (see keystore.h). While
@@ -782,7 +933,8 @@ esp_err_t storage_get_key(const char *key_id,
 
 esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
 {
-    if (!key_id || !pem || len == 0) return ESP_ERR_INVALID_ARG;
+    if (!storage_key_id_ok(key_id) || !pem || len == 0)
+        return ESP_ERR_INVALID_ARG;
 
     char path[160];
     key_path(key_id, path, sizeof(path));
@@ -840,7 +992,7 @@ esp_err_t storage_shred_file(const char *path)
 
 esp_err_t storage_delete_key(const char *key_id)
 {
-    if (!key_id || !key_id[0]) return ESP_ERR_INVALID_ARG;
+    if (!storage_key_id_ok(key_id)) return ESP_ERR_INVALID_ARG;
     char path[160];
     key_path(key_id, path, sizeof(path));                     /* .pem */
     storage_shred_file(path);              /* plaintext key material */
@@ -927,6 +1079,16 @@ esp_err_t storage_list_keys(char (*out)[STORAGE_KEY_ID_LEN], int max,
     *count = 0;
     storage_scan_key_ext(".pem", out, max, count);   /* legacy plaintext */
     storage_scan_key_ext(".kw1", out, max, count);   /* wrapped          */
+    /* The secrets bundle rides the .kw1 machinery but is not a key —
+     * "secrets" is a reserved id (KEYSTORE_SECRETS_ID). */
+    for (int i = 0; i < *count; i++) {
+        if (strcmp(out[i], KEYSTORE_SECRETS_ID) == 0) {
+            memmove(&out[i], &out[i + 1],
+                    (size_t)(*count - i - 1) * STORAGE_KEY_ID_LEN);
+            (*count)--;
+            i--;
+        }
+    }
     qsort(out, (size_t)*count, STORAGE_KEY_ID_LEN, cmp_key_id);
     return ESP_OK;
 }
@@ -937,7 +1099,7 @@ esp_err_t storage_key_info(const char *key_id,
 {
     if (type && type_len)       type[0] = '\0';
     if (comment && comment_len) comment[0] = '\0';
-    if (!key_id || !key_id[0]) return ESP_ERR_INVALID_ARG;
+    if (!storage_key_id_ok(key_id)) return ESP_ERR_INVALID_ARG;
 
     char path[160];
     snprintf(path, sizeof(path), "%s/keys/%s.pub",

@@ -1,7 +1,26 @@
 include(${PROJECT_DIR}/cmake/cyberdeck_component.cmake)
 
+# Secure-store perimeter: the vault implementation is optional AND
+# excludable — a closed-source drop may strip keystore.c entirely. The
+# inert stub (keystore_stub.c, always shipped) answers ABSENT forever,
+# which every caller already treats as "feature off, plaintext behavior".
+# Device builds gate on CONFIG_CYBERDECK_KEYSTORE; the simulator on the
+# CYBERDECK_KEYSTORE cmake option (default ON).
+if(BUILD_SIMULATOR)
+    option(CYBERDECK_KEYSTORE "Secure store (PIN vault, secrets bundle)" ON)
+    set(KEYSTORE_ENABLED ${CYBERDECK_KEYSTORE})
+else()
+    set(KEYSTORE_ENABLED ${CONFIG_CYBERDECK_KEYSTORE})
+endif()
+if(KEYSTORE_ENABLED AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/keystore.c)
+    set(KEYSTORE_SRC keystore.c)
+else()
+    set(KEYSTORE_SRC keystore_stub.c)
+    message(STATUS "storage: secure store excluded — building inert stub")
+endif()
+
 cyberdeck_component_register(
-    SRCS         storage.c keystore.c
+    SRCS         storage.c ${KEYSTORE_SRC}
     SRCS_DEV     storage_dev.c
     SRCS_SIM     storage_sim.c
     INCLUDE_DIRS include

@@ -197,6 +197,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
+/* Credential a PAST firmware persisted into the driver's NVS, captured
+ * once at init for migration into storage (wifi_manager_take_nvs_cred). */
+static wifi_profile_t s_nvs_cred;
+
 esp_err_t wifi_manager_init(void)
 {
     if (s_driver_up) return ESP_OK;
@@ -206,6 +210,33 @@ esp_err_t wifi_manager_init(void)
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_err_t err = esp_wifi_init(&cfg);
     if (err != ESP_OK) return err;
+
+    /* Secrets-under-MK: the driver's own NVS persistence is retired —
+     * credentials stay in RAM, storage (wifi.ini / the secrets bundle) is
+     * the single persistence. Whatever an earlier firmware left in NVS is
+     * captured here NON-destructively; the copy is cleared only by
+     * wifi_manager_clear_nvs_cred() AFTER the migration has verifiably
+     * saved it (never destroy the only copy first). If this IDF returns
+     * nothing pre-start, the stale NVS copy simply survives until the
+     * flash-encryption endgame — a residue, never a loss. */
+    /* ~740 B: too big for the 3.5 KB main-task stack, one-shot — so a
+     * transient internal-heap alloc, wiped before free. */
+    wifi_config_t *nvs_cfg =
+        heap_caps_malloc(sizeof(*nvs_cfg), MALLOC_CAP_INTERNAL);
+    if (nvs_cfg) {
+        if (esp_wifi_get_config(WIFI_IF_STA, nvs_cfg) == ESP_OK &&
+            nvs_cfg->sta.ssid[0]) {
+            snprintf(s_nvs_cred.ssid, sizeof(s_nvs_cred.ssid), "%s",
+                     (const char *)nvs_cfg->sta.ssid);
+            snprintf(s_nvs_cred.password, sizeof(s_nvs_cred.password), "%s",
+                     (const char *)nvs_cfg->sta.password);
+            ESP_LOGW(TAG, "Captured NVS WiFi credential '%s' for migration",
+                     s_nvs_cred.ssid);
+        }
+        memset(nvs_cfg, 0, sizeof(*nvs_cfg));
+        heap_caps_free(nvs_cfg);
+    }
+    ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
 
     ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                                &wifi_event_handler, NULL));
@@ -280,6 +311,24 @@ esp_err_t wifi_manager_adopt(const wifi_profile_t *profiles, int count,
     if (!s_started) { s_started = true; return esp_wifi_start(); }
     try_current_profile();
     return ESP_OK;
+}
+
+bool wifi_manager_take_nvs_cred(wifi_profile_t *out)
+{
+    if (!out || !s_nvs_cred.ssid[0]) return false;
+    *out = s_nvs_cred;
+    memset(&s_nvs_cred, 0, sizeof(s_nvs_cred));
+    return true;
+}
+
+void wifi_manager_clear_nvs_cred(void)
+{
+    /* Only called BEFORE any connect on this boot (kick_wifi's migration
+     * step) — esp_wifi_restore() would drop a live association and it
+     * resets the mode, so STA is re-asserted. */
+    esp_wifi_restore();
+    esp_wifi_set_mode(WIFI_MODE_STA);
+    ESP_LOGW(TAG, "Cleared migrated WiFi credential from driver NVS");
 }
 
 wifi_mgr_state_t wifi_manager_get_state(void) { return s_state; }

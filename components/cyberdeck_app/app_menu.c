@@ -5,6 +5,9 @@
  */
 
 #include "app_internal.h"
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"       /* CONFIG_CYBERDECK_KEYSTORE (sim: -D flag) */
+#endif
 #include "app_screens.h"
 #include "app_widgets.h"
 #include "app_menu_defs.h"
@@ -647,7 +650,13 @@ static void menu_activate(uint64_t now)
             menu_goto(MS_KEYBOARD); return;
         case 3: menu_goto(MS_EFFECTS);  return;
         case 4: menu_goto(MS_FONT);     return;
-        case 5: menu_goto(MS_KEYSTORE); return;
+        case CFG_KEYSTORE:
+#if CONFIG_CYBERDECK_KEYSTORE
+            menu_goto(MS_KEYSTORE);
+#else
+            menu_note(now, MENU_MSG_MS, false, "not in this build");
+#endif
+            return;
         case 6: menu_goto(MS_SYSTEM);   return;
         case 7: menu_back(now);         return;   /* Back */
         }
@@ -663,6 +672,7 @@ static void menu_activate(uint64_t now)
         switch (s_ks_act[sel]) {          /* slot -> action (contextual page) */
         case KSA_LOCK:                    /* panic button: park the deck */
             keystore_lock();
+            app_creds_wipe();
             unlock_open_gate(now);
             return;
         case KSA_SETPIN: unlock_open_setpin(now); return;  /* create/change */

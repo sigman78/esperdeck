@@ -233,8 +233,10 @@ bool saver_tick_home(uint64_t now)
             app.saver.on    = true;   /* input handling keys off what's on screen */
             app.saver.since = now;
             /* The deck locks as the rain goes up, so a lifted deck is
-             * already cold. No-op when locked or without a store. */
+             * already cold — the vault AND the hydrated copies out in app
+             * state. No-op when locked or without a store. */
             keystore_lock();
+            app_creds_wipe();
         }
         render_saver();
     }

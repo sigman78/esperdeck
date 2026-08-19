@@ -43,6 +43,21 @@ esp_err_t wifi_manager_disconnect(void);
  * auto-reconnect. If the link is already up (state CONNECTED) it is kept as-is
  * — no disruptive reconnect; otherwise a normal connect is started.
  */
+/**
+ * Hand over the WiFi credential a PAST firmware persisted into the
+ * driver's NVS (captured once at init, NVS copy cleared). Returns true
+ * and wipes the stash on first call with a credential present — the
+ * caller folds it into storage (the secrets bundle). False otherwise.
+ */
+bool wifi_manager_take_nvs_cred(wifi_profile_t *out);
+
+/**
+ * Clear the driver's NVS credential copy — call ONLY after the migration
+ * has verifiably saved it to storage, and only before any connect on this
+ * boot (it resets the driver; STA mode is re-asserted).
+ */
+void wifi_manager_clear_nvs_cred(void);
+
 esp_err_t wifi_manager_adopt(const wifi_profile_t *profiles, int count,
                              const char *ssid);
 

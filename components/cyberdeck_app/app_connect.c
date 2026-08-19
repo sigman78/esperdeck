@@ -225,9 +225,31 @@ enum { KEY_PEM_MAX = 8192, PUB_PEM_MAX = 2048 };
 static char *s_key_pem = NULL;
 static char *s_pub_pem = NULL;
 
+/* Connect-time credential (password or key passphrase). The profile
+ * snapshot may predate the unlock (lazy gate) and so miss its diverted
+ * secret — resolve from the bundle here, .bss (internal SRAM), wiped with
+ * the key PEM once the handshake is over. */
+static char s_secret[sizeof(((conn_profile_t *)0)->password)];
+
+static const char *resolve_secret(const conn_profile_t *p)
+{
+    /* A real value in the snapshot wins; the @bundle marker (a snapshot
+     * taken while locked) must NEVER reach libssh2 as a literal. */
+    if (p->password[0] && strcmp(p->password, STORAGE_PW_BUNDLED) != 0)
+        return p->password;
+    if (keystore_state() == KEYSTORE_UNLOCKED) {
+        char skey[48];
+        snprintf(skey, sizeof(skey), "profile:%s", p->name);
+        if (keystore_secret_get(skey, s_secret, sizeof(s_secret)) == ESP_OK)
+            return s_secret;
+    }
+    return "";
+}
+
 static void wipe_key_pem(void)
 {
     if (s_key_pem) keystore_wipe(s_key_pem, KEY_PEM_MAX);
+    keystore_wipe(s_secret, sizeof(s_secret));
 }
 
 /* Kick off the connect on a worker task (non-blocking) so the shell keeps
@@ -269,7 +291,8 @@ static void do_connect_start(uint64_t now)
             return;
         }
         cfg.private_key_pem = s_key_pem;
-        cfg.passphrase      = p->password[0] ? p->password : NULL;
+        const char *pw = resolve_secret(p);      /* key passphrase */
+        cfg.passphrase = pw[0] ? pw : NULL;
 
         char pub_path[160];   /* optional .pub beside the key */
         snprintf(pub_path, sizeof(pub_path), "%s/keys/%s.pub",
@@ -281,7 +304,7 @@ static void do_connect_start(uint64_t now)
             if (n > 0) { s_pub_pem[n] = '\0'; cfg.public_key_pem = s_pub_pem; }
         }
     } else {
-        cfg.password = p->password;
+        cfg.password = resolve_secret(p);
     }
 
     if (ssh_client_connect_start(&cfg) != ESP_OK) {

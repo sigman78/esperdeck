@@ -252,6 +252,7 @@ static bool home_activate_extra(int slot, uint64_t now)
     case HX_PAIR:   if (app.cfg.ble) enter_pairing(now); return true;
     case HX_LOCK:                       /* panic: wipe MK, raise the gate */
         keystore_lock();
+        app_creds_wipe();               /* ...and the hydrated copies */
         unlock_open_gate(now);
         return true;
     case HX_CONFIG: menu_open_config();                  return true;
@@ -365,6 +366,7 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
         else if (ch == 'w' || ch == 'W') { kick_wifi(); render_home(); }
         else if ((ch == 'l' || ch == 'L') && s_ks_present) {
             keystore_lock();                /* keyboard panic button */
+            app_creds_wipe();
             unlock_open_gate(now);
         }
         break;

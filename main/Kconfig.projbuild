@@ -1,5 +1,17 @@
 menu "Cyberdeck Configuration"
 
+    config CYBERDECK_KEYSTORE
+        bool "Secure store (PIN vault, device lock, secrets bundle)"
+        default y
+        help
+            The whole security feature set: the wrapped key store, the
+            PIN pad and device gate, failed-attempt backoff, and the
+            secrets bundle (passwords/PSKs under the master key). When
+            disabled — or when the implementation sources are absent
+            from the tree — inert open stubs are compiled instead and
+            the deck behaves exactly like a store-less build: plaintext
+            profiles/keys, no gates, no KEYSTORE menu.
+
     config CYBERDECK_BOOT_SPLASH
         bool "Show the boot splash (ANSI color test card)"
         default n

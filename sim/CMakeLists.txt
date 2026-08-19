@@ -16,6 +16,16 @@ add_compile_definitions(
     CONFIG_SSH_KEEPALIVE_INTERVAL=60
 )
 
+# Secure-store perimeter (mirrors components/storage/CMakeLists.txt): the
+# vault is optional AND excludable; sources absent -> inert stubs.
+option(CYBERDECK_KEYSTORE "Secure store (PIN vault, secrets bundle)" ON)
+if(CYBERDECK_KEYSTORE AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/keystore_cli.c)
+    add_compile_definitions(CONFIG_CYBERDECK_KEYSTORE=1)
+    set(KEYSTORE_CLI_SRC keystore_cli.c)
+else()
+    set(KEYSTORE_CLI_SRC keystore_cli_stub.c)
+endif()
+
 # Terminal font: 8x16 (100x30), 10x20 (80x24) or 12x24 (66x20).
 set(FONT_SIZE "8x16" CACHE STRING "Terminal font size: 8x16, 10x20 or 12x24")
 if(FONT_SIZE STREQUAL "10x20")
@@ -50,7 +60,7 @@ add_subdirectory(${ROOT}/components/storage        storage)
 add_subdirectory(${ROOT}/components/ssh            ssh)
 add_subdirectory(${ROOT}/components/cyberdeck_app  cyberdeck_app)
 
-add_executable(cyberdeck_sim main.c keystore_cli.c)
+add_executable(cyberdeck_sim main.c ${KEYSTORE_CLI_SRC})
 # SDL2main provides WinMain on Windows (SDL.h renames main -> SDL_main)
 target_link_libraries(cyberdeck_sim PRIVATE SDL2::SDL2main cyberdeck_app ssh wifi storage)
 

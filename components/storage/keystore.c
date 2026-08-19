@@ -505,6 +505,8 @@ uint32_t keystore_backoff_ms(void)
 }
 
 static void ks_adopt_plaintext(void);
+static void ks_adopt_secrets(void);
+static void secrets_wipe_cache(void);
 
 esp_err_t keystore_create(const char *pin)
 {
@@ -544,6 +546,7 @@ esp_err_t keystore_create(const char *pin)
      * plaintext indefinitely: with the lazy trigger nothing prompts for
      * an unwrapped key, so the unlock (and adoption) never happened. */
     ks_adopt_plaintext();
+    ks_adopt_secrets();
     return ESP_OK;
 }
 
@@ -600,6 +603,7 @@ esp_err_t keystore_unlock(const char *pin)
             ESP_LOGI(TAG, "Unlocked via slot %d", i);
             bk_clear();
             ks_adopt_plaintext();
+            ks_adopt_secrets();
             return ESP_OK;
         }
     }
@@ -612,6 +616,7 @@ void keystore_lock(void)
 {
     crypto_wipe(s_ks.mk, sizeof(s_ks.mk));
     s_ks.unlocked = false;
+    secrets_wipe_cache();          /* cache shares the MK's lifetime */
 }
 
 void keystore_reset_cache(void)
@@ -619,6 +624,7 @@ void keystore_reset_cache(void)
     crypto_wipe(s_ks.mk, sizeof(s_ks.mk));
     memset(&s_ks, 0, sizeof(s_ks));
     s_bk_loaded = false;   /* re-read backoff.cnt (factory reset drops it) */
+    secrets_wipe_cache();
 }
 
 void keystore_wipe(void *buf, size_t len)
@@ -672,13 +678,8 @@ esp_err_t keystore_change_pin(const char *old_pin, const char *new_pin)
  * Public API — wrapped key files
  * ---------------------------------------------------------------------- */
 
-static bool key_id_ok(const char *key_id)
-{
-    if (!key_id || !key_id[0]) return false;
-    if (strlen(key_id) >= STORAGE_KEY_ID_LEN) return false;
-    if (strchr(key_id, '/') || strchr(key_id, '\\')) return false;
-    return true;
-}
+/* Path safety is storage_key_id_ok() (storage_priv.h) — one gate shared with
+ * the plaintext storage_*_key entry points, which used to have none. */
 
 /* Key AAD: magic ‖ version ‖ content_type ‖ store_uuid ‖ key_id — binding
  * the id and store uuid into the tag kills renaming and transplants. */
@@ -697,7 +698,7 @@ static size_t kw_aad(uint8_t content_type, const char *key_id,
 esp_err_t keystore_wrap(const char *key_id, uint8_t content_type,
                         const void *plaintext, size_t len)
 {
-    if (!key_id_ok(key_id) || !plaintext || len == 0 || len > KW_CT_MAX)
+    if (!storage_key_id_ok(key_id) || !plaintext || len == 0 || len > KW_CT_MAX)
         return ESP_ERR_INVALID_ARG;
     if (!s_ks.unlocked) return ESP_ERR_INVALID_STATE;
 
@@ -734,7 +735,7 @@ esp_err_t keystore_wrap(const char *key_id, uint8_t content_type,
 esp_err_t keystore_unwrap(const char *key_id, void *buf, size_t buf_len,
                           size_t *written, uint8_t *content_type)
 {
-    if (!key_id_ok(key_id) || !buf || !written) return ESP_ERR_INVALID_ARG;
+    if (!storage_key_id_ok(key_id) || !buf || !written) return ESP_ERR_INVALID_ARG;
     *written = 0;
 
     char path[160];
@@ -793,13 +794,241 @@ esp_err_t keystore_unwrap(const char *key_id, void *buf, size_t buf_len,
 
 bool keystore_is_wrapped(const char *key_id)
 {
-    if (!key_id_ok(key_id)) return false;
+    if (!storage_key_id_ok(key_id)) return false;
     char path[160];
     kw_path(key_id, path, sizeof(path));
     FILE *f = fopen(path, "rb");
     if (!f) return false;
     fclose(f);
     return true;
+}
+
+/* -------------------------------------------------------------------------
+ * Secrets bundle — keys/secrets.kw1 (content_type 2)
+ *
+ * Raw "ns:key=value\n" lines cached in .bss (internal SRAM) with exactly
+ * the MK's lifetime: loaded lazily after unlock, crypto_wipe'd at lock.
+ * ---------------------------------------------------------------------- */
+
+#define KS_SECRETS_MAX 2048
+
+/* The bundle must hold everything the diversion layer can ever put in it —
+ * one line per profile and per WiFi net, each at its field's maximum. If it
+ * cannot, keystore_secret_set() starts returning ESP_ERR_NO_MEM and
+ * storage_save_profiles() falls back to leaving that password in the ini as
+ * PLAINTEXT: a silent downgrade of exactly what the vault exists to protect.
+ * Derived from the structs, so raising STORAGE_MAX_PROFILES / STORAGE_WIFI_MAX
+ * (or a field width) breaks the build here instead of the guarantee. */
+_Static_assert(STORAGE_MAX_PROFILES *
+                   (sizeof("profile:") - 1 +
+                    sizeof(((conn_profile_t *)0)->name) - 1 + 1 +
+                    sizeof(((conn_profile_t *)0)->password) - 1 + 1) +
+               STORAGE_WIFI_MAX *
+                   (sizeof("wifi:") - 1 +
+                    sizeof(((wifi_profile_t *)0)->ssid) - 1 + 1 +
+                    sizeof(((wifi_profile_t *)0)->password) - 1 + 1)
+               < KS_SECRETS_MAX,
+               "secrets bundle too small for the worst-case profile/wifi set "
+               "— raise KS_SECRETS_MAX (passwords would silently stay "
+               "plaintext in the ini otherwise)");
+
+static char   s_sec[KS_SECRETS_MAX];
+static size_t s_sec_len;
+static bool   s_sec_loaded;
+
+static void secrets_wipe_cache(void)
+{
+    crypto_wipe(s_sec, sizeof(s_sec));
+    s_sec_len    = 0;
+    s_sec_loaded = false;
+}
+
+static esp_err_t secrets_load(void)
+{
+    if (s_sec_loaded) return ESP_OK;
+    if (!s_ks.unlocked) return ESP_ERR_INVALID_STATE;
+    size_t  n  = 0;
+    uint8_t ct = 0;
+    esp_err_t e = keystore_unwrap(KEYSTORE_SECRETS_ID,
+                                  s_sec, sizeof(s_sec) - 1, &n, &ct);
+    if (e == ESP_ERR_NOT_FOUND) {              /* no bundle yet: empty */
+        s_sec[0] = '\0'; s_sec_len = 0; s_sec_loaded = true;
+        return ESP_OK;
+    }
+    if (e != ESP_OK) return e;
+    if (ct != KEYSTORE_CONTENT_SECRETS) {      /* a key named "secrets"?! */
+        secrets_wipe_cache();
+        return ESP_ERR_INVALID_CRC;
+    }
+    s_sec[n] = '\0'; s_sec_len = n; s_sec_loaded = true;
+    return ESP_OK;
+}
+
+static esp_err_t secrets_store(void)
+{
+    if (s_sec_len == 0) {                      /* emptied: drop the file */
+        char path[160];
+        kw_path(KEYSTORE_SECRETS_ID, path, sizeof(path));
+        remove(path);
+        return ESP_OK;
+    }
+    return keystore_wrap(KEYSTORE_SECRETS_ID, KEYSTORE_CONTENT_SECRETS,
+                         s_sec, s_sec_len);
+}
+
+/* Value of the "skey=" line, or NULL. *vlen excludes the newline. */
+static char *secrets_find(const char *skey, size_t *vlen)
+{
+    size_t kl = strlen(skey);
+    char  *p  = s_sec;
+    while (p && *p) {
+        char  *nl = strchr(p, '\n');
+        size_t ll = nl ? (size_t)(nl - p) : strlen(p);
+        if (ll > kl && p[kl] == '=' && strncmp(p, skey, kl) == 0) {
+            if (vlen) *vlen = ll - kl - 1;
+            return p + kl + 1;
+        }
+        p = nl ? nl + 1 : NULL;
+    }
+    return NULL;
+}
+
+/* Cut [from, to) out of the cache; zeroes the freed tail. */
+static void secrets_cut(char *from, char *to)
+{
+    size_t tail = s_sec_len - (size_t)(to - s_sec);
+    size_t gap  = (size_t)(to - from);
+    memmove(from, to, tail + 1);               /* +1 carries the NUL */
+    s_sec_len -= gap;
+    crypto_wipe(s_sec + s_sec_len + 1, gap);
+}
+
+esp_err_t keystore_secret_get(const char *skey, char *out, size_t out_len)
+{
+    if (!skey || !out || out_len == 0) return ESP_ERR_INVALID_ARG;
+    out[0] = '\0';
+    if (!s_ks.unlocked) return ESP_ERR_INVALID_STATE;
+    esp_err_t e = secrets_load();
+    if (e != ESP_OK) return e;
+    size_t vlen = 0;
+    const char *v = secrets_find(skey, &vlen);
+    if (!v) return ESP_ERR_NOT_FOUND;
+    if (vlen >= out_len) return ESP_ERR_INVALID_SIZE;
+    memcpy(out, v, vlen);
+    out[vlen] = '\0';
+    return ESP_OK;
+}
+
+esp_err_t keystore_secret_set(const char *skey, const char *value)
+{
+    if (!skey || !skey[0] || strchr(skey, '\n') || strchr(skey, '='))
+        return ESP_ERR_INVALID_ARG;
+    if (value && strchr(value, '\n')) return ESP_ERR_INVALID_ARG;
+    if (!s_ks.unlocked) return ESP_ERR_INVALID_STATE;
+    esp_err_t e = secrets_load();
+    if (e != ESP_OK) return e;
+
+    size_t vlen  = 0;
+    char  *v     = secrets_find(skey, &vlen);
+    char  *line  = NULL, *next = NULL;
+    if (v) {                                   /* replace = cut + append */
+        line = v - strlen(skey) - 1;
+        next = v + vlen;
+        if (*next == '\n') next++;
+    }
+
+    /* Capacity is checked BEFORE the cut, and the cut's own bytes count
+     * toward the budget. Bailing out after cutting used to leave the cache
+     * one entry shorter than the file it came from, and the next successful
+     * set persisted that divergence — a credential silently gone from flash
+     * while the caller only ever saw ESP_ERR_NO_MEM on some other key. */
+    if (value && value[0]) {
+        size_t need  = strlen(skey) + 1 + strlen(value) + 2;
+        size_t freed = line ? (size_t)(next - line) : 0;
+        if (s_sec_len - freed + need >= sizeof(s_sec))
+            return ESP_ERR_NO_MEM;             /* cache untouched */
+    }
+    if (line) secrets_cut(line, next);
+    if (value && value[0])
+        s_sec_len += (size_t)snprintf(s_sec + s_sec_len,
+                                      sizeof(s_sec) - s_sec_len,
+                                      "%s=%s\n", skey, value);
+    return secrets_store();
+}
+
+void keystore_secrets_prune(const char *prefix,
+                            const char *const *keep, int nkeep)
+{
+    if (!s_ks.unlocked || secrets_load() != ESP_OK) return;
+    size_t plen    = strlen(prefix);
+    bool   changed = false;
+    char  *p       = s_sec;
+    while (*p) {
+        char *nl   = strchr(p, '\n');
+        char *next = nl ? nl + 1 : p + strlen(p);
+        bool  drop = false;
+        if (strncmp(p, prefix, plen) == 0) {
+            char *eq = memchr(p, '=', (size_t)(next - p));
+            if (eq) {
+                size_t kl = (size_t)(eq - p) - plen;
+                drop = true;
+                for (int i = 0; i < nkeep && drop; i++)
+                    if (strlen(keep[i]) == kl &&
+                        strncmp(keep[i], p + plen, kl) == 0)
+                        drop = false;
+            }
+        }
+        if (drop) { secrets_cut(p, next); changed = true; }
+        else        p = next;
+    }
+    if (changed) secrets_store();
+}
+
+/* Migrate plaintext credentials out of profiles.ini / wifi.ini: the
+ * DIVERTING storage_save_* (storage.c) moves every password it sees into
+ * this bundle when the store is unlocked, so a load+save round-trip IS the
+ * migration. Only runs when a raw scan says plaintext actually exists —
+ * an unconditional round-trip would rewrite flash on every unlock. */
+static void ks_adopt_secrets(void)
+{
+    if (!storage_secrets_pending()) return;
+
+    /* Shared cred scratch (storage.h) — far too fat for the unlock
+     * worker's stack; the profiles phase finishes before the nets phase,
+     * so the union is safe. */
+    storage_cred_scratch_t *sc = storage_cred_scratch();
+    int n = 0;
+    if (storage_load_profiles(sc->u.profiles, &n, STORAGE_MAX_PROFILES)
+            == ESP_OK && n > 0)
+        storage_save_profiles(sc->u.profiles, n);
+    n = 0;
+    if (storage_wifi_load(sc->u.nets, &n, STORAGE_WIFI_MAX) == ESP_OK
+        && n > 0)
+        storage_wifi_save(sc->u.nets, n);
+    crypto_wipe(sc, sizeof(*sc));
+    ESP_LOGW(TAG, "Adopted plaintext credentials into the secrets bundle");
+}
+
+/* Remove-code path: hydrating load (store still unlocked) + RAW write =
+ * plaintext restored to the inis; then the bundle file goes away. */
+static void secrets_restore_plaintext(void)
+{
+    if (secrets_load() == ESP_OK && s_sec_len > 0) {
+        storage_cred_scratch_t *sc = storage_cred_scratch();
+        int n = 0;
+        if (storage_load_profiles(sc->u.profiles, &n, STORAGE_MAX_PROFILES)
+                == ESP_OK && n > 0)
+            storage_profiles_write_raw(sc->u.profiles, n);
+        n = 0;
+        if (storage_wifi_load(sc->u.nets, &n, STORAGE_WIFI_MAX) == ESP_OK
+            && n > 0)
+            storage_wifi_write_raw(sc->u.nets, n);
+        crypto_wipe(sc, sizeof(*sc));
+    }
+    char path[160];
+    kw_path(KEYSTORE_SECRETS_ID, path, sizeof(path));
+    remove(path);
+    secrets_wipe_cache();
 }
 
 esp_err_t keystore_remove(const char *pin)
@@ -828,6 +1057,11 @@ esp_err_t keystore_remove(const char *pin)
     memcpy(s_ks.mk, mk, 32);
     crypto_wipe(mk, sizeof(mk));
     s_ks.unlocked = true;
+
+    /* The secrets bundle reverts to plaintext ini fields (hydrating load
+     * + raw write), then its .kw1 goes away — BEFORE the key scan below,
+     * so it never gets mistaken for a key to unwrap into a .pem. */
+    secrets_restore_plaintext();
 
     /* Unwrap every keys/<id>.kw1 back to a bare .pem BEFORE dropping the
      * header — a key that fails to unwrap aborts while its plaintext is

@@ -17,6 +17,7 @@
 
 #include "esp_log.h"
 #include "display_fx.h"
+#include "keystore.h"     /* keystore_wipe for the cred scratch */
 #include "wifi_manager.h"
 
 static const char *TAG = "cyberdeck_app";
@@ -78,6 +79,28 @@ void load_profiles(void)
     }
 }
 
+/* Lock companion — see app_internal.h. keystore_lock() wipes the MK and the
+ * secrets cache inside the vault, but load_profiles() has already copied the
+ * hydrated passwords out here: the HOME list (app.profiles), the connect
+ * snapshot (app.conn.active) and the editor draft (app.pf.draft) each carry a
+ * plaintext login password or key passphrase. Without this the panic button
+ * and the idle auto-lock leave every credential sitting in .bss, and the lock
+ * only really covers the key files.
+ *
+ * Only the secret fields go: names, hosts, users and ports are explicitly
+ * not secret (docs/storage_auth.md "orthogonal model" axis 1) and HOME draws
+ * its tile grid before any unlock. The next successful unlock re-hydrates
+ * via load_profiles(). */
+void app_creds_wipe(void)
+{
+    for (int i = 0; i < MAX_PROFILES; i++)
+        keystore_wipe(app.profiles[i].password,
+                      sizeof(app.profiles[i].password));
+    keystore_wipe(app.conn.active.password,
+                  sizeof(app.conn.active.password));
+    keystore_wipe(app.pf.draft.password, sizeof(app.pf.draft.password));
+}
+
 bool ble_has_bond(void)
 {
     if (!app.cfg.ble) return false;
@@ -87,11 +110,99 @@ bool ble_has_bond(void)
     return n > 0;
 }
 
-void kick_wifi(void)
+/* One-time migration: a WiFi credential a past firmware persisted into
+ * the driver's NVS was captured at wifi init — fold it into storage (the
+ * secrets bundle when the store is open, which it is on the post-unlock
+ * path that calls this) unless the SSID is already known. */
+void wifi_migrate_nvs_cred(void)
 {
-    wifi_profile_t nets[STORAGE_WIFI_MAX];
+    /* Shared cred scratch (storage.h) — never on this stack: the main
+     * task has 3.5 KB and this runs on the kick_wifi call chain. */
+    storage_cred_scratch_t *sc = storage_cred_scratch();
+    if (!wifi_manager_take_nvs_cred(&sc->one)) return;
+
+    wifi_profile_t *nets = sc->u.nets;
     int n = 0;
     storage_wifi_load(nets, &n, STORAGE_WIFI_MAX);
+    bool known = false;
+    for (int i = 0; i < n && !known; i++)
+        known = strcmp(nets[i].ssid, sc->one.ssid) == 0;
+    if (!known && n < STORAGE_WIFI_MAX) {
+        nets[n++] = sc->one;
+        if (storage_wifi_save(nets, n) == ESP_OK) {
+            ESP_LOGW(TAG, "Migrated WiFi credential '%s' from driver NVS "
+                          "into storage", sc->one.ssid);
+            /* Saved and verifiable — ONLY NOW may the NVS copy go. */
+            wifi_manager_clear_nvs_cred();
+        }
+    } else if (known) {
+        wifi_manager_clear_nvs_cred();   /* already in storage: redundant */
+    }
+    keystore_wipe(sc, sizeof(*sc));
+}
+
+/* One-time seed: a Kconfig fallback credential with a real PSK moves into
+ * storage, so sdkconfig can be blanked afterwards — a firmware image must
+ * not carry a usable pre-shared key in .rodata. Idempotent: a known SSID
+ * (plaintext or @bundle marker row) is never re-seeded. */
+static void wifi_seed_fallback(void)
+{
+    if (!app.cfg.fallback_wifi_ssid || !app.cfg.fallback_wifi_ssid[0] ||
+        !app.cfg.fallback_wifi_password || !app.cfg.fallback_wifi_password[0])
+        return;
+
+    wifi_profile_t *nets = storage_cred_scratch()->u.nets;
+    int n = 0;
+    storage_wifi_load(nets, &n, STORAGE_WIFI_MAX);
+    for (int i = 0; i < n; i++)
+        if (strcmp(nets[i].ssid, app.cfg.fallback_wifi_ssid) == 0) {
+            keystore_wipe(nets, sizeof(*nets) * STORAGE_WIFI_MAX);
+            return;
+        }
+    if (n < STORAGE_WIFI_MAX) {
+        memset(&nets[n], 0, sizeof(nets[n]));
+        snprintf(nets[n].ssid, sizeof(nets[n].ssid), "%s",
+                 app.cfg.fallback_wifi_ssid);
+        snprintf(nets[n].password, sizeof(nets[n].password), "%s",
+                 app.cfg.fallback_wifi_password);
+        n++;
+        if (storage_wifi_save(nets, n) == ESP_OK)
+            ESP_LOGW(TAG, "Seeded fallback WiFi '%s' into storage — blank "
+                          "CONFIG_WIFI_PASSWORD now",
+                     app.cfg.fallback_wifi_ssid);
+    }
+    keystore_wipe(nets, sizeof(*nets) * STORAGE_WIFI_MAX);
+}
+
+void kick_wifi(void)
+{
+    /* Init is idempotent and captures any credential a past firmware left
+     * in the driver's NVS; the migration folds it into storage — the
+     * bundle when the store is open, plaintext wifi.ini otherwise (a
+     * store-less deck keeps working; a locked one adopts at unlock). */
+    wifi_manager_init();
+    wifi_migrate_nvs_cred();
+    wifi_seed_fallback();
+
+    /* Both helpers above have finished with the shared scratch. */
+    wifi_profile_t *nets = storage_cred_scratch()->u.nets;
+    int n = 0;
+    storage_wifi_load(nets, &n, STORAGE_WIFI_MAX);
+
+    /* Rows still wearing the @bundle marker are unreadable until unlock —
+     * joining with the literal marker (or as an open net) would only
+     * thrash the AP. They rejoin at the post-unlock kick. */
+    int usable = 0, gated = 0;
+    for (int i = 0; i < n; i++) {
+        if (strcmp(nets[i].password, STORAGE_PW_BUNDLED) == 0) {
+            gated++;
+            continue;
+        }
+        if (usable != i) nets[usable] = nets[i];
+        usable++;
+    }
+    if (gated) ESP_LOGI(TAG, "%d WiFi network(s) await unlock", gated);
+    n = usable;
 
     if (n == 0 && app.cfg.fallback_wifi_ssid && app.cfg.fallback_wifi_ssid[0]) {
         memset(&nets[0], 0, sizeof(nets[0]));
@@ -103,10 +214,11 @@ void kick_wifi(void)
     }
 
     if (n > 0) {
-        wifi_manager_connect(nets, n);
-    } else {
+        wifi_manager_connect(nets, n);     /* copies what it needs */
+    } else if (gated == 0) {               /* gated nets already logged */
         ESP_LOGW(TAG, "no WiFi profiles (wifi.ini empty, no fallback)");
     }
+    keystore_wipe(nets, sizeof(*nets) * STORAGE_WIFI_MAX);
 }
 
 /* -------------------------------------------------------------- toasts */

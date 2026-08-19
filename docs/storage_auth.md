@@ -1,14 +1,13 @@
 # Storage auth: PIN unlock and the wrapped key store
 
-**Status: roadmap steps 1 + 2 landed.** The key store, storage integration,
-sim-CLI provisioning, adopt-on-unlock, the unlock screen (`ST_UNLOCK` PIN
-pad with the set/change-code flow), the lazy connect gate, and the lock
-triggers (boot / saver-wake, `lock.ini`, menu KEYSTORE page) are implemented
-and tested; failed-attempt backoff is not yet. Code:
-`components/storage/keystore.{h,c}` (both builds), integration in
-`storage.c`, UI in `cyberdeck_app/app_unlock.c` + menu/saver/boot hooks,
-CLI in `sim/keystore_cli.c`, tests in `tests/keystore/`.
-With no `keystore.kv1` present, behavior is bit-identical to before.
+**Status: key store, unlock UI, the two-gates device lock, remove-code,
+failed-attempt backoff and the secrets bundle (passwords under the master
+key, MK) are landed.** Next per the roadmap below: the device-bound
+eFuse slot. Code: `components/storage/keystore.{h,c}` (both builds),
+integration in `storage.c`, UI in `cyberdeck_app/app_unlock.c` +
+menu/saver/boot/home hooks, CLI in `sim/keystore_cli.c`, tests in
+`tests/keystore/`. With no `keystore.kv1` present, behavior is
+bit-identical to a store-less deck.
 
 Sim CLI (runs headless against `sim_storage/`, exits before SDL):
 
@@ -47,10 +46,44 @@ profiles.
 
 | Threat | Covered? |
 |--------|----------|
-| Lost/stolen deck, casual use of profiles | yes — locked UI, wrapped keys |
-| Flash dump, offline PIN brute-force | portable slots: partially — Argon2id makes it slow (hours-to-days for 6 digits on a GPU rig, out of reach for a passphrase slot). Device-bound slot (type 3): fully — every guess must run on the physical chip, serialized (~11 days for 6 digits, no parallelism) |
+| Lost/stolen deck, casual use of profiles | yes — device gate (two-gates model), wrapped keys |
+| Flash dump: keys | portable slots: slowed — Argon2id's memory-hardness blunts GPUs, but a 4–6 digit space falls in minutes-to-hours on a serious rig; a real passphrase slot is out of reach. Device-bound slot (type 3, designed): fully — every guess must run on the physical chip, serialized |
+| Flash dump: login passwords / key passphrases / WiFi PSK (pre-shared key) | yes — the secrets bundle: same MK, same vault. Plaintext-era ini values adopt at the next unlock |
+| Online PIN guessing at the pad | yes — exponential backoff (30 s → 15 min cap, reboot re-arms) |
 | Runtime code execution on the device | no — an unlocked deck holds the master key in RAM |
 | Malicious reflash / rollback of the store | no — requires flash encryption + secure boot |
+
+### The orthogonal model
+
+Four independent axes; protection level follows **sensitivity**, never the
+auth mechanism's type:
+
+1. **What is precious** — everything that grants access moves under the MK:
+   private keys (done), profile login passwords, key passphrases, the WiFi
+   PSK (all via the secrets bundle below). Explicitly *not* secret: profile
+   metadata (names/hosts/users/ports — HOME renders before unlock), `.pub`
+   files, settings, host-key pins (integrity, not secrecy).
+2. **Recoverability doctrine** — *nothing precious is recoverable from the
+   deck, ever*. Recovery = re-provision from the sources of truth
+   (`~/.ssh`, the password manager). The deck is a wholesale-replaceable
+   credential cache; losing it costs a re-provisioning session, not data.
+3. **When it unlocks** — the two-gates model (below): deck unlocked ⇔ store
+   unlocked. Consequence: password-auth connects and profile editing gain
+   zero prompts from the bundle — UI access already implies an open store.
+4. **Where it is crackable** — a portable Argon2-derived key-encryption
+   key (KEK) vs the device-bound eFuse KEK (type-3 slot). Pure KEK
+   derivation, orthogonal to everything
+   above: it hardens the vault's lock; axes 1–3 decide what the vault holds
+   and when it opens.
+
+A non-goal worth recording: keeping keys as passphrase-encrypted OpenSSH
+PEMs with the passphrase in the store. A passphrase whose only copy lives
+in the same vault is one security boundary wearing two coats — the flash-
+dump attacker picks the *easier* door (PIN or the passphrase itself), so
+the construction is never stronger than wrapping the raw key, and costs
+bcrypt-seconds per connect plus a key format our TLS stack cannot parse.
+The `.kw1` already plays the "cached decrypted key" role, keyed by the
+vault at microseconds per open.
 
 ## Alternatives considered
 
@@ -87,7 +120,9 @@ profiles.
 
 ### Master-key indirection (LUKS-style)
 
-Key files are not wrapped with the PIN directly. A random 32-byte **master
+Key files are not wrapped with the PIN directly — the same indirection
+LUKS (Linux Unified Key Setup, the standard Linux disk-encryption scheme)
+uses. A random 32-byte **master
 key (MK)** wraps every key file; MK itself is stored wrapped by
 `Argon2id(PIN, salt)` in one of up to four **slots**. Consequences:
 
@@ -134,9 +169,12 @@ offset  size  field
         48    wrapped_mk            32 B MK ciphertext + 16 B tag
 ```
 
-Unlock = derive KEK from the passcode, AEAD-unwrap MK. **The Poly1305 tag is
+Unlock = derive the KEK from the passcode, then AEAD-unwrap the MK (AEAD:
+authenticated encryption with associated data — the cipher's tag proves
+integrity as well as secrecy). **The Poly1305 tag is
 the PIN verifier** — there is no separate PIN hash to attack, and a wrong PIN
-is cleanly distinguishable from a corrupt store. Slot AAD:
+is cleanly distinguishable from a corrupt store. Slot AAD (the associated
+data the tag covers without encrypting):
 `magic ‖ version ‖ store_uuid ‖ slot_index ‖ slot_type ‖ kdf params`
 (params tampering only DoSes — they are inputs to the derivation). The byte
 layout is unchanged from v1; the `kdf_*` fields are the old `argon2_*` fields
@@ -144,7 +182,8 @@ reinterpreted per `kdf_alg`, so type-3 slots need no format bump.
 
 ### Slot type 3 — device-bound PIN (eFuse HMAC)
 
-The S3's **HMAC peripheral** computes `HMAC-SHA256(K, msg)` where `K` is a
+The S3's **HMAC peripheral** (HMAC: hash-based message authentication
+code — keyed hashing) computes `HMAC-SHA256(K, msg)` where `K` is a
 256-bit key burned into an eFuse block (purpose `HMAC_UP`) with software
 readout disabled: firmware can *use* the key, never *read* it
 (`esp_hmac_calculate()`). A slot whose KEK depends on it can only be opened —
@@ -222,7 +261,44 @@ offset  size  field
 binding the key id and store uuid into the tag kills file renaming
 (`bandit.kw1` → `opnsense.kw1`) and cross-store transplants. `.pub` files
 stay plaintext; `storage_key_info()` needs no unlock. `content_type` is the
-extension point for later wrapping profile passwords or the WiFi PSK.
+extension point the secrets bundle uses.
+
+### `keys/secrets.kw1` — the secrets bundle (content_type 2)
+
+One wrapped blob holding every non-key credential, in the same `.kw1`
+container (AAD key_id = `secrets`, so it cannot be renamed into or out of
+existence unnoticed):
+
+    profile:<name>=<password-or-passphrase>
+    wifi:<ssid>=<psk>
+
+- **Load**: parsed into internal-SRAM cache at unlock, wiped at lock —
+  exactly the MK's lifetime; under two-gates the cache exists whenever the
+  UI does, so connects and the profile editor never prompt for it.
+- **Write**: any credential edit rewraps the whole bundle (it is small);
+  editing requires the UI, the UI implies unlocked — no locked-write path.
+- **Migration**: plaintext `password=` fields found in `profiles.ini` (and
+  the PSK in `wifi.ini`) adopt into the bundle at unlock, then the ini is
+  rewritten without them and shredded — same adopt-then-shred pattern as
+  bare PEMs. `profiles.ini` keeps only metadata.
+- **No store** = feature off: plaintext fields keep working bit-identically.
+- **WiFi consequence, accepted**: the PSK under the MK means no WiFi until
+  first unlock. Under boot-gating this costs nothing in normal use (the
+  gate pad IS the boot screen), but an unattended reboot sits offline until
+  someone enters the PIN. Revisit only if that bites.
+- **WiFi driver persistence retired**: `esp_wifi_set_storage(WIFI_STORAGE_RAM)`
+  at init — the ESP-IDF driver no longer writes credentials into its NVS
+  partition; storage (`wifi.ini` → the bundle) is the single persistence.
+  A credential a past firmware left in NVS is captured once at init,
+  folded into the bundle at the next unlock (`wifi_migrate_nvs_cred`),
+  and the NVS copy cleared via `esp_wifi_restore()` — best-effort, NVS is
+  log-structured, stale pages persist until the flash-encryption endgame.
+  The `CONFIG_WIFI_SSID/PASSWORD` sdkconfig fallback is blanked: a real
+  PSK baked into the firmware image was readable from any dump; the
+  fallback remains only as a dev bootstrap, with `wifi.ini` as the
+  intended plaintext-then-adopted bootstrap path.
+- **Remove code** unwraps the bundle back into plaintext ini fields, same
+  as keys revert to `.pem`.
 
 ### Provisioning — who encrypts, and when
 
@@ -337,15 +413,21 @@ of stack headroom, never inline in a UI tick.
 2. ~~Unlock screen + lock triggers.~~ **Done** (PIN pad + set/change-code
    flow, lazy connect gate, boot/wake triggers, `lock.ini`, menu page).
    Failed-attempt backoff moved to its own step below.
-3. **Device-bound slot (type 3)** — pulled ahead of flash encryption: the
-   largest security jump per line of code (kills offline brute-force
-   outright), removes the unlock-time RAM/stack pressure, and commits only
-   one eFuse block. Includes the HMAC-iteration bench and slot adoption.
-4. ~~Failed-attempt backoff.~~ **Done** (exponential after 5, counter in
+3. ~~Secrets bundle.~~ **Done** (promoted ahead of the eFuse commitment —
+   widen what the vault covers before hardening its lock): profile
+   passwords, key passphrases and the WiFi PSK under the MK via
+   `keys/secrets.kw1`; the diversion lives inside
+   `storage_save/load_profiles` and `storage_wifi_save/load` so every
+   caller inherits it; adoption at unlock/create, remove-code reversal,
+   stale entries pruned on save.
+4. **Device-bound slot (type 3)** — kills offline brute-force outright,
+   removes the unlock-time RAM/stack pressure, commits one eFuse block.
+   Self-calibrating HMAC iteration count, slot adoption on first device
+   unlock, weakest-slot policy (portable PIN slot dropped).
+5. ~~Failed-attempt backoff.~~ **Done** (exponential after 5, counter in
    `backoff.cnt`, monotonic-uptime waits — a reboot re-arms the delay;
    NVS was considered for reflash-survival but the bound slot is the real
    answer to an attacker who can reflash).
-5. Wrap profile passwords / WiFi PSK via `content_type`.
 6. Flash encryption + secure boot — still the endgame, now scoped to what
    the bound slot cannot cover: adopt-path remnants in reclaimed LittleFS
    blocks, everything else on flash, rollback/reflash protection.
@@ -357,13 +439,12 @@ of stack headroom, never inline in a UI tick.
   Measured (see Primitives): 4 MiB × 2 passes = 1.09 s. The
   `CYBERDECK_BENCH_ARGON2` Kconfig re-runs the sweep if the clock or PSRAM
   timing ever changes.
-- Backoff persistence location (NVS vs a store field) — must survive storage
-  reflash or it resets with the image; NVS leans right.
-- Whether profile passwords move under MK in v1 or stay plaintext until (4).
+- ~~Whether profile passwords move under MK.~~ Decided: yes — roadmap (3),
+  the secrets bundle; sensitivity, not auth type, picks the protection.
 - `esp_hmac_calculate` per-call overhead on the S3 → iteration count for a
-  ~0.5–1 s type-3 unlock (extend the bench before picking the default).
+  ~0.5–1 s type-3 unlock (self-calibrate at slot creation, floor the count).
 - eFuse burn policy: auto-burn on first bound-slot creation vs an explicit
   provisioning step, and a guard for dev units that should stay unburned
-  (Kconfig gate leans right).
+  (Kconfig gate leans right). Decision deferred until (3) lands.
 - Whether slot adoption (portable PIN → bound PIN on first device unlock)
   should ask, or just happen like pem adoption does.

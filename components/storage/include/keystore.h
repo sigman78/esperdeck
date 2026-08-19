@@ -35,7 +35,12 @@ extern "C" {
 #endif
 
 /* content_type values for wrapped files */
-#define KEYSTORE_CONTENT_PEM 1   /* PEM private key */
+#define KEYSTORE_CONTENT_PEM     1   /* PEM private key */
+#define KEYSTORE_CONTENT_SECRETS 2   /* secrets bundle (see below) */
+
+/* Reserved key id for the secrets bundle — keys/secrets.kw1. Never listed
+ * by storage_list_keys; do not name an SSH key "secrets". */
+#define KEYSTORE_SECRETS_ID "secrets"
 
 /* PIN/passphrase length accepted by unlock/create (bytes, not digits) */
 #define KEYSTORE_PIN_MIN 1
@@ -128,6 +133,37 @@ void keystore_reset_cache(void);
  * compiler cannot elide, unlike a trailing memset.
  */
 void keystore_wipe(void *buf, size_t len);
+
+/* -------------------------------------------------------------------------
+ * Secrets bundle — keys/secrets.kw1 (content_type 2)
+ *
+ * One wrapped blob of "namespace:key=value" lines holding every non-key
+ * credential: "profile:<name>=<password-or-passphrase>" and
+ * "wifi:<ssid>=<psk>". Cached in internal SRAM with exactly the master
+ * key's lifetime (loaded lazily after unlock, wiped at lock). Values may
+ * not contain newlines; keys may not contain '=' or newlines.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Fetch a secret into @p out (NUL-terminated). ESP_ERR_INVALID_STATE while
+ * locked, ESP_ERR_NOT_FOUND when absent, ESP_ERR_INVALID_SIZE if @p out is
+ * too small.
+ */
+esp_err_t keystore_secret_get(const char *skey, char *out, size_t out_len);
+
+/**
+ * Add/replace a secret and rewrap the bundle (NULL or "" value removes the
+ * entry; an emptied bundle deletes keys/secrets.kw1). Requires UNLOCKED.
+ */
+esp_err_t keystore_secret_set(const char *skey, const char *value);
+
+/**
+ * Drop every "<prefix><name>=" entry whose <name> is not in @p keep —
+ * e.g. prune "profile:" entries after a profile delete/rename. Rewraps
+ * only when something was removed. No-op while locked.
+ */
+void keystore_secrets_prune(const char *prefix,
+                            const char *const *keep, int nkeep);
 
 /**
  * Remaining failed-attempt wait in ms; 0 = attempts allowed now. The

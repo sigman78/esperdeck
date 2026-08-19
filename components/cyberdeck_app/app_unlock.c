@@ -24,6 +24,7 @@
 #include "app_widgets.h"
 #include "display_fx.h"
 #include "keystore.h"
+#include "wifi_manager.h"    /* post-unlock PSK re-kick */
 
 #include <stdio.h>
 #include <string.h>
@@ -425,6 +426,14 @@ static void worker_result(uint64_t now, esp_err_t r)
     }
     if (s_op == OP_UNLOCK) {
         if (r == ESP_OK) {
+            /* Secrets just became readable: re-read profiles so the RAM
+             * copies hydrate their diverted passwords, fold any credential
+             * a past firmware left in the driver's NVS into the bundle,
+             * and kick WiFi — with driver persistence retired, this is
+             * where the deck first gets a usable PSK (pre-shared key). */
+            load_profiles();
+            wifi_migrate_nvs_cred();
+            if (!wifi_manager_is_connected()) kick_wifi();
             toast(now, app.unlock.gate ? "deck unlocked"
                                        : "keystore unlocked");
             unlock_finish(now);
