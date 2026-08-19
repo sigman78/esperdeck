@@ -34,6 +34,35 @@ cyberdeck_component_register(
 # the tracked sim_storage.example/ skeleton.
 if(NOT BUILD_SIMULATOR)
     if(EXISTS ${PROJECT_DIR}/sim_storage)
+        # Whatever sits in the seed directory is BAKED into storage.bin, so a
+        # plaintext .pem there ships inside every built image — build/ output,
+        # a merged .bin, a CI artifact, anything handed to someone else. The
+        # intended flow wraps keys BEFORE the image is built (docs/storage_auth.md:
+        # "flashing ships ciphertext and a freshly flashed deck comes up locked").
+        # CONFIGURE_DEPENDS re-runs cmake when the glob result changes, so a key
+        # dropped in after the first configure still trips this.
+        file(GLOB CYBERDECK_SEED_PEMS CONFIGURE_DEPENDS
+             ${PROJECT_DIR}/sim_storage/keys/*.pem)
+        if(CYBERDECK_SEED_PEMS)
+            list(LENGTH CYBERDECK_SEED_PEMS CYBERDECK_SEED_PEM_N)
+            set(CYBERDECK_SEED_PEM_LIST "")
+            foreach(pem IN LISTS CYBERDECK_SEED_PEMS)
+                get_filename_component(CYBERDECK_SEED_PEM_NAME ${pem} NAME)
+                string(APPEND CYBERDECK_SEED_PEM_LIST
+                       "\n      keys/${CYBERDECK_SEED_PEM_NAME}")
+            endforeach()
+            message(WARNING
+                "sim_storage/ holds ${CYBERDECK_SEED_PEM_N} PLAINTEXT private "
+                "key(s):${CYBERDECK_SEED_PEM_LIST}\n"
+                "    They are baked into storage.bin as-is — the built image "
+                "carries usable keys.\n"
+                "    Wrap them first so the image ships ciphertext:\n"
+                "      cyberdeck_sim --import-key sim_storage/keys/<name>.pem "
+                "--pin <code>\n"
+                "    (creates keys/<name>.kw1 and drops the .pem; see "
+                "docs/storage_auth.md).\n"
+                "    Until then, do not share build artifacts.")
+        endif()
         littlefs_create_partition_image(storage ../../sim_storage FLASH_IN_PROJECT)
     else()
         message(WARNING "sim_storage/ not found — flashing example skeleton. "
