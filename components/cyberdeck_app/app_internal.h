@@ -157,9 +157,22 @@ typedef struct {                    /* app_unlock.c */
                                      * on submit/leave                     */
     int      len;
     uint8_t  expected;              /* auto-submit length (0 = Enter only) */
+    uint8_t  mode;                  /* entry phase (um_mode in app_unlock)  */
+    uint8_t  ret;                   /* where to land after (ur_ret)         */
+    bool     creating;              /* set-code flow on an ABSENT store     */
     bool     deriving;              /* KDF worker running; input swallowed */
-    bool     resume;                /* re-arm app.conn.active on success   */
-    uint64_t denied_until;          /* "ACCESS DENIED" flash window        */
+    const char *note;               /* status-row flash (static string)    */
+    uint64_t note_until;
+    int8_t   press;                 /* pad slot lit by a press...          */
+    uint64_t press_until;           /* ...until then (0 = none lit)        */
+    uint64_t last_input;            /* idle-cancel clock (IDLE_CANCEL_MS)  */
+    char     reveal_ch;             /* newest typed char, echoed briefly...*/
+    uint64_t reveal_until;          /* ...while defining a code (0 = off)  */
+    /* Two-gates model: a keystore on the deck means the deck is LOCKED.
+     * gate = this pad is the DEVICE gate (boot/wake): non-skippable, no
+     * idle-cancel, the saver rains over it. Otherwise it's a cancellable
+     * keystore prompt (connect fallback / menu flows). */
+    bool     gate;
 } unlock_state_t;
 
 struct app_state {

@@ -6,6 +6,7 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "display_fx.h"
+#include "keystore.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -111,11 +112,22 @@ void boot_enter(uint64_t now)
     app.state    = ST_BOOT;
 }
 
+/* Splash over (elapsed or skipped): HOME — behind the DEVICE gate whenever
+ * a keystore exists (two-gates model: a store on the deck means the deck
+ * is locked; no store = feature off, straight to HOME). */
+static void boot_done(uint64_t now)
+{
+    display_fx_wipe();   /* raster-reveal whatever comes up next */
+    if (keystore_state() == KEYSTORE_LOCKED)
+        unlock_open_gate(now);
+    else
+        enter_home(now);
+}
+
 void boot_tick(uint64_t now)
 {
     if (now >= app.boot.until) {
-        display_fx_wipe();   /* raster-reveal HOME once the splash ends */
-        enter_home(now);
+        boot_done(now);
         return;
     }
     if (now >= app.next_anim) {
@@ -131,5 +143,5 @@ void boot_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
      * keyboard yet. */
     if (k != K_NONE || ev->type == CYBERDECK_INPUT_TAP ||
         ev->type == CYBERDECK_INPUT_LONG_PRESS)
-        enter_home(now);
+        boot_done(now);
 }

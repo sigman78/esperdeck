@@ -22,6 +22,16 @@ esp_err_t storage_scan_key_ext(const char *ext,
                                char (*out)[STORAGE_KEY_ID_LEN], int max,
                                int *count);
 
+/**
+ * Best-effort secure delete: overwrite the file's bytes with zeros, flush,
+ * then remove(). NOT a guaranteed erase on LittleFS — copy-on-write
+ * wear-leveling can retire the old blocks untouched until reuse (the real
+ * fix is the flash-encryption endgame, docs/storage_auth.md) — but it
+ * shortens the exposure window and IS effective on the host sim's in-place
+ * filesystems, where provisioning leaves plaintext keys behind.
+ */
+esp_err_t storage_shred_file(const char *path);
+
 #ifdef __cplusplus
 }
 #endif

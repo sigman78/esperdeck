@@ -392,6 +392,8 @@ uint8_t keystore_pin_len(void)
     return 0;
 }
 
+static void ks_adopt_plaintext(void);
+
 esp_err_t keystore_create(const char *pin)
 {
     if (!pin_ok(pin)) return ESP_ERR_INVALID_ARG;
@@ -424,6 +426,11 @@ esp_err_t keystore_create(const char *pin)
     s_ks.unlocked   = true;
     ESP_LOGI(TAG, "Keystore created (slot 0: %s)",
              s_ks.hdr.slot[0].type == KS_SLOT_PIN ? "pin" : "passphrase");
+    /* Adopt existing bare keys NOW — a fresh store must protect what's
+     * already on disk. Waiting for the first keystore_unlock() left keys
+     * plaintext indefinitely: with the lazy trigger nothing prompts for
+     * an unwrapped key, so the unlock (and adoption) never happened. */
+    ks_adopt_plaintext();
     return ESP_OK;
 }
 
@@ -451,7 +458,7 @@ static void ks_adopt_plaintext(void)
         if (len == 0 || len == KW_CT_MAX) continue;   /* empty or oversized */
         if (keystore_wrap(ids[i], KEYSTORE_CONTENT_PEM, buf, len) != ESP_OK)
             continue;
-        remove(path);
+        storage_shred_file(path);          /* zero the plaintext, then rm */
         adopted++;
     }
     crypto_wipe(buf, KW_CT_MAX);
@@ -495,6 +502,11 @@ void keystore_reset_cache(void)
 {
     crypto_wipe(s_ks.mk, sizeof(s_ks.mk));
     memset(&s_ks, 0, sizeof(s_ks));
+}
+
+void keystore_wipe(void *buf, size_t len)
+{
+    if (buf && len) crypto_wipe(buf, len);
 }
 
 esp_err_t keystore_change_pin(const char *old_pin, const char *new_pin)
@@ -669,4 +681,77 @@ bool keystore_is_wrapped(const char *key_id)
     if (!f) return false;
     fclose(f);
     return true;
+}
+
+esp_err_t keystore_remove(const char *pin)
+{
+    if (!pin_ok(pin)) return ESP_ERR_INVALID_ARG;
+
+    esp_err_t e = ks_load();
+    if (e != ESP_OK) return e;         /* NOT_FOUND / INVALID_CRC */
+
+    /* Prove knowledge of the code even when already unlocked — removal
+     * downgrades every key to plaintext, the store's whole point. */
+    bool was_unlocked = s_ks.unlocked;
+    uint8_t mk[32];
+    int idx = -1;
+    for (int i = 0; i < KS_SLOTS; i++) {
+        const ks_slot_t *sl = &s_ks.hdr.slot[i];
+        if (sl->type != KS_SLOT_PIN && sl->type != KS_SLOT_PASSPHRASE)
+            continue;
+        e = slot_unwrap_mk(i, pin, mk);
+        if (e == ESP_ERR_NO_MEM) return e;
+        if (e == ESP_OK) { idx = i; break; }
+    }
+    if (idx < 0) return ESP_FAIL;
+    memcpy(s_ks.mk, mk, 32);
+    crypto_wipe(mk, sizeof(mk));
+    s_ks.unlocked = true;
+
+    /* Unwrap every keys/<id>.kw1 back to a bare .pem BEFORE dropping the
+     * header — a key that fails to unwrap aborts while its plaintext is
+     * still recoverable. A crash mid-way leaves .pem + store side by side;
+     * the next unlock just adopts the .pem back (ks_adopt_plaintext). */
+    char ids[16][STORAGE_KEY_ID_LEN];
+    int n = 0;
+    storage_scan_key_ext(".kw1", ids, 16, &n);
+
+    char *buf = heap_caps_malloc(KW_CT_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) {
+        if (!was_unlocked) keystore_lock();
+        return ESP_ERR_NO_MEM;
+    }
+
+    e = ESP_OK;
+    for (int i = 0; i < n; i++) {
+        size_t len = 0;
+        char path[160];
+        e = keystore_unwrap(ids[i], buf, KW_CT_MAX, &len, NULL);
+        if (e == ESP_OK) {
+            snprintf(path, sizeof(path), "%s/keys/%s.pem",
+                     storage_platform_mount_point(), ids[i]);
+            e = ks_write_atomic(path, buf, len);
+        }
+        if (e != ESP_OK) {
+            ESP_LOGE(TAG, "Remove aborted: key '%s' failed (%d) — store kept",
+                     ids[i], (int)e);
+            break;
+        }
+        kw_path(ids[i], path, sizeof(path));
+        remove(path);
+    }
+    crypto_wipe(buf, KW_CT_MAX);
+    heap_caps_free(buf);
+
+    if (e != ESP_OK) {
+        if (!was_unlocked) keystore_lock();
+        return e;
+    }
+
+    char path[160];
+    ks_path(path, sizeof(path));
+    remove(path);
+    keystore_reset_cache();            /* wipe MK + forget header — ABSENT */
+    ESP_LOGW(TAG, "Keystore removed — %d key(s) back to plaintext", n);
+    return ESP_OK;
 }

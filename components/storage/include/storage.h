@@ -18,6 +18,7 @@
 
 #include "esp_err.h"
 #include "display_fx.h"   /* display_fx_cfg_t (fx.ini settings) */
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

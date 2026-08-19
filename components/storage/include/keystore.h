@@ -101,10 +101,27 @@ esp_err_t keystore_unwrap(const char *key_id, void *buf, size_t buf_len,
 bool keystore_is_wrapped(const char *key_id);
 
 /**
+ * Decommission the store: prove @p pin (even when already unlocked — this
+ * writes private keys back as plaintext), unwrap every keys/<id>.kw1 to a
+ * bare keys/<id>.pem, then delete keystore.kv1 (state ABSENT, feature off).
+ * A key that fails to unwrap aborts BEFORE the header is deleted; a crash
+ * mid-way is safe — the next unlock re-adopts the emitted .pem files.
+ * ESP_FAIL = wrong code.
+ */
+esp_err_t keystore_remove(const char *pin);
+
+/**
  * Forget cached header state (call after deleting keystore.kv1 externally,
  * e.g. factory reset). Also wipes the MK like keystore_lock().
  */
 void keystore_reset_cache(void);
+
+/**
+ * crypto_wipe wrapper for callers holding transient plaintext (unwrapped
+ * PEM buffers, typed codes) outside this component — a zeroing the
+ * compiler cannot elide, unlike a trailing memset.
+ */
+void keystore_wipe(void *buf, size_t len);
 
 #ifdef __cplusplus
 }

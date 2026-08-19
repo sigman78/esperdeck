@@ -769,12 +769,33 @@ esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
     return ESP_OK;
 }
 
+esp_err_t storage_shred_file(const char *path)
+{
+    FILE *f = fopen(path, "r+b");
+    if (!f) return ESP_ERR_NOT_FOUND;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    if (sz > 0) {
+        static const uint8_t zeros[256];
+        fseek(f, 0, SEEK_SET);
+        for (long off = 0; off < sz; off += (long)sizeof(zeros)) {
+            size_t n = (size_t)(sz - off) < sizeof(zeros)
+                     ? (size_t)(sz - off) : sizeof(zeros);
+            if (fwrite(zeros, 1, n, f) != n) break;
+        }
+        fflush(f);
+    }
+    fclose(f);
+    remove(path);
+    return ESP_OK;
+}
+
 esp_err_t storage_delete_key(const char *key_id)
 {
     if (!key_id || !key_id[0]) return ESP_ERR_INVALID_ARG;
     char path[160];
     key_path(key_id, path, sizeof(path));                     /* .pem */
-    remove(path);
+    storage_shred_file(path);              /* plaintext key material */
     snprintf(path, sizeof(path), "%s/keys/%s.kw1",
              storage_platform_mount_point(), key_id);         /* wrapped     */
     remove(path);
@@ -933,7 +954,7 @@ static void wipe_keys_dir(void)
     do {
         if (fd.name[0] == '.') continue;                      /* skip . / .. */
         snprintf(path, sizeof(path), "%s/%s", dir, fd.name);
-        remove(path);
+        storage_shred_file(path);            /* may hold plaintext keys */
     } while (_findnext(h, &fd) == 0);
     _findclose(h);
 #else
@@ -943,7 +964,7 @@ static void wipe_keys_dir(void)
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.') continue;                    /* skip . / .. */
         snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
-        remove(path);
+        storage_shred_file(path);            /* may hold plaintext keys */
     }
     closedir(d);
 #endif
@@ -952,14 +973,17 @@ static void wipe_keys_dir(void)
 esp_err_t storage_factory_reset(void)
 {
     const char *mp = storage_platform_mount_point();
+    /* profiles.ini and wifi.ini hold plaintext passwords/PSKs — shred them
+     * (best-effort, see storage_shred_file); the rest is not sensitive. */
     static const char *files[] = {
         "profiles.ini", "wifi.ini", "known_hosts.ini", "ble_devices.ini",
-        "fx.ini", "keystore.kv1",
+        "fx.ini", "keystore.kv1", "lock.ini",
     };
     char path[160];
     for (int i = 0; i < (int)(sizeof(files) / sizeof(files[0])); i++) {
         snprintf(path, sizeof(path), "%s/%s", mp, files[i]);
-        remove(path);
+        if (i < 2) storage_shred_file(path);
+        else       remove(path);
     }
     wipe_keys_dir();
     keystore_reset_cache();   /* wipe the in-RAM MK + stale header cache */

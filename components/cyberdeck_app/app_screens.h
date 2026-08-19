@@ -50,6 +50,18 @@ void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
 /** Enter the keystore PIN pad. @p resume_connect: re-arm the connect to
  *  app.conn.active once unlocked (the lazy on-first-key-use trigger). */
 void unlock_open(uint64_t now, bool resume_connect);
+/** Set-code flow from the menu: create (store absent) or change (old →
+ *  new → confirm). Returns to the menu's KEYSTORE page when done. */
+void unlock_open_setpin(uint64_t now);
+
+/** Remove-keystore flow: prove the code, unwrap keys to plaintext. */
+void unlock_open_remove(uint64_t now);
+
+/** DEVICE gate pad (boot/wake/Lock deck): non-skippable, rain-capable. */
+void unlock_open_gate(uint64_t now);
+
+/** Idle rain over the DEVICE gate pad; true while the rain owns the screen. */
+bool saver_tick_gate(uint64_t now);
 void unlock_tick(uint64_t now);
 void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 

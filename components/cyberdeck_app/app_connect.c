@@ -129,10 +129,12 @@ void start_connect(int idx, uint64_t not_before, uint64_t now)
     app.conn.attempt = 0;
     app.conn.active  = app.profiles[idx];
     load_pinned_fp();
-    /* Key profile, wrapped key, locked store: unlock first — the PIN pad
-     * re-arms this connect on success (the lazy on-first-key-use trigger). */
+    /* Key profile + locked store: unlock first — the PIN pad re-arms this
+     * connect on success (the lazy on-first-key-use trigger). Gates even
+     * when THIS key is still a bare .pem: a present store means keys are
+     * protected or pending adoption (the unlock performs it), so plaintext
+     * must not silently bypass the lock. ABSENT store = feature off. */
     if (app.conn.active.auth == STORAGE_AUTH_KEY &&
-        keystore_is_wrapped(app.conn.active.key_id) &&
         keystore_state() == KEYSTORE_LOCKED) {
         unlock_open(now, true);
         return;
@@ -213,16 +215,25 @@ static void enter_session(uint64_t now)
     render_session_toast(now);
 }
 
+/* Key PEMs are read on the shell task (the connect worker has a PSRAM
+ * stack and must not touch littlefs — flash I/O asserts there) and must
+ * outlive the async connect: the worker reads the cfg strings during the
+ * handshake. The PRIVATE key buffer is INTERNAL SRAM — never PSRAM, the
+ * external bus is probeable (docs/storage_auth.md RAM hygiene) — and is
+ * wiped the moment the connect worker finishes; the .pub is public. */
+enum { KEY_PEM_MAX = 8192, PUB_PEM_MAX = 2048 };
+static char *s_key_pem = NULL;
+static char *s_pub_pem = NULL;
+
+static void wipe_key_pem(void)
+{
+    if (s_key_pem) keystore_wipe(s_key_pem, KEY_PEM_MAX);
+}
+
 /* Kick off the connect on a worker task (non-blocking) so the shell keeps
  * ticking — the "Connecting" bar animates and a tap/ESC can cancel. */
 static void do_connect_start(uint64_t now)
 {
-    /* Key PEMs are read HERE, on the shell task: the connect worker has a
-     * PSRAM stack and must not touch littlefs (flash I/O asserts there).
-     * The SPIRAM buffers must outlive the connect — allocated once, kept. */
-    enum { KEY_PEM_MAX = 8192, PUB_PEM_MAX = 2048 };
-    static char *key_pem = NULL;
-    static char *pub_pem = NULL;
     const conn_profile_t *p = &app.conn.active;
 
     ssh_config_t cfg = {
@@ -232,11 +243,20 @@ static void do_connect_start(uint64_t now)
         .expected_fp = app.conn.pinned_fp[0] ? app.conn.pinned_fp : NULL,
     };
     if (p->auth == STORAGE_AUTH_KEY) {
-        if (!key_pem) key_pem = heap_caps_malloc(KEY_PEM_MAX, MALLOC_CAP_SPIRAM);
-        if (!pub_pem) pub_pem = heap_caps_malloc(PUB_PEM_MAX, MALLOC_CAP_SPIRAM);
+        /* Locked store slipped past the start_connect gate (reconnect,
+         * re-arm, or a lock trigger fired since): same bounce — covers
+         * bare .pem keys the wrapped-only INVALID_STATE path below can't. */
+        if (keystore_state() == KEYSTORE_LOCKED) {
+            unlock_open(now, true);
+            return;
+        }
+        if (!s_key_pem) s_key_pem = heap_caps_malloc(KEY_PEM_MAX,
+                                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (!s_pub_pem) s_pub_pem = heap_caps_malloc(PUB_PEM_MAX,
+                                        MALLOC_CAP_SPIRAM);
         size_t klen = 0;
-        esp_err_t ge = (!key_pem || !pub_pem) ? ESP_ERR_NO_MEM
-                     : storage_get_key(p->key_id, key_pem, KEY_PEM_MAX, &klen);
+        esp_err_t ge = (!s_key_pem || !s_pub_pem) ? ESP_ERR_NO_MEM
+                     : storage_get_key(p->key_id, s_key_pem, KEY_PEM_MAX, &klen);
         if (ge == ESP_ERR_INVALID_STATE) {
             /* Locked store slipped past the start_connect gate (e.g. an
              * auto-reconnect after a future lock trigger): same bounce. */
@@ -248,7 +268,7 @@ static void do_connect_start(uint64_t now)
             enter_home(now);
             return;
         }
-        cfg.private_key_pem = key_pem;
+        cfg.private_key_pem = s_key_pem;
         cfg.passphrase      = p->password[0] ? p->password : NULL;
 
         char pub_path[160];   /* optional .pub beside the key */
@@ -256,15 +276,16 @@ static void do_connect_start(uint64_t now)
                  storage_platform_mount_point(), p->key_id);
         FILE *pf = fopen(pub_path, "r");
         if (pf) {
-            size_t n = fread(pub_pem, 1, PUB_PEM_MAX - 1, pf);
+            size_t n = fread(s_pub_pem, 1, PUB_PEM_MAX - 1, pf);
             fclose(pf);
-            if (n > 0) { pub_pem[n] = '\0'; cfg.public_key_pem = pub_pem; }
+            if (n > 0) { s_pub_pem[n] = '\0'; cfg.public_key_pem = s_pub_pem; }
         }
     } else {
         cfg.password = p->password;
     }
 
     if (ssh_client_connect_start(&cfg) != ESP_OK) {
+        wipe_key_pem();
         toast(now, "connect busy - try again");
         enter_home(now);
         return;
@@ -279,6 +300,9 @@ static void do_connect_start(uint64_t now)
 /* Handle the async connect result once the worker finishes. */
 static void do_connect_finish(uint64_t now, esp_err_t err)
 {
+    /* Handshake over either way — libssh2 has derived what it needs, so
+     * the plaintext key must not linger for the session's lifetime. */
+    wipe_key_pem();
     if (app.conn.cancelled) {
         if (err == ESP_OK) ssh_client_disconnect();   /* it connected as we cancelled */
         app.conn.cancelled = false;

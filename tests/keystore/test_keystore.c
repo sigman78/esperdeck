@@ -431,6 +431,64 @@ static void test_factory_reset_removes_store(void)
     TEST_ASSERT_EQUAL_INT(0, count);
 }
 
+/* ------------------------------------------------------------------
+ * Remove (decommission back to plaintext)
+ * ---------------------------------------------------------------- */
+
+static void test_remove_restores_plaintext(void)
+{
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        keystore_wrap("id_rm", KEYSTORE_CONTENT_PEM,
+                      TEST_PEM, sizeof(TEST_PEM) - 1));
+    keystore_lock();
+
+    /* Wrong code refuses; store and wrapped key untouched */
+    TEST_ASSERT_EQUAL_INT(ESP_FAIL, keystore_remove("9999"));
+    TEST_ASSERT_EQUAL_INT(KEYSTORE_LOCKED, keystore_state());
+    TEST_ASSERT_TRUE(file_size(KW1("id_rm")) > 0);
+
+    /* Right code while LOCKED: store gone, key back byte-identical */
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_remove("1234"));
+    TEST_ASSERT_EQUAL_INT(KEYSTORE_ABSENT, keystore_state());
+    TEST_ASSERT_EQUAL_INT(-1, file_size(KV1));
+    TEST_ASSERT_EQUAL_INT(-1, file_size(KW1("id_rm")));
+
+    static unsigned char buf[4096];
+    size_t len = 0;
+    TEST_ASSERT_EQUAL_INT(0, read_file(PEM("id_rm"), buf, sizeof(buf), &len));
+    TEST_ASSERT_EQUAL_UINT(sizeof(TEST_PEM) - 1, len);
+    TEST_ASSERT_EQUAL_MEMORY(TEST_PEM, buf, len);
+}
+
+static void test_create_adopts_existing_plaintext(void)
+{
+    /* A fresh store must protect keys already on disk — adoption cannot
+     * wait for the first unlock, which the lazy trigger may never fire. */
+    TEST_ASSERT_EQUAL_INT(0,
+        write_file(PEM("id_pre"), TEST_PEM, sizeof(TEST_PEM) - 1));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));
+    TEST_ASSERT_TRUE(keystore_is_wrapped("id_pre"));
+    TEST_ASSERT_EQUAL_INT(-1, file_size(PEM("id_pre")));   /* shredded */
+
+    static char buf[4096];
+    size_t n = 0;
+    uint8_t ctype = 0;
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        keystore_unwrap("id_pre", buf, sizeof(buf), &n, &ctype));
+    TEST_ASSERT_EQUAL_UINT(sizeof(TEST_PEM) - 1, n);
+    TEST_ASSERT_EQUAL_MEMORY(TEST_PEM, buf, n);
+}
+
+static void test_remove_requires_code_even_when_unlocked(void)
+{
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));  /* UNLOCKED */
+    TEST_ASSERT_EQUAL_INT(ESP_FAIL, keystore_remove("0000"));
+    TEST_ASSERT_EQUAL_INT(KEYSTORE_UNLOCKED, keystore_state());  /* kept */
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_remove("1234"));
+    TEST_ASSERT_EQUAL_INT(KEYSTORE_ABSENT, keystore_state());
+}
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
@@ -455,5 +513,8 @@ int main(void)
     RUN_TEST(test_list_keys_unions_pem_and_kw1);
     RUN_TEST(test_delete_key_removes_kw1);
     RUN_TEST(test_factory_reset_removes_store);
+    RUN_TEST(test_remove_restores_plaintext);
+    RUN_TEST(test_create_adopts_existing_plaintext);
+    RUN_TEST(test_remove_requires_code_even_when_unlocked);
     return UNITY_END();
 }

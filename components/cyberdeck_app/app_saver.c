@@ -6,6 +6,7 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_widgets.h"
+#include "keystore.h"
 
 #include <string.h>
 
@@ -200,11 +201,22 @@ bool saver_on_input(uint64_t now)
     if (!app.saver.on) return false;
     app.saver.on = false;
     if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
-    render_home();
     /* Only swallow once the rain has been up for a moment: the main loop
      * ticks before it drains input, so a keypress aimed at a HOME visible
      * milliseconds ago must still act, not vanish into a wake. */
-    return now - app.saver.since >= 1000;
+    bool swallow = now - app.saver.since >= 1000;
+    /* DEVICE gate (two-gates model): a keystore on the deck means the deck
+     * is locked — the store went cold when the rain came up, and a real
+     * wake lands on the non-skippable device pad, never on HOME. */
+    if (swallow && keystore_state() == KEYSTORE_LOCKED) {
+        unlock_open_gate(now);
+        return true;
+    }
+    /* Rain can cover HOME or the gate pad; repaint whichever is under it
+     * (an early keypress inside the 1 s grace still acts on that screen). */
+    if (app.state == ST_UNLOCK) app.next_anim = 0;
+    else                        render_home();
+    return swallow;
 }
 
 bool saver_tick_home(uint64_t now)
@@ -217,6 +229,29 @@ bool saver_tick_home(uint64_t now)
         app.next_anim = now + ANIM_PERIOD_MS;
         if (!app.saver.on) {
             app.saver.on    = true;   /* input handling keys off what's on screen */
+            app.saver.since = now;
+            /* The deck locks as the rain goes up, so a lifted deck is
+             * already cold. No-op when locked or without a store. */
+            keystore_lock();
+        }
+        render_saver();
+    }
+    return true;
+}
+
+/* Same idle rain, ticked from the DEVICE gate pad (ST_UNLOCK): the pad is
+ * non-skippable and must not sit lit forever — the rain covers it, and
+ * saver_on_input routes the wake straight back onto the pad. */
+bool saver_tick_gate(uint64_t now)
+{
+    if (now - app.saver.last_input <= SAVER_IDLE_MS) {
+        app.saver.on = false;
+        return false;
+    }
+    if (now >= app.next_anim) {
+        app.next_anim = now + ANIM_PERIOD_MS;
+        if (!app.saver.on) {
+            app.saver.on    = true;
             app.saver.since = now;
         }
         render_saver();

@@ -1,10 +1,13 @@
 # Storage auth: PIN unlock and the wrapped key store
 
-**Status: backend landed (roadmap step 1).** The key store, storage
-integration, sim-CLI provisioning, and adopt-on-unlock are implemented and
-tested; the unlock UI and lock triggers (step 2) are not. Code:
+**Status: roadmap steps 1 + 2 landed.** The key store, storage integration,
+sim-CLI provisioning, adopt-on-unlock, the unlock screen (`ST_UNLOCK` PIN
+pad with the set/change-code flow), the lazy connect gate, and the lock
+triggers (boot / saver-wake, `lock.ini`, menu KEYSTORE page) are implemented
+and tested; failed-attempt backoff is not yet. Code:
 `components/storage/keystore.{h,c}` (both builds), integration in
-`storage.c`, CLI in `sim/keystore_cli.c`, tests in `tests/keystore/`.
+`storage.c`, UI in `cyberdeck_app/app_unlock.c` + menu/saver/boot hooks,
+CLI in `sim/keystore_cli.c`, tests in `tests/keystore/`.
 With no `keystore.kv1` present, behavior is bit-identical to before.
 
 Sim CLI (runs headless against `sim_storage/`, exits before SDL):
@@ -249,21 +252,51 @@ littlefs image never needs plaintext:
   costs an attacker <10 % of the search space — acceptable for the
   auto-submit feel. Slot 1 may hold a full passphrase (keyboard-entered) for
   the stronger-offline-story crowd.
-- **Lock triggers, independently configurable**: on boot (default off), on
-  screen-saver wake (default on), lazy on first key-profile use (default
-  on). Password profiles never prompt.
-- **Failed attempts**: exponential backoff after 5, counter persisted across
-  reboots. No auto-wipe.
+- **Two-gates model — a keystore on the deck means the deck is LOCKED.**
+  Nothing to configure (`lock.ini` retired): creating the store *is*
+  opting into the gate, Remove code is opting out. One invariant: *deck
+  unlocked ⇔ store unlocked*. The non-skippable **DEVICE pad**
+  (`// DEVICE` tag) stands at boot, at saver wake, and behind the menu's
+  "Lock deck" panic button; no Esc, no idle-cancel (either would be a
+  bypass) — instead the rain falls over an idle pad for burn safety and
+  wake lands right back on it. Entering the code opens deck and store
+  together; both re-arm the moment the saver engages (a lifted deck is
+  already cold) and at power-off. The saver only runs on an idle HOME or
+  over the gate pad, so a live session is never interrupted — an open
+  session holds the deck open (accepted for v1; in-session idle lock is a
+  future feature). The lazy **CONNECT pad** (`// CONNECT`, Esc or 60 s
+  idle cancels to HOME) survives only as a safety net for a key connect
+  that finds the store locked (races) — in normal use it never appears,
+  since the device gate already unlocked the store. It fires even for a
+  key still sitting as a bare `.pem` (unlock adopts it; plaintext must not
+  bypass the lock), and creating a store adopts existing bare keys
+  immediately for the same reason. Password profiles never prompt on
+  connect — but the deck itself sits behind the gate. Menu set-code flows
+  keep their cancellable pad (`// KEYSTORE` tag, 60 s idle-cancel).
+- **Set/change code on-device**: the same pad walks OLD → NEW → CONFIRM
+  (create skips OLD) from the menu; change = two derivations (~2 s).
+- **Remove code (decommission)**: menu KEYSTORE → Remove code walks the pad
+  once, *proving the code even when the store is unlocked* (it downgrades
+  every key to plaintext), then unwraps each `.kw1` back to a bare `.pem`
+  and deletes `keystore.kv1` — the documented "absent = feature off" state.
+  Any unwrap failure aborts before the header is deleted; a crash mid-way
+  leaves `.pem` + store side by side and the next unlock re-adopts them.
+- **Failed attempts** (not yet implemented): exponential backoff after 5,
+  counter persisted across reboots. No auto-wipe.
 - Empty/absent keystore = feature off, zero behavior change.
 
 ### RAM hygiene
 
 MK and unwrapped PEMs live in **internal SRAM**, never PSRAM (external bus is
 probeable); `crypto_wipe` on lock and after use. The Argon2 work area is
-PSRAM and wiped after derivation. `do_connect_start()` currently keeps the
-PEM in a persistent SPIRAM buffer — with the store it moves to internal RAM
-and is wiped once auth completes. `storage_get_key()` keeps its signature and
-grows a "locked" error so `app_connect` can bounce to the unlock screen.
+PSRAM and wiped after derivation. `do_connect_start()` reads the PEM into an
+internal-SRAM buffer and `do_connect_finish()` wipes it the moment the
+connect worker returns (libssh2 has derived what it needs by then).
+`storage_get_key()` keeps its signature and grows a "locked" error so
+`app_connect` can bounce to the unlock screen. Accepted residue: libssh2's
+custom allocator is SPIRAM-first, so the *parsed* key inside mbedTLS and the
+session's traffic keys can land in PSRAM for the session's lifetime —
+noted for the flash-encryption endgame, not fixable at the app layer.
 
 One measured constraint for the unlock worker: `crypto_argon2` keeps a
 ~1 KiB working block (plus hash state) on the caller's stack — it overflowed
@@ -276,24 +309,33 @@ of stack headroom, never inline in a UI tick.
   PIN lives in a *portable* slot; a 6-digit PIN falls to a patient attacker.
   Closed once the device-bound slot (type 3) replaces the portable PIN slot;
   passphrase slot for the interim.
-- No true shredding on LittleFS (adopt path); no rollback protection.
+- No true shredding on LittleFS: `storage_shred_file()` zero-overwrites
+  before delete (adopt path, key delete, factory reset, remove-code source
+  files), but LittleFS copy-on-write wear-leveling may retire the OLD
+  blocks untouched until reuse — the overwrite is real on the sim host's
+  in-place filesystems and best-effort on device. Same class of residue:
+  every atomic `.ini` rewrite (profiles/wifi hold passwords) strands the
+  replaced file's blocks. All closed by the flash-encryption endgame; no
+  rollback protection either.
 - The sim host's `sim_storage/` is only as safe as the PC (same as `~/.ssh`).
 
 ## Roadmap
 
 1. ~~Key store + sim CLI (testable end-to-end, no UI).~~ **Done** (adopt
    path included — it's backend, not UI).
-2. Unlock screen + lock triggers — the usability gate; nothing on-device
-   works without it.
+2. ~~Unlock screen + lock triggers.~~ **Done** (PIN pad + set/change-code
+   flow, lazy connect gate, boot/wake triggers, `lock.ini`, menu page).
+   Failed-attempt backoff moved to its own step below.
 3. **Device-bound slot (type 3)** — pulled ahead of flash encryption: the
    largest security jump per line of code (kills offline brute-force
    outright), removes the unlock-time RAM/stack pressure, and commits only
    one eFuse block. Includes the HMAC-iteration bench and slot adoption.
-4. Wrap profile passwords / WiFi PSK via `content_type`.
-5. Flash encryption + secure boot — still the endgame, now scoped to what
+4. Failed-attempt backoff (exponential after 5, NVS-persisted counter).
+5. Wrap profile passwords / WiFi PSK via `content_type`.
+6. Flash encryption + secure boot — still the endgame, now scoped to what
    the bound slot cannot cover: adopt-path remnants in reclaimed LittleFS
    blocks, everything else on flash, rollback/reflash protection.
-6. (Independent) remote ssh-agent transport for true off-device custody.
+7. (Independent) remote ssh-agent transport for true off-device custody.
 
 ## Open questions
 

@@ -124,8 +124,7 @@ static int cmd_init(int argc, char **argv)
     }
     printf("keystore created at %s/keystore.kv1\n",
            storage_platform_mount_point());
-    printf("note: existing plaintext keys are adopted on the next unlock "
-           "(--unlock-test)\n");
+    printf("note: existing plaintext keys were adopted into the store\n");
     return 0;
 }
 

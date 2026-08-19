@@ -7,6 +7,7 @@
 #include "app_screens.h"
 #include "app_widgets.h"
 #include "display_fx.h"
+#include "keystore.h"
 #include "wifi_manager.h"
 
 #include "esp_log.h"
@@ -17,10 +18,16 @@
 static const char *TAG = "app_home";
 
 /* Trailing HOME tiles after the profiles: "New profile" only as a first-run
- * shortcut, "Pair keyboard" only while nothing is bonded, Configuration
- * always last. Order resolved by home_extras(). */
-typedef enum { HX_NEW, HX_PAIR, HX_CONFIG } home_extra_t;
-#define HOME_EXTRA_MAX 3
+ * shortcut, "Pair keyboard" only while nothing is bonded, "Lock deck" (the
+ * panic button belongs on HOME, not three taps deep) while a keystore
+ * exists, Configuration always last. Order resolved by home_extras(). */
+typedef enum { HX_NEW, HX_PAIR, HX_LOCK, HX_CONFIG } home_extra_t;
+#define HOME_EXTRA_MAX 4
+
+/* Keystore presence snapshot, refreshed on enter_home(): render_home runs
+ * ~10 Hz and an ABSENT store would stat the filesystem every frame. Store
+ * create/remove always route through other screens, so this stays true. */
+static bool s_ks_present;
 
 /* Resolve the trailing HOME tiles for the current state, in display order.
  * Returns the count; @p out must hold at least HOME_EXTRA_MAX entries. */
@@ -29,6 +36,7 @@ static int home_extras(home_extra_t *out)
     int n = 0;
     if (app.stored_count == 0)          out[n++] = HX_NEW;   /* first-run help */
     if (app.cfg.ble && !app.home.kbd_bonded)   out[n++] = HX_PAIR;  /* not yet bonded */
+    if (s_ks_present)                   out[n++] = HX_LOCK;  /* panic button   */
     out[n++] = HX_CONFIG;                                    /* always, last   */
     return n;
 }
@@ -158,6 +166,10 @@ void render_home(void)
                 ui_tile(cx, cy, g.tw, g.th, "+ Pair keyboard",
                         "tap or long-press", sel);
                 break;
+            case HX_LOCK:
+                ui_pen(OVERLAY_COL_AMBER);
+                ui_tile(cx, cy, g.tw, g.th, "Lock deck", "PIN to wake", sel);
+                break;
             case HX_CONFIG:
                 ui_pen(OVERLAY_COL_CYAN);
                 ui_tile(cx, cy, g.tw, g.th, "Configuration",
@@ -189,11 +201,13 @@ void render_home(void)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    /* Footer legend; pairing hints only when the build has BLE. An active
-     * toast owns the right edge — draw_footer_lim clips clear of it. */
-    const char *hint = app.cfg.ble
-        ? "tap\xB7tap connect \xB7 hold pair \xB7 B pair \xB7 R reload \xB7 W wifi"
-        : "tap\xB7tap connect \xB7 R reload \xB7 W wifi";
+    /* Footer legend; pairing hints only when the build has BLE, the lock
+     * hotkey only with a keystore. An active toast owns the right edge —
+     * draw_footer_lim clips clear of it. */
+    char hint[96];
+    snprintf(hint, sizeof(hint), "tap\xB7tap connect \xB7 %sR reload \xB7 W wifi%s",
+             app.cfg.ble ? "hold pair \xB7 B pair \xB7 " : "",
+             s_ks_present ? " \xB7 L lock" : "");
     if (app.toast[0]) {
         int tx = ui_cols() - ((int)strlen(app.toast) + 2) - 1;
         draw_footer_lim(hint, tx - 1);           /* -1: the taper cell */
@@ -212,6 +226,7 @@ void enter_home(uint64_t now)
 {
     app.state = ST_HOME;
     app.home.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
+    s_ks_present = keystore_state() != KEYSTORE_ABSENT;  /* "Lock deck" tile */
     app.home.next_refresh = 0;
     /* Arriving on HOME counts as activity: a session drop or provisioning
      * toast must live its full lifetime before the rain paints over it. */
@@ -235,6 +250,10 @@ static bool home_activate_extra(int slot, uint64_t now)
     switch (home_extra_kind(slot)) {
     case HX_NEW:    enter_profile(now, -1);              return true;
     case HX_PAIR:   if (app.cfg.ble) enter_pairing(now); return true;
+    case HX_LOCK:                       /* panic: wipe MK, raise the gate */
+        keystore_lock();
+        unlock_open_gate(now);
+        return true;
     case HX_CONFIG: menu_open_config();                  return true;
     default:        return false;
     }
@@ -344,6 +363,10 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
         }
         else if (ch == 'r' || ch == 'R') { load_profiles(); render_home(); }
         else if (ch == 'w' || ch == 'W') { kick_wifi(); render_home(); }
+        else if ((ch == 'l' || ch == 'L') && s_ks_present) {
+            keystore_lock();                /* keyboard panic button */
+            unlock_open_gate(now);
+        }
         break;
     default:
         break;

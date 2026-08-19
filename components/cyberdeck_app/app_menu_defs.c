@@ -17,11 +17,11 @@ static const char *main_items[]     = { "Resume session", "Disconnect", "Configu
 static const uint8_t main_cols[]    = { OVERLAY_COL_GREEN, OVERLAY_COL_AMBER, OVERLAY_COL_CYAN };
 
 static const char *config_items[]   = { "Profiles >", "WiFi >", "Keyboard >", "Effects >",
-                                        "Font >", "System >", "Back" };
+                                        "Font >", "Keystore >", "System >", "Back" };
 static const uint8_t config_cols[]  = { OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
                                         OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
                                         OVERLAY_COL_CYAN, OVERLAY_COL_CYAN,
-                                        OVERLAY_COL_BLUE };
+                                        OVERLAY_COL_CYAN, OVERLAY_COL_BLUE };
 
 static const char *profiles_items[] = { "Add (type here)", "Edit", "Reorder",
                                         "Delete", "Import >", "Back" };
