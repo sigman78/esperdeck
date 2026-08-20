@@ -170,7 +170,7 @@ void test_charset_dec_gfx_ascii_passthrough(void)
 
 void test_tsm_new_basic(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     TEST_ASSERT_NOT_NULL(t);
     TEST_ASSERT_EQUAL_INT(80, tsm_cols(t));
     TEST_ASSERT_EQUAL_INT(24, tsm_rows(t));
@@ -179,7 +179,7 @@ void test_tsm_new_basic(void)
 
 void test_tsm_new_initial_cursor(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
     TEST_ASSERT_EQUAL_UINT8(0, col);
@@ -190,7 +190,7 @@ void test_tsm_new_initial_cursor(void)
 
 void test_tsm_new_initial_cells_blank(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     /* All cells should be spaces with default colors */
     for (int r = 0; r < 24; r++)
         for (int c = 0; c < 80; c++) {
@@ -202,12 +202,12 @@ void test_tsm_new_initial_cells_blank(void)
 
 void test_tsm_new_null_on_zero_cols(void)
 {
-    TEST_ASSERT_NULL(tsm_new(0, 24));
+    TEST_ASSERT_NULL(tsm_new(0, 24, 0));
 }
 
 void test_tsm_new_null_on_zero_rows(void)
 {
-    TEST_ASSERT_NULL(tsm_new(80, 0));
+    TEST_ASSERT_NULL(tsm_new(80, 0, 0));
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
@@ -216,7 +216,7 @@ void test_tsm_new_null_on_zero_rows(void)
 
 void test_print_writes_cell(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "A");
     TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
     tsm_free(t);
@@ -224,7 +224,7 @@ void test_print_writes_cell(void)
 
 void test_print_advances_cursor(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "AB");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -235,7 +235,7 @@ void test_print_advances_cursor(void)
 
 void test_print_auto_wrap(void)
 {
-    tsm_t *t = tsm_new(10, 5);
+    tsm_t *t = tsm_new(10, 5, 0);
     /* Fill first row exactly */
     feed(t, "0123456789");
     /* Next char should wrap to row 1, col 0 */
@@ -246,7 +246,7 @@ void test_print_auto_wrap(void)
 
 void test_print_utf8_two_byte(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     /* U+00E9 é — UTF-8: 0xC3 0xA9 */
     uint8_t bytes[] = {0xC3, 0xA9};
     tsm_feed(t, bytes, 2);
@@ -256,7 +256,7 @@ void test_print_utf8_two_byte(void)
 
 void test_print_utf8_three_byte(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     /* U+2500 ─ — UTF-8: 0xE2 0x94 0x80 */
     uint8_t bytes[] = {0xE2, 0x94, 0x80};
     tsm_feed(t, bytes, 3);
@@ -270,7 +270,7 @@ void test_print_utf8_three_byte(void)
 
 void test_c0_cr(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "ABC\r");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -281,7 +281,7 @@ void test_c0_cr(void)
 
 void test_c0_lf_moves_down(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\n");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -291,7 +291,7 @@ void test_c0_lf_moves_down(void)
 
 void test_c0_bs_moves_left(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "AB\x08");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -301,7 +301,7 @@ void test_c0_bs_moves_left(void)
 
 void test_c0_ht_tab_stop(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\t");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -311,7 +311,7 @@ void test_c0_ht_tab_stop(void)
 
 void test_c0_lf_scrolls_at_bottom(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "A\r\nB\r\nC\r\n");
     /* After CR+LF at bottom row, rows scroll up: row0='B', row1='C', row2=blank */
     TEST_ASSERT_EQUAL_HEX16('B', cp_at(t, 0, 0));
@@ -326,7 +326,7 @@ void test_c0_lf_scrolls_at_bottom(void)
 
 void test_csi_cup_moves_cursor(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[5;10H");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -337,7 +337,7 @@ void test_csi_cup_moves_cursor(void)
 
 void test_csi_cup_default_params(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "ABCDE");
     feed(t, "\x1b[H");  /* home */
     int col, row; bool vis;
@@ -349,7 +349,7 @@ void test_csi_cup_default_params(void)
 
 void test_csi_cursor_up(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[5;1H\x1b[2A");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -359,7 +359,7 @@ void test_csi_cursor_up(void)
 
 void test_csi_cursor_down(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[3B");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -369,7 +369,7 @@ void test_csi_cursor_down(void)
 
 void test_csi_cursor_forward(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[5C");
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -379,7 +379,7 @@ void test_csi_cursor_forward(void)
 
 void test_csi_cursor_backward(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[1;10H\x1b[3D");   /* row 1 col 10 (1-based), then back 3 */
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -389,7 +389,7 @@ void test_csi_cursor_backward(void)
 
 void test_csi_cha(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "ABCDE\x1b[3G");  /* CHA: move to col 3 (1-based) */
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
@@ -403,7 +403,7 @@ void test_csi_cha(void)
 
 void test_csi_ed2_clears_screen(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "AAAA\nBBBB\nCCCC");
     feed(t, "\x1b[2J");
     for (int r = 0; r < 3; r++)
@@ -414,7 +414,7 @@ void test_csi_ed2_clears_screen(void)
 
 void test_csi_el0_erase_to_end_of_line(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "ABCDEFGHIJ");
     feed(t, "\x1b[1;4H\x1b[K");  /* move to col 4 row 1, erase to end */
     /* cols 0-2 = 'A','B','C'; cols 3-9 = ' ' */
@@ -428,7 +428,7 @@ void test_csi_el0_erase_to_end_of_line(void)
 
 void test_csi_el1_erase_to_start_of_line(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "ABCDEFGHIJ");
     feed(t, "\x1b[1;5H\x1b[1K");  /* move to col 5, erase to start */
     /* cols 0-4 = ' '; cols 5-9 = 'F'-'J' */
@@ -440,7 +440,7 @@ void test_csi_el1_erase_to_start_of_line(void)
 
 void test_csi_el2_erase_full_line(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "ABCDEFGHIJ");
     feed(t, "\x1b[2K");
     for (int c = 0; c < 10; c++)
@@ -454,7 +454,7 @@ void test_csi_el2_erase_full_line(void)
 
 void test_sgr_bold(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[1mA");
     TEST_ASSERT_BITS(CELL_ATTR_BOLD, CELL_ATTR_BOLD, cell(t, 0, 0).attrs);
     tsm_free(t);
@@ -462,7 +462,7 @@ void test_sgr_bold(void)
 
 void test_sgr_reset(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[1;4mA\x1b[0mB");
     TEST_ASSERT_BITS(CELL_ATTR_BOLD | CELL_ATTR_UNDERLINE, CELL_ATTR_BOLD | CELL_ATTR_UNDERLINE,
                      cell(t, 0, 0).attrs);
@@ -472,7 +472,7 @@ void test_sgr_reset(void)
 
 void test_sgr_256_fg(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[38;5;196mA");  /* 256-color fg: index 196 = bright red */
     uint16_t expected = color_ansi(196);
     TEST_ASSERT_EQUAL_HEX16(expected, cell(t, 0, 0).fg);
@@ -481,7 +481,7 @@ void test_sgr_256_fg(void)
 
 void test_sgr_256_bg(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[48;5;21mA");  /* 256-color bg: index 21 = bright blue */
     uint16_t expected = color_ansi(21);
     TEST_ASSERT_EQUAL_HEX16(expected, cell(t, 0, 0).bg);
@@ -490,7 +490,7 @@ void test_sgr_256_bg(void)
 
 void test_sgr_truecolor_fg(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[38;2;255;0;0mA");  /* truecolor red */
     TEST_ASSERT_EQUAL_HEX16(color_rgb(255, 0, 0), cell(t, 0, 0).fg);
     tsm_free(t);
@@ -498,7 +498,7 @@ void test_sgr_truecolor_fg(void)
 
 void test_sgr_default_colors_restored(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[31;42mA\x1b[39;49mB");  /* set fg+bg, then reset both */
     TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 1, 0).fg);
     TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 1, 0).bg);
@@ -511,7 +511,7 @@ void test_sgr_default_colors_restored(void)
 
 void test_scroll_region_decstbm(void)
 {
-    tsm_t *t = tsm_new(10, 5);
+    tsm_t *t = tsm_new(10, 5, 0);
     /* Set scroll region rows 2-4 (1-based) */
     feed(t, "\x1b[2;4r");
     /* Put content in rows */
@@ -531,7 +531,7 @@ void test_scroll_region_decstbm(void)
 
 void test_csi_su_scroll_up(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC");
     feed(t, "\x1b[1S");  /* scroll up 1 */
     TEST_ASSERT_EQUAL_HEX16('B', cp_at(t, 0, 0));
@@ -542,7 +542,7 @@ void test_csi_su_scroll_up(void)
 
 void test_csi_sd_scroll_down(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC");
     feed(t, "\x1b[1T");  /* scroll down 1 */
     TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
@@ -566,7 +566,7 @@ static void rotate_ring(tsm_t *t, int n)
 
 void test_ring_scroll_wraps_past_rows(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     /* ls-style: print at bottom, CRLF, repeat — 4 scrolls on a 3-row grid
      * wraps the base (4 % 3 = 1). */
     feed(t, "\x1b[3;1H");
@@ -582,7 +582,7 @@ void test_ring_scroll_wraps_past_rows(void)
 
 void test_ring_alt_screen_roundtrip(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     rotate_ring(t, 2);                       /* primary base = 2 */
     feed(t, "\x1b[1;1HP\x1b[2;1HQ\x1b[3;1HR");
     feed(t, "\x1b[?1049h");                  /* enter alt */
@@ -597,7 +597,7 @@ void test_ring_alt_screen_roundtrip(void)
 
 void test_ring_then_decstbm_partial_scroll(void)
 {
-    tsm_t *t = tsm_new(10, 5);
+    tsm_t *t = tsm_new(10, 5, 0);
     rotate_ring(t, 2);                       /* base = 2 */
     feed(t, "\x1b[2;4r");                    /* region rows 2-4 (1-based) */
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC\x1b[4;1HD\x1b[5;1HE");
@@ -612,7 +612,7 @@ void test_ring_then_decstbm_partial_scroll(void)
 
 void test_ring_then_insert_delete_lines(void)
 {
-    tsm_t *t = tsm_new(10, 4);
+    tsm_t *t = tsm_new(10, 4, 0);
     rotate_ring(t, 1);                       /* base = 1 */
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC\x1b[4;1HD");
     feed(t, "\x1b[2;1H\x1b[2L");             /* insert 2 lines at row 2 */
@@ -630,7 +630,7 @@ void test_ring_then_insert_delete_lines(void)
 
 void test_ring_then_insert_delete_chars(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     rotate_ring(t, 1);
     feed(t, "\x1b[2;1HABCDEF");
     feed(t, "\x1b[2;3H\x1b[2P");             /* DCH 2 at col 3 */
@@ -647,7 +647,7 @@ void test_ring_then_insert_delete_chars(void)
 
 void test_ring_reverse_index_wraps_negative(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "\x1b[1;1HA\x1b[2;1HB");
     feed(t, "\x1b[1;1H\x1bM");               /* RI at top: base 0 -> rows-1 */
     TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
@@ -662,7 +662,7 @@ void test_ring_reverse_index_wraps_negative(void)
 
 void test_print_span_wraps_across_rows(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     /* 25 chars from col 6 (0-based 5): fills cols 5-9, wraps twice. */
     feed(t, "\x1b[1;6HABCDEFGHIJKLMNOPQRSTUVWXY");
     TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 5, 0));
@@ -681,7 +681,7 @@ void test_print_span_wraps_across_rows(void)
 
 void test_print_span_autowrap_off_parks_at_margin(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "\x1b[?7l");                     /* DECAWM off */
     feed(t, "\x1b[2;6HABCDEFGHIJ");          /* 10 chars from col 5 */
     TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 5, 1));
@@ -698,7 +698,7 @@ void test_print_span_autowrap_off_parks_at_margin(void)
 
 void test_print_span_wrap_scrolls_ring_at_bottom(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     /* 15 chars at the bottom row: wraps once, scrolling the full screen —
      * 'top' (row 0) scrolls off, the filled row lands on row 1. */
     feed(t, "\x1b[1;1Htop");
@@ -713,7 +713,7 @@ void test_print_span_wrap_scrolls_ring_at_bottom(void)
 
 void test_ring_hard_reset_clears_base(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     rotate_ring(t, 2);
     feed(t, "\x1b[1;1HA");
     feed(t, "\x1b" "c");                     /* RIS */
@@ -730,7 +730,7 @@ void test_ring_hard_reset_clears_base(void)
 
 void test_csi_il_insert_line(void)
 {
-    tsm_t *t = tsm_new(10, 4);
+    tsm_t *t = tsm_new(10, 4, 0);
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC\x1b[4;1HD");
     feed(t, "\x1b[2;1H\x1b[1L");  /* cursor row 2, insert 1 line */
     TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
@@ -742,7 +742,7 @@ void test_csi_il_insert_line(void)
 
 void test_csi_dl_delete_line(void)
 {
-    tsm_t *t = tsm_new(10, 4);
+    tsm_t *t = tsm_new(10, 4, 0);
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC\x1b[4;1HD");
     feed(t, "\x1b[2;1H\x1b[1M");  /* cursor row 2, delete 1 line */
     TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
@@ -754,7 +754,7 @@ void test_csi_dl_delete_line(void)
 
 void test_csi_ich_insert_chars(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "ABCDE");
     feed(t, "\x1b[1;3H\x1b[2@");  /* pos col 3, insert 2 chars */
     TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
@@ -767,7 +767,7 @@ void test_csi_ich_insert_chars(void)
 
 void test_csi_dch_delete_chars(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "ABCDE");
     feed(t, "\x1b[1;2H\x1b[2P");  /* pos col 2, delete 2 chars */
     TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
@@ -783,7 +783,7 @@ void test_csi_dch_delete_chars(void)
 
 void test_decsc_decrc(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[5;10H\x1b""7");   /* move to (10,5) then DECSC */
     feed(t, "\x1b[1;1H");           /* move away */
     feed(t, "\x1b""8");             /* DECRC */
@@ -800,7 +800,7 @@ void test_decsc_decrc(void)
 
 void test_alt_screen_switch(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "Primary");
     feed(t, "\x1b[?1049h");  /* switch to alt screen */
     /* Alt screen should be blank */
@@ -819,7 +819,7 @@ void test_alt_screen_switch(void)
 
 void test_dectcem_hide_show(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     bool vis; int c, r;
     feed(t, "\x1b[?25l");   /* hide cursor */
     tsm_cursor(t, &c, &r, &vis);
@@ -836,7 +836,7 @@ void test_dectcem_hide_show(void)
 
 void test_esc_ri_reverse_index(void)
 {
-    tsm_t *t = tsm_new(10, 5);
+    tsm_t *t = tsm_new(10, 5, 0);
     feed(t, "\x1b[3;1H");  /* row 3 */
     feed(t, "\x1bM");       /* RI — reverse index */
     int col, row; bool vis;
@@ -847,7 +847,7 @@ void test_esc_ri_reverse_index(void)
 
 void test_esc_ri_scrolls_at_top(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC");
     feed(t, "\x1b[1;1H\x1bM");  /* RI at top of screen → scroll down */
     TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));  /* new blank row at top */
@@ -858,7 +858,7 @@ void test_esc_ri_scrolls_at_top(void)
 
 void test_esc_nel(void)
 {
-    tsm_t *t = tsm_new(10, 5);
+    tsm_t *t = tsm_new(10, 5, 0);
     feed(t, "\x1b[1;5H");   /* col 5, row 1 */
     feed(t, "\x1b" "E");     /* NEL — next line */
     int col, row; bool vis;
@@ -874,7 +874,7 @@ void test_esc_nel(void)
 
 void test_charset_dec_gfx_active(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b(0");   /* designate G0 = DEC Special Graphics */
     feed(t, "q");        /* 'q' → U+2500 ─ */
     TEST_ASSERT_EQUAL_HEX16(0x2500, cp_at(t, 0, 0));
@@ -890,7 +890,7 @@ void test_charset_dec_gfx_active(void)
 
 void test_dirty_after_print(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     tsm_clear_dirty(t);
     feed(t, "ABC");
     const tsm_row_dirty_t *d = tsm_dirty(t);
@@ -903,7 +903,7 @@ void test_dirty_after_print(void)
 
 void test_dirty_cleared(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "ABC");
     tsm_clear_dirty(t);
     const tsm_row_dirty_t *d = tsm_dirty(t);
@@ -918,7 +918,7 @@ void test_dirty_cleared(void)
 
 void test_esc_ris_full_reset(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "\x1b[1mABCDE");
     feed(t, "\x1b" "c");  /* RIS */
     int col, row; bool vis;
@@ -956,7 +956,7 @@ static void clear_response(void)
 
 void test_da1_response(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     clear_response();
     tsm_set_response_cb(t, capture_response, NULL);
     feed(t, "\x1b[c");   /* DA1 — no param */
@@ -967,7 +967,7 @@ void test_da1_response(void)
 
 void test_da1_param0(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     clear_response();
     tsm_set_response_cb(t, capture_response, NULL);
     feed(t, "\x1b[0c");  /* DA1 — param 0, same reply */
@@ -978,7 +978,7 @@ void test_da1_param0(void)
 
 void test_dsr_status(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     clear_response();
     tsm_set_response_cb(t, capture_response, NULL);
     feed(t, "\x1b[5n");  /* DSR — status report */
@@ -989,7 +989,7 @@ void test_dsr_status(void)
 
 void test_dsr_cpr(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     clear_response();
     tsm_set_response_cb(t, capture_response, NULL);
     feed(t, "\x1b[3;6H");  /* move to row=3, col=6 (1-based) */
@@ -1002,7 +1002,7 @@ void test_dsr_cpr(void)
 
 void test_no_response_when_cb_null(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     /* No callback set — must not crash */
     feed(t, "\x1b[c");
     feed(t, "\x1b[5n");
@@ -1017,7 +1017,7 @@ void test_no_response_when_cb_null(void)
 /* switch_to_primary marks rows dirty → display updates */
 void test_alt_screen_exit_marks_dirty(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "HELLO");
     tsm_clear_dirty(t);          /* simulate post-flush state */
     feed(t, "\x1b[?1049h");     /* enter alt screen */
@@ -1033,7 +1033,7 @@ void test_alt_screen_exit_marks_dirty(void)
 /* ?47l exits alt screen */
 void test_alt_screen_47_exit(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "HELLO");
     feed(t, "\x1b[?47h");   /* enter alt screen */
     TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
@@ -1045,7 +1045,7 @@ void test_alt_screen_47_exit(void)
 /* ?1047l exits alt screen */
 void test_alt_screen_1047_exit(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "HELLO");
     feed(t, "\x1b[?1047h");
     feed(t, "\x1b[?1047l");
@@ -1056,7 +1056,7 @@ void test_alt_screen_1047_exit(void)
 /* Hard reset from alt screen: t->cells is primary, display is blank */
 void test_reset_from_alt_screen(void)
 {
-    tsm_t *t = tsm_new(10, 3);
+    tsm_t *t = tsm_new(10, 3, 0);
     feed(t, "\x1b[?1049h");   /* enter alt */
     feed(t, "ALT");
     tsm_reset(t);
@@ -1075,14 +1075,14 @@ void test_reset_from_alt_screen(void)
 
 void test_sync_initial_state(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     TEST_ASSERT_FALSE(tsm_sync_update(t));
     tsm_free(t);
 }
 
 void test_sync_mode_bsu(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[?2026h");
     TEST_ASSERT_TRUE(tsm_sync_update(t));
     tsm_free(t);
@@ -1090,7 +1090,7 @@ void test_sync_mode_bsu(void)
 
 void test_sync_mode_esu(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[?2026l");
     TEST_ASSERT_FALSE(tsm_sync_update(t));
     tsm_free(t);
@@ -1098,7 +1098,7 @@ void test_sync_mode_esu(void)
 
 void test_sync_bsu_esu_roundtrip(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[?2026h");
     TEST_ASSERT_TRUE(tsm_sync_update(t));
     feed(t, "\x1b[?2026l");
@@ -1108,7 +1108,7 @@ void test_sync_bsu_esu_roundtrip(void)
 
 void test_sync_decrqm_inactive(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     clear_response();
     tsm_set_response_cb(t, capture_response, NULL);
     feed(t, "\x1b[?2026$p");
@@ -1120,7 +1120,7 @@ void test_sync_decrqm_inactive(void)
 
 void test_sync_decrqm_active(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[?2026h");
     clear_response();
     tsm_set_response_cb(t, capture_response, NULL);
@@ -1133,11 +1133,250 @@ void test_sync_decrqm_active(void)
 
 void test_sync_reset_clears_mode(void)
 {
-    tsm_t *t = tsm_new(80, 24);
+    tsm_t *t = tsm_new(80, 24, 0);
     feed(t, "\x1b[?2026h");
     TEST_ASSERT_TRUE(tsm_sync_update(t));
     tsm_reset(t);
     TEST_ASSERT_FALSE(tsm_sync_update(t));
+    tsm_free(t);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * scrollback
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/* Fill a 3-row terminal with numbered lines so history is identifiable.
+ * The newline goes BEFORE each line rather than after: a trailing newline
+ * would scroll once more and leave a blank row on screen, making every
+ * expectation below one off from what you would naively write. So n lines
+ * leaves exactly n-3..n-1 on screen and 0..n-4 in history. */
+static tsm_t *sb_term(int sb_lines, int nlines)
+{
+    tsm_t *t = tsm_new(10, 3, sb_lines);
+    if (!t) return NULL;
+    for (int i = 0; i < nlines; i++) {
+        char line[16];
+        snprintf(line, sizeof(line), "%s%d", i ? "\r\n" : "", i);
+        feed(t, line);
+    }
+    return t;
+}
+
+/* First codepoint of a view row, as the digit it encodes. */
+static int row_digit(tsm_t *t, int row)
+{
+    return (int)tsm_row(t, row)[0].cp - '0';
+}
+
+/* Built with scrollback off, every entry point must be inert rather than
+ * merely unused — the ring pointer is NULL and nothing may dereference it. */
+void test_sb_disabled_stores_nothing(void)
+{
+    tsm_t *t = sb_term(0, 10);
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_capacity(t));
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_len(t));
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_scroll(t, 5));
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_scroll(t, -5));
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_offset(t));
+    tsm_sb_reset(t);
+
+    /* The view is still the live grid, and the clear paths still work. */
+    TEST_ASSERT_EQUAL_UINT16('7', tsm_row(t, 0)[0].cp);
+    feed(t, "\x1b[3J");
+    feed(t, "\x1b" "c");
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_len(t));
+    tsm_free(t);
+}
+
+/* Capacity is what was allocated; length is what has accumulated. The app
+ * keys off capacity, so the two must not be conflated. */
+void test_sb_capacity_distinct_from_length(void)
+{
+    tsm_t *t = tsm_new(10, 3, 50);
+    TEST_ASSERT_EQUAL_INT(50, tsm_sb_capacity(t));
+    TEST_ASSERT_EQUAL_INT(0,  tsm_sb_len(t));      /* fresh: nothing yet */
+    feed(t, "a\r\nb\r\nc\r\nd");
+    TEST_ASSERT_EQUAL_INT(50, tsm_sb_capacity(t)); /* unchanged by use   */
+    TEST_ASSERT_EQUAL_INT(1,  tsm_sb_len(t));
+    tsm_free(t);
+}
+
+void test_sb_accumulates_evicted_rows(void)
+{
+    /* 6 lines on a 3-row screen: 3,4,5 stay visible, 0,1,2 become history. */
+    tsm_t *t = sb_term(100, 6);
+    TEST_ASSERT_EQUAL_INT(3, tsm_sb_len(t));
+    tsm_free(t);
+}
+
+void test_sb_capacity_caps_length(void)
+{
+    tsm_t *t = sb_term(2, 20);
+    TEST_ASSERT_EQUAL_INT(2, tsm_sb_len(t));
+    tsm_free(t);
+}
+
+void test_sb_scroll_reveals_history(void)
+{
+    tsm_t *t = sb_term(100, 6);        /* screen shows 3,4,5; history 0,1,2 */
+    TEST_ASSERT_EQUAL_INT(3, row_digit(t, 0));
+
+    TEST_ASSERT_EQUAL_INT(1, tsm_sb_scroll(t, 1));
+    TEST_ASSERT_EQUAL_INT(2, row_digit(t, 0));   /* one row of history */
+    TEST_ASSERT_EQUAL_INT(3, row_digit(t, 1));   /* live grid shifted down */
+    TEST_ASSERT_EQUAL_INT(4, row_digit(t, 2));
+
+    TEST_ASSERT_EQUAL_INT(3, tsm_sb_scroll(t, 2));
+    TEST_ASSERT_EQUAL_INT(0, row_digit(t, 0));   /* oldest stored row */
+    TEST_ASSERT_EQUAL_INT(1, row_digit(t, 1));
+    TEST_ASSERT_EQUAL_INT(2, row_digit(t, 2));
+    tsm_free(t);
+}
+
+void test_sb_scroll_clamps_both_ends(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    TEST_ASSERT_EQUAL_INT(3, tsm_sb_scroll(t, 999));   /* clamped to sb_len */
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_scroll(t, -999));  /* clamped to live   */
+    tsm_free(t);
+}
+
+void test_sb_reset_returns_to_live(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    tsm_sb_scroll(t, 2);
+    tsm_sb_reset(t);
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_offset(t));
+    TEST_ASSERT_EQUAL_INT(3, row_digit(t, 0));
+    tsm_free(t);
+}
+
+/* Output arriving while scrolled back must not drag the view forward. */
+void test_sb_view_holds_content_as_ring_grows(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    tsm_sb_scroll(t, 2);
+    int top = row_digit(t, 0);
+    TEST_ASSERT_EQUAL_INT(1, top);
+
+    feed(t, "9\r\n");
+    TEST_ASSERT_EQUAL_INT(3, tsm_sb_offset(t));   /* followed the ring */
+    TEST_ASSERT_EQUAL_INT(top, row_digit(t, 0));  /* same content on screen */
+    tsm_free(t);
+}
+
+/* Alt-screen apps repaint their own viewport; that is not session history. */
+void test_sb_alt_screen_does_not_feed_history(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    int before = tsm_sb_len(t);
+
+    feed(t, "\x1b[?1049h");                       /* enter alt screen */
+    feed(t, "a\r\nb\r\nc\r\nd\r\ne\r\n");         /* scrolls the alt grid */
+    TEST_ASSERT_EQUAL_INT(before, tsm_sb_len(t));
+
+    feed(t, "\x1b[?1049l");                       /* back to primary  */
+    TEST_ASSERT_EQUAL_INT(before, tsm_sb_len(t));
+    tsm_free(t);
+}
+
+void test_sb_scroll_refused_on_alt_screen(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    feed(t, "\x1b[?1049h");
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_scroll(t, 2));
+    tsm_free(t);
+}
+
+/* Entering the alt screen while scrolled back must snap to live, or the
+ * app would draw into a viewport partly showing history. */
+void test_sb_alt_screen_entry_snaps_to_live(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    tsm_sb_scroll(t, 2);
+    feed(t, "\x1b[?1049h");
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_offset(t));
+    tsm_free(t);
+}
+
+/* ED 2 is what a full-screen app or `clear` sends on the way out; it must
+ * leave history alone. Sharing a case body with ED 3 once made quitting mc
+ * wipe the whole buffer. */
+void test_sb_ed2_keeps_history(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    int before = tsm_sb_len(t);
+    TEST_ASSERT_GREATER_THAN_INT(0, before);
+    feed(t, "\x1b[2J");
+    TEST_ASSERT_EQUAL_INT(before, tsm_sb_len(t));
+    feed(t, "\x1b[J");                            /* ED 0, default param */
+    feed(t, "\x1b[1J");                           /* ED 1                */
+    TEST_ASSERT_EQUAL_INT(before, tsm_sb_len(t));
+    tsm_free(t);
+}
+
+/* The full quit-a-full-screen-app sequence, in the order a real one sends
+ * it: alt screen, redraw, clear, leave. History must come back untouched. */
+void test_sb_survives_alt_screen_app_exit(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    int before = tsm_sb_len(t);
+
+    feed(t, "\x1b[?1049h");                       /* enter alt        */
+    feed(t, "panel\r\npanel\r\npanel\r\npanel");  /* app draws        */
+    feed(t, "\x1b[2J");                           /* app clears       */
+    feed(t, "\x1b[?1049l");                       /* leave alt        */
+
+    TEST_ASSERT_EQUAL_INT(before, tsm_sb_len(t));
+    TEST_ASSERT_EQUAL_INT(before, tsm_sb_scroll(t, before));
+    tsm_free(t);
+}
+
+void test_sb_ed3_clears_history(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    TEST_ASSERT_GREATER_THAN_INT(0, tsm_sb_len(t));
+    feed(t, "\x1b[3J");
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_len(t));
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_offset(t));
+    tsm_free(t);
+}
+
+void test_sb_hard_reset_clears_history(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    tsm_sb_scroll(t, 2);
+    feed(t, "\x1b" "c");                          /* RIS ('c' would extend the hex escape) */
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_len(t));
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_offset(t));
+    tsm_free(t);
+}
+
+/* A scroll region is an app managing a pane, not the session scrolling. */
+void test_sb_partial_region_scroll_is_not_history(void)
+{
+    tsm_t *t = tsm_new(10, 5, 100);
+    feed(t, "\x1b[2;4r");                         /* DECSTBM rows 2..4 */
+    feed(t, "\x1b[4;1H");                         /* park on region bottom */
+    feed(t, "a\r\nb\r\nc\r\nd\r\n");
+    TEST_ASSERT_EQUAL_INT(0, tsm_sb_len(t));
+    tsm_free(t);
+}
+
+/* The ring wraps; history must still read oldest-to-newest across the seam. */
+void test_sb_ring_wraps_in_order(void)
+{
+    tsm_t *t = sb_term(3, 20);                    /* far more lines than slots */
+    TEST_ASSERT_EQUAL_INT(3, tsm_sb_len(t));
+
+    /* 20 lines on a 3-row screen: 17,18,19 live, so history holds 14,15,16. */
+    tsm_sb_scroll(t, 3);
+    TEST_ASSERT_EQUAL_UINT16('1', tsm_row(t, 0)[0].cp);
+    TEST_ASSERT_EQUAL_UINT16('4', tsm_row(t, 0)[1].cp);
+    TEST_ASSERT_EQUAL_UINT16('1', tsm_row(t, 1)[0].cp);
+    TEST_ASSERT_EQUAL_UINT16('5', tsm_row(t, 1)[1].cp);
+    TEST_ASSERT_EQUAL_UINT16('1', tsm_row(t, 2)[0].cp);
+    TEST_ASSERT_EQUAL_UINT16('6', tsm_row(t, 2)[1].cp);
     tsm_free(t);
 }
 
@@ -1285,6 +1524,25 @@ int main(void)
     RUN_TEST(test_sync_decrqm_inactive);
     RUN_TEST(test_sync_decrqm_active);
     RUN_TEST(test_sync_reset_clears_mode);
+
+    /* scrollback */
+    RUN_TEST(test_sb_disabled_stores_nothing);
+    RUN_TEST(test_sb_capacity_distinct_from_length);
+    RUN_TEST(test_sb_accumulates_evicted_rows);
+    RUN_TEST(test_sb_capacity_caps_length);
+    RUN_TEST(test_sb_scroll_reveals_history);
+    RUN_TEST(test_sb_scroll_clamps_both_ends);
+    RUN_TEST(test_sb_reset_returns_to_live);
+    RUN_TEST(test_sb_view_holds_content_as_ring_grows);
+    RUN_TEST(test_sb_alt_screen_does_not_feed_history);
+    RUN_TEST(test_sb_scroll_refused_on_alt_screen);
+    RUN_TEST(test_sb_alt_screen_entry_snaps_to_live);
+    RUN_TEST(test_sb_ed2_keeps_history);
+    RUN_TEST(test_sb_survives_alt_screen_app_exit);
+    RUN_TEST(test_sb_ed3_clears_history);
+    RUN_TEST(test_sb_hard_reset_clears_history);
+    RUN_TEST(test_sb_partial_region_scroll_is_not_history);
+    RUN_TEST(test_sb_ring_wraps_in_order);
 
     return UNITY_END();
 }

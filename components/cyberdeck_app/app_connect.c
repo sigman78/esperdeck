@@ -7,6 +7,7 @@
 #include "app_screens.h"
 #include "app_widgets.h"
 #include "display_fx.h"
+#include "font.h"        /* font_height() — drag pixels to terminal rows */
 #include "keystore.h"
 #include "ssh_client.h"
 #include "vterm.h"
@@ -78,16 +79,50 @@ static void render_connecting(const char *msg, uint64_t now)
     ui_present();
 }
 
-static void render_session_toast(uint64_t now)
+#define SCROLLBAR_LINGER_MS  1400
+
+static uint64_t s_scrollbar_until;   /* 0 = not showing */
+
+/* Drag travel not yet spent, in pixel-percent (px * SCROLL_SPEED_PCT). */
+static int s_scroll_accum;
+
+#ifndef CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT
+#define CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT 100
+#endif
+#define SCROLL_SPEED_PCT  CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT
+
+void session_scroll_seen(uint64_t now)
 {
-    if (now >= app.toast_until || !app.toast[0]) {
+    s_scrollbar_until = now + SCROLLBAR_LINGER_MS;
+}
+
+/* Toast and scrollback indicator share the overlay, so one clear/present
+ * pass draws both. */
+static void render_session_chrome(uint64_t now)
+{
+    const bool toast_on = now < app.toast_until && app.toast[0];
+    const bool bar_on   = s_scrollbar_until && now < s_scrollbar_until &&
+                          vterm_scroll_len() > 0;
+    if (!s_scrollbar_until || now >= s_scrollbar_until) s_scrollbar_until = 0;
+
+    if (!toast_on && !bar_on) {
         if (app.state == ST_SESSION) ui_hide();
         return;
     }
-    /* Amber chip with a powerline taper — same ui_chip as the HOME toast,
-     * so the one element shown on both screens renders identically. */
+
     ui_colors(UI_FG, UI_BG);
     ui_clear();
+
+    if (bar_on)
+        draw_scrollbar(vterm_scroll_offset(), vterm_scroll_len());
+
+    if (!toast_on) {
+        ui_present();
+        return;
+    }
+
+    /* Amber chip with a powerline taper — same ui_chip as the HOME toast,
+     * so the one element shown on both screens renders identically. */
     int x = ui_cols() - ((int)strlen(app.toast) + 2) - 1;
     ui_pen(OVERLAY_COL_AMBER);
     if (app.toast_ok) {
@@ -212,7 +247,7 @@ static void enter_session(uint64_t now)
     toast(now, "%s - F12 or long-press for menu",
           HELLO[app.anim_frame % (sizeof(HELLO) / sizeof(HELLO[0]))]);
     app.toast_ok = true;       /* garnish with the spinner-to-checkmark */
-    render_session_toast(now);
+    render_session_chrome(now);
 }
 
 /* Key PEMs are read on the shell task (the connect worker has a PSRAM
@@ -403,7 +438,7 @@ void session_tick(uint64_t now)
         }
         return;
     }
-    render_session_toast(now);
+    render_session_chrome(now);
 }
 
 void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
@@ -433,6 +468,35 @@ void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
         menu_open(now);
         return;
     }
-    if (ev->type == CYBERDECK_INPUT_KEY)
-        ssh_client_send(ev->buf, ev->len);
+    /* Right-edge drag, content-follows-finger: down pulls older lines in.
+     * Pixels accumulate because the touch task polls at 50 ms — converting
+     * each small dy on its own would floor to zero and a slow drag would
+     * never scroll. */
+    if (ev->type == CYBERDECK_INPUT_SCROLL) {
+        s_scroll_accum += (int)ev->dy * SCROLL_SPEED_PCT;
+        const int per_row = font_height() * 100;
+        int rows = s_scroll_accum / per_row;
+        if (rows) {
+            s_scroll_accum -= rows * per_row;
+            vterm_scroll(rows);
+            session_scroll_seen(now);
+        }
+        return;
+    }
+
+    if (ev->type != CYBERDECK_INPUT_KEY) return;
+
+    /* Paging is local, but only in builds that have scrollback — otherwise
+     * these keys belong to the remote. Capacity, not length: length is also
+     * 0 on a fresh session. */
+    if ((k == K_SCROLL_UP || k == K_SCROLL_DOWN) && vterm_scroll_capacity() > 0) {
+        vterm_scroll_page(k == K_SCROLL_UP ? +1 : -1);
+        session_scroll_seen(now);
+        return;
+    }
+
+    /* Any other key snaps to live, and is still sent. */
+    vterm_scroll_reset();
+
+    ssh_client_send(ev->buf, ev->len);
 }

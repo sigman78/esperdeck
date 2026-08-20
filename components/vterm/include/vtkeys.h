@@ -1,0 +1,61 @@
+/*
+ * vtkeys -- logical key + modifiers -> terminal byte sequence.
+ *
+ * The two keyboard backends have nothing in common below this line: the
+ * device reads HID usage IDs over BLE, the simulator reads SDL keysyms.
+ * Both need the SAME bytes on the wire, so both reduce their keycode to a
+ * vtkey_t plus a modifier mask and call vtkeys_encode(). Encoding rules
+ * live here once; adding a key or fixing a sequence is a single edit.
+ *
+ * Printable characters are NOT handled here — those stay with the backend
+ * that owns the keyboard layout.
+ */
+
+#ifndef VTKEYS_H
+#define VTKEYS_H
+
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
+/* Keys that have an escape sequence. Order is free; nothing persists it. */
+typedef enum {
+    VTKEY_NONE = 0,
+    /* Cursor + nav "letter family" — final byte A/B/C/D/H/F */
+    VTKEY_UP, VTKEY_DOWN, VTKEY_RIGHT, VTKEY_LEFT,
+    VTKEY_HOME, VTKEY_END,
+    /* "Tilde family" — CSI <n> ~ */
+    VTKEY_INSERT, VTKEY_DELETE, VTKEY_PGUP, VTKEY_PGDN,
+    /* Function keys */
+    VTKEY_F1, VTKEY_F2,  VTKEY_F3,  VTKEY_F4,
+    VTKEY_F5, VTKEY_F6,  VTKEY_F7,  VTKEY_F8,
+    VTKEY_F9, VTKEY_F10, VTKEY_F11, VTKEY_F12,
+} vtkey_t;
+
+/* Modifier mask. Values are the xterm bit weights: the parameter sent is
+ * 1 + mask, so shift alone is 2, ctrl alone is 5, ctrl+shift is 6. */
+#define VTMOD_SHIFT  0x01u
+#define VTMOD_ALT    0x02u
+#define VTMOD_CTRL   0x04u
+
+/* Longest sequence produced: ESC [ 2 4 ; 8 ~ (ctrl+alt+shift F12) = 7.
+ * INPUT_EVENT_MAX_LEN is 8, so an input-queue buffer is always big enough. */
+#define VTKEYS_MAX_LEN  8
+
+/**
+ * Encode @p key with @p mods into @p buf.
+ *
+ * @param key         Logical key; VTKEY_NONE writes nothing.
+ * @param mods        VTMOD_* bitmask (0 = unmodified).
+ * @param app_cursor  DECCKM active — unmodified arrows and Home/End go out
+ *                    as SS3 (ESC O x) instead of CSI (ESC [ x). Ignored once
+ *                    any modifier is held: xterm always uses CSI for those.
+ * @param buf         Output, at least VTKEYS_MAX_LEN bytes.
+ * @param bufsz       Size of @p buf; nothing is written if the sequence
+ *                    would not fit.
+ * @return            Bytes written, 0 if the key is unknown or would not fit.
+ */
+size_t vtkeys_encode(vtkey_t key, uint8_t mods, bool app_cursor,
+                     uint8_t *buf, size_t bufsz);
+
+#endif /* VTKEYS_H */

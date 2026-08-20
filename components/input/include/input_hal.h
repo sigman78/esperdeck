@@ -16,15 +16,18 @@
 #define INPUT_EVENT_KEY        0   /* keyboard byte sequence: buf[0..len-1] */
 #define INPUT_EVENT_TAP        1   /* touch tap: x and y are valid */
 #define INPUT_EVENT_LONG_PRESS 2   /* touch long-press: x and y are valid */
+#define INPUT_EVENT_SCROLL     3   /* edge drag: dy is valid (x,y = current) */
 
 #define INPUT_EVENT_MAX_LEN  8
 
 typedef struct {
-    uint8_t  type;                  /* INPUT_EVENT_KEY / TAP / LONG_PRESS   */
+    uint8_t  type;                  /* INPUT_EVENT_KEY / TAP / LONG_PRESS / SCROLL */
     uint8_t  len;                   /* byte count in buf (KEY events only)  */
     uint8_t  buf[INPUT_EVENT_MAX_LEN];
     uint16_t x;                     /* touch X coordinate (touch events)    */
     uint16_t y;                     /* touch Y coordinate (touch events)    */
+    int16_t  dy;                    /* SCROLL: pixels moved since the last
+                                     * event, signed (down is positive)     */
 } input_event_t;
 
 /**
@@ -41,3 +44,17 @@ esp_err_t input_hal_init(void);
  * @return true if an event was received, false on timeout
  */
 bool input_hal_read(input_event_t *ev, uint32_t timeout_ms);
+
+/**
+ * Arm the right-edge scroll-drag strip.
+ *
+ * A press that STARTS within @p width_px of the right edge, and then moves
+ * vertically past a small threshold, becomes a stream of INPUT_EVENT_SCROLL
+ * instead of the tap/long-press it would otherwise have produced. Anchoring
+ * on the press origin rather than the current position means a drag that
+ * wanders out of the strip keeps scrolling, which is what a finger actually
+ * does.
+ *
+ * @param width_px  Strip width in pixels; 0 disables the gesture entirely.
+ */
+void input_hal_set_scroll_edge(int width_px);

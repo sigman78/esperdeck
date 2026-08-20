@@ -198,6 +198,13 @@ esp_err_t storage_font_save(const char *name);
 esp_err_t storage_saver_load(uint32_t *idle_min);
 esp_err_t storage_saver_save(uint32_t idle_min);
 
+/**
+ * Touch gesture toggles (touch.ini). Load always outputs a value
+ * (default: enabled); ESP_ERR_NOT_FOUND when no file exists yet.
+ */
+esp_err_t storage_touch_load(bool *scroll_edge);
+esp_err_t storage_touch_save(bool scroll_edge);
+
 /* -------------------------------------------------------------------------
  * Known SSH host keys (TOFU pinning)
  * ---------------------------------------------------------------------- */

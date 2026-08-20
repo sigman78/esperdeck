@@ -14,6 +14,7 @@
 //#if defined(CONFIG_INPUT_TOUCH) || defined(CONFIG_INPUT_AUTO)
 
 #include "input_hal_internal.h"
+#include "display.h"     /* DISPLAY_WIDTH — the edge strip is measured from it */
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "driver/i2c_master.h"
@@ -47,14 +48,37 @@ static const char *TAG = "touch_input";
 #define RESET_GPIO_LOW_US   (100 * 1000)
 #define RESET_HOLD_US       (200 * 1000)
 
+/* Vertical travel that turns an edge press into a scroll drag. Below this a
+ * press is still a tap: fingers wobble, and a 2 px twitch must not eat the
+ * tap that was meant. */
+#define SCROLL_START_PX     12
+
 /* Touch state machine states */
 typedef enum {
     STATE_IDLE,
     STATE_TOUCHING,
+    STATE_SCROLLING,     /* edge drag in progress; taps suppressed */
     STATE_WAITING_LIFT,
 } touch_state_t;
 
 static esp_lcd_touch_handle_t s_tp = NULL;
+
+/* Right-edge strip width in pixels; 0 = gesture off. Written from the app
+ * task (menu toggle), read by the poll task — a plain int is atomic on the
+ * S3 and a torn read is impossible for a value this size. */
+static volatile int s_scroll_edge_px = 0;
+
+void input_hal_set_scroll_edge(int width_px)
+{
+    s_scroll_edge_px = width_px < 0 ? 0 : width_px;
+}
+
+/* Did a press at @p x start inside the armed right-edge strip? */
+static inline bool in_scroll_edge(uint16_t x)
+{
+    int w = s_scroll_edge_px;
+    return w > 0 && (int)x >= DISPLAY_WIDTH - w;
+}
 
 /* ------------------------------------------------------------------ */
 /* Poll task                                                            */
@@ -66,6 +90,7 @@ static void touch_poll_task(void *arg)
     int64_t       touch_start = 0;
     uint16_t      touch_x     = 0;
     uint16_t      touch_y     = 0;
+    uint16_t      last_y      = 0;   /* SCROLLING: y of the last event sent */
 
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(POLL_INTERVAL_MS));
@@ -92,6 +117,20 @@ static void touch_poll_task(void *arg)
 
         case STATE_TOUCHING: {
             int64_t elapsed = now_ms - touch_start;
+
+            /* An edge press that has travelled far enough becomes a scroll
+             * drag. Checked before the long-press branch so a slow deliberate
+             * drag is not stolen by the 500 ms timer. */
+            if (pressed && in_scroll_edge(touch_x)) {
+                int dy = (int)pt.y - (int)touch_y;
+                if (dy > SCROLL_START_PX || dy < -SCROLL_START_PX) {
+                    last_y = pt.y;
+                    state  = STATE_SCROLLING;
+                    ESP_LOGD(TAG, "scroll drag begins x=%u y=%u", touch_x, touch_y);
+                    break;
+                }
+            }
+
             if (elapsed >= LONG_PRESS_MS) {
                 input_event_t ev = {
                     .type = INPUT_EVENT_LONG_PRESS,
@@ -118,6 +157,27 @@ static void touch_poll_task(void *arg)
             }
             break;
         }
+
+        case STATE_SCROLLING:
+            if (!pressed) {
+                ESP_LOGD(TAG, "scroll drag ends");
+                state = STATE_IDLE;
+                break;
+            }
+            /* One event per poll that actually moved. The consumer converts
+             * pixels to rows, so no font knowledge is needed here. */
+            if (pt.y != last_y) {
+                input_event_t ev = {
+                    .type = INPUT_EVENT_SCROLL,
+                    .len  = 0,
+                    .x    = pt.x,
+                    .y    = pt.y,
+                    .dy   = (int16_t)((int)pt.y - (int)last_y),
+                };
+                last_y = pt.y;
+                input_hal_post_event(&ev);
+            }
+            break;
 
         case STATE_WAITING_LIFT:
             if (!pressed) {

@@ -178,7 +178,9 @@ static int ks_menu_items(const char *out[], const char *bodies[])
 
 /* --------------------------------------------------------------- SYSTEM */
 
-#define SYS_MENU_TILES 4
+/* SYS_MENU_TILES is the last member of sys_menu_item_t (app_menu_defs.h),
+ * so the page array and the index enum cannot drift apart — and the tile
+ * count follows CONFIG_INPUT_TOUCH_SCROLL automatically. */
 
 /* Saver timeout steps (minutes) — the saver engage also wipes the MK, so
  * this doubles as the auto-lock interval. */
@@ -189,14 +191,18 @@ static int sys_menu_items(const char *out[], const char *bodies[],
 {
     snprintf(saverbuf, bufsz, "%u min",
              (unsigned)(app.saver.idle_ms / 60000u));
-    out[0]    = "Saver + lock after";
-    bodies[0] = saverbuf;
-    out[1]    = "Clear host keys";
-    bodies[1] = "";
-    out[2]    = "Factory reset";
-    bodies[2] = "";
-    out[3]    = "Back";
-    bodies[3] = "";
+    out[SYS_SAVER]         = "Saver + lock after";
+    bodies[SYS_SAVER]      = saverbuf;
+#if CONFIG_INPUT_TOUCH_SCROLL
+    out[SYS_TOUCHSCROLL]    = "Edge scroll gesture";
+    bodies[SYS_TOUCHSCROLL] = app.touch_scroll ? "on" : "off";
+#endif
+    out[SYS_CLEARHOSTS]    = "Clear host keys";
+    bodies[SYS_CLEARHOSTS] = "";
+    out[SYS_FACTORY]       = "Factory reset";
+    bodies[SYS_FACTORY]    = "";
+    out[SYS_BACK]          = "Back";
+    bodies[SYS_BACK]       = "";
     return SYS_MENU_TILES;
 }
 
@@ -204,6 +210,11 @@ static int sys_menu_items(const char *out[], const char *bodies[],
  * ISR for the cache-off window, landing a visible hiccup on the keypress.
  * Flushed by menu_fx_flush() once the user leaves the page. */
 static bool s_saver_dirty = false;
+
+#if CONFIG_INPUT_TOUCH_SCROLL
+/* touch.ini write, deferred for the same reason as saver.ini above. */
+static bool s_touch_dirty = false;
+#endif
 
 static void sys_saver_cycle(void)
 {
@@ -229,11 +240,17 @@ static bool s_fx_dirty = false;
 
 void menu_fx_flush(void)
 {
-    if (s_saver_dirty &&
-        !(app.state == ST_MENU && app.menu.screen == MS_SYSTEM)) {
+    const bool on_system = (app.state == ST_MENU && app.menu.screen == MS_SYSTEM);
+    if (s_saver_dirty && !on_system) {
         s_saver_dirty = false;
         storage_saver_save(app.saver.idle_ms / 60000u);
     }
+#if CONFIG_INPUT_TOUCH_SCROLL
+    if (s_touch_dirty && !on_system) {
+        s_touch_dirty = false;
+        storage_touch_save(app.touch_scroll);
+    }
+#endif
     if (!s_fx_dirty) return;
     if (app.state == ST_MENU && app.menu.screen == MS_EFFECTS) return;
     s_fx_dirty = false;
@@ -437,9 +454,9 @@ static void render_menu(void)
                                                              : OVERLAY_COL_CYAN;
         else if (kspage)  col = i == g.count - 1 ? OVERLAY_COL_BLUE
                                                  : OVERLAY_COL_CYAN;
-        else if (syspage) col = i == 0           ? OVERLAY_COL_CYAN
-                              : i == g.count - 1 ? OVERLAY_COL_BLUE
-                                                 : OVERLAY_COL_RED;
+        else if (syspage) col = i < SYS_CLEARHOSTS ? OVERLAY_COL_CYAN
+                              : i == SYS_BACK      ? OVERLAY_COL_BLUE
+                                                   : OVERLAY_COL_RED;
         else              col = cols[i];
         ui_pen(col);
         /* Focus is carried by the tile itself (washed bar + lit rail);
@@ -791,10 +808,17 @@ static void menu_activate(uint64_t now)
 
     case MS_SYSTEM:
         switch (sel) {
-        case 0:                                   /* saver/auto-lock timeout */
+        case SYS_SAVER:                           /* saver/auto-lock timeout */
             sys_saver_cycle();
             break;
-        case 1:                                   /* clear host keys (2-step) */
+#if CONFIG_INPUT_TOUCH_SCROLL
+        case SYS_TOUCHSCROLL:                     /* right-edge scroll drag */
+            app.touch_scroll = !app.touch_scroll;
+            app_touch_scroll_apply();
+            s_touch_dirty = true;
+            break;
+#endif
+        case SYS_CLEARHOSTS:                      /* clear host keys (2-step) */
             if (!was_armed) {
                 app.menu.armed = true;
                 menu_note(now, 0, false, "activate again to clear");
@@ -804,7 +828,7 @@ static void menu_activate(uint64_t now)
                           e == ESP_OK ? "host keys cleared" : "nothing to clear");
             }
             break;
-        case 2:                                   /* factory reset (2-step) */
+        case SYS_FACTORY:                         /* factory reset (2-step) */
             if (!was_armed) {
                 app.menu.armed = true;
                 menu_note(now, 0, false, "activate again to WIPE ALL");
@@ -815,7 +839,7 @@ static void menu_activate(uint64_t now)
                 menu_note(now, MENU_MSG_MS, false, "wiped - reboot advised");
             }
             break;
-        case 3: menu_back(now); return;           /* Back */
+        case SYS_BACK: menu_back(now); return;
         }
         break;
 

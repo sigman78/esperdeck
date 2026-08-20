@@ -2,13 +2,19 @@
  * HID Usage ID → terminal byte sequence translation table
  *
  * Covers:
- *   - Printable keys 0x04–0x39 via direct table lookup
- *   - Ctrl, Shift, Alt modifiers
- *   - Special keys (arrows, F1–F12, nav cluster) via linear scan
+ *   - Printable keys 0x04–0x39 via direct table lookup, with Ctrl/Shift/Alt
+ *   - Special keys (arrows, F1–F12, nav cluster) mapped to a logical key and
+ *     encoded by vtkeys, which the simulator's SDL backend also uses
  */
 
 #include "hid_keymap.h"
-#include <string.h>
+#include "input_hal.h"   /* INPUT_EVENT_MAX_LEN — the caller's buffer */
+#include "vtkeys.h"
+
+/* The caller hands us a slot from the input queue, so the queue's buffer
+ * must be able to hold the longest sequence the encoder can produce. */
+_Static_assert(INPUT_EVENT_MAX_LEN >= VTKEYS_MAX_LEN,
+               "input event buffer too small for the longest key sequence");
 
 /* Modifier bit masks (HID modifier byte) */
 #define MOD_LCTRL   (1u << 0)
@@ -64,46 +70,39 @@ static const uint8_t s_printable[][2] = {
 #define PRINTABLE_CNT  (PRINTABLE_MAX - PRINTABLE_MIN + 1)
 
 /*
- * Special-key table — linear scan (small table, negligible overhead).
+ * Special keys: HID usage ID → logical key. The byte sequences (and the
+ * modifier encoding) live in vtkeys.c, shared with the simulator's SDL
+ * backend so the two cannot drift.
  */
 typedef struct {
     uint8_t hid;
-    uint8_t len;
-    uint8_t seq[6];
-} hid_special_t;
+    uint8_t key;    /* vtkey_t */
+} hid_vtkey_t;
 
-static const hid_special_t s_specials[] = {
-    /* F1–F4 (SS3 sequences) */
-    { 0x3A, 3, { 0x1B, 'O', 'P'           } },
-    { 0x3B, 3, { 0x1B, 'O', 'Q'           } },
-    { 0x3C, 3, { 0x1B, 'O', 'R'           } },
-    { 0x3D, 3, { 0x1B, 'O', 'S'           } },
-    /* F5–F12 (CSI Pn ~) */
-    { 0x3E, 5, { 0x1B, '[', '1', '5', '~' } },
-    { 0x3F, 5, { 0x1B, '[', '1', '7', '~' } },
-    { 0x40, 5, { 0x1B, '[', '1', '8', '~' } },
-    { 0x41, 5, { 0x1B, '[', '1', '9', '~' } },
-    { 0x42, 5, { 0x1B, '[', '2', '0', '~' } },
-    { 0x43, 5, { 0x1B, '[', '2', '1', '~' } },
-    { 0x44, 5, { 0x1B, '[', '2', '3', '~' } },
-    { 0x45, 5, { 0x1B, '[', '2', '4', '~' } },
+static const hid_vtkey_t s_vtkeys[] = {
+    /* Function keys */
+    { 0x3A, VTKEY_F1  }, { 0x3B, VTKEY_F2  }, { 0x3C, VTKEY_F3  },
+    { 0x3D, VTKEY_F4  }, { 0x3E, VTKEY_F5  }, { 0x3F, VTKEY_F6  },
+    { 0x40, VTKEY_F7  }, { 0x41, VTKEY_F8  }, { 0x42, VTKEY_F9  },
+    { 0x43, VTKEY_F10 }, { 0x44, VTKEY_F11 }, { 0x45, VTKEY_F12 },
     /* Navigation cluster */
-    { 0x49, 4, { 0x1B, '[', '2', '~'      } },  /* Insert  */
-    { 0x4C, 4, { 0x1B, '[', '3', '~'      } },  /* Delete  */
-    { 0x4A, 3, { 0x1B, '[', 'H'           } },  /* Home    */
-    { 0x4D, 3, { 0x1B, '[', 'F'           } },  /* End     */
-    { 0x4B, 4, { 0x1B, '[', '5', '~'      } },  /* Page Up */
-    { 0x4E, 4, { 0x1B, '[', '6', '~'      } },  /* Page Dn */
-    /* Numpad Enter */
-    { 0x58, 1, { '\r'                      } },
+    { 0x49, VTKEY_INSERT }, { 0x4A, VTKEY_HOME }, { 0x4B, VTKEY_PGUP },
+    { 0x4C, VTKEY_DELETE }, { 0x4D, VTKEY_END  }, { 0x4E, VTKEY_PGDN },
+    /* Arrows */
+    { 0x4F, VTKEY_RIGHT }, { 0x50, VTKEY_LEFT },
+    { 0x51, VTKEY_DOWN  }, { 0x52, VTKEY_UP   },
 };
 
-#define SPECIALS_CNT  (sizeof(s_specials) / sizeof(s_specials[0]))
+#define VTKEYS_CNT  (sizeof(s_vtkeys) / sizeof(s_vtkeys[0]))
 
-/* Arrow key HID codes and their ANSI suffix characters */
-static const uint8_t s_arrow_hid[]  = { 0x52, 0x51, 0x4F, 0x50 };
-static const char    s_arrow_char[] = { 'A',  'B',  'C',  'D'  };
-#define ARROW_CNT  4
+/* HID modifier byte → the three modifiers the wire format can carry.
+ * GUI/meta is dropped: xterm has no weight for it. */
+static inline uint8_t hid_to_vtmods(uint8_t m)
+{
+    return (uint8_t)((SHIFT(m) ? VTMOD_SHIFT : 0u) |
+                     (ALT(m)   ? VTMOD_ALT   : 0u) |
+                     (CTRL(m)  ? VTMOD_CTRL  : 0u));
+}
 
 uint8_t hid_keymap_translate(uint8_t keycode, uint8_t modifiers,
                              bool app_cursor, uint8_t *buf)
@@ -140,23 +139,18 @@ uint8_t hid_keymap_translate(uint8_t keycode, uint8_t modifiers,
         return 1;
     }
 
-    /* --- arrow keys — mode-aware --- */
-    for (uint8_t i = 0; i < ARROW_CNT; i++) {
-        if (keycode == s_arrow_hid[i]) {
-            buf[0] = 0x1B;
-            buf[1] = app_cursor ? 'O' : '[';
-            buf[2] = s_arrow_char[i];
-            return 3;
-        }
+    /* --- numpad Enter: a plain CR, not an escape sequence --- */
+    if (keycode == 0x58) {
+        buf[0] = '\r';
+        return 1;
     }
 
-    /* --- special keys --- */
-    for (uint8_t i = 0; i < SPECIALS_CNT; i++) {
-        if (s_specials[i].hid == keycode) {
-            uint8_t len = s_specials[i].len;
-            memcpy(buf, s_specials[i].seq, len);
-            return len;
-        }
+    /* --- arrows, nav cluster, function keys --- */
+    for (uint8_t i = 0; i < VTKEYS_CNT; i++) {
+        if (s_vtkeys[i].hid == keycode)
+            return (uint8_t)vtkeys_encode((vtkey_t)s_vtkeys[i].key,
+                                          hid_to_vtmods(modifiers),
+                                          app_cursor, buf, VTKEYS_MAX_LEN);
     }
 
     return 0;   /* unrecognised */

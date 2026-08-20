@@ -695,6 +695,51 @@ esp_err_t storage_saver_save(uint32_t idle_min)
 }
 
 /* -------------------------------------------------------------------------
+ * Touch gesture toggles — touch.ini ("scroll=1")
+ * ---------------------------------------------------------------------- */
+
+static void touch_path(char *buf, size_t bufsz)
+{
+    snprintf(buf, bufsz, "%s/touch.ini", storage_platform_mount_point());
+}
+
+esp_err_t storage_touch_load(bool *scroll_edge)
+{
+    if (!scroll_edge) return ESP_ERR_INVALID_ARG;
+    *scroll_edge = true;                        /* default: gesture on */
+
+    char path[128];
+    touch_path(path, sizeof(path));
+    FILE *f = fopen(path, "r");
+    if (!f) return ESP_ERR_NOT_FOUND;
+
+    char line[64];
+    while (fgets(line, sizeof(line), f)) {
+        rtrim(line);
+        char key[32], val[32];
+        if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
+        if (strcmp(key, "scroll") == 0)
+            *scroll_edge = (strtoul(val, NULL, 10) != 0);
+    }
+    fclose(f);
+    return ESP_OK;
+}
+
+esp_err_t storage_touch_save(bool scroll_edge)
+{
+    char path[128];
+    touch_path(path, sizeof(path));
+
+    atomic_file_t af;
+    FILE *f = atomic_open(&af, path);
+    if (!f) return ESP_FAIL;
+    fprintf(f, "scroll=%d\n", scroll_edge ? 1 : 0);
+    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    ESP_LOGI(TAG, "Saved touch scroll gesture (%s)", scroll_edge ? "on" : "off");
+    return ESP_OK;
+}
+
+/* -------------------------------------------------------------------------
  * Known SSH host keys — known_hosts.ini, flat "host:port=fp" lines
  * ---------------------------------------------------------------------- */
 

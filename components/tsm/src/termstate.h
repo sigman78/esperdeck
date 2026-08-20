@@ -14,10 +14,6 @@
 
 #include "esp_heap_caps.h"
 
-/* ── Scrollback ──────────────────────────────────────────────────────────── */
-
-#define TSM_SCROLLBACK_ROWS  0   /* disabled by default; stub only */
-
 /* ── Cursor save/restore slot ────────────────────────────────────────────── */
 
 typedef struct {
@@ -65,6 +61,18 @@ struct tsm_s {
      * together with the cells/alt_cells pointer swap, always. */
     int base;
     int alt_base;
+
+    /* Rows evicted off the top of the PRIMARY screen, newest last. Alt-screen
+     * scrolls never feed it: a full-screen app repainting itself is not
+     * history, and would bury the shell output worth scrolling back to.
+     *
+     * sb_off is the VIEW, not storage. Only tsm_row() reads it, so the parser
+     * and the renderer stay unaware the ring exists. */
+    tsm_cell_t *sb_cells;    /* sb_max * cols, NULL when disabled */
+    int         sb_max;      /* capacity in rows (0 = scrollback off) */
+    int         sb_len;      /* rows currently stored (<= sb_max)     */
+    int         sb_head;     /* next write slot                       */
+    int         sb_off;      /* view offset above live (<= sb_len)    */
 
     /* Dirty tracking */
     tsm_row_dirty_t *dirty;  /* rows entries */

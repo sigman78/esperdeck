@@ -73,8 +73,11 @@ typedef struct tsm_s tsm_t;
 /* Terminal API */
 
 /* Allocate and initialise a new terminal of cols x rows.
+ * @p sb_lines is the scrollback capacity in rows (0 disables it), allocated
+ * up front. An oversized request degrades to a smaller ring — possibly none
+ * — rather than failing the terminal; see tsm_sb_capacity().
  * Returns NULL on allocation failure. */
-tsm_t *tsm_new(int cols, int rows);
+tsm_t *tsm_new(int cols, int rows, int sb_lines);
 
 /* Free all resources. */
 void tsm_free(tsm_t *tsm);
@@ -82,10 +85,15 @@ void tsm_free(tsm_t *tsm);
 /* Feed raw bytes from the host (VT sequences + UTF-8 text). */
 void tsm_feed(tsm_t *tsm, const uint8_t *data, size_t len);
 
-/* Pointer to one screen row (cols tsm_cell_t, binary-compatible with
+/* Pointer to one VIEW row (cols tsm_cell_t, binary-compatible with
  * terminal_cell_t). Rows live in a rotating ring — full-screen scrolls move
  * the ring base, not the cells — so consecutive logical rows are NOT
- * contiguous in memory; never index past the returned row. */
+ * contiguous in memory; never index past the returned row.
+ *
+ * While scrolled back the top rows come from the scrollback ring instead of
+ * the live grid; callers render the same way either way. Cursor and dirty
+ * tracking always describe the LIVE grid, so a scrolled-back view must be
+ * repainted in full — see tsm_sb_scroll. */
 const tsm_cell_t *tsm_row(const tsm_t *tsm, int row);
 
 /* Current cursor position and visibility. */
@@ -101,6 +109,31 @@ void tsm_clear_dirty(tsm_t *tsm);
 /* Dimensions. */
 int tsm_cols(const tsm_t *tsm);
 int tsm_rows(const tsm_t *tsm);
+
+/* ── Scrollback ──────────────────────────────────────────────────────────── */
+
+/* Ring capacity in rows: what tsm_new() actually got, which may be less than
+ * asked for, and 0 when scrollback is disabled or its allocation failed.
+ * Distinct from tsm_sb_len() — that is 0 on a fresh terminal too. */
+int tsm_sb_capacity(const tsm_t *tsm);
+
+/* Rows of history currently stored (0 .. capacity). */
+int tsm_sb_len(const tsm_t *tsm);
+
+/* Current view offset: 0 = live, n = n rows of history shown above the
+ * live grid. */
+int tsm_sb_offset(const tsm_t *tsm);
+
+/* Move the view by @p delta rows (positive = back into history) and return
+ * the resulting offset, clamped to [0, tsm_sb_len()]. Returns the offset
+ * unchanged when scrollback is disabled or the alt screen is active.
+ *
+ * The caller must repaint every row after a change: dirty tracking only
+ * describes the live grid and says nothing about the view moving. */
+int tsm_sb_scroll(tsm_t *tsm, int delta);
+
+/* Jump back to the live view (equivalent to scrolling to offset 0). */
+void tsm_sb_reset(tsm_t *tsm);
 
 /* Full terminal reset: reinitialises the VT parser state machine and resets
  * all terminal display state to power-on defaults. */

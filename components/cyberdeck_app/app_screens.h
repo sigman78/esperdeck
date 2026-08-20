@@ -76,6 +76,9 @@ void connect_resume_active(uint64_t now);
 void connect_arm_pinned(const char *fp, uint64_t now);
 /** Session died and we are NOT auto-reconnecting: NO CARRIER + collapse. */
 void session_dropped(uint64_t now);
+/** Note scrollback activity: raises the right-edge indicator and restarts
+ *  its linger timer. Call after any change to the scroll offset. */
+void session_scroll_seen(uint64_t now);
 void connecting_tick(uint64_t now);
 void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now);
 void session_tick(uint64_t now);

@@ -116,6 +116,7 @@ static void main_task(void *pvParameters)
             .len  = ev.len,
             .x    = ev.x,
             .y    = ev.y,
+            .dy   = ev.dy,
         };
         memcpy(app_ev.buf, ev.buf, sizeof(app_ev.buf));
         cyberdeck_app_handle_input(&app_ev, now_ms());
@@ -212,6 +213,10 @@ void app_main(void)
         .fallback_wifi_ssid     = CONFIG_WIFI_SSID,
         .fallback_wifi_password = CONFIG_WIFI_PASSWORD,
         .ble = &s_ble_ops,
+#if CONFIG_INPUT_TOUCH_SCROLL
+        .set_scroll_edge = input_hal_set_scroll_edge,
+        .scroll_edge_px  = CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX,
+#endif
     };
     ESP_ERROR_CHECK(cyberdeck_app_init(&app_cfg, now_ms()));
 

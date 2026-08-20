@@ -19,12 +19,14 @@
 #define CYBERDECK_INPUT_KEY        0
 #define CYBERDECK_INPUT_TAP        1
 #define CYBERDECK_INPUT_LONG_PRESS 2
+#define CYBERDECK_INPUT_SCROLL     3
 
 typedef struct {
     uint8_t  type;
     uint8_t  len;       /* KEY: bytes in buf */
     uint8_t  buf[8];
     uint16_t x, y;      /* touch pixel coords */
+    int16_t  dy;        /* SCROLL: pixels since the last event, down positive */
 } cyberdeck_input_t;
 
 /* ---- BLE keyboard seam (NULL ops on platforms without BLE) ------------- */
@@ -58,6 +60,14 @@ typedef struct {
     const char *fallback_wifi_password;
 
     const cyberdeck_ble_ops_t *ble;   /* NULL = keyboard handled elsewhere */
+
+    /* Arm/disarm the right-edge scroll strip, in pixels (0 = off). Same
+     * seam as `ble` above: the shell states what it wants and the platform
+     * owns the touch driver, so cyberdeck_app never depends on `input`.
+     * NULL where there is no touch panel — the simulator drives the gesture
+     * from its own mouse handling. */
+    void (*set_scroll_edge)(int width_px);
+    int  scroll_edge_px;              /* strip width when the gesture is on */
 } cyberdeck_app_config_t;
 
 /* ---- lifecycle ---------------------------------------------------------- */

@@ -281,3 +281,55 @@ int draw_step(int y, char num, const char *label,
     ui_pen(OVERLAY_COL_DEFAULT);
     return y + 3;
 }
+
+/* ------------------------------------------------- scrollback indicator */
+
+/* U+2581..U+2588 fill the bottom n/8 of a cell. (No upper-eighth glyphs
+ * exist in Terminus, which is why the fill is anchored to the bottom.) */
+#define BLK_LOWER(n)  ((uint16_t)(0x2580u + (n)))
+
+void draw_scrollbar(int offset, int total)
+{
+    if (total <= 0) return;
+
+    const int col  = ui_cols() - 1;
+    const int rows = ui_rows();
+    if (col < 0 || rows < 1) return;
+
+    if (offset < 0)     offset = 0;
+    if (offset > total) offset = total;
+
+    /* Fill height in eighths of a cell, measured up from the bottom. */
+    int f = (int)(((long)offset * 8 * rows) / total);
+    if (f > 8 * rows) f = 8 * rows;
+    const int full = f / 8;
+    const int rem  = f % 8;
+
+    /* Every cell needs the SAME attrs: mixing INVERSE with plain cells gives
+     * them different backgrounds and leaves a black notch at the boundary.
+     * BRIGHT then DIM lands a dark-gray bg under a medium-white fg without
+     * adding palette entries. */
+    const uint8_t bar_attrs = OVERLAY_ATTR_BRIGHT | OVERLAY_ATTR_DIM;
+    ui_pen(OVERLAY_COL_WHITE);
+    for (int y = 0; y < rows; y++) {
+        const int from_bottom = rows - 1 - y;
+        uint16_t  cp;
+        if (from_bottom < full)                cp = UI_BLOCK;
+        else if (from_bottom == full && rem)   cp = BLK_LOWER(rem);
+        else                                   cp = ' ';
+        ui_putch(col, y, cp, bar_attrs);
+    }
+
+    /* Pen 0 + INVERSE resolves to neutral gray with dark text. Nothing at
+     * offset 0 — the empty bar already says it. */
+    if (offset > 0) {
+        char label[16];
+        int n  = snprintf(label, sizeof(label), " %d ", offset);
+        int lx = col - 1 - n;
+        if (lx >= 0) {
+            ui_pen(OVERLAY_COL_DEFAULT);
+            ui_puts(lx, 0, label, OVERLAY_ATTR_INVERSE);
+        }
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+}

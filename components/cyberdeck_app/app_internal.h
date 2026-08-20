@@ -54,10 +54,18 @@ typedef struct {
     int count;         /* live tiles on this page (<= ncols*nrows) */
 } tilegrid_t;
 
-/* Decoded UI keys (core decodes once per event; screens get the result). */
+/** Push app.touch_scroll down to the touch driver (no-op without the
+ *  gesture compiled in). Call after boot load and after every toggle. */
+void app_touch_scroll_apply(void);
+
+/* Decoded UI keys (core decodes once per event; screens get the result).
+ * K_SCROLL_* are Shift+PageUp/PageDown: the deck keeps those for its own
+ * scrollback rather than forwarding them, the same bargain every terminal
+ * emulator makes. Unshifted PageUp/PageDown still go to the remote. */
 typedef enum {
     K_NONE = 0, K_UP, K_DOWN, K_LEFT, K_RIGHT,
     K_ENTER, K_ESC, K_F12, K_CHAR, K_BACKSPACE, K_TAB,
+    K_SCROLL_UP, K_SCROLL_DOWN,
 } ui_key_t;
 
 /* ------------------------------------------------- per-module state
@@ -183,6 +191,11 @@ struct app_state {
     conn_profile_t profiles[MAX_PROFILES];
     int  profile_count;
     int  stored_count;              /* profiles actually on flash (excl. synth) */
+
+    /* Right-edge scroll drag, toggled from SYSTEM and stored in touch.ini.
+     * Kept even when CONFIG_INPUT_TOUCH_SCROLL is off so the field's absence
+     * never has to be #ifdef'd at every read site. */
+    bool touch_scroll;
 
     /* Tile grid of the current screen, saved for touch hit-testing. */
     tilegrid_t grid;

@@ -70,8 +70,8 @@ bool menu_is_picker(int sc)
 const char *menu_confirm(int sc, int sel)
 {
     if (sc == MS_KEYBOARD   && sel == 1) return "CONFIRM forget bonds?";
-    if (sc == MS_SYSTEM     && sel == 1) return "CONFIRM clear host keys?";
-    if (sc == MS_SYSTEM     && sel == 2) return "CONFIRM FACTORY RESET?";
+    if (sc == MS_SYSTEM     && sel == SYS_CLEARHOSTS) return "CONFIRM clear host keys?";
+    if (sc == MS_SYSTEM     && sel == SYS_FACTORY)    return "CONFIRM FACTORY RESET?";
     if (sc == MS_DELPROFILE && sel < app.stored_count) return "CONFIRM delete?";
     return NULL;
 }

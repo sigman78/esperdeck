@@ -19,5 +19,6 @@ idf_component_register(
         freertos
         esp_event
         vterm
+        display
         storage
 )

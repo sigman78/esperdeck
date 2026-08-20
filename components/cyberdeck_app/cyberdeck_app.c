@@ -49,7 +49,22 @@ static ui_key_t decode_key(const cyberdeck_input_t *ev, char *ch)
         }
     }
     if (len == 5 && memcmp(b, "\x1b[24~", 5) == 0) return K_F12;
+    /* Shift+PageUp / Shift+PageDown — scrollback, kept by the deck. */
+    if (len == 6 && memcmp(b, "\x1b[5;2~", 6) == 0) return K_SCROLL_UP;
+    if (len == 6 && memcmp(b, "\x1b[6;2~", 6) == 0) return K_SCROLL_DOWN;
     return K_NONE;
+}
+
+/* ------------------------------------------------------- touch gestures */
+
+/* The strip width is a build-time constant; only the on/off state is a
+ * runtime setting, so "apply" is simply width-or-zero. Pushed through the
+ * platform seam so the driver is the single owner of the armed state and
+ * cannot be left armed by a stale copy of app state. */
+void app_touch_scroll_apply(void)
+{
+    if (!app.cfg.set_scroll_edge) return;
+    app.cfg.set_scroll_edge(app.touch_scroll ? app.cfg.scroll_edge_px : 0);
 }
 
 /* ------------------------------------------------------------- profiles */
@@ -305,6 +320,8 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     app.menu.reorder_grab = -1;
     storage_saver_load(&app.saver.idle_ms);   /* minutes... */
     app.saver.idle_ms *= 60u * 1000u;         /* ...to ms   */
+    storage_touch_load(&app.touch_scroll);
+    app_touch_scroll_apply();
     boot_enter(now_ms);
     saver_reset(now_ms);   /* idle timer starts at boot */
 

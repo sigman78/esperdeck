@@ -73,3 +73,13 @@ int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption);
 /** Numbered onboarding step row; returns the next step row. */
 int draw_step(int y, char num, const char *label,
               const char *value, uint8_t value_pen, int xlimit);
+
+/* ------------------------------------------------- scrollback indicator */
+
+/** Scrollback fill down the right edge, line count on gray above it.
+ *  @p offset is rows back from live, @p total the history available.
+ *
+ *  A fill rather than a scrollbar: a proportional thumb would be under one
+ *  cell tall for most of its travel at 30 rows against 1000 lines. The
+ *  boundary lands to an eighth of a cell, so ~4 lines per step. */
+void draw_scrollbar(int offset, int total);

@@ -1,5 +1,22 @@
 menu "vterm"
 
+    config VTERM_SCROLLBACK_LINES
+        int "Terminal scrollback lines"
+        default 1000
+        range 0 4000
+        help
+            Rows of output kept after they scroll off the top, reachable
+            with Shift+PageUp / Shift+PageDown.
+
+            Costs lines * columns * 8 bytes, allocated once at startup and
+            preferentially in PSRAM: 1000 lines at 100 columns is 800 KB of
+            the ~8.3 MB free there, and none of the internal DRAM the render
+            ISR competes for. A request that will not fit is halved until it
+            does, so an over-large value shortens history rather than
+            failing to boot.
+
+            0 disables scrollback and allocates nothing.
+
     config VTERM_BENCH
         bool "Enable performance instrumentation"
         default n

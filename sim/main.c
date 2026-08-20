@@ -28,8 +28,48 @@
 #include "ssh_client.h"
 #include "storage.h"
 #include "vterm.h"
+#include "vtkeys.h"
 #include "wifi_manager.h"
 
+
+/* SDL keysym → logical key; the byte sequences live in vtkeys.c, shared
+ * with the device's HID backend so the two backends cannot drift. */
+static vtkey_t sdl_to_vtkey(SDL_Keycode sym)
+{
+    switch (sym) {
+    case SDLK_UP:        return VTKEY_UP;
+    case SDLK_DOWN:      return VTKEY_DOWN;
+    case SDLK_LEFT:      return VTKEY_LEFT;
+    case SDLK_RIGHT:     return VTKEY_RIGHT;
+    case SDLK_HOME:      return VTKEY_HOME;
+    case SDLK_END:       return VTKEY_END;
+    case SDLK_INSERT:    return VTKEY_INSERT;
+    case SDLK_DELETE:    return VTKEY_DELETE;
+    case SDLK_PAGEUP:    return VTKEY_PGUP;
+    case SDLK_PAGEDOWN:  return VTKEY_PGDN;
+    case SDLK_F1:        return VTKEY_F1;
+    case SDLK_F2:        return VTKEY_F2;
+    case SDLK_F3:        return VTKEY_F3;
+    case SDLK_F4:        return VTKEY_F4;
+    case SDLK_F5:        return VTKEY_F5;
+    case SDLK_F6:        return VTKEY_F6;
+    case SDLK_F7:        return VTKEY_F7;
+    case SDLK_F8:        return VTKEY_F8;
+    case SDLK_F9:        return VTKEY_F9;
+    case SDLK_F10:       return VTKEY_F10;
+    case SDLK_F11:       return VTKEY_F11;
+    case SDLK_F12:       return VTKEY_F12;
+    default:             return VTKEY_NONE;
+    }
+}
+
+/* SDL modifier state → the three modifiers the wire format can carry. */
+static uint8_t sdl_to_vtmods(SDL_Keymod mod)
+{
+    return (uint8_t)(((mod & KMOD_SHIFT) ? VTMOD_SHIFT : 0u) |
+                     ((mod & KMOD_ALT)   ? VTMOD_ALT   : 0u) |
+                     ((mod & KMOD_CTRL)  ? VTMOD_CTRL  : 0u));
+}
 
 /*
  * Translate an SDL keydown event to a terminal escape sequence.
@@ -50,34 +90,20 @@ static const char *translate_key(SDL_Keycode sym, SDL_Keymod mod)
     case SDLK_BACKSPACE: return "\x7f";
     case SDLK_TAB:       return "\t";
     case SDLK_ESCAPE:    return "\x1b";
-
-    case SDLK_UP:    return vterm_app_cursor_keys() ? "\x1bOA" : "\x1b[A";
-    case SDLK_DOWN:  return vterm_app_cursor_keys() ? "\x1bOB" : "\x1b[B";
-    case SDLK_LEFT:  return vterm_app_cursor_keys() ? "\x1bOD" : "\x1b[D";
-    case SDLK_RIGHT: return vterm_app_cursor_keys() ? "\x1bOC" : "\x1b[C";
-
-    case SDLK_HOME:      return "\x1b[H";
-    case SDLK_END:       return "\x1b[F";
-    case SDLK_PAGEUP:    return "\x1b[5~";
-    case SDLK_PAGEDOWN:  return "\x1b[6~";
-    case SDLK_DELETE:    return "\x1b[3~";
-    case SDLK_INSERT:    return "\x1b[2~";
-
-    case SDLK_F1:        return "\x1bOP";
-    case SDLK_F2:        return "\x1bOQ";
-    case SDLK_F3:        return "\x1bOR";
-    case SDLK_F4:        return "\x1bOS";
-    case SDLK_F5:        return "\x1b[15~";
-    case SDLK_F6:        return "\x1b[17~";
-    case SDLK_F7:        return "\x1b[18~";
-    case SDLK_F8:        return "\x1b[19~";
-    case SDLK_F9:        return "\x1b[20~";
-    case SDLK_F10:       return "\x1b[21~";
-    case SDLK_F11:       return "\x1b[23~";
-    case SDLK_F12:       return "\x1b[24~";
-
-    default:             return NULL;
+    default:             break;
     }
+
+    vtkey_t key = sdl_to_vtkey(sym);
+    if (key == VTKEY_NONE) return NULL;
+
+    /* Encoded sequences never contain NUL, so a NUL-terminated static
+     * buffer keeps the caller's strlen() contract intact. */
+    static char seq[VTKEYS_MAX_LEN + 1];
+    size_t n = vtkeys_encode(key, sdl_to_vtmods(mod), vterm_app_cursor_keys(),
+                             (uint8_t *)seq, VTKEYS_MAX_LEN);
+    if (n == 0) return NULL;
+    seq[n] = '\0';
+    return seq;
 }
 
 static void send_key_bytes(const char *seq, size_t len, uint64_t now)
@@ -98,8 +124,13 @@ static void send_key_bytes(const char *seq, size_t len, uint64_t now)
  */
 #define TOUCH_TAP_MAX_MS    300
 #define TOUCH_LONG_PRESS_MS 500
+/* Matches SCROLL_START_PX in touch_input.c — the travel that turns an edge
+ * press into a drag rather than a tap. */
+#define TOUCH_SCROLL_START_PX 12
 
-typedef enum { TOUCH_IDLE, TOUCH_TOUCHING, TOUCH_WAITING_LIFT } touch_state_t;
+typedef enum {
+    TOUCH_IDLE, TOUCH_TOUCHING, TOUCH_SCROLLING, TOUCH_WAITING_LIFT
+} touch_state_t;
 
 static touch_state_t touch_state = TOUCH_IDLE;
 static uint64_t      touch_start;
@@ -138,6 +169,67 @@ static void touch_mouse_up(const SDL_MouseButtonEvent *b, uint64_t now)
     touch_state = TOUCH_IDLE;
 }
 
+/* Right-edge scroll drag, mirroring touch_input.c's STATE_SCROLLING: a press
+ * that STARTS in the strip and then travels vertically turns into a stream of
+ * SCROLL events instead of the tap it would have been. Armed by the shell
+ * through sim_set_scroll_edge (the cfg.set_scroll_edge seam), so the menu
+ * toggle governs the simulator exactly as it governs the panel. */
+static int      s_scroll_edge_px = 0;
+static uint16_t s_scroll_last_y;
+
+static void sim_set_scroll_edge(int width_px)
+{
+    s_scroll_edge_px = width_px < 0 ? 0 : width_px;
+}
+
+/* Mouse wheel → scroll, sim-only. The panel has no wheel, so this rides the
+ * same SCROLL event as the edge drag rather than inventing a second path:
+ * one notch is reported as a cell of travel, which the shell then scales by
+ * the configured drag speed exactly as it does a finger. SDL gives positive
+ * y for a push away from you, which should show older lines — the same
+ * direction as dragging the content down. */
+static void mouse_wheel(const SDL_MouseWheelEvent *w, uint64_t now)
+{
+    if (!w->y) return;
+    int notches = w->y;
+#if SDL_VERSION_ATLEAST(2, 0, 4)
+    if (w->direction == SDL_MOUSEWHEEL_FLIPPED) notches = -notches;
+#endif
+    cyberdeck_input_t ev = {
+        .type = CYBERDECK_INPUT_SCROLL,
+        .dy   = (int16_t)(notches * font_height()),
+    };
+    cyberdeck_app_handle_input(&ev, now);
+}
+
+static void touch_mouse_motion(const SDL_MouseMotionEvent *m, uint64_t now)
+{
+    if (touch_state != TOUCH_TOUCHING && touch_state != TOUCH_SCROLLING) return;
+
+    uint16_t x, y;
+    display_window_to_fb(m->x, m->y, &x, &y);
+
+    if (touch_state == TOUCH_TOUCHING) {
+        if (s_scroll_edge_px <= 0 ||
+            (int)touch_x < DISPLAY_WIDTH - s_scroll_edge_px) return;
+        int dy = (int)y - (int)touch_y;
+        if (dy > -TOUCH_SCROLL_START_PX && dy < TOUCH_SCROLL_START_PX) return;
+        s_scroll_last_y = y;
+        touch_state     = TOUCH_SCROLLING;
+        return;
+    }
+
+    if (y == s_scroll_last_y) return;
+    cyberdeck_input_t ev = {
+        .type = CYBERDECK_INPUT_SCROLL,
+        .x    = x,
+        .y    = y,
+        .dy   = (int16_t)((int)y - (int)s_scroll_last_y),
+    };
+    s_scroll_last_y = y;
+    cyberdeck_app_handle_input(&ev, now);
+}
+
 static void touch_tick(uint64_t now)
 {
     if (touch_state == TOUCH_TOUCHING &&
@@ -150,7 +242,8 @@ static void touch_tick(uint64_t now)
 /* -------------------------------------------------------------------------
  * --drive "tap:x,y|key:enter|hold:x,y|wait:800" — scripted input for UI
  * screenshot automation (framebuffer pixel coords; key names: enter, esc,
- * tab, up/down/left/right, f12, or a single character). Steps fire 450 ms
+ * tab, up/down/left/right, f12, sbup/sbdn for scrollback paging, or a
+ * single character). Steps fire 450 ms
  * apart (wait:N overrides the gap) starting 2.5 s after boot, injected
  * through the same paths as real input. Sim-only test hook.
  * ---------------------------------------------------------------------- */
@@ -169,6 +262,9 @@ static void drive_key(const char *name, uint64_t now)
     else if (!strcmp(name, "right")) seq = "\x1b[C";
     else if (!strcmp(name, "left"))  seq = "\x1b[D";
     else if (!strcmp(name, "f12"))   seq = "\x1b[24~";
+    /* Scrollback paging — the deck keeps these rather than forwarding. */
+    else if (!strcmp(name, "sbup"))  seq = "\x1b[5;2~";
+    else if (!strcmp(name, "sbdn"))  seq = "\x1b[6;2~";
     else if (name[0] && !name[1])    { one[0] = name[0]; seq = one; }
     if (seq) send_key_bytes(seq, strlen(seq), now);
 }
@@ -259,6 +355,10 @@ int main(int argc, char *argv[])
         .fallback_wifi_ssid     = "SIM",
         .fallback_wifi_password = "",
         .ble = NULL,
+#if CONFIG_INPUT_TOUCH_SCROLL
+        .set_scroll_edge = sim_set_scroll_edge,
+        .scroll_edge_px  = CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX,
+#endif
     };
     if (cyberdeck_app_init(&app_cfg, SDL_GetTicks64()) != ESP_OK) {
         fprintf(stderr, "cyberdeck_app_init() failed\n");
@@ -301,6 +401,15 @@ int main(int argc, char *argv[])
 
             case SDL_TEXTINPUT:
                 send_key_bytes(ev.text.text, strlen(ev.text.text), now);
+                got_input = true;
+                break;
+
+            case SDL_MOUSEMOTION:
+                touch_mouse_motion(&ev.motion, now);
+                break;
+
+            case SDL_MOUSEWHEEL:
+                mouse_wheel(&ev.wheel, now);
                 got_input = true;
                 break;
 

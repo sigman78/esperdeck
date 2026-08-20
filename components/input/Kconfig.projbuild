@@ -61,4 +61,45 @@ menu "Input HAL"
         default 4
         range 0 48
 
+    config INPUT_TOUCH_SCROLL
+        bool "Right-edge drag scrolls the scrollback"
+        depends on INPUT_TOUCH && VTERM_SCROLLBACK_LINES != 0
+        default y
+        help
+            Compiles in the edge-drag gesture and its SYSTEM menu toggle.
+            A press starting in the right-edge strip and moving vertically
+            pages the scrollback instead of producing a tap.
+
+            Pointless without scrollback, hence the dependency: with
+            VTERM_SCROLLBACK_LINES at 0 there is nothing to scroll and this
+            option disappears.
+
+            The gesture itself is switched on and off from the menu at
+            runtime; this only decides whether it exists in the build.
+
+    config INPUT_TOUCH_SCROLL_EDGE_PX
+        int "Width of the right-edge scroll strip (pixels)"
+        depends on INPUT_TOUCH_SCROLL
+        default 48
+        range 16 200
+        help
+            How far in from the right edge a press may start and still be
+            taken as a scroll drag. 48 px is about a finger width on the
+            7" panel, and six character cells at the 8x16 font.
+
+    config INPUT_TOUCH_SCROLL_SPEED_PCT
+        int "Scroll drag speed (percent of 1:1)"
+        depends on INPUT_TOUCH_SCROLL
+        default 150
+        range 25 500
+        help
+            How far the view moves per unit of finger travel, as a
+            percentage. 100 is 1:1 — the text tracks the finger exactly.
+            150 (the default) moves half again as fast, which covers more
+            of a long buffer without losing the sense of dragging the
+            content itself.
+
+            Applied to accumulated pixels, so the fraction is not lost:
+            a slow drag still scrolls, it just takes more travel per row.
+
 endmenu

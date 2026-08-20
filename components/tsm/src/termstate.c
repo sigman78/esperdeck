@@ -121,6 +121,28 @@ static void erase_screen(tsm_t *t)
 
 /* ── Scrolling ───────────────────────────────────────────────────────────── */
 
+/* Cells are left as they are — sb_len = 0 makes them unreachable. */
+static void sb_clear(tsm_t *t)
+{
+    t->sb_len  = 0;
+    t->sb_head = 0;
+    t->sb_off  = 0;
+}
+
+/* Copy one logical row into the scrollback ring, oldest overwritten first. */
+static void sb_push_row(tsm_t *t, int row)
+{
+    memcpy(&t->sb_cells[(size_t)t->sb_head * (size_t)t->cols],
+           row_ptr(t, row), (size_t)t->cols * sizeof(tsm_cell_t));
+    if (++t->sb_head >= t->sb_max) t->sb_head = 0;
+    if (t->sb_len < t->sb_max) t->sb_len++;
+
+    /* Follow the ring so a held view keeps showing the same content as new
+     * output arrives. At sb_off == sb_len history is sliding out from under
+     * it and there is nowhere further back to hold. */
+    if (t->sb_off > 0 && t->sb_off < t->sb_len) t->sb_off++;
+}
+
 /* Scroll [top, bot] up by n lines; new lines at bottom are blank.
  *
  * Full-region scroll rotates the row ring — O(1) bookkeeping plus n erased
@@ -137,6 +159,15 @@ static void scroll_up(tsm_t *t, int n)
     int top  = t->scroll_top;
     int bot  = t->scroll_bot;
     int span = bot - top + 1;
+
+    /* Only the full primary screen makes history: a DECSTBM region is an app
+     * managing a pane, not the session scrolling. Must run before the work
+     * below, while the rows are still at their old logical positions. */
+    if (t->sb_max > 0 && !t->mode.decalt && top == 0 && bot == t->rows - 1) {
+        int push = n < span ? n : span;
+        for (int r = 0; r < push; r++) sb_push_row(t, r);
+    }
+
     if (n >= span) { for (int r = top; r <= bot; r++) erase_row(t, r); return; }
     if (top == 0 && bot == t->rows - 1) {
         t->base += n;
@@ -250,6 +281,9 @@ static void swap_grids(tsm_t *t)
 static void switch_to_alt(tsm_t *t)
 {
     if (t->mode.decalt) return;
+    /* An app taking the alt screen owns the whole viewport from here on;
+     * a stale scrollback view would leave history stranded above it. */
+    t->sb_off = 0;
     save_cursor(t, &t->saved);
     swap_grids(t);
     t->mode.decalt = true;
@@ -437,8 +471,14 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
             for (int r = 0; r < t->cy; r++) erase_row(t, r);
             erase_range(t, t->cy, 0, t->cx);
             break;
-        case 2: /* whole screen */
-        case 3: /* whole screen + scrollback (not implemented) */
+        case 2: /* whole screen — history is NOT touched */
+            erase_screen(t);
+            break;
+        case 3: /* whole screen + scrollback (xterm ED 3) */
+            /* Must NOT share a body with case 2: ED 2 is what every
+             * full-screen app sends on exit, and clearing history there
+             * throws the session away the moment you quit mc. */
+            sb_clear(t);
             erase_screen(t);
             break;
         }
@@ -569,6 +609,7 @@ static void do_hard_reset(tsm_t *t)
 {
     if (t->mode.decalt)            /* return to primary first */
         swap_grids(t);
+    sb_clear(t);                   /* RIS drops history, as xterm does */
     erase_screen(t);
     t->base = 0;                   /* freshly erased — mapping is free to reset */
     t->cx = 0; t->cy = 0;
@@ -829,7 +870,7 @@ static void *tsm_calloc_hot(size_t n, size_t sz)
     return p;
 }
 
-tsm_t *tsm_new(int cols, int rows)
+tsm_t *tsm_new(int cols, int rows, int sb_lines)
 {
     if (cols <= 0 || rows <= 0) return NULL;
 
@@ -841,6 +882,15 @@ tsm_t *tsm_new(int cols, int rows)
     t->dirty     = (tsm_row_dirty_t *)tsm_calloc_hot((size_t)rows, sizeof(tsm_row_dirty_t));
 
     if (!t->cells || !t->alt_cells || !t->dirty) { tsm_free(t); return NULL; }
+
+    /* Scrollback is a comfort, not a requirement: halve the request until it
+     * fits rather than failing the terminal outright. A deck that comes up
+     * with a shorter history beats one that will not come up. */
+    for (int want = sb_lines; want > 0; want /= 2) {
+        t->sb_cells = (tsm_cell_t *)tsm_calloc((size_t)want * (size_t)cols,
+                                               sizeof(tsm_cell_t));
+        if (t->sb_cells) { t->sb_max = want; break; }
+    }
 
     t->cols = cols;
     t->rows = rows;
@@ -871,6 +921,7 @@ void tsm_free(tsm_t *t)
     if (!t) return;
     heap_caps_free(t->cells);
     heap_caps_free(t->alt_cells);
+    heap_caps_free(t->sb_cells);
     heap_caps_free(t->dirty);
     heap_caps_free(t);
 }
@@ -882,7 +933,38 @@ void tsm_feed(tsm_t *t, const uint8_t *data, size_t len)
 
 const tsm_cell_t *tsm_row(const tsm_t *t, int row)
 {
-    return &t->cells[phys_row(t, row) * t->cols];
+    if (t->sb_off <= 0)
+        return &t->cells[phys_row(t, row) * t->cols];
+
+    /* Scrolled back: the top sb_off rows come from history, the rest is the
+     * live grid shifted down by the same amount. */
+    if (row < t->sb_off) {
+        int i = t->sb_len - t->sb_off + row;
+        int p = t->sb_head - t->sb_len + i;
+        if (p < 0) p += t->sb_max;
+        return &t->sb_cells[(size_t)p * (size_t)t->cols];
+    }
+    return &t->cells[phys_row(t, row - t->sb_off) * t->cols];
+}
+
+int tsm_sb_capacity(const tsm_t *t) { return t->sb_max; }
+int tsm_sb_len(const tsm_t *t)    { return t->sb_len; }
+int tsm_sb_offset(const tsm_t *t) { return t->sb_off; }
+
+int tsm_sb_scroll(tsm_t *t, int delta)
+{
+    /* Alt-screen apps own the whole viewport; paging the primary screen's
+     * history in behind them would show a mix of the two. */
+    if (t->sb_max <= 0 || t->mode.decalt) return t->sb_off;
+
+    int off = t->sb_off + delta;
+    t->sb_off = clampi(off, 0, t->sb_len);
+    return t->sb_off;
+}
+
+void tsm_sb_reset(tsm_t *t)
+{
+    t->sb_off = 0;
 }
 
 void tsm_cursor(const tsm_t *t, int *col, int *row, bool *visible)

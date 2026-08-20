@@ -69,6 +69,40 @@ void vterm_set_response_cb(vterm_response_cb_t cb, void *user);
  */
 void vterm_reset(void);
 
+/*
+ * Scrollback — history that has scrolled off the top of the screen.
+ *
+ * Fed only by the primary screen; alt-screen apps (vim, htop) never
+ * contribute and cannot be scrolled. Capacity is
+ * CONFIG_VTERM_SCROLLBACK_LINES, 0 disables the whole feature and these
+ * calls become no-ops reporting 0.
+ *
+ * The screen is repainted as needed by these calls, so a caller does not
+ * follow them with vterm_flush().
+ */
+
+/** Move the view @p delta rows (positive = back in time). Returns the new
+ *  offset, clamped to the stored history. */
+int vterm_scroll(int delta);
+
+/** Half-screen step: @p dir +1 = back in time, -1 = towards live. */
+int vterm_scroll_page(int dir);
+
+/** Return to the live view. Returns true if the view actually moved —
+ *  callers use this to swallow the keystroke that caused it. */
+bool vterm_scroll_reset(void);
+
+/** Current view offset in rows; 0 = live. */
+int vterm_scroll_offset(void);
+
+/** Rows of history currently available to scroll back through. */
+int vterm_scroll_len(void);
+
+/** Scrollback capacity, 0 when the feature is off. Use this — not
+ *  vterm_scroll_len(), which is also 0 on a fresh session — to decide
+ *  whether the deck should claim the scrollback key bindings at all. */
+int vterm_scroll_capacity(void);
+
 /**
  * Returns true when the remote has enabled application cursor key mode
  * (DECCKM, ESC [ ? 1 h).  Use this to decide whether arrow keys should
