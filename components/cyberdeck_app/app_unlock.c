@@ -112,23 +112,23 @@ static void render_unlock(void)
                      .ncols = 3, .nrows = 4, .count = 12 };
     g.th = ui_rows() >= 28 ? 4 : 3;
     g.tw = ui_cols() >= 80 ? 10 : 8;
-    int dots_row = tall ? 5 : 2;
-    g.y0 = dots_row + 2;
+    int entry_row = tall ? 5 : 2;
+    g.y0 = entry_row + 2;
     g.x0 = (ui_cols() - (g.tw * 3 + g.gx * 2)) / 2;
     app.grid = g;
 
-    /* Status / dots row: the code being typed, or what the deck is doing
+    /* Status / entry row: the code being typed, or what the deck is doing
      * with it. A note (wrong code, mismatch) flashes until input resumes. */
     if (app.unlock.deriving) {
         static const char MSG[] = "DERIVING KEY";
         int x = (ui_cols() - (int)sizeof(MSG) + 1) / 2;
         ui_pen(OVERLAY_COL_CYAN);
-        ui_putch(x - 2, dots_row, spinner_glyph(app.anim_frame), 0);
-        ui_puts(x, dots_row, MSG, 0);
+        ui_putch(x - 2, entry_row, spinner_glyph(app.anim_frame), 0);
+        ui_puts(x, entry_row, MSG, 0);
     } else if (app.unlock.note_until) {
         uint8_t blink = ((app.anim_frame / 3) & 1) ? OVERLAY_ATTR_INVERSE : 0;
         ui_pen(OVERLAY_COL_AMBER);
-        ui_puts((ui_cols() - (int)strlen(app.unlock.note)) / 2, dots_row,
+        ui_puts((ui_cols() - (int)strlen(app.unlock.note)) / 2, entry_row,
                 app.unlock.note, blink);
     } else if (keystore_backoff_ms() > 0) {
         /* Failed-attempt wait: a live countdown owns the entry row (the
@@ -137,55 +137,62 @@ static void render_unlock(void)
         snprintf(msg, sizeof(msg), "LOCKED \xB7 RETRY IN %u s",
                  (unsigned)((keystore_backoff_ms() + 999) / 1000));
         ui_pen(OVERLAY_COL_AMBER);
-        ui_puts((ui_cols() - (int)strlen(msg)) / 2, dots_row, msg,
+        ui_puts((ui_cols() - (int)strlen(msg)) / 2, entry_row, msg,
                 OVERLAY_ATTR_BOLD);
     } else {
-        /* Entry cells — prominent <●> filled / <○> empty brackets; the
-         * newest entry briefly reveals its character while defining a
-         * code. Free-length entry appends a blinking caret cell; a row
-         * too long for the screen falls back to compact dots. */
+        /* Entry cells — [X] taken / [_] still to come, one bracketed slot
+         * per character with a gap between them: at a glance the row reads
+         * as "three of four", which the old ●/○ pair did not. The newest
+         * entry briefly shows its character while defining a code. A
+         * free-length row appends a blinking caret cell; a row too long
+         * for the screen falls back to compact marks. */
         int len = app.unlock.len;
         int n   = app.unlock.expected ? app.unlock.expected : len + 1;
         if (n * 4 - 1 <= ui_cols() - 2) {
             int x0 = (ui_cols() - (n * 4 - 1)) / 2;
             for (int i = 0; i < n; i++) {
-                int  x      = x0 + i * 4;
-                bool filled = i < len;
+                int     x      = x0 + i * 4;
+                bool    filled = i < len;
+                /* Empty slots recede (dim), taken ones step forward (bold
+                 * green) — on this all-green theme the glyph alone would
+                 * not separate them. */
+                uint8_t a      = filled ? OVERLAY_ATTR_BOLD : OVERLAY_ATTR_DIM;
                 ui_pen(filled ? OVERLAY_COL_GREEN : OVERLAY_COL_DEFAULT);
-                ui_putch(x,     dots_row, '<', 0);
-                ui_putch(x + 2, dots_row, '>', 0);
+                ui_putch(x,     entry_row, '[', a);
+                ui_putch(x + 2, entry_row, ']', a);
                 if (filled) {
                     bool show = i == len - 1 && app.unlock.reveal_until;
                     if (show) ui_pen(OVERLAY_COL_WHITE);
-                    ui_putch(x + 1, dots_row,
-                             show ? (uint16_t)app.unlock.reveal_ch
-                                  : UI_LED_ON,
-                             OVERLAY_ATTR_BOLD);
+                    ui_putch(x + 1, entry_row,
+                             show ? (uint16_t)app.unlock.reveal_ch : 'X', a);
                 } else if (!app.unlock.expected) {   /* caret cell */
-                    if ((app.anim_frame / 4) & 1) {
-                        ui_pen(OVERLAY_COL_GREEN);
-                        ui_putch(x + 1, dots_row, UI_VBAR, 0);
-                    }
+                    ui_pen(OVERLAY_COL_GREEN);
+                    ui_putch(x + 1, entry_row,
+                             ((app.anim_frame / 4) & 1) ? UI_VBAR : '_',
+                             OVERLAY_ATTR_BOLD);
                 } else {
-                    ui_putch(x + 1, dots_row, UI_LED_OFF, 0);
+                    ui_putch(x + 1, entry_row, '_', a);
                 }
             }
-        } else {                       /* long passphrase: compact dots */
+        } else {                       /* long passphrase: compact marks */
             int m = len > 24 ? 24 : len;
             int x0 = (ui_cols() - (m * 2 + 1)) / 2;
             ui_pen(OVERLAY_COL_GREEN);
             for (int i = 0; i < m; i++)
-                ui_putch(x0 + i * 2, dots_row, UI_LED_ON, 0);
+                ui_putch(x0 + i * 2, entry_row, 'X', OVERLAY_ATTR_BOLD);
             if ((app.anim_frame / 4) & 1)
-                ui_putch(x0 + m * 2, dots_row, UI_VBAR, 0);
+                ui_putch(x0 + m * 2, entry_row, UI_VBAR, 0);
         }
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    /* A pressed key is drawn LAST, displaced one cell right+down and lit —
+    /* A pressed tile is drawn LAST, displaced one cell right+down and lit —
      * the classic button push-in. The full-screen clear each frame erases
      * the displacement when PRESS_MS expires, and drawing it last keeps
-     * the shifted tile on top of its lower neighbor on gutterless grids. */
+     * the shifted tile on top of its lower neighbor on gutterless grids.
+     * Only touch lights a tile (see unlock_input): mirroring keystrokes
+     * onto the pad would shoulder-surf the code onto a screen the typist
+     * isn't even looking at. */
     int lit = app.unlock.press_until ? app.unlock.press : -1;
     for (int i = 0; i < 12; i++) {
         if (i == lit) continue;
@@ -505,8 +512,9 @@ void unlock_tick(uint64_t now)
     }
 }
 
-/* Light the pad tile under a press for PRESS_MS (touch, or the matching
- * key) — set BEFORE dispatch so the action's own render already shows it. */
+/* Light the pad tile under a finger for PRESS_MS — set BEFORE dispatch so
+ * the action's own render already shows it. Touch only: the finger has
+ * already given the digit away to anyone watching, a keystroke has not. */
 static void pad_flash(int slot, uint64_t now)
 {
     app.unlock.press       = (int8_t)slot;
@@ -530,11 +538,9 @@ void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now
     }
     if (ev->type != CYBERDECK_INPUT_KEY) return;
 
-    if (k == K_CHAR && ch >= '0' && ch <= '9')
-        pad_flash(ch == '0' ? 10 : ch - '1', now);
-    else if (k == K_BACKSPACE) pad_flash(9, now);
-    else if (k == K_ENTER)     pad_flash(11, now);
-
+    /* No pad_flash() here on purpose — a keyboard press is not visible on
+     * the deck, so echoing it as a lit tile would leak the code to the
+     * room. The entry row alone acknowledges the keystroke. */
     if (k == K_ESC)            unlock_cancel(now);
     else if (k == K_ENTER)     submit(now);
     else if (k == K_BACKSPACE) erase_char();
