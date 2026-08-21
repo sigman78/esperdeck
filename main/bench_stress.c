@@ -126,9 +126,41 @@ static void ov_apply(ov_phase_t phase)
  * screen did not exist yet — comparing them against DENSE is a cross-workload
  * comparison, not a regression. These two modes bracket that range.
  */
-typedef enum { TERM_DENSE = 0, TERM_SPARSE, TERM_BLANK } term_mode_t;
+typedef enum { TERM_DENSE = 0, TERM_SPARSE, TERM_BLANK, TERM_MIXED } term_mode_t;
 
-static void feed_terminal(int cols, int rows, unsigned frame, term_mode_t tm)
+/* A TUI-shaped repertoire: 160 distinct codepoints spanning ASCII, box
+ * drawing, block elements and Latin-1 — what mc / btop / tmux actually put on
+ * screen. Deliberately wider than the 95-entry ASCII glyph cache, so it shows
+ * what non-ASCII content costs. */
+static uint16_t mixed_cp(unsigned k, unsigned span)
+{
+    k %= span;
+    if (k <  94) return (uint16_t)(0x0021 + k);           /* ASCII        94 */
+    k -= 94;
+    if (k < 128) return (uint16_t)(0x2500 + k);           /* box drawing 128 */
+    k -= 128;
+    if (k <  32) return (uint16_t)(0x2580 + k);           /* blocks       32 */
+    k -= 32;
+    if (k <  64) return (uint16_t)(0x00C0 + k);           /* Latin-1      64 */
+    k -= 64;
+    if (k <  64) return (uint16_t)(0x0390 + k);           /* Greek        64 */
+    k -= 64;
+    return (uint16_t)(0x0410 + (k % 128u));               /* Cyrillic    128 */
+}
+
+static int utf8_put(char *p, uint16_t cp)
+{
+    if (cp < 0x80)  { p[0] = (char)cp; return 1; }
+    if (cp < 0x800) { p[0] = (char)(0xC0 | (cp >> 6));
+                      p[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    p[0] = (char)(0xE0 | (cp >> 12));
+    p[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+    p[2] = (char)(0x80 | (cp & 0x3F));
+    return 3;
+}
+
+static void feed_terminal(int cols, int rows, unsigned frame, term_mode_t tm,
+                          unsigned span)
 {
     static char line[1024];
 
@@ -140,7 +172,9 @@ static void feed_terminal(int cols, int rows, unsigned frame, term_mode_t tm)
         for (int c = 0; c < cols && n < (int)sizeof line - 16; c++) {
             /* SPARSE: ~1 glyph in 6, no SGR churn — a shell screen, not a
              * painted one. DENSE: every cell, with a colour change. */
-            if (tm == TERM_SPARSE) {
+            if (tm == TERM_MIXED) {
+                n += utf8_put(line + n, mixed_cp(r * 13u + c + frame, span));
+            } else if (tm == TERM_SPARSE) {
                 const bool ink = ((r * 7u + c * 3u + frame) % 6u) == 0;
                 n += snprintf(line + n, sizeof line - n, "%c",
                               ink ? s_set[(r + c) % SET_LEN] : ' ');
@@ -192,21 +226,25 @@ static const struct {
     ov_phase_t  ov;
     term_mode_t tm;
     fx_mode_t   fx;
+    unsigned    span;      /* distinct codepoints, TERM_MIXED only */
     const char *name;
 } s_phases[] = {
-    { OV_OFF,    TERM_DENSE,  FX_NOWOB,  "off"       },
-    { OV_CLEAR,  TERM_DENSE,  FX_NOWOB,  "clear"     },
-    { OV_SCRIM,  TERM_DENSE,  FX_NOWOB,  "scrim"     },
-    { OV_SPACES, TERM_DENSE,  FX_NOWOB,  "spaces"    },
-    { OV_DENSE,  TERM_DENSE,  FX_NOWOB,  "dense"     },
-    { OV_BARS,   TERM_DENSE,  FX_NOWOB,  "bars"      },
-    { OV_BOLD,   TERM_DENSE,  FX_NOWOB,  "bold"      },
-    { OV_OFF,    TERM_SPARSE, FX_NOWOB,  "t:sparse"  },
-    { OV_OFF,    TERM_BLANK,  FX_NOWOB,  "t:blank"   },
-    { OV_OFF,    TERM_DENSE,  FX_APP,    "fx:app"    },
-    { OV_OFF,    TERM_SPARSE, FX_APP,    "fx:app+sp" },
-    { OV_OFF,    TERM_DENSE,  FX_NOSCAN, "fx:noscan" },
-    { OV_OFF,    TERM_DENSE,  FX_NONE,   "fx:none"   },
+    { OV_OFF, TERM_DENSE, FX_NOWOB, 0,   "off" },
+    { OV_CLEAR, TERM_DENSE, FX_NOWOB, 0,   "clear" },
+    { OV_SCRIM, TERM_DENSE, FX_NOWOB, 0,   "scrim" },
+    { OV_SPACES, TERM_DENSE, FX_NOWOB, 0,   "spaces" },
+    { OV_DENSE, TERM_DENSE, FX_NOWOB, 0,   "dense" },
+    { OV_BARS, TERM_DENSE, FX_NOWOB, 0,   "bars" },
+    { OV_BOLD, TERM_DENSE, FX_NOWOB, 0,   "bold" },
+    { OV_OFF, TERM_SPARSE, FX_NOWOB, 0,   "t:sparse" },
+    { OV_OFF,    TERM_MIXED,  FX_NOWOB, 160, "t:mix160"  },
+    { OV_OFF,    TERM_MIXED,  FX_NOWOB, 320, "t:mix320"  },
+    { OV_OFF,    TERM_MIXED,  FX_NOWOB, 510, "t:mix510"  },
+    { OV_OFF, TERM_BLANK, FX_NOWOB, 0,   "t:blank" },
+    { OV_OFF, TERM_DENSE, FX_APP, 0,   "fx:app" },
+    { OV_OFF, TERM_SPARSE, FX_APP, 0,   "fx:app+sp" },
+    { OV_OFF, TERM_DENSE, FX_NOSCAN, 0,   "fx:noscan" },
+    { OV_OFF, TERM_DENSE, FX_NONE, 0,   "fx:none" },
 };
 
 #define SETTLE_TICKS   3    /* frames discarded after an overlay switch */
@@ -243,13 +281,13 @@ static void bench_task(void *arg)
 
         /* Let the new overlay/content reach the ISR before counting. */
         for (int i = 0; i < SETTLE_TICKS; i++) {
-            feed_terminal(cols, rows, frame++, tm);
+            feed_terminal(cols, rows, frame++, tm, s_phases[p].span);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
         display_render_bench_reset();
 
         for (int i = 0; i < WINDOW_TICKS; i++) {
-            feed_terminal(cols, rows, frame++, tm);
+            feed_terminal(cols, rows, frame++, tm, s_phases[p].span);
             vTaskDelay(pdMS_TO_TICKS(100));
         }
 

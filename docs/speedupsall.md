@@ -639,16 +639,70 @@ Instruction count -42.8% predicts the measurement well: `t:blank` (pure scan,
 no decode) came in at -47.2%, slightly better than the count alone, because a
 disproportionate share of what was removed was stack traffic rather than ALU.
 
+### Glyph cache — decode removed (2026-08-21)
+
+Same rule as the LUT applied to the decoder: 3000 decodes per frame over a
+distinct set far smaller than the font. Terminus ships ~1470 glyphs (70 KB at
+12x24 if cached outright), so the cache is **bounded and associative**:
+256 entries, 2-way, round-robin replacement, keyed on `(bold, cp)`.
+
+| dense, worst chunk | 8x16 | 10x20 |
+|---|---|---|
+| `off` (ASCII) | 360 → **246 us** (−31.7%) | 260 → **171 us** (−34.2%) |
+| `t:mix160` (TUI repertoire) | 370 → **250 us** (−32.5%) | — → 172 us |
+| `t:blank` | 233 → 233 us (0.0%) | 171 → 171 us (0.0%) |
+
+An ASCII-only cache was tried first and rejected: it left every box-drawing and
+accented cell decoding, costing **+51%** on a TUI-shaped screen (370 vs 245 us).
+The associative version brings non-ASCII to **within 4 us of pure ASCII** while
+the ASCII path pays only **+0.6%** for the hash and tag compare.
+
+**Sizing** (`t:mixNNN` phases — distinct codepoints vs worst band):
+
+| phase | 8x16 (100x30) | 10x20 (80x24) |
+|---|---|---|
+| `t:mix160` — 160 distinct, 0.62x cap | 250 us (+1.6%) | 172 us (+0.6%) |
+| `t:mix320` — 320 distinct, 1.25x cap | 273 us (+11%) | 197 us (+15%) |
+| `t:mix510` — see note | 404 us (+64%) | 266 us (+55%) |
+
+> **`span` is a cap, not the distinct count.** The generator walks
+> `r*13 + c`, so the working set is `rows*13 + cols` bounded by span. At 160
+> and 320 both grids see the full span and are comparable. At 510 they are
+> **not**: 8x16 reaches **477 distinct (1.86x capacity)** while 10x20 reaches
+> only **379 (1.48x)**, which is why 8x16 looks so much worse in that row. It
+> is a benchmark artifact, not a property of the cache — at 320, where both
+> grids see the same 320 glyphs, **10x20 is the worse of the two**.
+
+`tools/cachesim.py` replays the exact access pattern against the cache model
+and predicts max misses/row of 97 (8x16) vs 70 (10x20) at `t:mix510`, ratio
+1.39 against a measured cycle-delta ratio of 1.65 — the residual being
+per-glyph decode variance.
+
+No cliff: an overflowing set costs one decode for the loser, not a cascade,
+amortised over 3000 cells. Even the deepest case measured (477 distinct — a
+font chart, not a terminal) sits at 65% of the 20 MHz deadline. 256 entries is
+the right size.
+
+Why not true LRU: it needs a recency write on every hit, 3000 ISR-context
+stores per frame, to improve a case already under 1%. Round-robin advances a
+per-set bit only on fill, so hits stay read-only.
+
+Costs 5.1 / 11.3 / 13.3 KB internal DRAM by size; allocation failure degrades
+to decoding per frame.
+
 ### Where that leaves pclk
 
 Band utilisation with the shipped fx config, after the whole 2026-08-21 arc:
 
 | pclk | refresh | 8x16 band | 10x20 band | verdict |
 |---|---|---|---|---|
-| 16 MHz | 39.0 Hz | 49% | 54% | current, lots of margin |
-| **20 MHz** | **48.8 Hz** | **62%** | **68%** | **comfortable** |
-| 26.67 MHz | 65.0 Hz | 82% | 90% | arguable, tight at 10x20 |
-| 32 MHz | 78.0 Hz | 99% | 108% | no |
+| 16 MHz | 39.0 Hz | 36% | 36% | current |
+| **20 MHz** | **48.8 Hz** | **45%** | **46%** | **verified on hardware** |
+| 26.67 MHz | 65.0 Hz | 60% | 61% | plausible, untested |
+| 32 MHz | 78.0 Hz | 72% | 73% | plausible, untested |
+| 40 MHz | 97.6 Hz | 90% | 91% | at the peripheral limit |
+
+(worst phase, `fx:app`, after the LUT and the glyph cache)
 
 At the start of this branch those first two rows read 109%/122% and were both
 over the deadline. **20 MHz is now a config change, not a project.**
@@ -658,6 +712,11 @@ worst band), prebuild task (levels the 23–28% avg/max spread at the half-row
 sizes), then PIE SIMD inside that task.
 
 ## ESP32-S3 memory-access rules (measured 2026-08-21)
+
+> The practical distillation of everything below — how to write and validate
+> a tight data loop on this part — is **`docs/tight-loops.md`**. This section
+> keeps the raw measurements behind it.
+
 
 On-device microbenchmark (`membench` in `bench_stress.c`), internal SRAM,
 1600 B, min of 8 runs. **Uses `volatile`, so it measures raw issue cost, not
