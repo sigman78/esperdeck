@@ -564,6 +564,87 @@ grounds and that still holds, but it does **not** help this problem. A blank-cel
 fast path only pays on content that has blanks, and the deadline is set by worst-case
 dense content where there are none.
 
+## ESP32-S3 memory-access rules (measured 2026-08-21)
+
+On-device microbenchmark (`membench` in `bench_stress.c`), internal SRAM,
+1600 B, min of 8 runs. **Uses `volatile`, so it measures raw issue cost, not
+what optimised C achieves** — a real `-O2` byte loop beats 5 cyc/byte. Treat
+the table as RELATIVE guidance, not an absolute model.
+
+| fill | cyc/byte | | copy | cyc/byte |
+|---|---|---|---|---|
+| `u8` | 5.00 | | `u8` | 9.00 |
+| `u16` | 2.50 | | `u16` | 4.50 |
+| `u32` @16B | 1.25 | | `u32` @16B | 2.00 |
+| `u32` @4B | **1.25** | | `u32` ×4 unrolled | 1.81 |
+| `u32` ×4 unrolled | 1.25 | | `u32` src+2 (misaligned) | **2.31** |
+| ROM `memset` | **0.33** | | `u32` funnel (shift+or) | **3.24** |
+| | | | ROM `memcpy` | **0.64** |
+
+Hardware facts behind it (`core-isa.h`, `tie.h` for esp32s3):
+
+- `XCHAL_DATA_WIDTH 16` — the load/store unit is 16 bytes wide.
+- `XCHAL_UNALIGNED_LOAD_HW 1`, `..._STORE_HW 1`, and both
+  `..._EXCEPTION 0` — misaligned access works in hardware, no trap.
+- `XCHAL_DCACHE_LINESIZE 16`; internal SRAM is **not** cached at all (the
+  32 KB data cache is for flash/PSRAM only).
+- `XCHAL_HAVE_LOOPS 1` — zero-overhead `loop`, which GCC does emit.
+
+### The rules
+
+1. **Cost is per INSTRUCTION, not per byte.** Every width lands at ~5 cyc per
+   access. So widening pays only where it REDUCES the instruction count — bulk
+   moves and fills. Where the halves are needed separately it loses: two `u16`
+   loads beat one `u32` load plus an extract. This is why `bg[]`/`xf[]` stay
+   as separate arrays rather than an interleaved `u32`.
+2. **16-byte alignment buys nothing for scalar code** — `u32` @16B and @4B are
+   identical. It matters only for the PIE vector ops (`ee.vld.128` requires
+   it) and for the ROM routines' fast path. 4-byte alignment is sufficient
+   everywhere the current renderer touches.
+3. **Misaligned 32-bit loads are cheap (+15%), funnel shifts are not (+62%).**
+   For a half-word-offset copy, a misaligned `u32` load beats
+   `(a >> 16) | (b << 16)` by ~29%. Counter-intuitive, and the opposite of the
+   usual embedded folklore.
+4. **ROM `memset`/`memcpy` are 3–4x any hand-rolled word loop, and they are
+   ISR-SAFE.** `nm` resolves them to `0x400011e8` / `0x400011f4` — absolute
+   symbols in ROM, never behind the flash cache. **The "memset is off-limits
+   with the flash cache disabled" comment in `render_cache.c` is wrong.**
+   The break-even is the `callx8` overhead: not worth it for a 16–48 B glyph,
+   clearly worth it for the whole-band fills (`fill_black`,
+   `render_fx_fill_hidden`, `render_fx_clip_apply` — each 25.6 KB).
+
+### Applied
+
+`zero_fill()` byte loop → word loop, and `smear_glyph()` → SWAR (4 rows per
+word at rb==1, 2 at rb==2, masking the bit that would cross a lane). Both in
+the decoder, which is ~31% of the worst band.
+
+| dense, worst chunk | 8x16 | 12x24 |
+|---|---|---|
+| `off` | 567 us (−2.9%) | 400 us (−1.9%) |
+| `bold` | 581 us (−3.6%) | 421 us (−5.3%) |
+| `t:blank` | unchanged | unchanged |
+
+`t:blank` not moving is the control: blank cells take the zero-fill fast path
+in `build_row_cache` and never reach the decoder.
+
+### Rejected: `restrict` on the render path
+
+Adding `__restrict` to the scan's `rows`/`bgv`/`xfv`/`d` and to the decoder's
+`pool`/`out` — all genuinely non-aliasing — measured **+2.6% WORSE** at 8x16
+(`off` 133,681 → 137,121; `bold` 138,313 → 141,794).
+
+The regression is entirely in the decoder: `t:blank` came out **bit-identical**
+(104,427 / 105,853 both runs), and blank cells run the full scan but skip
+`font_decode_glyph`. So the scan's `restrict` produced identical code — GCC had
+already proven it or could not use it — and the decoder's made things worse,
+the same way `-O2` does: more freedom to reorder, worse scheduling and register
+pressure on this core.
+
+Same lesson as the `-Os`/`-O2` result above: **on this hot path, giving the
+compiler more latitude reliably loses.** The code is tuned around what GCC
+actually emits at `-Os`, and aliasing hints are not free wins. Reverted.
+
 ## Rejected ideas (don't revisit without new data)
 
 - **ISR reads tsm's grid directly / pointer swap**: grids are PSRAM (ISR reads
