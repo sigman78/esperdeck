@@ -53,6 +53,7 @@ extern DRAM_ATTR render_geom_t g_rs;
 typedef struct {
     color_t        *dst;         /* band origin in the pixel buffer      */
     const uint8_t  *rows;        /* decoded glyph rows, g_rs.gb stride   */
+    const uint32_t (*pr[2])[4];  /* per-column pixel-pair LUT, by variant */
     const uint16_t *bg[2];       /* per-column bg: [0] normal [1] dimmed */
     const uint16_t *xf[2];       /* per-column fg^bg, same variants      */
     const uint8_t  *ul;          /* per-column underline flags           */

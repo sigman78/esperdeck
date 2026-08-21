@@ -36,8 +36,7 @@ static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)
         for (int n = 0; n < cx->num_scans; n++) {
             const int gl = cx->glyph_row0 + n;
             const int sel = n & cx->scan_on & 1;
-            const uint16_t *bgv = cx->bg[sel];
-            const uint16_t *xfv = cx->xf[sel];
+            const uint32_t (*prv)[4] = cx->pr[sel];
             uint32_t *d = (uint32_t *)(cx->dst + (unsigned)n * DISPLAY_WIDTH);
 
             int c = 0;
@@ -48,15 +47,15 @@ static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)
                         + (size_t)(c + 1) * (2u * W * sizeof(SCAN_ROW)));
                 const unsigned b0  = g0[gl];
                 const unsigned b1  = g1[gl];
-                const uint16_t bg0 = bgv[c    ], xf0 = xfv[c    ];
-                const uint16_t bg1 = bgv[c + 1], xf1 = xfv[c + 1];
+                const uint32_t *const t0 = prv[c    ];
+                const uint32_t *const t1 = prv[c + 1];
 
                 RENDER_UNROLL
                 for (int p = 0; p < W; p += 2)
-                    d[p >> 1] = scan_gpair(b0, W, p, bg0, xf0);
+                    d[p >> 1] = t0[(b0 >> (W - 2 - p)) & 3u];
                 RENDER_UNROLL
                 for (int p = 0; p < W; p += 2)
-                    d[CW + (p >> 1)] = scan_gpair(b1, W, p, bg1, xf1);
+                    d[CW + (p >> 1)] = t1[(b1 >> (W - 2 - p)) & 3u];
                 d += 2 * CW;
             }
             if (c < ncols) {
@@ -65,7 +64,7 @@ static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)
                 const unsigned b0 = g0[gl];
                 RENDER_UNROLL
                 for (int p = 0; p < W; p += 2)
-                    d[p >> 1] = scan_gpair(b0, W, p, bgv[c], xfv[c]);
+                    d[p >> 1] = prv[c][(b0 >> (W - 2 - p)) & 3u];
                 d += CW;
             }
             for (int i = hi; i < NW; i++)
@@ -78,8 +77,7 @@ static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)
     for (int n = 0; n < cx->num_scans; n++) {
         const int gl = cx->glyph_row0 + n;
         const int sel = n & cx->scan_on & 1;
-        const uint16_t *bgv = cx->bg[sel];
-        const uint16_t *xfv = cx->xf[sel];
+        const uint32_t (*prv)[4] = cx->pr[sel];
         uint32_t *const line = (uint32_t *)(cx->dst + (unsigned)n * DISPLAY_WIDTH);
 
         /* Cell c lands on destination words [koff + c*CW, koff + (c+1)*CW).
@@ -105,15 +103,15 @@ static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)
                     + (size_t)(c + 1) * (2u * W * sizeof(SCAN_ROW)));
             const unsigned b0  = g0[gl];
             const unsigned b1  = g1[gl];
-            const uint16_t bg0 = bgv[c    ], xf0 = xfv[c    ];
-            const uint16_t bg1 = bgv[c + 1], xf1 = xfv[c + 1];
+            const uint32_t *const t0 = prv[c    ];
+            const uint32_t *const t1 = prv[c + 1];
 
             RENDER_UNROLL
             for (int p = 0; p < W; p += 2)
-                d[p >> 1] = scan_gpair(b0, W, p, bg0, xf0);
+                d[p >> 1] = t0[(b0 >> (W - 2 - p)) & 3u];
             RENDER_UNROLL
             for (int p = 0; p < W; p += 2)
-                d[CW + (p >> 1)] = scan_gpair(b1, W, p, bg1, xf1);
+                d[CW + (p >> 1)] = t1[(b1 >> (W - 2 - p)) & 3u];
             d += 2 * CW;
         }
 
@@ -124,7 +122,7 @@ static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)
             const unsigned b0 = g0[gl];
             RENDER_UNROLL
             for (int p = 0; p < W; p += 2)
-                d[p >> 1] = scan_gpair(b0, W, p, bgv[c], xfv[c]);
+                d[p >> 1] = prv[c][(b0 >> (W - 2 - p)) & 3u];
         }
 
         {
@@ -135,18 +133,18 @@ static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)
                 const SCAN_ROW *g = (const SCAN_ROW *)(rows
                         + (size_t)c1 * (2u * W * sizeof(SCAN_ROW)));
                 const unsigned b  = g[gl];
-                const uint16_t bg = bgv[c1], xf = xfv[c1];
+                const uint32_t *const t = prv[c1];
                 for (int w = 0; w < nw; w++)
-                    line[base + w] = scan_gpair(b, W, w * 2, bg, xf);
+                    line[base + w] = t[(b >> (W - 2 - w * 2)) & 3u];
             } else if (koff < 0 && c0 > 0) {
                 const int cp   = c0 - 1;
                 const int base = koff + cp * CW;      /* negative */
                 const SCAN_ROW *g = (const SCAN_ROW *)(rows
                         + (size_t)cp * (2u * W * sizeof(SCAN_ROW)));
                 const unsigned b  = g[gl];
-                const uint16_t bg = bgv[cp], xf = xfv[cp];
+                const uint32_t *const t = prv[cp];
                 for (int w = -base; w < CW; w++)      /* first visible word */
-                    line[base + w] = scan_gpair(b, W, w * 2, bg, xf);
+                    line[base + w] = t[(b >> (W - 2 - w * 2)) & 3u];
             }
         }
 

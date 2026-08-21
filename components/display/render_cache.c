@@ -86,6 +86,7 @@ IRAM_ATTR bool render_cache_has_cells(void)
  * history behind this shape is in docs/ARCHITECTURE.md. */
 static DRAM_ATTR struct {
     _Alignas(4) uint8_t rows[FONT_MAX_CACHE_BYTES];  /* decoded glyphs  */
+    uint32_t pr[2][RENDER_MAX_COLS][4];              /* pixel-pair LUT  */
     uint16_t bg[2][RENDER_MAX_COLS];                 /* [variant][col]  */
     uint16_t xf[2][RENDER_MAX_COLS];                 /* fg ^ bg         */
     uint8_t  ul[RENDER_MAX_COLS];                    /* underline flags */
@@ -104,6 +105,25 @@ static DRAM_ATTR struct {
 IRAM_ATTR void render_cache_invalidate(void)
 {
     s_cc.row = -1;
+}
+
+/*
+ * The scan writes pixel PAIRS as one 32-bit store: low half is the left pixel,
+ * high half the right. A cell only ever has two colours, so there are exactly
+ * four possible pairs — precompute them once per cell per ROW and let the scan
+ * index them with the glyph's two bits, instead of recomputing
+ * `bg ^ (xf & mask)` for every pixel on every scanline.
+ *
+ * Index bit 1 is the LEFT pixel, bit 0 the RIGHT, matching
+ * `(glyph_row >> (W-2-p)) & 3` at the scan's pixel position p.
+ */
+static IRAM_ATTR void build_pair_lut(uint32_t *out, uint16_t fg, uint16_t bg)
+{
+    const uint32_t f = fg, b = bg;
+    out[0] = b | (b << 16);      /* left bg, right bg */
+    out[1] = b | (f << 16);      /* left bg, right fg */
+    out[2] = f | (b << 16);      /* left fg, right bg */
+    out[3] = f | (f << 16);      /* left fg, right fg */
 }
 
 /* Scanline dim: 93.75% brightness via carry-safe per-field shift/mask. */
@@ -262,6 +282,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
 
         s_cc.bg[0][c] = bg;
         s_cc.xf[0][c] = (uint16_t)(fg ^ bg);
+        build_pair_lut(s_cc.pr[0][c], fg, bg);
         s_cc.ul[c]    = cc.underline;
         any_ul |= cc.underline != 0;
         if (scan_on) {
@@ -269,6 +290,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
             const uint16_t bgd = fx_dim565(bg);
             s_cc.bg[1][c] = bgd;
             s_cc.xf[1][c] = (uint16_t)(fgd ^ bgd);
+            build_pair_lut(s_cc.pr[1][c], fgd, bgd);
         }
 #if OVERLAY_DIM_DITHER
         s_cc.dim[c] = cc.dim;
@@ -292,6 +314,8 @@ IRAM_ATTR void render_cache_resolve(int char_row, int scan_on, scan_ctx_t *cx)
         s_cc.frame = g_fx_frame;
     }
     cx->rows   = s_cc.rows;
+    cx->pr[0]  = s_cc.pr[0];
+    cx->pr[1]  = s_cc.pr[1];
     cx->bg[0]  = s_cc.bg[0];
     cx->bg[1]  = s_cc.bg[1];
     cx->xf[0]  = s_cc.xf[0];
