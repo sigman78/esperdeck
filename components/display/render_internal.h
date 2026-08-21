@@ -58,11 +58,13 @@ typedef struct {
 #if OVERLAY_DIM_DITHER
     const uint8_t  *dim;         /* per-column scrim flags               */
 #endif
+    const int8_t   *xoff;        /* per-scanline wobble word offset, or
+                                  * NULL when no line in this band is
+                                  * displaced (the untouched fast path) */
     int  ncols;
     int  num_scans;              /* scanlines in this band               */
     int  glyph_row0;             /* first glyph row of the band          */
     int  scan_on;                /* 1 = scanline-dim variant in use      */
-    int  margin_words;           /* black pixel-pairs right of the grid  */
     bool any_ul;                 /* any column underlined this row?      */
 #if OVERLAY_DIM_DITHER
     bool any_dim;
@@ -108,7 +110,10 @@ void render_fx_fill_hidden(color_t *dst, int band_y0, int num_scans,
                            const fx_clip_t *c);
 void render_fx_clip_apply(color_t *dst, int band_y0, int num_scans,
                           const fx_clip_t *c);
-void render_fx_wobble(color_t *dst, int start_scan, int num_scans);
+/* Per-scanline wobble displacement, in destination WORDS, for one band.
+ * @p out must hold at least num_scans entries (FONT_MAX_BAND bounds it).
+ * Returns false when nothing in the band is displaced. */
+bool render_fx_wobble_offsets(int start_scan, int num_scans, int8_t *out);
 void render_fx_static(color_t *dst, int start_scan, int num_scans);
 void render_fx_bell_tag(color_t *dst, int char_row, int glyph_row0,
                         int num_scans);

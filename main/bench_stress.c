@@ -13,6 +13,7 @@
 #include "esp_log.h"
 
 #include "display.h"
+#include "display_fx.h"
 #include "vterm.h"
 
 static const char *TAG = "bench_stress";
@@ -153,23 +154,57 @@ static void feed_terminal(int cols, int rows, unsigned frame, term_mode_t tm)
     vterm_flush();   /* vterm_feed only parses; flush pushes the cells */
 }
 
-/* Phase schedule: the seven overlay phases over a DENSE terminal, then two
- * overlay-off phases that vary the TERMINAL content instead. The last two are
- * what make the historic real-session figures interpretable. */
+/*
+ * Effect config under test.
+ *
+ * The bench task returns before cyberdeck_app_init(), so display_fx_set() is
+ * never called and g_fx_wobble_lut stays all-zero — which makes dx == 0 and
+ * short-circuits render_fx_wobble() entirely. Every render-ISR figure recorded
+ * before 2026-08-21 therefore measured the deck with WOBBLE OFF, even though
+ * the shipped default is .wobble = 2. Each phase now names its own config
+ * explicitly so no phase inherits another's.
+ */
+typedef enum { FX_NOWOB = 0, FX_APP, FX_NOSCAN, FX_NONE } fx_mode_t;
+
+static void fx_apply(fx_mode_t m)
+{
+    display_fx_cfg_t c;
+    display_fx_defaults(&c);          /* scanlines 1, bold_pop 1, wobble 2 */
+    switch (m) {
+    case FX_APP:                      break;   /* exactly what the shell loads */
+    case FX_NOWOB:  c.wobble = 0;              /* == every pre-2026-08-21 run */
+                    break;
+    case FX_NOSCAN: c.wobble = 0; c.scanlines = 0;
+                    break;
+    case FX_NONE:   c.wobble = 0; c.scanlines = 0; c.bold_pop = 0;
+                    c.glow = 0; c.mono = 0;
+                    break;
+    }
+    display_fx_set(&c);
+}
+
+/* Phase schedule: seven overlay phases over a dense terminal, two that vary
+ * the TERMINAL content, then four that vary the EFFECT config. Everything
+ * except the fx: phases runs FX_NOWOB, which reproduces the historic runs. */
 static const struct {
     ov_phase_t  ov;
     term_mode_t tm;
+    fx_mode_t   fx;
     const char *name;
 } s_phases[] = {
-    { OV_OFF,    TERM_DENSE,  "off"      },
-    { OV_CLEAR,  TERM_DENSE,  "clear"    },
-    { OV_SCRIM,  TERM_DENSE,  "scrim"    },
-    { OV_SPACES, TERM_DENSE,  "spaces"   },
-    { OV_DENSE,  TERM_DENSE,  "dense"    },
-    { OV_BARS,   TERM_DENSE,  "bars"     },
-    { OV_BOLD,   TERM_DENSE,  "bold"     },
-    { OV_OFF,    TERM_SPARSE, "t:sparse" },
-    { OV_OFF,    TERM_BLANK,  "t:blank"  },
+    { OV_OFF,    TERM_DENSE,  FX_NOWOB,  "off"       },
+    { OV_CLEAR,  TERM_DENSE,  FX_NOWOB,  "clear"     },
+    { OV_SCRIM,  TERM_DENSE,  FX_NOWOB,  "scrim"     },
+    { OV_SPACES, TERM_DENSE,  FX_NOWOB,  "spaces"    },
+    { OV_DENSE,  TERM_DENSE,  FX_NOWOB,  "dense"     },
+    { OV_BARS,   TERM_DENSE,  FX_NOWOB,  "bars"      },
+    { OV_BOLD,   TERM_DENSE,  FX_NOWOB,  "bold"      },
+    { OV_OFF,    TERM_SPARSE, FX_NOWOB,  "t:sparse"  },
+    { OV_OFF,    TERM_BLANK,  FX_NOWOB,  "t:blank"   },
+    { OV_OFF,    TERM_DENSE,  FX_APP,    "fx:app"    },
+    { OV_OFF,    TERM_SPARSE, FX_APP,    "fx:app+sp" },
+    { OV_OFF,    TERM_DENSE,  FX_NOSCAN, "fx:noscan" },
+    { OV_OFF,    TERM_DENSE,  FX_NONE,   "fx:none"   },
 };
 
 #define SETTLE_TICKS   3    /* frames discarded after an overlay switch */
@@ -199,6 +234,7 @@ static void bench_task(void *arg)
         if (ov != OV_OFF && !s_ov)
             continue;
 
+        fx_apply(s_phases[p].fx);
         ov_apply(ov);
         if (tm == TERM_BLANK)
             vterm_write("\x1b[2J\x1b[H", 7);   /* clear once, then leave it */
@@ -217,7 +253,7 @@ static void bench_task(void *arg)
 
         uint32_t avg, mx, chunks;
         display_render_bench_get(&avg, &mx, &chunks);
-        ESP_LOGI(TAG, "font=%s ph=%-8s avg=%u cyc (%u us) max=%u cyc (%u us) chunks=%u",
+        ESP_LOGI(TAG, "font=%s ph=%-9s avg=%u cyc (%u us) max=%u cyc (%u us) chunks=%u",
                  font_size_name(font_active_size()), s_phases[p].name,
                  (unsigned)avg, (unsigned)(avg / CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ),
                  (unsigned)mx,  (unsigned)(mx  / CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ),

@@ -398,6 +398,172 @@ chrome is the one case worth watching.
   glyph because every pixel takes `bg`.
 - Nothing here changes the tsm/parser rankings.
 
+## Render ISR headroom study (2026-08-21)
+
+Goal: find the cycles to run the panel at 20 MHz / 48.8 Hz. Found something more
+urgent on the way.
+
+### 1. The shipped wobble default overruns the band deadline TODAY
+
+`bench_stress` returns from `app_main()` before `cyberdeck_app_init()`, so
+`display_fx_set()` is never called, `g_fx_wobble_lut` stays all-zero, `dx == 0`
+and `render_fx_wobble()` exits on its guard. **Every render-ISR figure this
+project ever recorded was measured with wobble off** — while the shipped default
+is `.wobble = 2`. The `fx:` bench phases (added 2026-08-21) close that hole.
+
+Worst chunk, dense terminal, overlay off, all sources at `-Os`:
+
+| phase | 8x16 (820 us budget) | 10x20 (512.5 us budget) |
+|---|---|---|
+| `off` | 573 us — 70% | 396 us — 77% |
+| **`fx:app`** (shipped) | **896 us — 109% OVER** | **623 us — 122% OVER** |
+| `fx:app+sp` (shipped, realistic content) | **841 us — 103% OVER** | **565 us — 110% OVER** |
+| `fx:noscan` | 568 us — 69% | 392 us — 76% |
+| `fx:none` | 567 us — 69% | 391 us — 76% |
+
+Per-effect peak cost: **wobble +323 us (8x16) / +227 us (10x20)**; scanlines +5/+4 us
+(0.9%); bold_pop +1 us (0.13%); glow already `0` by default. So there is no effects
+budget to reclaim anywhere except wobble — and wobble is not unused, it ships on.
+
+### 2. The wobble cost is induced by codegen, not fundamental
+
+At `-Os` the in-place shift compiles to **eight instructions per pixel**, moving one
+16-bit pixel at a time with both addresses recomputed every iteration:
+
+```
+loop   a13, ...
+  extui  a8, a14, 0, 16    ; re-narrow i to 16 bits -> blocks strength reduction
+  add.n  a8, a8, a8
+  add.n  a9, a8, a12
+  add.n  a9, a2, a9        ; full address recompute, every pixel
+  l16ui  a9, a9, 0         ; ONE pixel
+  add.n  a8, a2, a8
+  s16i   a9, a8, 0         ; ONE pixel
+  addi.n a14, a14, 1
+```
+
+That is **6.06 cycles/px** (77,605 cyc / 16 lines / 800 px). For scale the entire
+glyph pipeline — bit extraction, XOR mask, colour resolve, margin fill — runs at
+**8.15 cycles/px** while writing *two* pixels per 32-bit store. A pure memmove costs
+75% of what the whole renderer costs. The edge zero-fill also becomes a `callx8` to
+ROM `memset` (cache-safe, but a windowed call per shifted line in ISR context).
+
+### 3. `-Os` vs `-O2`: the project default is CORRECT, and `-O2` is much worse
+
+The render core had no optimisation override — the whole of `components/display/`
+built at the project's `-Os`, while `font_renderer.c` (the decoder it calls) and
+tsm's parser were already promoted to `-O2`. The obvious move is to promote the
+renderer too. **Measured, that is a 35% regression.**
+
+8x16, dense, overlay off:
+
+| config | scan.c instrs | `off` max | `t:blank` avg | `fx:app` max | wobble delta |
+|---|---|---|---|---|---|
+| all `-Os` (shipped) | 973 | 573 us | 104,323 | 896 us | 77,605 cyc |
+| all `-O2` | **1350 (+38.7%)** | **766 us (+34%)** | **153,311 (+47%)** | 971 us | 49,255 cyc |
+| **`-O2` on `render_fx_pass.c` only** | 973 | **573 us** | 104,321 | **776 us** | **48,800 cyc** |
+
+`t:blank` is the purest scan measurement (no decode) and it degrades **+47%** at
+`-O2`. The static instruction count of the hot loop grows **+38.7%**, tracking the
+runtime almost 1:1. Cause: `-O2` inlines all the per-size `scan_band_*` variants into
+one 3 KB `render_scan_band`, defeating the hand-tuning the code documents
+("two load-bearing choices at -Os: columns go in PAIRS with hoisted loads, and the
+pixel loops need RENDER_UNROLL").
+
+But `-O2` *does* fix the wobble shift — **−37%** — because that loop is exactly the
+naive scalar code `-Os` refuses to unroll or strength-reduce. Hence the split.
+
+**Result of `-O2` on `render_fx_pass.c` alone** (+48 bytes of image, one line of CMake):
+
+| | 8x16 | 10x20 |
+|---|---|---|
+| `fx:app` before | 896 us — 109% OVER | 623 us — 122% OVER |
+| `fx:app` after | **776 us — 94.6% OK** | **530 us — 103.4%, still over** |
+| `fx:app+sp` after | 734 us — 90% OK | 472 us — 92% OK |
+
+8x16 is back inside its deadline with no behaviour change at all. 10x20 shrinks its
+overrun from 111 us to 18 us, so it still needs a real wobble fix — but a far
+smaller one than before, and amplitude reduction alone may cover it.
+
+**Flag hygiene** (this idiom appends, producing `-Os ... -O2`): verified by
+disassembly that the trailing `-O2` is a clean override. Compiling
+`render_scan.c` / `render_fx_pass.c` / `render_cache.c` as-configured vs `-O2` alone
+gives **identical instruction counts and identical disassembly md5**. The objects
+differ by exactly 4 bytes, which is the recorded command-line string (`-Os ` = 4
+chars), not code. `set_source_files_properties(... COMPILE_OPTIONS "-O2")` is safe.
+
+### 4. SIMD: real, but only legal in task context
+
+ESP32-S3 has a 128-bit SIMD unit — Xtensa **PIE**, the one `esp-dsp` and
+`esp_lvgl_port` use. Confirmed against this toolchain: `ee.zero.q`, `ee.movi.32.q`,
+`ee.vld.128.ip`, `ee.vst.128.ip`, `ee.andq`, `ee.orq`, `ee.xorq`, `ee.notq`,
+`ee.src.q`, `ee.vadds.s16`, `ee.vmul.s16` all assemble with no extra flags.
+
+Our scan is an ideal fit. `px = bg ^ (xf & mask)` becomes four instructions per
+**eight** pixels:
+
+```
+ee.movi.32.q  q_bg, a_bg, 0..3   ; broadcast, once per cell
+ee.movi.32.q  q_xf, a_xf, 0..3
+ee.vld.128.ip q_m, a_lut, 0      ; 128-bit mask from a 256-entry LUT[glyph byte]
+ee.andq       q_t, q_xf, q_m
+ee.xorq       q_t, q_bg, q_t
+ee.vst.128.ip q_t, a_dst, 16
+```
+
+At **8x16 this is Espressif's ideal alignment case**: 8 px x 2 B = 16 B = exactly one
+vector, and the 1600 B line stride keeps every cell 16-byte aligned, so no
+misalignment path is needed. 10x20 (20 B/cell) and 12x24 (24 B/cell) would need cell
+grouping (4 cells = 5 vectors; 2 cells = 3 vectors) or `wur.sar_byte` + `ee.src.q`.
+
+**The blocker is the ISR, not the ISA.** From `tie.h`: `XCHAL_CP_MASK 0x09` — the S3
+has CP0 `"FPU"` (72 B) and **CP3 `"cop_ai"` (208 B save area)**. PIE is CP3, gated by
+`CPENABLE`, and FreeRTOS assigns coprocessors lazily per task. `esp_lvgl_port`'s
+assembly has **no `CPENABLE` handling and no register save/restore** — it "assumes
+the coprocessor is already enabled by the caller", which is true for LVGL because
+LVGL renders in a *task*. With `CONFIG_FREERTOS_FPU_IN_ISR` off (the default) the
+interrupt entry does not touch `CPENABLE` at all; with it on, entry forces
+`CPENABLE = 0` for the ISR's duration. Either way a vector instruction in the bounce
+ISR traps or clobbers whichever task owns CP3.
+
+Consequence for our plan: **the prebuild task is the SIMD enabler.** It already moves
+work out of ISR context into a core-1 task, which is exactly the context where PIE is
+supported with no coprocessor hacks. Taken further — task pre-renders *pixels*, ISR
+copies the band (25.6 KB, ~6,400 cycles / 27 us vs 559 us today) — it is the same
+shape as ESP-IDF's own `num_fbs>=1` + bounce mode, but with a small band ring in
+internal SRAM instead of a 768 KB PSRAM framebuffer, avoiding the PSRAM contention
+that pushed this project to `no_fb` in the first place.
+
+Reference (worth reading before attempting it):
+`esp-bsp/components/esp_lvgl_port/src/lvgl9/simd/` — 11 hand-written `.S` files
+dispatched through `LV_DRAW_SW_ASM_CUSTOM_INCLUDE`, each with three alignment paths
+(16 B / 4 B / 1 B), validated bit-exact against a retained ANSI reference and
+benchmarked in cycles-per-sample. Reported S3 gains: fill ARGB8888 ~4.9x, image copy
+RGB565 ~9.8x — but note both are pure `memset`/`memcpy`, so those ratios do not
+transfer to our per-pixel compute directly.
+
+### Ranked plan to 20 MHz
+
+Deadlines fall to 656 / 410 / 492 us at 8x16 / 10x20 / 12x24.
+
+| # | Step | Effect | Status |
+|---|---|---|---|
+| 1 | `-O2` on `render_fx_pass.c` | 8x16 back under deadline; 10x20 overrun 111 -> 18 us | **done, this branch** |
+| 2 | Real wobble fix — fold the displacement into the scan as a destination word offset (needs even-pixel displacement), or cut amplitude | closes the remaining 10x20 overrun | next |
+| 3 | Per-cell pair LUT in the scan — four `uint32` per cell for glyph bits `00 01 10 11`, built once per cell per row, read *fh* times. Target 7 -> 2-3 cyc/px, ~1.6 KB DRAM | est. −130 us at 10x20 -> ~64% of the 20 MHz deadline | the main lever |
+| 4 | ASCII glyph cache (decode is 31% of the worst band) | up to −122 us at 10x20 | insurance |
+| 5 | Prebuild task | levels the 23–28% spike at the half-row sizes; **precondition for 6** | promoted |
+| 6 | PIE SIMD inside the prebuild task | task context, no coprocessor hacks, 8x16 naturally aligned | after 5 |
+
+Do NOT do: promoting `render_scan.c` / `render_cache.c` / `display_render.c` to `-O2`
+(measured 35% worse — see §3), or stripping effects other than wobble (under 1%
+combined — see §1).
+
+Note on item #7 in the ranked plan above: it was re-promoted in PR #48 on *duty*
+grounds and that still holds, but it does **not** help this problem. A blank-cell
+fast path only pays on content that has blanks, and the deadline is set by worst-case
+dense content where there are none.
+
 ## Rejected ideas (don't revisit without new data)
 
 - **ISR reads tsm's grid directly / pointer swap**: grids are PSRAM (ISR reads

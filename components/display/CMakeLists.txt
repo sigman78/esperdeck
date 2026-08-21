@@ -10,3 +10,4 @@ cyberdeck_component_register(
     REQUIRES_DEV esp_lcd driver esp_timer
     REQUIRES_SIM SDL2::SDL2-static
 )
+

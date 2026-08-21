@@ -8,12 +8,22 @@
  * quantify render/decoder changes — see "Glyph tables & the row cache" in
  * docs/ARCHITECTURE.md for the numbers this produced.
  *
- * The task cycles through seven OVERLAY phases (off / clear / scrim /
- * spaces / dense / bars / bold), one measured window each, tagged `ov=` in
- * the log line. The terminal stays dense throughout, so the transparent
- * phases measure real compositing. See the phase table in bench_stress.c
- * for what each one isolates — historically only `off` was ever measured,
- * which left the whole shell-chrome path unquantified.
+ * The task cycles through thirteen phases, one measured window each, tagged
+ * `ph=` in the log line, sweeping three independent axes:
+ *
+ *   overlay  off / clear / scrim / spaces / dense / bars / bold — the
+ *            shell's chrome layer, composited over a dense terminal
+ *   content  t:sparse / t:blank — blank cells skip the glyph decode, so ISR
+ *            cost swings ~29% with how much ink is on screen. Quoting a
+ *            render-ISR number without its content mode is meaningless.
+ *   effects  fx:app / fx:app+sp / fx:noscan / fx:none — a bench build
+ *            returns before cyberdeck_app_init(), so display_fx_set() is
+ *            never called and the wobble LUT stays flat. WOBBLE was
+ *            therefore absent from every measurement taken before these
+ *            phases existed, despite shipping enabled.
+ *
+ * Each phase names its own fx config so none inherits another's. See the
+ * phase table in bench_stress.c for what each one isolates.
  *
  * Compiled out entirely when the option is off; the hooks below reduce to
  * no-ops.

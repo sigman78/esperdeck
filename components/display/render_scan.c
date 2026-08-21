@@ -66,14 +66,19 @@ IRAM_ATTR void render_scan_band(const scan_ctx_t *cx)
     }
 }
 
+/* Both post-passes below write at absolute cell positions, so they take the
+ * same per-scanline wobble offset the scan used — otherwise underlines and
+ * the cursor would stay pinned while their glyphs wobble out from under
+ * them. Clipped to the line, since a displaced cell can fall off the edge. */
+#define SCAN_NW  (DISPLAY_WIDTH / 2)
+
 /* Underline post-pass — force fg on the cell's last two scanlines.
  * Touches only flagged columns; skipped entirely when the row has none. */
 IRAM_ATTR void render_underline_pass(const scan_ctx_t *cx)
 {
     if (!cx->any_ul)
         return;
-    const int fw        = g_rs.fw;
-    const int col_words = fw >> 1;
+    const int col_words = g_rs.fw >> 1;
     int ul_first = (g_rs.fh - 2) - cx->glyph_row0;   /* band-relative */
     if (ul_first < 0) ul_first = 0;
     if (ul_first >= cx->num_scans)
@@ -84,9 +89,14 @@ IRAM_ATTR void render_underline_pass(const scan_ctx_t *cx)
             const int sel = n & cx->scan_on & 1;   /* match scanline variant */
             const uint16_t fg = (uint16_t)(cx->bg[sel][c] ^ cx->xf[sel][c]);
             const uint32_t fg2 = (uint32_t)fg | ((uint32_t)fg << 16);
-            uint32_t *p = (uint32_t *)(cx->dst + (unsigned)n * DISPLAY_WIDTH
-                                       + c * fw);
-            for (int w = 0; w < col_words; w++) p[w] = fg2;
+            uint32_t *const line =
+                (uint32_t *)(cx->dst + (unsigned)n * DISPLAY_WIDTH);
+            const int koff = cx->xoff ? cx->xoff[n] : 0;
+            int w0 = koff + c * col_words;
+            int w1 = w0 + col_words;
+            if (w0 < 0)       w0 = 0;
+            if (w1 > SCAN_NW) w1 = SCAN_NW;
+            for (int w = w0; w < w1; w++) line[w] = fg2;
         }
     }
 }
@@ -149,9 +159,7 @@ IRAM_ATTR void render_cursor_pass(const scan_ctx_t *cx, int char_row)
             s_cursor.y != char_row || s_cursor.x < 0 || s_cursor.x >= cx->ncols)
         return;
 
-    const int fw        = g_rs.fw;
-    const int col_words = fw >> 1;
-    const int px_start  = s_cursor.x * fw;
+    const int col_words = g_rs.fw >> 1;
     int first = 0;
 
     if (s_cursor.mode == CURSOR_UNDERSCORE) {
@@ -159,7 +167,12 @@ IRAM_ATTR void render_cursor_pass(const scan_ctx_t *cx, int char_row)
         if (first < 0) first = 0;
     }
     for (int n = first; n < cx->num_scans; n++) {
-        uint32_t *p = (uint32_t *)(cx->dst + n * DISPLAY_WIDTH + px_start);
-        for (int w = 0; w < col_words; w++) p[w] ^= 0xFFFFFFFFu;
+        uint32_t *const line = (uint32_t *)(cx->dst + n * DISPLAY_WIDTH);
+        const int koff = cx->xoff ? cx->xoff[n] : 0;
+        int w0 = koff + s_cursor.x * col_words;
+        int w1 = w0 + col_words;
+        if (w0 < 0)       w0 = 0;
+        if (w1 > SCAN_NW) w1 = SCAN_NW;
+        for (int w = w0; w < w1; w++) line[w] ^= 0xFFFFFFFFu;
     }
 }

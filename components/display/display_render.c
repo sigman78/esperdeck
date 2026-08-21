@@ -140,15 +140,20 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
         return;
     }
 
+    /* Wobble is applied by the scan as a per-scanline destination offset, so
+     * the pixels land displaced instead of being shifted afterwards. NULL
+     * xoff keeps the untouched fast path when nothing in the band moves. */
+    int8_t wob[FONT_MAX_BAND];
+    const bool wobbled = render_fx_wobble_offsets(start_scan, num_scans, wob);
+
     scan_ctx_t cx = {
         .dst        = dst,
+        .xoff       = wobbled ? wob : NULL,
         .ncols      = render_cache_text_cols(),
         .num_scans  = num_scans,
         .glyph_row0 = glyph_row0,
         .scan_on    = g_fx_snap.scanlines ? 1 : 0,
     };
-    /* Black margin right of the grid, in pixel-pair words (12x24 only). */
-    cx.margin_words = (DISPLAY_WIDTH - cx.ncols * g_rs.fw) >> 1;
 
     render_cache_resolve(char_row, cx.scan_on, &cx);
 
@@ -159,7 +164,6 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
 #endif
     render_cursor_pass(&cx, char_row);
 
-    render_fx_wobble(dst, start_scan, num_scans);
     render_fx_static(dst, start_scan, num_scans);
     if (clip.active)
         render_fx_clip_apply(dst, start_scan, num_scans, &clip);

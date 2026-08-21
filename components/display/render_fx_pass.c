@@ -128,13 +128,33 @@ IRAM_ATTR void render_fx_clip_apply(color_t *dst, int band_y0, int num_scans,
     }
 }
 
-/* CRT line wobble — a ~16-scanline S-wiggle sweeping down the screen, at
- * most 16 shifted lines per frame. The shift is in-place WITHIN the line:
- * an offset render origin would spill across band boundaries. */
-IRAM_ATTR void render_fx_wobble(color_t *dst, int start_scan, int num_scans)
+/*
+ * CRT line wobble — a ~16-scanline S-wiggle sweeping down the screen, at most
+ * 16 displaced lines per frame.
+ *
+ * Rather than rendering straight and shifting afterwards, the displacement is
+ * handed to the scan as a per-scanline destination WORD offset, so the pixels
+ * land wobbled the first time they are written and the shift pass disappears.
+ * That converts a ~37,000-cycle spike on one band per frame into a few cycles
+ * on every band.
+ *
+ * The catch, and why displacement is quantised to even pixels: RGB565 packs two
+ * pixels per 32-bit word, so an ODD displacement is a half-word offset that no
+ * pointer arithmetic can express — it would force the scan to straddle pixel
+ * pairs across cell boundaries. Even displacement is a plain word offset. The
+ * cost is that the wiggle steps in 2 px increments instead of 1, which on an
+ * 800 px panel is below the noise floor of a deliberately glitchy effect.
+ *
+ * Fills @p out with one word offset per scanline of the band and returns true
+ * if any is non-zero (false lets the scan take its untouched fast path).
+ */
+IRAM_ATTR bool render_fx_wobble_offsets(int start_scan, int num_scans, int8_t *out)
 {
+    for (int i = 0; i < num_scans; i++)
+        out[i] = 0;
+
     if (!g_fx_snap.wobble)
-        return;
+        return false;
 
     /* wob_env = sin(2*pi*(k+1)/17)*127: one full vertical period. dxa adds
      * ±25% amplitude drift (~10 Hz LCG); yc walks the wiggle top down the
@@ -148,26 +168,22 @@ IRAM_ATTR void render_fx_wobble(color_t *dst, int start_scan, int num_scans)
     const int dxa = (dx * (12 + (int)((hf >> 7) & 7))) >> 4;
     const int yc = (int)(((unsigned)g_fx_frame * 5u) >> 1);
     const int n0 = yc - start_scan;
+    bool any = false;
     for (int k = 0; k < 16 && dx != 0; k++) {
         const int n = n0 + k;
         if (n < 0 || n >= num_scans) continue;     /* other band / off */
-        /* ±1 px jitter hashed from absolute y + frame — sub-row bands of
-         * one frame agree at their seam. */
+        /* ±2 px jitter hashed from absolute y + frame — sub-row bands of
+         * one frame agree at their seam. Even, like the envelope term. */
         const uint32_t hr = ((uint32_t)(start_scan + n) * 2654435761u)
                           ^ ((uint32_t)(g_fx_frame >> 1) * 2246822519u);
         int d = (dxa * (int)wob_env[k] + 64) >> 7;
-        d += (int)((hr >> 9) % 3u) - 1;
-        if (d == 0) continue;
-        color_t *lp = dst + (unsigned)n * DISPLAY_WIDTH;
-        if (d > 0) {                               /* shift right */
-            for (int i = DISPLAY_WIDTH - 1; i >= d; i--) lp[i] = lp[i - d];
-            for (int i = d - 1; i >= 0; i--)             lp[i] = 0;
-        } else {                                   /* shift left */
-            for (int i = 0; i < DISPLAY_WIDTH + d; i++) lp[i] = lp[i - d];
-            for (int i = DISPLAY_WIDTH + d; i < DISPLAY_WIDTH; i++)
-                lp[i] = 0;
-        }
+        d = (d / 2) * 2;                           /* truncate toward zero */
+        d += ((int)((hr >> 9) % 3u) - 1) * 2;
+        if (d <= -DISPLAY_WIDTH || d >= DISPLAY_WIDTH) continue;
+        out[n] = (int8_t)(d / 2);                  /* pixels -> words */
+        any |= out[n] != 0;
     }
+    return any;
 }
 
 /* Signal-loss static burst — grayscale snow on a few pseudo-random
