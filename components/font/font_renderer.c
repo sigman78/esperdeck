@@ -273,9 +273,22 @@ static IRAM_ATTR bool lookup_offset(const FontRange *ranges, int n, uint16_t cp,
     return false;
 }
 
+/* Runs before EVERY glyph decode, so its width matters. Measured on internal
+ * SRAM: a byte store costs the same as a word store (~5 cyc either way — the
+ * cost is per instruction, not per byte), so byte-at-a-time fills pay 4x.
+ * Callers hand us the 4-aligned row cache with a 4-multiple glyph stride
+ * (16 / 40 / 48 B), so the word path is the one that runs; the byte loop is
+ * kept for the host tests, which pass arbitrary buffers. */
 static IRAM_ATTR void zero_fill(void *out, size_t n)
 {
     uint8_t *o = (uint8_t *)out;
+    if ((((uintptr_t)o | n) & 3u) == 0) {
+        uint32_t *w = (uint32_t *)out;
+        const size_t nw = n >> 2;
+        for (size_t i = 0; i < nw; i++)
+            w[i] = 0;
+        return;
+    }
     for (size_t i = 0; i < n; i++)
         o[i] = 0;
 }
@@ -383,21 +396,49 @@ static IRAM_ATTR void decode_regular(uint16_t cp, void *out)
 /* Smear one pixel in the face's smear direction, in place, per row. 8x16 is
  * the only LEFT-smearing (rb==1) size; 10x20/12x24 smear RIGHT (rb==2). The
  * per-variant s_bold_smear_left flag drives the choice, not rb, per spec. */
+/* The smear is a per-row shift-or with no carry between rows, which makes it
+ * exactly a SWAR operation: process 4 rows (rb==1) or 2 rows (rb==2) per
+ * 32-bit word and mask off the bit that would cross a lane boundary.
+ *   left : per lane (v << 1), so clear each lane's bit 0 after shifting
+ *   right: per lane (v >> 1), so clear each lane's top bit after shifting
+ * Bit-identical to the byte/halfword loop it replaces. Both the row cache and
+ * the glyph stride are 4-aligned, so the word path always applies. */
 static IRAM_ATTR void smear_glyph(void *out)
 {
+    uint32_t *w = (uint32_t *)out;
+    const int nrows = s_height;
+    const int rows_per_word = (s_rb == 1) ? 4 : 2;
+
+    if ((((uintptr_t)out & 3u) == 0) && (nrows % rows_per_word) == 0) {
+        const int nw = nrows / rows_per_word;
+        if (s_rb == 1) {
+            if (s_bold_smear_left)
+                for (int i = 0; i < nw; i++) w[i] |= (w[i] << 1) & 0xFEFEFEFEu;
+            else
+                for (int i = 0; i < nw; i++) w[i] |= (w[i] >> 1) & 0x7F7F7F7Fu;
+        } else {
+            if (s_bold_smear_left)
+                for (int i = 0; i < nw; i++) w[i] |= (w[i] << 1) & 0xFFFEFFFEu;
+            else
+                for (int i = 0; i < nw; i++) w[i] |= (w[i] >> 1) & 0x7FFF7FFFu;
+        }
+        return;
+    }
+
+    /* Fallback for a hypothetical odd geometry (no shipped size needs it). */
     if (s_rb == 1) {
         uint8_t *rows = (uint8_t *)out;
-        for (int r = 0; r < s_height; r++) {
+        for (int r = 0; r < nrows; r++) {
             uint8_t v = rows[r];
             rows[r] = s_bold_smear_left ? (uint8_t)(v | ((v << 1) & 0xFF))
-                                         : (uint8_t)(v | (v >> 1));
+                                        : (uint8_t)(v | (v >> 1));
         }
     } else {
         uint16_t *rows = (uint16_t *)out;
-        for (int r = 0; r < s_height; r++) {
+        for (int r = 0; r < nrows; r++) {
             uint16_t v = rows[r];
             rows[r] = s_bold_smear_left ? (uint16_t)(v | ((v << 1) & 0xFFFF))
-                                         : (uint16_t)(v | (v >> 1));
+                                        : (uint16_t)(v | (v >> 1));
         }
     }
 }

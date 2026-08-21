@@ -38,6 +38,7 @@
 #define RENDER_FORCE_INLINE static inline
 #endif
 
+
 /* Active cell geometry — owned by display_render.c, set once at boot. */
 typedef struct {
     int fw;      /* cell width                            */

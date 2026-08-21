@@ -6,6 +6,8 @@
 #ifdef CONFIG_CYBERDECK_BENCH_STRESS
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -261,10 +263,100 @@ static void bench_task(void *arg)
     }
 }
 
+/*
+ * Memory-access microbenchmark — run once at startup.
+ *
+ * The ESP32-S3 load/store unit is 16 bytes wide (XCHAL_DATA_WIDTH) and the
+ * core reports XCHAL_UNALIGNED_{LOAD,STORE}_HW = 1, i.e. misaligned access
+ * works without an exception — but says nothing about what it costs. Internal
+ * SRAM is not cached, so these numbers are the raw load/store cost that the
+ * render ISR pays. Reported as cycles per byte over one 1600-byte scanline,
+ * min of 8 runs to shed preemption noise.
+ */
+#ifdef CONFIG_DISPLAY_ISR_BENCH
+#include "esp_cpu.h"
+
+#define MB_BYTES  1600                 /* one 800 px RGB565 scanline */
+#define MB_RUNS   8
+
+#define MB_TIME(label, stmt)                                                  \
+    do {                                                                      \
+        uint32_t best = 0xFFFFFFFFu;                                          \
+        for (int r = 0; r < MB_RUNS; r++) {                                   \
+            const uint32_t t0 = esp_cpu_get_cycle_count();                    \
+            stmt;                                                             \
+            const uint32_t dt = esp_cpu_get_cycle_count() - t0;               \
+            if (dt < best) best = dt;                                         \
+        }                                                                     \
+        ESP_LOGI(TAG, "  %-22s %6u cyc  %5u.%02u cyc/byte", label,            \
+                 (unsigned)best, (unsigned)(best / MB_BYTES),                 \
+                 (unsigned)((best * 100u / MB_BYTES) % 100u));                \
+    } while (0)
+
+static void membench(void)
+{
+    uint8_t *a = heap_caps_aligned_alloc(32, MB_BYTES + 64,
+                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    uint8_t *b = heap_caps_aligned_alloc(32, MB_BYTES + 64,
+                                         MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!a || !b) {
+        ESP_LOGW(TAG, "membench: no aligned DRAM");
+        free(a); free(b);
+        return;
+    }
+    const int n8 = MB_BYTES, n16 = MB_BYTES / 2, n32 = MB_BYTES / 4;
+
+    ESP_LOGI(TAG, "membench: internal SRAM, %d B, min of %d", MB_BYTES, MB_RUNS);
+
+    volatile uint8_t  *d8  = (volatile uint8_t *)a;
+    volatile uint16_t *d16 = (volatile uint16_t *)a;
+    volatile uint32_t *d32 = (volatile uint32_t *)a;
+    MB_TIME("fill  u8",        for (int i = 0; i < n8;  i++) d8[i]  = 0);
+    MB_TIME("fill  u16",       for (int i = 0; i < n16; i++) d16[i] = 0);
+    MB_TIME("fill  u32 @16B",  for (int i = 0; i < n32; i++) d32[i] = 0);
+
+    /* 4-byte aligned but straddling the 16-byte bus width */
+    volatile uint32_t *d32o = (volatile uint32_t *)(a + 4);
+    MB_TIME("fill  u32 @4B",   for (int i = 0; i < n32 - 1; i++) d32o[i] = 0);
+
+    MB_TIME("fill  u32 x4",    for (int i = 0; i < n32; i += 4) {
+                                   d32[i] = 0; d32[i+1] = 0;
+                                   d32[i+2] = 0; d32[i+3] = 0; });
+
+    const volatile uint8_t  *s8  = (const volatile uint8_t *)b;
+    const volatile uint16_t *s16 = (const volatile uint16_t *)b;
+    const volatile uint32_t *s32 = (const volatile uint32_t *)b;
+    MB_TIME("copy  u8",        for (int i = 0; i < n8;  i++) d8[i]  = s8[i]);
+    MB_TIME("copy  u16",       for (int i = 0; i < n16; i++) d16[i] = s16[i]);
+    MB_TIME("copy  u32 @16B",  for (int i = 0; i < n32; i++) d32[i] = s32[i]);
+    MB_TIME("copy  u32 x4",    for (int i = 0; i < n32; i += 4) {
+                                   d32[i] = s32[i];     d32[i+1] = s32[i+1];
+                                   d32[i+2] = s32[i+2]; d32[i+3] = s32[i+3]; });
+
+    /* Genuinely misaligned 32-bit loads: src +2 bytes. XCHAL says the hardware
+     * handles it; this is what it charges. */
+    const volatile uint32_t *s32u = (const volatile uint32_t *)(b + 2);
+    MB_TIME("copy  u32 src+2",  for (int i = 0; i < n32 - 1; i++) d32[i] = s32u[i]);
+
+    /* Funnel-shift equivalent — what the odd-displacement wobble path did */
+    MB_TIME("copy  u32 funnel", for (int i = 0; i < n32 - 1; i++)
+                                   d32[i] = (s32[i] >> 16) | (s32[i+1] << 16));
+
+    MB_TIME("ROM memcpy",       memcpy(a, b, MB_BYTES));
+    MB_TIME("ROM memset",       memset(a, 0, MB_BYTES));
+
+    free(a);
+    free(b);
+}
+#else
+static void membench(void) { }
+#endif
+
 bool bench_stress_start(void)
 {
     ESP_LOGW(TAG, "BENCH STRESS build: font=%s — no shell, no network",
              font_size_name(font_active_size()));
+    membench();
     xTaskCreatePinnedToCore(bench_task, "bench", 8192, NULL, 5, NULL, 0);
     return true;
 }
