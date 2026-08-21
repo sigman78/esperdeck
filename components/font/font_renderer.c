@@ -15,9 +15,9 @@
 #include "esp_log.h"
 #include <string.h>
 
-#ifndef BUILD_SIMULATOR
+/* The simulator provides an idfsim/esp_heap_caps.h stub, so this is
+ * unconditional — the glyph cache is built on both targets. */
 #include "esp_heap_caps.h"
-#endif
 
 static const char *TAG = "font_renderer";
 
@@ -250,6 +250,7 @@ void font_init(font_size_t size)
     s_palette     = reg->palette;
     ESP_LOGI(TAG, "Font system initialized (simulator, %s, %d ranges + %d bold, %u palette entries)",
              v->name, s_num_ranges, s_num_bold, (unsigned)reg->palette_len);
+    gcache_init();
 #endif
 }
 
@@ -561,7 +562,6 @@ IRAM_ATTR void font_decode_glyph(uint16_t cp, bool bold, void *out)
         dst[w] = src[w];
 }
 
-#ifndef BUILD_SIMULATOR
 static void gcache_init(void)
 {
     /* font_init() is once-per-boot today (a size change needs a reboot), but
@@ -599,6 +599,3 @@ static void gcache_init(void)
              (unsigned)(tag_b + bits_b + data_b), (unsigned)GC_SETS,
              (unsigned)GC_WAYS, (unsigned)s_glyph_bytes);
 }
-#else
-static void gcache_init(void) { s_gc_tag = NULL; }
-#endif

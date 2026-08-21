@@ -120,6 +120,43 @@ static void test_blank(void)
     TEST_ASSERT_EQUAL_MEMORY(zero, out, GB);
 }
 
+/* The decoded-glyph cache is bounded (256 entries, 2-way) while the golden set
+ * is ~1470 codepoints x 2 faces, so the sweeps above already overcommit it ~11x
+ * and force constant eviction — every CRC they check goes through a fill.
+ *
+ * This covers what they do not: that a cache HIT returns the same bytes as the
+ * fill that populated it, and that a refill after eviction is still correct.
+ * A slot-indexing or victim-selection bug shows up here as a wrong glyph
+ * rather than a corrupted one. */
+static void test_cache_hit_and_refill(void)
+{
+    uint8_t first[GB], again[GB];
+    int bad = 0;
+
+    /* fill (or hit), then a guaranteed hit on the same key */
+    for (int i = 0; i < GOLDEN_NUM; i++) {
+        font_decode_glyph(golden[i].cp, false, first);
+        font_decode_glyph(golden[i].cp, false, again);
+        if (memcmp(first, again, GB) != 0) {
+            if (bad < 10) printf("hit != fill at U+%04X\n", golden[i].cp);
+            bad++;
+        }
+    }
+
+    /* sweep the bold face to evict everything, then re-check a sample of the
+     * regular face against its reference — a refill must be identical */
+    for (int i = 0; i < GOLDEN_NUM; i++)
+        font_decode_glyph(golden[i].cp, true, again);
+    for (int i = 0; i < GOLDEN_NUM; i += 7) {
+        font_decode_glyph(golden[i].cp, false, again);
+        if (crc32z(again, GB) != golden[i].crc_reg) {
+            if (bad < 10) printf("refill wrong at U+%04X\n", golden[i].cp);
+            bad++;
+        }
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, bad, "glyph cache hit/refill disagrees");
+}
+
 int main(void)
 {
     font_init(TEST_SIZE);
@@ -130,5 +167,6 @@ int main(void)
     RUN_TEST(test_all_bold);
     RUN_TEST(test_fallback);
     RUN_TEST(test_blank);
+    RUN_TEST(test_cache_hit_and_refill);
     return UNITY_END();
 }
