@@ -23,8 +23,8 @@ IRAM_ATTR void render_fx_snapshot(void)
 }
 
 /* Visual bell: a red tag flashed in the top-right corner by the ISR. */
-#define BELL_TOTAL   40    /* 4 half-periods → exactly two on/off flashes */
-#define BELL_HALF    10    /* frames per on (or off) half at ~60 fps      */
+#define BELL_TOTAL   40    /* 4 half-periods → two on/off flashes, ~1.0 s */
+#define BELL_HALF    10    /* frames per on (or off) half, ~256 ms @39 Hz */
 
 static DRAM_ATTR struct {
     volatile int frames;   /* armed from any task via display_bell()  */

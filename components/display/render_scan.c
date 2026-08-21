@@ -113,7 +113,7 @@ IRAM_ATTR void render_dim_pass(const scan_ctx_t *cx)
 #endif
 
 /* Cursor — updated via display_set_cursor(); blink from the frame tick. */
-#define CURSOR_BLINK_FRAMES  15   /* toggle every 15 frames ≈ 250 ms at 60 fps */
+#define CURSOR_BLINK_FRAMES  15   /* toggle every 15 frames ≈ 385 ms at 39 Hz */
 
 static DRAM_ATTR struct {
     int           x, y;

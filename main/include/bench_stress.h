@@ -8,6 +8,13 @@
  * quantify render/decoder changes — see "Glyph tables & the row cache" in
  * docs/ARCHITECTURE.md for the numbers this produced.
  *
+ * The task cycles through seven OVERLAY phases (off / clear / scrim /
+ * spaces / dense / bars / bold), one measured window each, tagged `ov=` in
+ * the log line. The terminal stays dense throughout, so the transparent
+ * phases measure real compositing. See the phase table in bench_stress.c
+ * for what each one isolates — historically only `off` was ever measured,
+ * which left the whole shell-chrome path unquantified.
+ *
  * Compiled out entirely when the option is off; the hooks below reduce to
  * no-ops.
  */
