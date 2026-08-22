@@ -1,0 +1,246 @@
+# Extensibility plan — plugins with UI
+
+Where the architecture is going and the PR-sized steps to get there. Written
+from a full-tree review (2026-08-22, three sweeps: shell/UI architecture,
+component wiring, comment audit). Each phase lands value on its own; nothing
+here requires a rewrite.
+
+**The vision:** feature- and hardware-specific *plugins* that bring their own
+UI — a statically linked, self-describing module (one component, or one file
+in an existing component) that hands the shell a descriptor at init and never
+requires editing shell internals. The backlog this must serve is
+[`feat-ideas.md`](feat-ideas.md): palette/theme filters, the CRT effects
+pack, screensaver-zoo entries, info-saver widgets (weather / Home Assistant),
+NFC (near-field communication) tap-to-unlock, file transfer + SD card.
+
+---
+
+## Current state
+
+### Seams that already exist (build on, don't replace)
+
+- **A screen vtable.** `SCREENS[ST_COUNT]` (`cyberdeck_app.c`) dispatches
+  `tick`/`input` per state — no switch. It lacks `enter`/`exit`/`render`, a
+  name, and a state pointer, and it is *closed*: indexed by a compile-time
+  enum.
+- **Ops-struct injection.** `cyberdeck_ble_ops_t` / `cyberdeck_presence_ops_t`
+  (`cyberdeck_app.h`) — NULL-able capability structs filled by the
+  composition root. This is the plugin shape in miniature.
+- **`menu_def_t` page descriptors** (`app_menu_defs.h`) — menus are half
+  data-driven already; only the *actions* live in a switch.
+- **The stub-swap build pattern** (`app_unlock.c` / `app_unlock_stub.c`,
+  keystore) — a feature module can be excluded at link time. 80% of
+  "optional feature".
+- **Polled ticks, no event bus — by design.** Everything the shell reacts to
+  is polled from one tick loop. Plugin-friendly: a plugin gets `tick(now)`
+  and polls like everything else.
+- **A generic key/value (KV) idiom, private.** `fx_fields[]` — an offsetof
+  table driving both load and save so they cannot drift (`storage.c`), plus
+  `parse_kv` and the `atomic_open`/`atomic_close` write-temp-then-rename
+  pair. None of it is exported.
+- **Model screens.** `app_sshimport.c` (185 lines, one service API) and
+  `app_wifiprov.c` are what a plugin screen should look like.
+
+### Blockers
+
+*Closed tables* — the structural ones:
+
+1. Adding a screen touches ~9 sites in 6 files, all inside `cyberdeck_app`
+   (enum, state struct inlined into the one global `app` struct,
+   `app_screens.h`, the `SCREENS[]` row, CMake, and a menu/home entry).
+   Telling: the two newest features dodged the cost — pacman is a widget,
+   the saver is a tick-hijack wedged into the dispatcher.
+2. Menu actions are a ~240-line positional `(page, index)` switch
+   (`menu_activate()`, `app_menu.c`); array order is the API, a hazard the
+   code itself documents (`app_menu_defs.h`). Five of eleven pages bypass
+   the descriptor table entirely.
+3. Home-grid extras are an enum plus three switches (`app_home.c`);
+   overflow tiles are silently dropped — there is no scrolling list widget.
+4. No navigation stack: "back" is re-derived per screen (13 bespoke
+   `app.state =` writes; unlock keeps a private return enum). A plugin
+   screen cannot be "returned to" by code that does not know its name.
+5. The UI API is component-private — only `cyberdeck_app.h` is exported. An
+   out-of-component plugin cannot draw a tile.
+
+*Tangled responsibilities:*
+
+- `app_menu.c` (~1000 lines) is renderer + navigation + settings model +
+  persistence + profile CRUD + device control (reboots inline).
+- `app_connect.c` owns the whole SSH connection policy (key loading via raw
+  `fopen`, keystore secret resolution, retry machine) inside a screen.
+- Security policy lives in eye-candy: the saver calls `keystore_lock()` +
+  `app_creds_wipe()`; the walk-away auto-lock check sits in HOME's tick.
+- Capability states are magic numbers at call sites (`b == 4`,
+  `enroll_state() == 1`) because ops return bare `int`.
+
+*Wiring debt:*
+
+- Leaky edges: `storage → display` (only for `display_fx.h`; the keystore
+  tests fake the header to escape it) and `storage → libssh2_esp` (only to
+  reach vendored monocypher).
+- The `input` component is invisible to the simulator; `sim/main.c`
+  hand-mirrors the GT911 touch state machine, constants synced by comment.
+- Feature gates triplicated: the keystore `option()` appears verbatim in
+  three CMakeLists; every `CONFIG_*` shared code reads must be hand-mirrored
+  in `sim/CMakeLists.txt` (the sim has no Kconfig).
+
+---
+
+## Target architecture
+
+Three scope decisions, made up front:
+
+- **Explicit registration, not linker-section magic.** One shared
+  `plugin_table.c`, compiled by both composition roots, lists the built
+  plugins. One edit point per plugin, identical on device and sim,
+  debuggable, MSVC-clean — and it *converges* the two roots instead of
+  doubling their divergence.
+- **No dynamic loading.** ELF-loader plugins are the wrong scope for a
+  ~60 KB-internal-DRAM target; static link + registry gives the
+  architectural benefit.
+- **No event bus (yet).** Polling works and is simpler to reason about.
+  Revisit when a real multi-consumer need appears — the second consumer of
+  BLE advertisements will be the tell (`ble_keyboard.c` hard-calls
+  `ble_presence_on_disc()` today).
+
+The descriptor — every field optional, so a plugin can be just a menu page,
+just a screensaver, or a full hardware capability with UI:
+
+```c
+typedef struct {
+    const char *name;                     // stable id: menu label, ini file, storage key
+    esp_err_t (*init)(const plugin_env_t *env);   // after core services are up
+    void (*tick)(uint32_t now_ms);        // polled from cyberdeck_app_tick
+    void (*idle_flush)(void);             // deferred flash writes (generalizes menu_fx_flush)
+    const screen_def_t   *screens;        // registered screens (opaque ids returned)
+    const menu_page_t    *menu_pages;     // full pages, actions as callbacks in the table
+    const menu_item_t    *menu_items;     // items contributed into existing pages
+    const home_tile_t    *home_tiles;     // visibility predicate + activate callback
+    const saver_ops_t    *saver;          // screensaver-zoo entry
+    const kv_field_t     *settings;       // offsetof table -> generic ini load/save,
+                                          //   auto-included in factory reset
+    const service_def_t  *services;       // named capability ops (generalizes ble/presence)
+} cyberdeck_plugin_t;
+```
+
+Supporting contracts:
+
+- **Open screen registry**: `screen_ops_t` grows `enter`/`exit`/`render`/
+  `name` and a `void *ctx`; `app_screen_register()` returns an id; per-screen
+  state leaves the global `app` struct. A small **navigation stack**
+  (`nav_push/pop/replace`) replaces the bespoke state writes and hardcoded
+  return destinations.
+- **Menu items carry their behavior**: `menu_item_t { label, color, action,
+  confirm, dim, value }` — kills `menu_activate()`, `menu_confirm()`,
+  `menu_item_dim()` and the positional-index contracts in one move.
+- **Capability registry**: `service_get("presence")` returning typed ops
+  replaces one-config-field-per-capability; states become named enums.
+- **Public UI kit**: a curated `cyberdeck_ui.h` exporting the tile grid,
+  hit-testing, fields, and widgets — prerequisite for any out-of-component
+  plugin.
+
+### Constraints every phase must respect
+
+1. `tools/check_iram.py` claims symbol prefixes (`render_cache_*`,
+   `scan_band_*`, `fx_*`, `decode_record`, …) — plugin symbols must avoid
+   them, and any plugin code reachable from the render ISR (interrupt
+   service routine) needs `IRAM_ATTR`/`DRAM_ATTR` plus a
+   `CYBERDECK_BENCH_STRESS` pass ([`bench-methodology.md`](bench-methodology.md)).
+   Effect-style plugins go through the existing per-frame fx snapshot —
+   never new ISR hooks.
+2. Descriptor tables live in flash rodata — fine, as long as the ISR never
+   walks them.
+3. Plugin state allocates from PSRAM (external RAM) unless the ISR touches
+   it; internal DRAM is the scarce pool.
+4. Everything must still compile in the third context: the standalone Unity
+   test projects build component sources with no ESP-IDF and no SDL.
+5. Shared code stays MSVC-clean (and beware `windows.h`-poisoned
+   identifiers — `near`/`far`; see the `is_near` note in `cyberdeck_app.h`).
+
+*Out of scope, deliberately:* dynamic code loading; an event bus; turning
+core-flow screens (boot, connecting, session, unlock) into plugins — the
+spine stays the spine. Nothing in phases 0–2 touches the render ISR.
+
+---
+
+## The phases
+
+Ordered so every step lands value alone, the risky refactors are
+behavior-neutral, and the plugin seam arrives already proven by migrated
+in-tree features. Tick items as they merge.
+
+### Phase 0 — hygiene
+
+- [x] **0a** Comment sweep: essays → docs (new `bench-methodology.md`),
+      stale comments fixed (PR #61).
+- [ ] **0b** Retire `components/terminal` (+ its suite); fix the
+      MSVC-broken sim build (`near` rename); missing `font` REQUIRES;
+      stale WinCNG doc lines (PR #62).
+
+### Phase 1 — foundations that pay off regardless of plugins
+
+- [ ] **1. Generic settings API.** Public `storage_kv_load/save(file,
+      const kv_field_t*, void*)` (u8/u16/bool/string) generalizing
+      `fx_fields[]`; expose the atomic-write pair; migrate
+      `fx/font/saver/touch.ini`; factory reset iterates a registered file
+      list instead of the hardcoded array. Same PR: break `storage → display`
+      (fx serialization moves behind a caller-owned kv table; deletes the
+      fake header in `tests/keystore/stubs/`) and `storage → libssh2_esp`
+      (monocypher becomes its own small component).
+      *Kills: 4 bespoke load/save pairs, 2 leaky edges.*
+- [ ] **2. Screen registry + navigation stack.** Extend `screen_ops_t`
+      (enter/exit/render/name/ctx), add `app_screen_register()`, move
+      per-screen state behind `void *ctx`, add `nav_push/pop/replace`.
+      Core screens re-register through the same API — the shell dogfoods
+      its own plugin surface. Behavior-neutral; regression-test the flow
+      with the sim's `--drive` scripted input.
+      *Kills: the enum, the global-struct growth, 13 state writes, 4
+      bespoke back-paths.*
+- [ ] **3. Menus fully data-driven.** Actions/confirm/dim/value move into
+      `menu_item_t`; convert the five bespoke pages; add
+      `menu_page_register()` + `menu_items_extend()`. Split the settings
+      model (cycling + persistence, now on the PR-1 KV API) out of
+      `app_menu.c`; the deferred-fx-flush call in the core tick becomes the
+      generic `idle_flush` hook.
+      *Kills: the 240-line switch, positional contracts, the 1000-line file.*
+- [ ] **4. Widget gaps + public UI kit.** Scrolling list widget (hard
+      prerequisite — grids silently drop overflow), one shared
+      confirm/modal helper (currently cloned 3×), unified toast, then the
+      curated public `cyberdeck_ui.h`.
+
+### Phase 2 — the plugin seam
+
+- [ ] **5. `cyberdeck_plugin_t` + capability registry + shared
+      `plugin_table.c`** compiled by both roots. Home-grid extras become
+      registered tiles (visibility predicate + activate) on the new list
+      widget. BLE/presence ops migrate to named services with enum states.
+- [ ] **6. Build-system convergence.** One `cyberdeck_features.cmake`
+      defining each feature gate once; the sim's mirrored `CONFIG_*`
+      defines generated from the same list; document (or script) the sim's
+      `add_subdirectory` ordering. Optional: a global hotkey registry
+      replacing the per-screen shortcut ladders.
+
+### Phase 3 — prove it, then spend it
+
+- [ ] **7. Migrate in-tree features onto the seam** — the acceptance test
+      for the whole design: the saver becomes a plugin (its lock action
+      moves to a core `session_guard`, which also absorbs the walk-away
+      policy from `app_home.c` — security policy leaves the eye-candy);
+      pacman becomes a sprite-widget plugin; connection policy extracts
+      from `app_connect.c` into the ssh component, leaving a thin screen.
+- [ ] **8+. The backlog lands as plugins** ([`feat-ideas.md`](feat-ideas.md)):
+      palette/theme filters and the CRT fx pack (menu page + KV settings +
+      fx snapshot), screensaver-zoo entries (saver ops), info-saver widgets
+      (tick + tiles), NFC tap-to-unlock (service + unlock-screen
+      extension), file transfer / SD card (service + screen + menu page).
+      Each becomes a checklist item, not an archaeology project.
+
+---
+
+## Status log
+
+- **2026-08-22** — plan written from the three-sweep review. 0a merged
+  (#61). 0b in review (#62); it surfaced that the sim build had been broken
+  since #60 (`near` vs the `windows.h` legacy-keyword macro) — fixed there,
+  and build verification now checks exit codes (piping ninja through `tail`
+  had masked failures).
