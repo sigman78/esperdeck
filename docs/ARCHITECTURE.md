@@ -57,19 +57,13 @@ components/
   wifi/              profile-driven STA + SoftAP provisioning
   storage/           INI profiles, known-hosts, BLE registry, key blobs
   input/             BLE HID keyboard, GT911 touch, USB-serial
-  terminal/          legacy low-level TUI — unused by the shell (see note)
   libssh2_esp/       vendored wrapper; libssh2 cloned+patched by CMake at
-                     configure time (mbedTLS on device, WinCNG in sim)
+                     configure time (mbedTLS backend on device and in the sim)
 idfsim/              host-compilable ESP-IDF stubs (esp_err, heap_caps, ...)
-tests/               Unity suites (tsm: vtparse + termstate; terminal)
+tests/               Unity suites (tsm: vtparse + termstate; font, keystore, ...)
 cmake/               cyberdeck_component_register() — IDF/sim dual registration
 docs/                this document
 ```
-
-> **Note on `components/terminal`.** An early low-level "DOS-style" text output
-> layer, superseded by `tsm` + `vterm`. It is no longer required by `main` and
-> is not linked into the simulator binary; only its Unity test suite still
-> exercises it. Safe to remove if the tests go with it.
 
 ---
 

@@ -84,9 +84,6 @@ cd tests/tsm && cmake -B build && cmake --build build --config Debug
 ctest --test-dir build -C Debug
 ```
 
-`tests/terminal` exercises the legacy `components/terminal` layer, which the
-firmware no longer uses.
-
 ## Simulator
 
 ```bash
@@ -103,11 +100,10 @@ cmake --build build-sim
   environment where `cl` is available (e.g. a VS developer prompt) if the
   default clang cannot find the Windows SDK headers.
 
-Crypto: the sim's `libssh2` uses the WinCNG backend plus the fork's
-Monocypher curve25519, and connects to stock OpenSSH servers. The device
-build uses mbedTLS. If a hardened server rejects the sim's key-exchange
-offer, test that part on the device — the sim's job is UI and state-machine
-iteration.
+Crypto: the sim's `libssh2` uses the same mbedTLS backend as the device
+(mbedTLS 3.6 LTS via CPM, plus the fork's Monocypher ed25519), so key
+exchange, host-key algorithms, and known-hosts pins match between sim and
+device — a fingerprint accepted in the sim is valid on the deck.
 
 ## Performance
 

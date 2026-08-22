@@ -100,7 +100,7 @@ static int presence_ops_enroll_state(void)
 static const cyberdeck_presence_ops_t s_presence_ops = {
     .enrolled     = ble_presence_enrolled,
     .present      = ble_presence_present,
-    .near         = ble_presence_near,
+    .is_near      = ble_presence_near,
     .age_ms       = ble_presence_age_ms,
     .rssi         = ble_presence_rssi,
     .enroll_start = ble_presence_enroll_start,

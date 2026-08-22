@@ -113,11 +113,11 @@ void render_home(void)
         (app.cfg.presence->enrolled() || app.cfg.presence->enroll_state() == 1)) {
         const bool adv  = app.cfg.presence->enroll_state() == 1;
         const bool ph   = !adv && app.cfg.presence->present();
-        const bool near = ph && app.cfg.presence->near();
-        ui_pen(adv  ? OVERLAY_COL_AMBER          /* enrolling            */
-             : near ? OVERLAY_COL_GREEN          /* within arm's reach   */
-             : ph   ? OVERLAY_COL_BLUE           /* in range, but far    */
-                    : OVERLAY_COL_RED);          /* gone                 */
+        const bool nearby = ph && app.cfg.presence->is_near();
+        ui_pen(adv    ? OVERLAY_COL_AMBER        /* enrolling            */
+             : nearby ? OVERLAY_COL_GREEN        /* within arm's reach   */
+             : ph     ? OVERLAY_COL_BLUE         /* in range, but far    */
+                      : OVERLAY_COL_RED);        /* gone                 */
         ui_putch(ke + 2, 1, UI_LED_ON, 0);
         ui_puts(ke + 4, 1, "PHN", OVERLAY_ATTR_BOLD);
         ui_pen(OVERLAY_COL_DEFAULT);

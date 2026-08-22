@@ -21,5 +21,5 @@ cyberdeck_component_register(
                  app_hostkey.c app_connect.c app_profile.c app_menu.c
                  app_wifiprov.c app_sshimport.c ${UNLOCK_SRC}
     INCLUDE_DIRS include
-    REQUIRES     storage ssh wifi display vterm
+    REQUIRES     storage ssh wifi display vterm font
 )

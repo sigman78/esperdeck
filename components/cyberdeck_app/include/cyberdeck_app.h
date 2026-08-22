@@ -47,7 +47,9 @@ typedef struct {
 typedef struct {
     bool     (*enrolled)(void);
     bool     (*present)(void);        /* resolved sighting < ~45 s ago     */
-    bool     (*near)(void);           /* present AND RSSI over near gate   */
+    bool     (*is_near)(void);        /* present AND RSSI over near gate
+                                         (not `near`: windows.h defines that
+                                         legacy keyword away, killing MSVC) */
     uint32_t (*age_ms)(void);         /* ms since last sighting, ~0 = now  */
     int      (*rssi)(void);           /* smoothed, 0 = none yet            */
     void     (*enroll_start)(void);   /* advertise for phone pairing       */
