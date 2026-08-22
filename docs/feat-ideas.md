@@ -232,7 +232,75 @@ practical win per hour in this area), the NFC card stays the better pure
 token (real key material, no app, no Apple dependency), and Tier B is the
 maximalist path only if maintaining an iOS app sounds like fun.
 
-## 9. Also on the table (from the repo survey)
+## 9. File transfer + SD card storage
+
+Move files in and out of the deck without leaving the SSH session — and give
+them somewhere real to land.
+
+### The transfer: second channel on the LIVE session, OSC as the trigger
+
+"Multiplexed" is native to SSH: libssh2 runs multiple channels over one
+session — same TCP socket, same auth, zero reconnect. The shell channel
+stays the terminal; the deck opens a transient SFTP (or SCP) channel beside
+it, streams the file, closes it. Binary-safe, no terminal-stream pollution,
+no remote tooling beyond sshd's built-in sftp subsystem.
+
+The TUI handoff is in-band SIGNALING, out-of-band DATA. The in-tree VT
+engine (components/tsm vtparse) already routes every OSC (Operating System
+Command escape) string through a clean callback (`cb.osc`), so a private
+sequence is a first-class hook:
+
+    # remote helper, ~2 lines of shell profile:
+    deckget() { printf '\e]7777;fetch;%s\a' "$(realpath "$1")"; }
+    deckput() { printf '\e]7777;offer;%s\a' "$(realpath "$1")"; }
+
+The OSC handler pops a local confirm toast ("fetch /path (12 KB)?"); on
+accept, the ssh task opens `libssh2_sftp_open` on the live session and
+pulls the file. The real engineering is the ssh task's drain loop: one
+session, one socket, so SFTP reads interleave with shell-channel reads —
+a small state machine, not a new architecture. Progress rides the toast
+machinery (or a pixel-smooth sprite bar).
+
+**Security is part of the design, not a footnote**: the remote (and
+anything it prints) can emit OSCs, so fetch/offer must NEVER auto-execute
+— always a local confirm tap, destination allow-listing, size caps. An
+escape sequence that silently writes files is remote code execution with
+extra steps.
+
+Alternatives, for the record:
+
+- **ZMODEM** (`sz`/`rz` over the terminal byte stream, vterm feed paused
+  around the transfer): the classic single-stream handoff, maximal BBS
+  charm, ~1-2k lines of state machine, breaks through tmux, needs lrzsz on
+  the remote. The demoscene stretch goal.
+- **iTerm2 OSC 1337 File= / kitty OSC 5113**: established escape-code
+  transfer protocols; implementing the receive side buys compatibility
+  with existing remote scripts (`it2dl`, `kitten transfer`). Base64 in the
+  terminal stream: +33% overhead, chunked-OSC buffering, desync risk.
+- **OSC 52** (clipboard, base64, both directions): not file transfer, but
+  covers the shuttle-a-snippet case for an afternoon of work — worth
+  doing regardless.
+
+### The storage: the board's TF slot
+
+littlefs on flash is a few MB and holds config + the keystore — not a
+download target. The Waveshare board has a TF (microSD) slot: GBs for
+fetched files, logs, scrollback dumps, saver/palette assets. Driver side is
+stock IDF (`esp_vfs_fat` + SDMMC or SPI host); the open question is pin
+budget — the RGB panel owns most GPIOs (the backlight PWM needed a
+hand-wire), so verify which host/pins Waveshare routed the slot to before
+promising SDMMC speeds.
+
+**Security boundary**: the SD card is removable, unencrypted media.
+Transfers, logs and media live there; credentials NEVER do — the keystore
+and everything under the master key stays on internal flash. Mounting is
+best-effort and hot-unplug must not wedge the deck (mount on demand, flush
+eagerly).
+
+Effort: OSC hook + SFTP pull + confirm UI ~= a week; SD mount + a "files"
+lister a few days on top; ZMODEM whenever the retro itch wins.
+
+## 10. Also on the table (from the repo survey)
 
 - **Bracketed paste** (`termstate.c:2004` stub): small, and a mild security
   item (paste injection). Do during any terminal-adjacent work.
@@ -264,6 +332,7 @@ maximalist path only if maintaining an iOS app sounds like fun.
 | 6 | Info saver | ★★★★ | ★★★★ | M–L | med | TLS heap, tokens → keystore; post-unlock |
 | 7 | Animations pass | ★★★ | ★★★ | S | low | fold into #4 |
 | 8 | NFC token unlock | ★★★★ | ★★★★ | S (tier 1) / M (tier 2) | low | hardware-gated: PN532 on the touch I2C bus |
+| 9 | File transfer + SD card | ★★★★ | ★★★★★ | M | med | OSC trigger + SFTP side-channel; SD pin budget to verify |
 
 ## Recommended sequence
 
@@ -276,3 +345,6 @@ NFC unlock (#8) runs independently of the visual track — it starts whenever
 the PN532 module is on the bench; its BLE tier A (§8b: presence-gated PIN
 length + walk-away auto-lock) needs no hardware at all and is the best
 practical security win per hour on the whole list.
+File transfer (#9) is the most USEFUL item after the menu rework — the deck
+stops being a terminal-only endpoint — and its OSC-trigger half needs no
+hardware either; the SD slot turns it from a demo into a tool.
