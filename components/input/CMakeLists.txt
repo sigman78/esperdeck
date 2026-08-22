@@ -3,6 +3,7 @@ idf_component_register(
         "input_hal.c"
         "hid_keymap.c"
         "ble_keyboard.c"
+        "ble_presence.c"
         "input_uart.c"
         "touch_input.c"
     INCLUDE_DIRS
@@ -21,4 +22,5 @@ idf_component_register(
         vterm
         display
         storage
+        mbedtls
 )

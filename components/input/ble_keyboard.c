@@ -25,6 +25,8 @@
 
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
+
+#include "ble_presence.h"
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
 #include "host/ble_store.h"
@@ -484,6 +486,11 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     switch (event->type) {
     case BLE_GAP_EVENT_DISC: {
         struct ble_gap_disc_desc *d = &event->disc;
+
+        /* Phone-presence rides this scan whenever it is the one running
+         * (keyboard disconnected); ble_presence runs its own passive scan
+         * only while we hold a connection. */
+        ble_presence_on_disc(d->addr.val, d->addr.type, d->rssi);
 
         if (s_state == BLE_RECONNECT) {
             /* Registry membership alone identifies a bonded keyboard — do NOT

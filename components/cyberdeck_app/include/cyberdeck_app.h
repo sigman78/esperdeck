@@ -41,6 +41,21 @@ typedef struct {
     void (*forget)(void);            /* wipe all bonds (recover a bad store) */
 } cyberdeck_ble_ops_t;
 
+/* ---- phone-presence seam (BLE proximity; NULL where unsupported) -------
+ * Prototype policy input (docs/feat-ideas.md §8b tier A): presence gates
+ * behavior — it is never key material. */
+typedef struct {
+    bool     (*enrolled)(void);
+    bool     (*present)(void);        /* resolved sighting < ~45 s ago     */
+    bool     (*near)(void);           /* present AND RSSI over near gate   */
+    uint32_t (*age_ms)(void);         /* ms since last sighting, ~0 = now  */
+    int      (*rssi)(void);           /* smoothed, 0 = none yet            */
+    void     (*enroll_start)(void);   /* advertise for phone pairing       */
+    void     (*enroll_stop)(void);
+    int      (*enroll_state)(void);   /* ble_presence_enroll_t as int      */
+    void     (*forget)(void);
+} cyberdeck_presence_ops_t;
+
 /* ---- configuration ------------------------------------------------------ */
 
 typedef struct {
@@ -60,6 +75,7 @@ typedef struct {
     const char *fallback_wifi_password;
 
     const cyberdeck_ble_ops_t *ble;   /* NULL = keyboard handled elsewhere */
+    const cyberdeck_presence_ops_t *presence;   /* NULL = no phone sensing */
 
     /* Arm/disarm the right-edge scroll strip, in pixels (0 = off). Same
      * seam as `ble` above: the shell states what it wants and the platform

@@ -23,6 +23,7 @@
 #include "bench_argon2.h"
 #include "bench_stress.h"
 #include "ble_keyboard.h"
+#include "ble_presence.h"
 #include "cyberdeck_app.h"
 #include "display.h"
 #include "font.h"
@@ -89,6 +90,23 @@ static const cyberdeck_ble_ops_t s_ble_ops = {
     .select_device    = ble_keyboard_select_device,
     .get_name         = ble_keyboard_get_connected_name,
     .forget           = ble_keyboard_forget_all,
+};
+
+static int presence_ops_enroll_state(void)
+{
+    return (int)ble_presence_enroll_state();
+}
+
+static const cyberdeck_presence_ops_t s_presence_ops = {
+    .enrolled     = ble_presence_enrolled,
+    .present      = ble_presence_present,
+    .near         = ble_presence_near,
+    .age_ms       = ble_presence_age_ms,
+    .rssi         = ble_presence_rssi,
+    .enroll_start = ble_presence_enroll_start,
+    .enroll_stop  = ble_presence_enroll_stop,
+    .enroll_state = presence_ops_enroll_state,
+    .forget       = ble_presence_forget,
 };
 
 /* -------------------------------------------------------------------------
@@ -198,6 +216,7 @@ void app_main(void)
      * boot — pairing a new one is reachable from the shell ('b' / touch). */
     ble_keyboard_reconnect_start();
 
+    ble_presence_init();
     ssh_client_init();
     log_heap("after input+ssh init");
 
@@ -213,6 +232,7 @@ void app_main(void)
         .fallback_wifi_ssid     = CONFIG_WIFI_SSID,
         .fallback_wifi_password = CONFIG_WIFI_PASSWORD,
         .ble = &s_ble_ops,
+        .presence = &s_presence_ops,
 #if CONFIG_INPUT_TOUCH_SCROLL
         .set_scroll_edge = input_hal_set_scroll_edge,
         .scroll_edge_px  = CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX,
