@@ -234,6 +234,11 @@ void session_resume(void)
 
 static void enter_session(uint64_t now)
 {
+    /* The display now belongs to remote content: blank every sprite slot so
+     * terminal text in U+E000.. (e.g. Nerd-Font icons) renders blank cells,
+     * not leftover HOME marquee art (font.h: local UI namespace). */
+    font_sprite_clear_all();
+
     app.conn.session_start = now;
     app.conn.attempt       = 0;   /* a future drop counts retries from 1 again */
     display_fx_wipe();     /* raster-reveal the fresh session */

@@ -86,6 +86,16 @@ typedef enum {
 #define FONT_MAX_CACHE_BYTES  1600
 #endif
 
+/* Largest decoded glyph any ENABLED size produces — sizes static sprite
+ * slot storage. */
+#if FONT_RT_12X24
+#define FONT_MAX_GLYPH_BYTES  48
+#elif FONT_RT_10X20
+#define FONT_MAX_GLYPH_BYTES  40
+#else
+#define FONT_MAX_GLYPH_BYTES  16
+#endif
+
 /*
  * Real bold glyphs (Terminus bold face, sparse subset A: ASCII,
  * Latin-1/Extended-A, Cyrillic). Device builds can opt out via Kconfig to
@@ -143,5 +153,65 @@ size_t font_glyph_bytes(void);
  * @param out  Destination for the decoded rows.
  */
 void font_decode_glyph(uint16_t cp, bool bold, void *out);
+
+/*
+ * Dynamic sprite glyphs — RAM-backed codepoints for pixel-level UI.
+ *
+ * FONT_SPRITE_COUNT Private Use Area codepoints (U+E000..) decode from a
+ * writable DRAM table instead of the Terminus pool. Because the renderer's
+ * row cache rebuilds every character row every frame, a sprite updated from
+ * any task is on screen within one frame — sub-cell animation, pixel-smooth
+ * progress/slider edges and custom icons at zero per-frame app cost.
+ *
+ * Slots are shared by ALL cells showing that codepoint: N visually distinct
+ * simultaneous appearances need N slots. Content is authored for the ACTIVE
+ * size (a size change reboots, so slots have boot lifetime); an unset slot
+ * decodes all-zero (blank). Bold renders the same bitmap — pixel art is not
+ * smeared. ONE writer per slot at a time: concurrent font_sprite_set on the
+ * same slot interleaves buffer fills and publishes garbage.
+ *
+ * The range is a LOCAL UI namespace: every render layer resolves these
+ * codepoints, so remote/terminal text containing U+E000.. shows the current
+ * slot content (blank when unset), not the '?' fallback. Screens that own
+ * slots should font_sprite_clear_all() when handing the display to remote
+ * content; sanitizing the range at vterm ingest is the eventual fix.
+ *
+ * Perf contract: the check lives in the decoded-glyph cache's MISS path, so
+ * normal glyph decodes pay nothing; a displayed sprite costs a normal cache
+ * hit, and font_sprite_set() invalidates the slot's cache keys so the next
+ * frame refills (a per-slot generation counter closes the cross-core race
+ * where a cache fill spans the whole update). Set/clear are task-context
+ * calls (double-buffered against the concurrently reading ISR).
+ */
+#define FONT_SPRITE_BASE   0xE000u
+#define FONT_SPRITE_COUNT  8u      /* grow as takers appear — cost is linear
+                                    * (2 x FONT_MAX_GLYPH_BYTES DRAM each) */
+
+/** Codepoint of sprite slot @p slot (valid for slot < FONT_SPRITE_COUNT). */
+static inline uint16_t font_sprite_cp(unsigned slot)
+{
+    return (uint16_t)(FONT_SPRITE_BASE + slot);
+}
+
+/**
+ * Set sprite @p slot's bitmap: font_glyph_bytes() bytes in decoded-glyph
+ * layout — font_height() rows of FONT_ROW_BYTES(font_width()) bytes, u16
+ * rows little-endian, bit (width-1) = leftmost pixel. Out-of-range slots
+ * are ignored. Visible next frame.
+ */
+void font_sprite_set(unsigned slot, const void *rows);
+
+/**
+ * Set sprite @p slot from font_height() uint16 row values (bit width-1 =
+ * leftmost pixel) — packs into the active size's row layout internally, so
+ * callers never touch the decoded-glyph byte format.
+ */
+void font_sprite_set_rows16(unsigned slot, const uint16_t *rows);
+
+/** Reset sprite @p slot to blank (all-zero rows). */
+void font_sprite_clear(unsigned slot);
+
+/** Blank every slot — call when handing the display to remote content. */
+void font_sprite_clear_all(void);
 
 #endif // FONT_H

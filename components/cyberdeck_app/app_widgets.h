@@ -33,6 +33,12 @@ void draw_rule(int row);
 /** 8-frame braille spinner glyph. */
 uint16_t spinner_glyph(uint32_t frame);
 
+/* app_pacman.c — the HOME marquee (dynamic-sprite showcase). draw_pacman
+ * renders one tick at overlay @p row; pacman_reset marks its static pellet
+ * sprite for reload after the slots were blanked (session entry). */
+void draw_pacman(int row);
+void pacman_reset(void);
+
 /** Braille "noise" glyph from a hash (never blank). */
 uint16_t braille_noise(uint32_t h);
 

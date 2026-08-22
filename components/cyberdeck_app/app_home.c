@@ -201,6 +201,9 @@ void render_home(void)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
+    /* Pac-Man marquee just above the footer — the sprite-glyph showcase. */
+    draw_pacman(ui_rows() - 2);
+
     /* Footer legend; pairing hints only when the build has BLE, the lock
      * hotkey only with a keystore. An active toast owns the right edge —
      * draw_footer_lim clips clear of it. */
@@ -227,6 +230,7 @@ void enter_home(uint64_t now)
     app.state = ST_HOME;
     app.home.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
     s_ks_present = keystore_state() != KEYSTORE_ABSENT;  /* "Lock deck" tile */
+    pacman_reset();   /* session entry blanked the sprite slots */
     app.home.next_refresh = 0;
     /* Arriving on HOME counts as activity: a session drop or provisioning
      * toast must live its full lifetime before the rain paints over it. */
