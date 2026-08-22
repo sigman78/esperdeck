@@ -455,6 +455,24 @@ of stack headroom, never inline in a UI tick.
    the bound slot cannot cover: adopt-path remnants in reclaimed LittleFS
    blocks, everything else on flash, rollback/reflash protection.
 7. (Independent) remote ssh-agent transport for true off-device custody.
+8. (Independent, idea stage) **NFC token slot** — tap-to-unlock as an extra
+   KEK (key-encryption-key) slot wrapping the same MK: the token must carry
+   KEY MATERIAL, never a UID check (UIDs are phone-readable and cloneable
+   in seconds). Two honesty tiers: NTAG215 with a 32-byte stored secret
+   mixed with a short PIN (`KEK = Argon2(secret ‖ quick-PIN)`; one RF read
+   clones the card — the PIN is what makes that survivable), or NTAG 424
+   DNA AES-128 mutual auth (EV2 secure messaging; secret never crosses the
+   air) as the firmware-only upgrade. Composes with the type-3 slot: mix
+   the eFuse HMAC into the token KEK and a stolen card is useless against
+   another deck's flash dump. Lost card = revoke the slot; the PIN slot
+   stays the recovery path. Hardware: PN532 on the exposed GT911 I2C bus —
+   zero new GPIOs, field powered only while the unlock screen polls. BLE /
+   iPhone variants exist on the same slot model: IRK-presence (no app,
+   POLICY only — shortens the PIN and adds a walk-away auto-lock trigger,
+   contributes no key material since the IRK lives on the deck) and a
+   companion-app Secure-Enclave ECDH slot (real key material, Face ID
+   gated, at the cost of maintaining an iOS app). Full sketches for both
+   in `feat-ideas.md` §8/§8b.
 
 ## Open questions
 
