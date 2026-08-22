@@ -25,8 +25,8 @@ RENDER_FORCE_INLINE uint32_t scan_gpair(unsigned row, int w, int p,
             (uint16_t)(0u - ((row >> (w - 2 - p)) & 1u))));
     return (uint32_t)p0 | ((uint32_t)p1 << 16);
 }
-/* Unused once the LUT took over the scan; kept above as the spec. */
-#define SCAN_GPAIR_UNUSED_OK  ((void)scan_gpair)
+/* Unused once the LUT took over the scan; kept above as the spec
+ * (docs/tight-loops.md §5 — keep the reference implementation in the tree). */
 
 /* One real function per linked size — see render_scan.inc. */
 #if FONT_RT_8X16

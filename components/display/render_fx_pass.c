@@ -129,21 +129,12 @@ IRAM_ATTR void render_fx_clip_apply(color_t *dst, int band_y0, int num_scans,
 }
 
 /*
- * CRT line wobble — a ~16-scanline S-wiggle sweeping down the screen, at most
- * 16 displaced lines per frame.
- *
- * Rather than rendering straight and shifting afterwards, the displacement is
- * handed to the scan as a per-scanline destination WORD offset, so the pixels
- * land wobbled the first time they are written and the shift pass disappears.
- * That converts a ~37,000-cycle spike on one band per frame into a few cycles
- * on every band.
- *
- * The catch, and why displacement is quantised to even pixels: RGB565 packs two
- * pixels per 32-bit word, so an ODD displacement is a half-word offset that no
- * pointer arithmetic can express — it would force the scan to straddle pixel
- * pairs across cell boundaries. Even displacement is a plain word offset. The
- * cost is that the wiggle steps in 2 px increments instead of 1, which on an
- * 800 px panel is below the noise floor of a deliberately glitchy effect.
+ * CRT line wobble — a ~16-scanline S-wiggle sweeping down the screen. The
+ * displacement is handed to the scan as a per-scanline destination WORD
+ * offset (pixels land wobbled as written; no shift pass), which is why it is
+ * quantised to EVEN pixels: RGB565 packs two pixels per 32-bit word, and an
+ * odd displacement would be a half-word offset the scan cannot express.
+ * Design + measured numbers: docs/speedupsall.md § "Wobble fix".
  *
  * Fills @p out with one word offset per scanline of the band and returns true
  * if any is non-zero (false lets the scan take its untouched fast path).

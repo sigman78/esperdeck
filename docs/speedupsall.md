@@ -549,7 +549,7 @@ Deadlines fall to 656 / 410 / 492 us at 8x16 / 10x20 / 12x24.
 | # | Step | Effect | Status |
 |---|---|---|---|
 | 1 | `-O2` on `render_fx_pass.c` | 8x16 back under deadline; 10x20 overrun 111 -> 18 us | **done, this branch** |
-| 2 | Real wobble fix — fold the displacement into the scan as a destination word offset (needs even-pixel displacement), or cut amplitude | closes the remaining 10x20 overrun | next |
+| 2 | Real wobble fix — fold the displacement into the scan as a destination word offset (needs even-pixel displacement), or cut amplitude | closes the remaining 10x20 overrun | **done — see below** |
 | 3 | Per-cell pair LUT in the scan — four `uint32` per cell for glyph bits `00 01 10 11`, built once per cell per row, read *fh* times. Target 7 -> 2-3 cyc/px, ~1.6 KB DRAM | est. −130 us at 10x20 -> ~64% of the 20 MHz deadline | the main lever |
 | 4 | ASCII glyph cache (decode is 31% of the worst band) | up to −122 us at 10x20 | insurance |
 | 5 | Prebuild task | levels the 23–28% spike at the half-row sizes; **precondition for 6** | promoted |
@@ -563,6 +563,30 @@ Note on item #7 in the ranked plan above: it was re-promoted in PR #48 on *duty*
 grounds and that still holds, but it does **not** help this problem. A blank-cell
 fast path only pays on content that has blanks, and the deadline is set by worst-case
 dense content where there are none.
+
+### Wobble fix — render at offset (item 2, done)
+
+Rather than rendering straight and shifting afterwards, the displacement is
+handed to the scan as a per-scanline destination WORD offset (`cx->xoff`), so
+the pixels land wobbled the first time they are written and the shift pass
+disappears. That converts a ~37,000-cycle spike on one band per frame into a
+few cycles on every band.
+
+The catch, and why displacement is quantised to even pixels: RGB565 packs two
+pixels per 32-bit word, so an ODD displacement is a half-word offset that no
+pointer arithmetic can express — it would force the scan to straddle pixel
+pairs across cell boundaries. Even displacement is a plain word offset. The
+cost is that the wiggle steps in 2 px increments instead of 1, which on an
+800 px panel is below the noise floor of a deliberately glitchy effect.
+
+`xoff` is NULL whenever no line in the band moves — the overwhelming
+majority: the wiggle spans 16 scanlines, so at 8x16 it touches one band in
+thirty. That case keeps its own untouched copy of the scan loop in
+`render_scan.inc` rather than a per-scanline `koff` in a shared loop —
+folding the offset in measured **+5.9% on the undisplaced path**, because the
+extra live values disturb register allocation in a loop tuned down to the
+cycle. `tools/scancheck.py` proves offset + clipping bit-identical to
+render-then-shift across all geometries.
 
 ## Pixel-pair LUT — the scan rewrite (measured 2026-08-21)
 

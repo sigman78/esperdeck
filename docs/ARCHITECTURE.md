@@ -162,6 +162,24 @@ column's glyph **once per character row** into a flat DRAM cache, rebuilt
 synchronously on a row's first band and reused by the second (tall fonts
 render two bands per row).
 
+Above the row cache sits a **decoded-glyph cache** (`font_renderer.c`): 256
+entries, 2-way set-associative, keyed on `(bold, codepoint)`, filled lazily,
+internal DRAM (the ISR reads it with the flash cache disabled). Sizing: a
+realistic TUI screen — ASCII plus box drawing, blocks and accents — is
+roughly 130–190 distinct glyphs including bold, so 256 leaves headroom,
+while caching all ~1470 Terminus glyphs outright would cost 70 KB at 12x24.
+*2-way, not direct-mapped:* with ~150 live items in 256 direct-mapped slots
+the birthday bound says ~44% of them would share a slot with something else;
+two ways drop the overflow probability (3+ items landing in one set) to ~12%
+of sets, and 4-way would add tag compares to every hit to improve a miss
+cost already under 1% of the band. *Replacement is round-robin per set,
+advanced only when a line is filled* — true LRU (least-recently-used) would
+need a recency store on every hit, 3000 ISR-context stores per frame, to
+improve that same under-1% case. Overflow is graceful rather than cliff-edged: a
+set that overflows costs one decode for the loser, not a cascade, amortised
+over 3000 cells. Measured effect and the `t:mixNNN` sizing sweep:
+[`speedupsall.md`](speedupsall.md) § "Glyph cache — decode removed".
+
 *Decision — measured, not assumed* (dense 100%-painted stress screen,
 `CONFIG_DISPLAY_ISR_BENCH`, worst chunk in µs vs the chunk period):
 
@@ -178,7 +196,9 @@ row's two bands) was written when the `-Os` decoder overran the 10x20 period
 DRAM were retired. Dropping the cache entirely, however, costs 19–24% *average*
 ISR time for zero simplification — the per-row cache stays. To re-run the
 numbers after render/decoder work: enable `CYBERDECK_BENCH_STRESS`
-(+ `DISPLAY_ISR_BENCH`), flash, and read the 5-second `bench_stress` log lines.
+(+ `DISPLAY_ISR_BENCH`), flash, and read the 5-second `bench_stress` log lines
+— [`bench-methodology.md`](bench-methodology.md) is the full recipe and the
+list of caveats that invalidate a comparison.
 
 Two follow-up smoothing ideas were measured (branch `research/prebuild-task`):
 

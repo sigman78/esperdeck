@@ -37,30 +37,9 @@ static const char s_set[] = "@WM#g&%8QRBdKXhE";
 #define SET_LEN  ((unsigned)(sizeof s_set - 1))
 
 /*
- * Overlay phases.
- *
- * build_row_cache() composites the overlay ABOVE the terminal cell buffer,
- * one decode per column either way — but the two layers do NOT cost the same
- * per cell, and only the overlay-off path had ever been measured. Each phase
- * isolates one branch of render_cache.c:229-277:
- *
- *   off     s_overlay.buf == NULL — the published baseline. Two predicted
- *           null checks per column, nothing else.
- *   clear   registered, every cell transparent (what ui_clear() produces).
- *           Adds the per-column ov_row[] load stream, nothing more.
- *   scrim   transparent + DIM — the modal backdrop (ui_dim()). clear, plus
- *           the scrim branch of resolve_terminal_cell().
- *   spaces  fully opaque U+0020. The overlay branch has NO blank fast path,
- *           so every one of these pays a full font_decode_glyph() where the
- *           identical space in the terminal layer is a word zero-fill. This
- *           is what a space-padded ui_printf() actually costs.
- *   dense   fully opaque glyph soup — worst-case chrome, max decode rate.
- *   bars    opaque spaces + INVERSE across all 8 accents — drives the most
- *           expensive resolve_overlay_cell() branch (bar palette + tint).
- *   bold    dense + BOLD — the bold lookup / synthesize-and-smear path.
- *
- * The terminal underneath is kept dense in every phase, so the transparent
- * phases measure real compositing rather than a blank screen.
+ * Overlay phases — each isolates one branch of build_row_cache()'s overlay
+ * resolve, over a terminal kept dense so the transparent phases measure real
+ * compositing. The per-phase table is docs/bench-methodology.md.
  */
 typedef enum {
     OV_OFF = 0, OV_CLEAR, OV_SCRIM, OV_SPACES, OV_DENSE, OV_BARS, OV_BOLD,
@@ -113,18 +92,10 @@ static void ov_apply(ov_phase_t phase)
 }
 
 /*
- * Terminal content modes.
- *
- * DENSE is the historic stress screen: every cell a non-blank glyph with a
- * per-cell SGR change and 25% bold — strictly denser than any real terminal
- * screen, so its max is a worst-case chunk time.
- *
- * SPARSE and BLANK exist because blank cells take the zero-fill fast path in
- * build_row_cache() instead of a glyph decode, which makes ISR cost strongly
- * content-dependent. The pre-2026-08-15 figures in docs/speedupsall.md were
- * taken on REAL SESSION content (btop / ls -lR / idle) because this stress
- * screen did not exist yet — comparing them against DENSE is a cross-workload
- * comparison, not a regression. These two modes bracket that range.
+ * Terminal content modes. DENSE is the worst-case stress screen; SPARSE and
+ * BLANK bracket the ~29% content dependence (blank cells skip the decode);
+ * MIXED sizes the glyph cache. Definitions and the cross-workload caveat for
+ * pre-2026-08-15 figures: docs/bench-methodology.md.
  */
 typedef enum { TERM_DENSE = 0, TERM_SPARSE, TERM_BLANK, TERM_MIXED } term_mode_t;
 
@@ -191,14 +162,10 @@ static void feed_terminal(int cols, int rows, unsigned frame, term_mode_t tm,
 }
 
 /*
- * Effect config under test.
- *
- * The bench task returns before cyberdeck_app_init(), so display_fx_set() is
- * never called and g_fx_wobble_lut stays all-zero — which makes dx == 0 and
- * short-circuits render_fx_wobble() entirely. Every render-ISR figure recorded
- * before 2026-08-21 therefore measured the deck with WOBBLE OFF, even though
- * the shipped default is .wobble = 2. Each phase now names its own config
- * explicitly so no phase inherits another's.
+ * Effect config under test. A bench build never calls display_fx_set(), so
+ * each phase names its own complete config explicitly — no phase inherits
+ * another's. (This is also why every figure recorded before 2026-08-21 had
+ * wobble off: docs/bench-methodology.md.)
  */
 typedef enum { FX_NOWOB = 0, FX_APP, FX_NOSCAN, FX_NONE } fx_mode_t;
 
@@ -302,14 +269,9 @@ static void bench_task(void *arg)
 }
 
 /*
- * Memory-access microbenchmark — run once at startup.
- *
- * The ESP32-S3 load/store unit is 16 bytes wide (XCHAL_DATA_WIDTH) and the
- * core reports XCHAL_UNALIGNED_{LOAD,STORE}_HW = 1, i.e. misaligned access
- * works without an exception — but says nothing about what it costs. Internal
- * SRAM is not cached, so these numbers are the raw load/store cost that the
- * render ISR pays. Reported as cycles per byte over one 1600-byte scanline,
- * min of 8 runs to shed preemption noise.
+ * Memory-access microbenchmark — run once at startup. Raw uncached-SRAM
+ * load/store cost as the render ISR pays it; rationale and reporting format
+ * in docs/bench-methodology.md, distilled rules in docs/speedupsall.md.
  */
 #ifdef CONFIG_DISPLAY_ISR_BENCH
 #include "esp_cpu.h"

@@ -13,9 +13,9 @@
  * screen animates "DERIVING KEY" meanwhile and swallows input (the
  * derivation is not cancellable). change-code = two derivations (~2 s).
  *
- * Entered from: start_connect() lazily (locked key profile), the saver wake
- * gate and the boot trigger (lock.ini toggles), and the menu's KEYSTORE
- * page (set/change code). Failed-attempt backoff is a later slice.
+ * Entered from: the boot and saver-wake gates (creating a store IS opting
+ * into the lock — see docs/storage_auth.md "two-gates model"), start_connect()
+ * lazily (locked key profile), and the menu's KEYSTORE page (set/change code).
  */
 
 #include "app_internal.h"

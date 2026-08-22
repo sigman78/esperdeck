@@ -519,31 +519,15 @@ static IRAM_ATTR void decode_uncached(uint16_t cp, bool bold, void *out)
 }
 
 /*
- * Decoded-glyph cache — 2-way set associative, bounded.
+ * Decoded-glyph cache — 256 entries, 2-way set associative, bounded.
  *
- * build_row_cache() decodes every visible cell on every frame: 3000 decodes
- * per frame at 100x30, ~146k/s at 48.8 Hz, over a distinct set far smaller
- * than the font (Terminus ships ~1470 glyphs; caching all of them would cost
- * 70 KB at 12x24). So: cache a bounded working set and evict.
- *
- * Sized at 256 entries. A realistic TUI screen — ASCII plus box drawing,
- * blocks and accents — is roughly 130-190 distinct glyphs including bold, so
- * 256 leaves headroom without thrashing. Overflow is graceful rather than
- * cliff-edged: a set that overflows costs one decode for the loser, not a
- * cascade, and there are 3000 cells to amortise it over.
- *
- * 2-way, not direct-mapped: with ~150 items in 256 direct-mapped slots the
- * birthday bound says ~44% of them would share a slot with something else.
- * Two ways drops the overflow probability (3+ items landing in one set) to
- * ~12% of sets. 4-way would be better still but costs more tag compares on
- * every hit, and 2-way already puts the miss cost under 1% of the band.
- *
- * Replacement is round-robin per set, flipped only when a line is FILLED.
- * True LRU would need a recency write on every hit — 3000 stores per frame in
- * ISR context — to improve a case that is already under 1%. Not worth it.
- *
- * Filled lazily; the first frame warms it. Internal DRAM: the bounce ISR reads
- * this with the flash cache disabled.
+ * build_row_cache() decodes every visible cell on every frame (3000/frame at
+ * 100x30) over a working set far smaller than the font, so cache the decoded
+ * rows and evict. Sizing and associativity rationale (birthday bound, why
+ * not LRU/4-way): "Glyph tables & the row cache" in docs/ARCHITECTURE.md;
+ * measured effect in docs/speedupsall.md. Filled lazily; the first frame
+ * warms it. Internal DRAM: the bounce ISR reads this with the flash cache
+ * disabled.
  */
 #define GC_SETS_LOG 7u
 #define GC_SETS     (1u << GC_SETS_LOG)          /* 128 */

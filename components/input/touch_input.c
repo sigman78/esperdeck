@@ -11,8 +11,6 @@
  * GPIO_NUM_NC so the component skips its own reset path.
  */
 
-//#if defined(CONFIG_INPUT_TOUCH) || defined(CONFIG_INPUT_AUTO)
-
 #include "input_hal_internal.h"
 #include "display.h"     /* DISPLAY_WIDTH — the edge strip is measured from it */
 #include "esp_log.h"
@@ -379,14 +377,3 @@ esp_err_t touch_input_backend_init(void)
              CONFIG_INPUT_TOUCH_SCL_PIN);
     return ESP_OK;
 }
-
-//#endif /* CONFIG_INPUT_TOUCH || CONFIG_INPUT_AUTO */
-
-/* ------------------------------------------------------------------ */
-/* No-op stub when touch is disabled                                    */
-/* ------------------------------------------------------------------ */
-
-//#if !defined(CONFIG_INPUT_TOUCH) && !defined(CONFIG_INPUT_AUTO)
-//#include "esp_err.h"
-//esp_err_t touch_input_backend_init(void) { return ESP_OK; }
-//#endif

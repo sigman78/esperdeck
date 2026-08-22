@@ -251,8 +251,7 @@ static void log_last_error(const char *context)
  * (SSH_DRAIN_BUDGET bytes / SSH_DRAIN_BUDGET_US), presents the batch once,
  * then ALWAYS yields at least one tick — libssh2_channel_read() can return
  * data continuously and never block; without the yield IDLE0 is starved and
- * the task watchdog fires. One 512 B read per tick used to cap ingest at
- * ~51 KB/s, which made every fullscreen redraw crawl (docs/speedup-render.md).
+ * the task watchdog fires (drain-loop history: docs/speedup-render.md).
  *
  * The session lock is given back between chunks so ssh_client_send (shell
  * task, core 1) interleaves mid-batch — key echo waits one chunk, not a

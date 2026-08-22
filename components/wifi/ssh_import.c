@@ -389,23 +389,10 @@ static void wipe_free(void *p, size_t len)
 }
 
 /* Private key material belongs in INTERNAL SRAM — the external bus is
- * probeable (docs/storage_auth.md "RAM hygiene"), which is why app_connect
- * keeps its PEM buffer internal. Import used to allocate SPIRAM-only,
- * because a fixed 2 x BODY_MAX (32 KB) plainly would not fit.
- *
- * Measured on the S3 with the import server live (largest free INTERNAL
- * block, all three modes): 31,744 B. One 16 KB buffer fits, two never do —
- * the ceiling is structural, not fragmentation luck. But the fixed sizing
- * was the real problem: a decoded form field can never exceed the encoded
- * body it came from (url_decode only ever shrinks: %XX -> 1 byte, '+' -> ' '),
- * so content_len bounds the key buffer too. A real ed25519 upload measured
- * content_len=569, key=418 bytes — the old code reserved 16 KB for it.
- *
- * Right-sized, both buffers together are ~1.1 KB and internal serves them
- * comfortably. The SPIRAM fallback covers the pathological end of the range
- * (a body near the 16 KB cap, where the second allocation would fail): key
- * material lands on the external bus only when it genuinely cannot fit,
- * instead of always. */
+ * probeable. Buffers are right-sized from content_len (url_decode only ever
+ * shrinks), so internal serves them comfortably; the SPIRAM fallback engages
+ * only for a body near the 16 KB cap. Measurements and the sizing argument:
+ * docs/storage_auth.md "RAM hygiene". */
 static void *alloc_secret(size_t len)
 {
     void *p = heap_caps_malloc(len, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);

@@ -12,14 +12,11 @@
  * and the pixel loops need RENDER_UNROLL. The glyph stride folds to the
  * constant 2*W*sizeof(SCAN_ROW) because cell height == 2*W for all sizes.
  *
- * cx->xoff carries the CRT wobble as a per-scanline destination word offset,
- * so displaced lines land wobbled as they are written instead of being
- * shifted by a second pass. It is NULL whenever no line in the band moves,
- * which is the overwhelming majority: the wiggle spans 16 scanlines, so at
- * 8x16 it touches one band in thirty. That case gets its own copy of the
- * loop below rather than a per-scanline `koff` — folding the offset into one
- * shared loop measured +5.9% on the undisplaced path, because the extra live
- * values disturb register allocation in a loop tuned down to the cycle.
+ * cx->xoff carries the CRT wobble as a per-scanline destination word offset;
+ * NULL whenever no line in the band moves (the overwhelming majority). The
+ * displaced case gets its own copy of the loop below — folding the offset
+ * into one shared loop measured +5.9% on the undisplaced path
+ * (docs/speedupsall.md § "Wobble fix").
  */
 
 static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)
