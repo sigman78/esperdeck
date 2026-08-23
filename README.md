@@ -85,6 +85,8 @@ Arrows + Enter or mouse-as-touch; **F12** opens the in-session menu.
 
 ## Documentation
 
+- [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) — using the device: first
+  boot, WiFi, profiles, the terminal, locking it down.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — internals: components,
   render pipeline, data flow, threading, memory rules.
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — building, flashing, tests,

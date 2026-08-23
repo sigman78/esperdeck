@@ -7,8 +7,9 @@ Cyberdeck is a single C codebase that builds two ways:
 
 Everything above the hardware seam is shared. The two builds differ only in a
 handful of platform backends (LCD vs SDL, LittleFS vs host FS, NimBLE vs SDL
-keyboard, ESP-WiFi vs a stub). The [`README`](../README.md) is the overview;
-this document is the internals.
+keyboard, ESP-WiFi vs a stub). The [`README`](../README.md) is the overview,
+[`USER_GUIDE.md`](USER_GUIDE.md) covers using the device; this document is
+the internals.
 
 ---
 
