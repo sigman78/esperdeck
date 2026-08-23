@@ -359,7 +359,7 @@ a "files" lister a few days on top; ZMODEM whenever the retro itch wins.
 ## 10. Also on the table (from the repo survey)
 
 **Status: all open** — 10a bracketed paste (still a TODO stub in
-`termstate.c`), 10b 20 MHz pclk (research done in `speedupsall.md`, not
+`termstate.c`), 10b 20 MHz pclk (research done in `performance.md`, not
 flipped), 10c PIE SIMD scan (gated on the prebuild-task branch landing),
 10d in-session idle lock, 10e eFuse PIN slot (keystore roadmap step 3),
 10f backlight PWM (code complete on `research/backlight-pwm`, blocked on
@@ -369,7 +369,7 @@ the GPIO2 hand-wire).
   security item (paste injection). Do this during any terminal-adjacent
   work.
 - **Smooth scrolling** via sub-row scanline offset — carved out in
-  `speedupsall.md` as a UX proposal. It is not covered by the throughput
+  `performance.md` as a UX proposal. It is not covered by the throughput
   rejection.
 - **20 MHz panel clock (48.8 Hz)** — verified achievable 2026-08-21. With
   the wobble fold landed and the scan-dispatch branch merged, it is now

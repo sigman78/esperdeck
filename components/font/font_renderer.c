@@ -525,7 +525,7 @@ static IRAM_ATTR void decode_uncached(uint16_t cp, bool bold, void *out)
  * 100x30) over a working set far smaller than the font, so cache the decoded
  * rows and evict. Sizing and associativity rationale (birthday bound, why
  * not LRU/4-way): "Glyph tables & the row cache" in docs/ARCHITECTURE.md;
- * measured effect in docs/speedupsall.md. Filled lazily; the first frame
+ * measured effect in docs/performance.md. Filled lazily; the first frame
  * warms it. Internal DRAM: the bounce ISR reads this with the flash cache
  * disabled.
  */

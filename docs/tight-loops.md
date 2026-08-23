@@ -7,7 +7,7 @@ SRAM, `xtensa-esp32s3-elf-gcc` 14.2, project default `-Os`.
 
 The render ISR is the worked example throughout. It regenerates every
 pixel of every frame with no framebuffer, so it is the most
-cost-sensitive code in the tree. `docs/speedupsall.md` has the full
+cost-sensitive code in the tree. `docs/performance.md` has the full
 measurement history.
 
 ---

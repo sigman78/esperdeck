@@ -10,13 +10,13 @@ MIT-licensed (see the source file headers). Two parts:
 Optimized for a small embedded footprint: owns its cell buffer, no
 allocations on the hot path, and the two hot files are compiled `-O2`
 against the project's `-Os` (see `CMakeLists.txt` — measured, not assumed;
-history in `docs/speedupsall.md`).
+history in `docs/performance.md`).
 
 Supported features:
 - Near-full VT100 support
 - UTF-8, capped to the Basic Multilingual Plane (U+FFFF) — matches the
   bitmap-font subset and keeps a cell at 8 bytes
-- 256 color
+- 16/256/truecolor foreground and background (quantized to RGB565)
 - Alt screen
 - Cursor save / restore
 - Terminal reporting (device attributes, cursor position)
@@ -25,7 +25,6 @@ Tested by `tests/tsm` — host-compiled Unity suites for both parts; see
 `docs/DEVELOPMENT.md`.
 
 Possible future work:
-- True color support
 - Mouse support
 - Configurable scrollback
 - Double-width cells

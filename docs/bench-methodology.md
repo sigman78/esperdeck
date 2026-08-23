@@ -3,7 +3,7 @@
 This explains how to take a render-ISR (interrupt service routine)
 measurement that is comparable to the ones already on record, and what
 invalidates one. The numbers themselves live in
-[`speedupsall.md`](speedupsall.md) (the results log) and in the decision
+[`performance.md`](performance.md) (the results log) and in the decision
 tables of [`ARCHITECTURE.md`](ARCHITECTURE.md). The validation discipline
 — proving bit-exactness *before* benchmarking — is in
 [`tight-loops.md`](tight-loops.md) §5.
@@ -30,7 +30,7 @@ boots into the stress screen.
 The worst `max` chunk is compared against the chunk period (one
 bounce-buffer band): 820 µs at 8x16, 512.5 µs at 10x20, 640 µs at 12x24
 with the 16 MHz pixel clock (deadlines shrink at 20 MHz — see the
-headroom study in `speedupsall.md`).
+headroom study in `performance.md`).
 
 ## Three independent axes
 
@@ -77,13 +77,13 @@ meaningless.**
   codepoints (ASCII, box drawing, blocks, Latin-1, Greek, Cyrillic — what
   mc/btop/tmux put on screen), used to size the glyph cache. NNN is a
   *cap*, not the distinct count — see the sizing note in
-  `speedupsall.md` before comparing `t:mix510` across grid sizes.
+  `performance.md` before comparing `t:mix510` across grid sizes.
 - **`t:blank`** — cleared screen: pure scan, no decode. This is the
   control that must not move when only the decoder changes.
 
 `t:sparse` and `t:blank` bracket the content-dependence range.
 
-**Historical caveat.** The pre-2026-08-15 figures in `speedupsall.md`
+**Historical caveat.** The pre-2026-08-15 figures in `performance.md`
 were taken on REAL SESSION content (btop / `ls -lR` / idle), because the
 stress screen did not exist yet. Comparing them against dense-phase
 numbers is a cross-workload comparison, not a regression.
@@ -114,4 +114,4 @@ an exception, but that says nothing about what it *costs*. Internal SRAM
 is not cached, so these numbers are the raw access cost the render ISR
 pays. They are reported as cycles per byte over one 1600-byte scanline,
 min of 8 runs to shed preemption noise. The distilled rules live in
-`speedupsall.md` § "ESP32-S3 memory-access rules".
+`performance.md` § "ESP32-S3 memory-access rules".

@@ -1,9 +1,11 @@
-# VT output speedups — consolidated plan (pass 2)
+# Performance — measurements, decisions, plan
 
-Pass 1 (ingest pacing) is done. Items 1–3 of `docs/speedup-render.md`
-shipped in PR #14 (drain-until-EAGAIN loop, WIFI_PS_NONE during session, TCP
-window bump), verified on hardware. This doc replaces the remaining backlog
-from that file. On 2026-08-09, a three-angle review (parser disassembly +
+This file is the performance log for the `SSH → vtparse → tsm → vterm →
+display` pipeline: dated measurements, decisions, and the ranked plan.
+Pass 1 (ingest pacing) is done — its three items shipped in PR #14
+(drain-until-EAGAIN loop, WIFI_PS_NONE during session, TCP window bump),
+verified on hardware; the full pass-1 record is the appendix at the bottom
+of this file. On 2026-08-09, a three-angle review (parser disassembly +
 map, render path, host microbench) re-verified every item below against the
 current tree.
 
@@ -933,3 +935,142 @@ runs 3.2 ns/B (81% in the parser); scroll lines run 10.9 ns/B (83%
 termstate, half of it the memmove); dirty-row copy runs ~1.1 ns/cell.
 On-hw anchor: a 60 KB btop frame takes ≈ 9–10 ms pure CPU (July's
 14–15 ms figure included ISR preemption).
+
+---
+
+## Appendix: pass 1 — ingest pacing (2026-07-12)
+
+*Merged from the retired `docs/speedup-render.md` on 2026-08-23. A
+multi-agent research pass covered the `SSH → vtparse → tsm → vterm →
+display` pipeline; every recommendation was checked adversarially against
+the actual code, `sdkconfig`, the linker map, disassembly of the `-Os`
+build, and the vendored libssh2 sources. Items 1–3 below shipped in
+PR #14. The pass-1 backlog (old items 4–8) is not reproduced here: it was
+re-verified and re-ranked into the plan at the top of this file, where
+most of it has since shipped (the memcpy-per-dirty-span idea lives on as
+plan item 8).*
+
+### Headline: the bottleneck was never tsm
+
+A 60 KB btop frame costs **~14–15 ms of tsm + copy CPU** but **~1.2 s of wall
+time**. The gap is pacing, not parsing:
+
+- `ssh_read_task` read at most 512 B per iteration, then always slept
+  `vTaskDelay(1)` = 10 ms (`CONFIG_FREERTOS_HZ=100`) after each read. This
+  capped ingest at a hard **51.2 KB/s**. Ingesting 30 / 60 / 100 KB frames
+  took 0.6 / 1.2 / 2.0 s, no matter how fast the terminal engine ran.
+- Every chunk of at most 512 B also triggered a full `refresh_display()`
+  pass — about 118 dirty-copy passes per 60 KB frame.
+- After the pacing fix, the next limits appear in this order: TCP window
+  divided by RTT (round-trip time) (5760 B window ÷ RTT), then RTT
+  inflation from WiFi modem power-save, then — far behind — libssh2
+  decrypt (~1–4 MB/s) and tsm parse (~3–8 MB/s).
+
+`CONFIG_VTERM_BENCH=y` is already set. `vterm_bench_report()` shows
+`tsm_us + draw_us` as a small fraction of wall time, confirming this on
+hardware.
+
+The display side is *not* a factor. The render ISR (interrupt service
+routine) re-renders every band every frame from the DRAM cell buffer at
+constant cost. (The occasional glitch when a flash operation stalls the
+bounce-buffer refill is a separate, unrelated issue.)
+
+### Implemented (pass 1, PR #14)
+
+#### 1. Drain-until-EAGAIN read loop, present once per batch
+
+In `ssh_client.c ssh_read_task`, the task used to do one 512 B read plus a
+10 ms sleep per iteration. Now it drains the channel until EAGAIN or a
+per-wake budget (8 KB or 5 ms, whichever comes first), then presents the
+batch once and yields one tick. Reads go into a static 2 KB PSRAM
+(external RAM) buffer. (The 8 KB PSRAM task stack also carries libssh2's
+transport path; internal DRAM is too scarce for a bigger stack buffer.)
+
+- Task-side ceiling: 51.2 KB/s → **~800 KB/s** (8 KB per 10 ms tick).
+- The session mutex is given up and retaken **per chunk**, so
+  `ssh_client_send` (shell task, core 1) can interleave between chunks.
+  The worst-case key-echo lock wait is one chunk (~1–2 ms), not a whole
+  batch.
+- The unconditional end-of-wake `vTaskDelay(1)` stays. IDLE0 must run on
+  every wake or the task WDT fires — the old comment was right about
+  that; only its claim that "51 KB/s is far above any practical limit"
+  was wrong.
+- The byte budget is paired with a time budget because the read task
+  (prio 6, core 0) outright preempts touch (prio 4) and uart (prio 5) on
+  the same core. The mutex does not protect them.
+- Verified against the vendored libssh2: when the outbound WINDOW_ADJUST
+  would block, `channel_read` returns EAGAIN with data still queued. The
+  adjust packet is staged in stable state and flushes on the next wake,
+  so the loop cannot livelock (worst case: one lost tick).
+- The keepalive call site is unchanged. `keepalive.c` sends from a
+  stack-local buffer and ignores EAGAIN — a pre-existing wart. Do not
+  move it onto a different stack frame.
+
+This required a new vterm API: `vterm_feed()` (parse only) plus
+`vterm_flush()` (present dirty rows; a no-op while a DEC ?2026
+synchronized update is open). `vterm_write()` keeps its old
+feed-then-present behavior.
+
+Presentation coalescing comes free where it matters most. **btop wraps
+every frame in `?2026`** unconditionally, and the DECRQM reply that nvim /
+vim / tmux probe for is already implemented (`termstate.c`
+`CSI ? 2026 $ p`). Those apps now present atomically once per frame.
+mc/htop (ncurses) never emit ?2026; they still get one present per 8 KB
+batch instead of one per 512 B.
+
+#### 2. WiFi power-save off during SSH sessions (config-gated)
+
+No `esp_wifi_set_ps()` call existed anywhere, so the IDF default
+`WIFI_PS_MIN_MODEM` was active for every session. Receive wakeups are
+gated on the AP's DTIM beacon, commonly adding 20–100 ms RTT. After fix 1,
+throughput is bound by `TCP_WND / RTT`, so RTT is now the multiplier that
+matters — and every keystroke echo pays it too.
+
+This is gated behind **`CONFIG_SSH_WIFI_PS_NONE`** (default y):
+`WIFI_PS_NONE` is set when a session opens, and `WIFI_PS_MIN_MODEM` is
+restored on `ssh_client_disconnect()`.
+
+One verified caveat explains why this is a config option: with the BLE
+keyboard connected, **WiFi/BT coexistence still time-slices the radio**.
+Per the IDF 5.5.2 docs, WiFi sleeps during BT slices even under
+`WIFI_PS_NONE`. The win is real (DTIM-gated sleep removed) but smaller
+than the naive 3–10× estimate; it also costs radio power and may increase
+pressure on the BLE link. Measure with the keyboard *connected*: ping the
+deck during an idle session, before and after.
+
+#### 3. TCP receive window 5760 → 11520, recvmbox 6 → 12
+
+In `sdkconfig.defaults` (plus the local `sdkconfig`):
+`LWIP_TCP_WND_DEFAULT` and `LWIP_TCP_SND_BUF_DEFAULT` go from 5760 to
+11520 (4×MSS to 8×MSS; MSS = TCP maximum segment size, 1440 B), and
+`LWIP_TCP_RECVMBOX_SIZE` goes from 6 to 12 (rule: WND/MSS + 2). Max
+in-flight data was 5760 B, which capped throughput at `5760/RTT`
+(~576 KB/s at 10 ms RTT). 8×MSS doubles that ceiling.
+
+This is verified safe for the razor-thin internal heap. With
+`CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`, queued unread segments live in
+SPIRAM-first WiFi RX buffers / lwip pbufs (zero-copy, `L2_TO_L3_COPY` off)
+— **not** internal RAM. Going even larger (with `LWIP_WND_SCALE`) stays
+structurally available later if measurements call for it; scale
+`DYNAMIC_RX_BUFFER_NUM` and the mbox together with it. Note that
+`ESP_WIFI_RX_BA_WIN=3` may cap WiFi-layer aggregation independently.
+
+**Expected end state for items 1–3: a 60 KB btop frame drops from ~1.2 s
+to ~100–150 ms.** To validate on hardware: run `vterm_bench_report()`
+before and after, and wall-clock a btop refresh and `mc` startup.
+
+### Reference notes
+
+- Standard fast-terminal architecture (st, alacritty, foot): drain input
+  in large chunks, parse continuously, and present at most once per
+  refresh interval (st: 8/33 ms min/max latency; alacritty: 64 KB batched
+  PTY reads; foot: row-damage plus frame pacing). Item 1 follows this
+  pattern; an optional 16–33 ms present-timer for non-?2026 apps is a
+  natural extension.
+- DEC ?2026 adoption: btop always; nvim 0.10+/vim/tmux after a successful
+  DECRQM probe (already answered by our `termstate.c`); mc/htop never,
+  because ncurses has no support for it — no TERM change would let them
+  advertise support they don't have.
+- ESP32-S3 octal PSRAM @80 MHz, real-world: ~57 MB/s sequential memcpy
+  PSRAM→internal, ~21 MB/s PSRAM→PSRAM memmove; 32 B cache lines, 32 KB
+  8-way data cache shared by grid traffic and parser state.

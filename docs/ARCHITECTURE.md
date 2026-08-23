@@ -201,7 +201,7 @@ disabled). The sizing math:
   decode for the loser, not a cascade, amortized over 3000 cells.
 
 Measured effect and the `t:mixNNN` sizing sweep:
-[`speedupsall.md`](speedupsall.md) § "Glyph cache — decode removed".
+[`performance.md`](performance.md) § "Glyph cache — decode removed".
 
 *Decision — measured, not assumed* (dense 100%-painted stress screen,
 `CONFIG_DISPLAY_ISR_BENCH`, worst chunk in µs vs the chunk period):
@@ -272,7 +272,7 @@ the keyboard. On the device the two pipes run on separate cores.
   the copy is withheld while DEC `?2026` synchronized output is active, to
   avoid tearing. The ISR renders whatever is currently in the cell buffer.
   The pipeline is instrumented: in-session `vterm_bench`/`render_bench`
-  log lines appear every 30 s ([`speedupsall.md`](speedupsall.md) has the
+  log lines appear every 30 s ([`performance.md`](performance.md) has the
   tuning history).
 - **Terminal replies.** When `tsm` must answer the host (Device
   Attributes, cursor-position report), it calls a response callback.

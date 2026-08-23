@@ -1,21 +1,16 @@
 # Development
 
-Build details, tests, and simulator notes that don't belong in the
-[README](../README.md). Internals live in [`ARCHITECTURE.md`](ARCHITECTURE.md).
-
 ## Dependencies
-
-There are **no git submodules**; everything arrives at configure time:
 
 - `libssh2` — cloned (pinned SHA) and patched by CMake for both builds; see
   `components/libssh2_esp/` (vendored wrapper + `patches/`). The fork adds
   ed25519 keys (including passphrase-encrypted, bcrypt KDF — key derivation
   function) and curve25519 key exchange via Monocypher.
 
-  *Why this shape:* mbedTLS has no ed25519, and its 3.6 LTS line will never
+  *Why:* mbedTLS has no ed25519, and its 3.6 LTS line will never
   get it (new crypto lands only in the PSA-based successor). So the project
   patches libssh2's mbedTLS backend and vendors Monocypher for the ed25519
-  math, instead of forking mbedTLS. The fork lives at `sigman78/libssh2`,
+  math, instead of forking mbedTLS. The fork lives at [sigman78/libssh2](https://github.com/sigman78/libssh2/tree/feature/mbedtls-ed25519),
   branch `feature/mbedtls-ed25519`; the header comment in
   `components/libssh2_esp/CMakeLists.txt` describes the as-built setup.
   Still open: upstreaming the patch, and a fresh look when mbedTLS 3.6 LTS
@@ -37,13 +32,6 @@ Two flash targets matter:
   profiles, imported keys, and pinned host keys saved on the device. Use
   only to deliberately reprovision — and keep your own data in
   `sim_storage/` (below) so a reprovision restores it instead of erasing it.
-
-**Windows note:** `idf.py` refuses to run inside Git Bash / MSYS shells (it
-checks `MSYSTEM`). Use the ESP-IDF PowerShell/CMD prompt — or, once the
-project is configured, skip `idf.py` entirely: build with `ninja -C build`
-and flash with `python -m esptool --port COMx write_flash
-@build/flash_app_args` (the app-only equivalent of `app-flash`). Do **not**
-pass `@build/flash_args` — that is the full `flash`, storage wipe included.
 
 ### Your profiles and keys in the flash image
 
@@ -76,10 +64,9 @@ default — are Kconfig options (`CYBERDECK_FONT_RT_8X16` / `_10X20` /
 `CYBERDECK_FONT_BOLD`). The sim picks its font at configure time
 (`-DFONT_SIZE=8x16|10x20|12x24`).
 
-Every device link ends with `check_iram` (`tools/check_iram.py`). The
-render ISR (interrupt service routine) must keep running while a flash
-write has the flash cache disabled (`LCD_RGB_ISR_IRAM_SAFE`). If the
-linker placed any ISR-path function or ISR-read table in flash, the
+There is `check_iram` script (`tools/check_iram.py`) to ensure that
+render ISR is running properly with the the flash cache disabled (`LCD_RGB_ISR_IRAM_SAFE`).
+If the linker placed any ISR-path function or ISR-read table in flash, the
 device would hit a Cache exception during a settings save. The audit
 fails the build instead and names the offending symbol. When you add
 ISR-path code, keep names within the script's patterns (`render_fx_*`,
@@ -135,7 +122,7 @@ device — a fingerprint accepted in the sim is valid on the deck.
 ## Performance
 
 The terminal pipeline (parser, scroll, render ISR) has been profiled on
-hardware and tuned in three passes; [`speedupsall.md`](speedupsall.md) has
+hardware and tuned in three passes; [`performance.md`](performance.md) has
 the plan, the measurements, and the remaining backlog. The firmware ships
 with cheap always-on counters: during an SSH session a `vterm_bench` /
 `render_bench` line is logged every 30 s (parse-vs-state split, scroll
