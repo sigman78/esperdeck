@@ -9,17 +9,17 @@ There are **no git submodules**; everything arrives at configure time:
 
 - `libssh2` — cloned (pinned SHA) and patched by CMake for both builds; see
   `components/libssh2_esp/` (vendored wrapper + `patches/`). The fork adds
-  ed25519 keys (including passphrase-encrypted, bcrypt KDF) and curve25519
-  key exchange via Monocypher.
+  ed25519 keys (including passphrase-encrypted, bcrypt KDF — key derivation
+  function) and curve25519 key exchange via Monocypher.
 - `esp_littlefs` (`joltwallet/littlefs`), `esp_lcd_touch_gt911`, `qrcode` —
   pulled by the ESP-IDF component manager (device build only).
-- SDL2 and Unity — fetched by CPM.cmake (sim and tests).
+- SDL2 and Unity — fetched by CPM.cmake, a CMake package manager (sim and tests).
 
 ## Device build notes
 
 `sdkconfig.defaults` pins the load-bearing settings (S3 target, 16 MB flash,
-octal PSRAM, NimBLE, custom partition table). Local overrides and credentials
-go in the gitignored `sdkconfig`.
+octal PSRAM (external RAM), NimBLE, custom partition table). Local
+overrides and credentials go in the gitignored `sdkconfig`.
 
 Two flash targets matter:
 
@@ -68,7 +68,8 @@ default — are Kconfig options (`CYBERDECK_FONT_RT_8X16` / `_10X20` /
 (`-DFONT_SIZE=8x16|10x20|12x24`).
 
 Every device link ends with `check_iram` (`tools/check_iram.py`): the render
-ISR keeps running while the flash cache is disabled
+ISR (interrupt service routine) keeps running while the flash cache is
+disabled
 (`LCD_RGB_ISR_IRAM_SAFE`), so any ISR-path function or ISR-read table that
 the linker places in flash would be a Cache exception during a settings
 save — the audit fails the build instead, naming the symbol. When adding
@@ -86,7 +87,8 @@ row-cache decisions in ARCHITECTURE.md were measured with it.
 Five host-compiled Unity suites (no ESP-IDF required) live under `tests/`:
 
 - `tsm` — the VT parser (`vtparse`) and terminal model (`termstate`),
-  including scroll-ring, batched-print, and UTF-8/CSI feed-boundary edges
+  including scroll-ring, batched-print, and UTF-8/CSI (control-sequence)
+  feed-boundary edges
 - `font` — golden per-codepoint CRCs prove the compressed glyph tables
   still decode pixel-exact after any regeneration
 - `keystore` — the PIN-unlock wrapped key store (create/unlock/backoff)

@@ -10,7 +10,9 @@ three-angle review (parser disassembly + map, render path, host microbench).
 > tree **as of that date**. Sections are kept as a historical record and are not
 > retro-edited — later measurements supersede earlier ones in place-marked notes.
 >
-> **Always state the terminal content mode when quoting a render-ISR number.**
+> **Always state the terminal content mode when quoting a render-ISR
+> (interrupt service routine) number** — the `t:*` / `fx:*` phase tags used
+> throughout are defined in [`bench-methodology.md`](bench-methodology.md).
 > ISR cost varies **+28.6%** between a blank screen and a 100%-painted one,
 > because blank cells skip the glyph decode. The 2026-08-09/08-10 blocks measured
 > **real session content**; the 2026-08-20 block measures both that class and the
@@ -25,7 +27,7 @@ Three regimes, each with a different dominant cost:
 
 1. **Constant tax — the render ISR.** `no_fb` bounce mode redraws every pixel of
    every frame; dirty state never reaches the ISR. The panel runs at **39.0 Hz**
-   (16 MHz pclk / 820×500 total — the "60 fps" comments in `display_render.c`
+   (16 MHz pixel clock (pclk) / 820×500 total — the "60 fps" comments in `display_render.c`
    are stale). The PR #23 cycle bench (deleted again within that PR) measured
    ~69.7k cycles per bounce chunk ⇒ the ISR consumes **34–54% of core 0
    permanently** (the spread is whether the bench chunk was 16 or 10 lines —
@@ -34,7 +36,8 @@ Three regimes, each with a different dominant cost:
    *(2026-08-20: the stale "60 fps" comments were fixed in `render_scan.c:116`
    and `render_fx_pass.c:27`. The ISR moved to core 1 in item #1, and its cost is
    now **65.5% of core 1** — see the re-measurement section.)*
-2. **SGR-dense output (btop) is parser-bound.** Host microbench of the untouched
+2. **SGR-dense output (btop) is parser-bound.** (SGR: Select Graphic
+   Rendition, the color/attribute escape codes.) Host microbench of the untouched
    tsm sources: `vtparse` is **~81% of `tsm_feed`** on truecolor streams;
    `do_sgr` costs ~6 ns/sequence (micro-opting it is pointless). At `-Os`
    (the build's flag) the parser is ~2.4× slower than `-O2`.
@@ -50,18 +53,18 @@ cycle delta and is inflated ~1.5× by render-ISR preemption; pure CPU ≈ 9–10
 Placement facts (map + code):
 
 - The **whole `tsm_t` is PSRAM-first** — including the embedded `vtparse_t`
-  per-byte parser state, 256 B print buffer, and OSC buffer
+  per-byte parser state, 256 B print buffer, and OSC (Operating System Command escape) buffer
   (`termstate.c:683-699`, `termstate.h:94`). Cells, alt cells, dirty array:
   PSRAM. Per-wake PSRAM working set far exceeds the 32 KB dcache; one scroll
   memmove touches 46 KB.
-- `vtparse_feed` is 1217 B of IRAM, but at `-Os` its helpers (`append_print`,
+- `vtparse_feed` is 1217 B of IRAM (always-mapped instruction RAM), but at `-Os` its helpers (`append_print`,
   `flush_print`, `do_clear`, emitters) are out-of-lined to **flash** — every
   printable byte calls flash from IRAM. The old "whole parser inlines into
   vtparse_feed" claim is dead. No ISR callers exist.
 - `on_print` per printed cell: out-of-line `charset_xlat` call + out-of-line
   `mark_dirty` + ~9 reloads of `tsm_t` fields + a `mull` + 5 narrow PSRAM
   stores.
-- The vterm bridge buffer the ISR reads is internal DRAM (`vterm.c:113-116`);
+- The vterm bridge buffer the ISR reads is internal DRAM (data RAM; `vterm.c:113-116`);
   fonts are copied to DRAM at boot with flash fallback (`font_renderer.c:109-143`).
 - ~~Config drift: `sdkconfig.defaults` sets `CONFIG_LCD_RGB_ISR_IRAM_SAFE=y`,
   current sdkconfig has it off.~~ **Resolved** — both are `=y` as of PR #36; the
@@ -78,7 +81,7 @@ Placement facts (map + code):
 | 3 | Batch `do_print_span` | measured: print −51%/B btop, −82%/B ls | medium | **DONE** (pass 3) |
 | 4 | `tsm_t`+dirty → internal DRAM; drop `IRAM_ATTR` from `vtparse_feed` | net +1.3 KB internal free | small | **DONE** (pass 3) |
 | 5 | `-O2` on tsm (after #4) | folded into pass-3 parse −25%/B | trivial | **DONE** (pass 3) |
-| 5b | CSI-param fast path (digits/`;`/`:` = 0x30–0x3B run scan) | folded into pass-3 parse −25%/B | small | **DONE** (pass 3) |
+| 5b | CSI (control-sequence-introducer) param fast path (digits/`;`/`:` = 0x30–0x3B run scan) | folded into pass-3 parse −25%/B | small | **DONE** (pass 3) |
 | 6 | Row-pointer ring for scroll | measured: 40× cheaper per scrolled line | high | **DONE** (feature/scroll-ring) |
 | 7 | Blank-cell fast path in ISR band loop | ISR duty −~40% | small | **open — re-promoted 2026-08-20** |
 | 8 | memcpy per dirty span; flush rate-limit to ~39 Hz; BEL memchr | few % each | tiny | open |
@@ -501,7 +504,8 @@ chars), not code. `set_source_files_properties(... COMPILE_OPTIONS "-O2")` is sa
 
 ### 4. SIMD: real, but only legal in task context
 
-ESP32-S3 has a 128-bit SIMD unit — Xtensa **PIE**, the one `esp-dsp` and
+ESP32-S3 has a 128-bit SIMD (single-instruction, multiple-data) unit —
+Xtensa **PIE** (Processor Instruction Extensions), the one `esp-dsp` and
 `esp_lvgl_port` use. Confirmed against this toolchain: `ee.zero.q`, `ee.movi.32.q`,
 `ee.vld.128.ip`, `ee.vst.128.ip`, `ee.andq`, `ee.orq`, `ee.xorq`, `ee.notq`,
 `ee.src.q`, `ee.vadds.s16`, `ee.vmul.s16` all assemble with no extra flags.
@@ -600,7 +604,7 @@ render-then-shift across all geometries.
 The scan's inner loop recomputed `bg ^ (xf & mask)` per pixel per scanline. A
 cell has only **two** colours, so a pixel pair has only **four** possible
 outcomes — precompute them per cell once per ROW and index with the glyph's two
-bits. Per output word: ~10 ALU ops become one `extui` plus one indexed load.
+bits. Per output word: ~10 ALU (arithmetic) ops become one `extui` plus one indexed load.
 
 ```c
 d[p >> 1] = t0[(b0 >> (W - 2 - p)) & 3];   /* bit 1 = left px, bit 0 = right */
@@ -680,7 +684,7 @@ distinct set far smaller than the font. Terminus ships ~1470 glyphs (70 KB at
 | dense, worst chunk | 8x16 | 10x20 |
 |---|---|---|
 | `off` (ASCII) | 360 → **246 us** (−31.7%) | 260 → **171 us** (−34.2%) |
-| `t:mix160` (TUI repertoire) | 370 → **250 us** (−32.5%) | — → 172 us |
+| `t:mix160` (text-UI repertoire) | 370 → **250 us** (−32.5%) | — → 172 us |
 | `t:blank` | 233 → 233 us (0.0%) | 171 → 171 us (0.0%) |
 
 An ASCII-only cache was tried first and rejected: it left every box-drawing and

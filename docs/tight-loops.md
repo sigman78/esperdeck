@@ -20,7 +20,7 @@ tree. `docs/speedupsall.md` has the full measurement history.
 | Internal SRAM cache | **none** — direct access | `XCHAL_DCACHE_SIZE 0`; the 32 KB D-cache is flash/PSRAM only |
 | Zero-overhead loops | yes, GCC emits them | `XCHAL_HAVE_LOOPS 1` |
 | Register window | 16 visible, windowed ABI | `entry` / `retw` |
-| SIMD | 128-bit PIE, **coprocessor 3** `"cop_ai"`, 208 B state | `tie.h`, `XCHAL_CP_MASK 0x09` |
+| SIMD (single-instruction, multiple-data) | 128-bit PIE (Processor Instruction Extensions, the S3's vector unit), **coprocessor 3** `"cop_ai"`, 208 B state | `tie.h`, `XCHAL_CP_MASK 0x09` |
 | `memset`/`memcpy` | **ROM**, `0x400011e8` / `0x400011f4` | `nm` — type `A`, absolute |
 
 Header is at
@@ -76,7 +76,7 @@ Before reaching for cleverness, ask: how small is the set of distinct outputs,
 and how often is each reused?
 
 **Count live values, not just instructions.** The register window is 16. The old
-scan kept `bg0, xf0, bg1, xf1` live per cell pair and spilled; the LUT collapsed
+scan kept `bg0, xf0, bg1, xf1` live per cell pair and spilled; the LUT (lookup table) collapsed
 those four into two base pointers and the spills vanished — frame 112 → 80 B,
 stack traffic −48%. **A change that halves the live set can pay for the loads it
 adds**: the LUT's +90 loads displaced −157 spill accesses, a net −67 memory ops.
@@ -92,7 +92,7 @@ the extra live values disturbing register allocation. Splitting into two loop
 bodies restored the fast path byte-for-byte. Duplication is cheap (~4 KB); a
 regression on the 97%-case is not.
 
-**SWAR where the operation has no carry between lanes.** The bold smear is a
+**SWAR (SIMD within a register) where the operation has no carry between lanes.** The bold smear is a
 per-row shift-or; it became 4 rows per word with a lane mask
 (`w |= (w << 1) & 0xFEFEFEFE`). Check the boundary bit direction carefully and
 prove it (§5).

@@ -3,7 +3,7 @@
 **Status: key store, unlock UI, the two-gates device lock, remove-code,
 failed-attempt backoff and the secrets bundle (passwords under the master
 key, MK) are landed.** Next per the roadmap below: the device-bound
-eFuse slot. Code: `components/storage/keystore.{h,c}` (both builds),
+eFuse (one-time-programmable on-chip fuse) slot. Code: `components/storage/keystore.{h,c}` (both builds),
 integration in `storage.c`, UI in `cyberdeck_app/app_unlock.c` +
 menu/saver/boot/home hooks, CLI in `sim/keystore_cli.c`, tests in
 `tests/keystore/`. With no `keystore.kv1` present, behavior is
@@ -27,7 +27,7 @@ rather than failing web import; and `storage_get_key` returns
 The deck stores SSH private keys in the `storage` partition (LittleFS on
 device, `sim_storage/` on the host). Today they are plaintext PEM files:
 anyone who picks up the deck can open every profile, and anyone who dumps
-flash owns the keys. OpenSSH's own passphrase encryption (bcrypt KDF) is the
+flash owns the keys. OpenSSH's own passphrase encryption (bcrypt KDF — key derivation function) is the
 wrong tool here — several seconds per attempt on the S3, a passphrase typed
 per *connection* rather than per *session*, and no shared unlock state across
 profiles.

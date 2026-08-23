@@ -147,8 +147,8 @@ Two projects in one: a fetch layer and the display.
   (built for exactly this) — plus TLS (Transport Layer Security); mbedTLS is
   in the tree, but budget handshake heap against ~50 KB free internal DRAM
   (push to PSRAM where possible).
-- Router/homelab: start with ping/RTT and link stats already on hand; SNMP or
-  ubus is real work, defer.
+- Router/homelab: start with ping/RTT (round-trip time) and link stats already on hand; SNMP or
+  ubus (router management protocols) is real work, defer.
 
 Constraint to accept: pre-unlock there is no WiFi (the PSK lives under the
 master key), so the info saver is a **post-unlock** feature; the lock screen
@@ -166,9 +166,9 @@ inconsistency happened.
 
 ## 8. NFC token unlock (tap-to-unlock)
 
-**Status: open** — design only, no NFC hardware or driver in tree.
+**Status: open** — design only; no NFC (near-field communication) hardware or driver in tree.
 
-Fits the keystore unusually cleanly: the store is slot-based (LUKS-style —
+Fits the keystore unusually cleanly: the store is slot-based (LUKS-style, after Linux's disk-encryption scheme —
 multiple KEKs, key-encryption-keys, wrap one master key), so an NFC token is
 just another slot with the existing enrollment/revocation machinery behind
 it. UX case: the PIN unlock costs ~1.1 s of Argon2 plus pinpad typing;
@@ -182,7 +182,7 @@ cloneable onto magic cards in seconds.
 |---|---|---|---|---|
 | 0 — don't | any | UID check | cloneable trivially | — |
 | 1 | NTAG215/216 (~$0.30) | 32-B random secret in user memory; `KEK = Argon2(secret ‖ quick-PIN)` | one RF read clones the card — the mixed-in short PIN is what makes that survivable | a weekend |
-| 2 | NTAG 424 DNA (~$1.50) | AES-128 mutual auth (EV2 secure messaging) — secret never crosses the air | none practical here | 1–2 weeks (APDU + EV2 layer; AES already in tree via mbedTLS) |
+| 2 | NTAG 424 DNA (~$1.50) | AES-128 mutual auth (EV2 secure messaging) — secret never crosses the air | none practical here | 1–2 weeks (APDU smart-card commands + EV2 layer; AES already in tree via mbedTLS) |
 
 Tier 1 → 2 is a firmware upgrade, not a hardware change. Composes with the
 device-bound eFuse slot (storage_auth roadmap 4): mix the eFuse HMAC into
@@ -195,7 +195,7 @@ touch's existing 400 kHz I2C bus, exposed on the board's PH2.0 header —
 collide (PN532 0x24, GT911 0x5D). No IRQ line: poll 2–3 Hz only while the
 unlock screen shows, which also confines the PN532's ~60–100 mA field-on
 draw to the pinpad. Wart: PN532 I2C clock-stretches — bump the I2C timeout;
-fallback is HSU/UART mode on the board's UART header (DIP-selectable). The
+fallback is HSU/UART mode on the board's UART header (chosen by the module's DIP switches). The
 module does ISO14443-4 `InDataExchange`, so it covers Tier 1 and Tier 2
 alike. Rejected: RC522 (SPI ≈ 5 pins, poor ISO14443-4 support), PN5180 /
 ST25R (overkill), 125 kHz anything.
@@ -228,8 +228,8 @@ tiers:
 - **Tier B — companion app, cryptographically real.** Deck advertises an
   unlock GATT service only while the pinpad shows; the phone (background
   BLE central — the reliable role on iOS) connects over the bonded LESC
-  link and performs ECDH with a P-256 key resident in the Secure Enclave;
-  the shared secret is the KEK input (`KEK = KDF(ECDH ‖ eFuse-HMAC)`), so
+  (LE Secure Connections) link and performs ECDH (elliptic-curve Diffie–Hellman key agreement) with a P-256 key resident in the Secure Enclave;
+  the shared secret is the KEK input (`KEK = KDF(ECDH ‖ eFuse-HMAC)`; KDF = key derivation function), so
   a flash dump is useless without the physical phone, and a `.userPresence`
   key policy gates every unlock behind Face ID. Stronger than NTAG 424,
   better gesture (walk up, glance). The cost is not firmware (NimBLE does

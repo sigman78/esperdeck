@@ -28,7 +28,7 @@ logic in one file and the platform half in a `*_sim.c` / `*_dev.c` sibling:
 
 The composition roots are the only place platform code is assembled:
 
-- `main/main.c` — device: brings up NVS, netif, display, WiFi, input, SSH,
+- `main/main.c` — device: brings up NVS (non-volatile storage), netif, display, WiFi, input, SSH,
   then hands control to the shell on a dedicated task.
 - `sim/main.c` — host: SDL init, key/mouse translation, and the same shell.
 
@@ -44,9 +44,9 @@ timestamps and input events from the root and calls back into the components.
 main/               device composition root (main.c, splash, Kconfig)
 sim/                 host composition root (SDL event loop)
 components/
-  cyberdeck_app/     THE SHELL — boot→picker→session FSM + overlay TUI,
-                     one module per screen (app_home/menu/connect/unlock/
-                     saver/...)
+  cyberdeck_app/     THE SHELL — boot→picker→session FSM (finite-state
+                     machine) + overlay TUI (text UI), one module per
+                     screen (app_home/menu/connect/unlock/saver/...)
   display/ + font/   bounce-buffer render core, CRT effects (display_fx),
                      Terminus font in 8x16 / 10x20 / 12x24 with a bold face;
                      glyph tables are compressed (crop + PackBits row-RLE +
@@ -56,7 +56,7 @@ components/
   tsm/               VT100/220/xterm parser + terminal state (cells, SGR)
   vterm/             bridge: tsm grid → display cell buffer
   ssh/               libssh2 client (connect, host-key check, PTY, read task)
-  wifi/              profile-driven STA + SoftAP provisioning
+  wifi/              profile-driven STA (client) + SoftAP (own hotspot) provisioning
   storage/           INI profiles, known-hosts, BLE registry, key blobs,
                      PIN-unlocked keystore (see storage_auth.md)
   input/             BLE HID keyboard, GT911 touch, USB-serial, phone-presence
@@ -77,7 +77,7 @@ docs/                this and the other guides — see the doc index in README
 There is no pixel framebuffer anywhere. An 800×480×2 B RGB565 buffer would cost
 ~750 KB; the ESP32-S3 does not have it to spare. Instead the display is a grid
 of **8-byte cells** — 100×30, 80×24 or 66×20 depending on the selected font
-size (Terminus 8×16 / 10×20 / 12×24, copied from flash to DRAM at boot) —
+size (Terminus 8×16 / 10×20 / 12×24, copied from flash to DRAM (internal data RAM) at boot) —
 rasterized to pixels on demand.
 
 ```
@@ -96,7 +96,8 @@ rasterized to pixels on demand.
 
 `display_render_chunk()` is the single implementation of "turn cells into
 pixels for one horizontal band." The device calls it from the LCD peripheral's
-DMA ISR — every band is composed live at the panel's 39 Hz, so the sim and the
+DMA (direct memory access) interrupt — the render ISR (interrupt service
+routine) — so every band is composed live at the panel's 39 Hz, so the sim and the
 hardware render *identical* output by construction. The render core is four
 single-concern modules (`render_internal.h` is the map): `display_render.c`
 holds the pipeline skeleton and public API, `render_cache.c` the per-row
@@ -110,13 +111,13 @@ on a frame boundary (no mid-frame seam, no torn reads).
 
 **Cell layout** (`display.h` / `tsm.h`) is 8 bytes and binary-compatible between
 `tsm` and the display. `vterm` copies **dirty row-spans** from `tsm`'s grid
-(PSRAM; rows live in a scroll *ring*, so consecutive logical rows are not
+(PSRAM — the external RAM pool; rows live in a scroll *ring*, so consecutive logical rows are not
 contiguous — see `tsm_row()`) into the internal-DRAM bridge buffer the ISR
 reads. That copy doubles as the frame snapshot: withholding it is how DEC
 `?2026` synchronized output presents atomically. The layout:
 
 ```
-offset 0  cp       uint16  BMP codepoint
+offset 0  cp       uint16  BMP (Basic Multilingual Plane) codepoint
 offset 2  fg       uint16  foreground RGB565 (pre-converted at SGR parse time)
 offset 4  bg       uint16  background RGB565
 offset 6  attrs    uint8   BOLD | UNDERLINE | INVERSE | BLINK | DIM | ...
@@ -154,7 +155,7 @@ from the original uncompressed tables) proves any regeneration is still
 pixel-exact.
 
 Because the records are variable-length, the ISR cannot point at a glyph —
-it **decodes**. `font_decode_glyph()` (IRAM, compiled `-O2` against the
+it **decodes**. `font_decode_glyph()` (IRAM — always-mapped instruction RAM — compiled `-O2` against the
 project's `-Os`; that alone halves decode time) expands a record into plain
 rows. The band loop never decodes per pixel: `build_row_cache()` decodes each
 column's glyph **once per character row** into a flat DRAM cache, rebuilt
@@ -359,7 +360,8 @@ they live in a LittleFS partition (`partitions.csv`); in the sim, in a
 
 Profiles and keys are editable three ways: the on-device editor (menu), a web
 manager started from the menu ("Web (PC)", served over the LAN), and the
-SoftAP phone flow for first-time setup (`wifi/ssh_import.c`).
+SoftAP phone flow (the deck hosts its own temporary WiFi hotspot) for
+first-time setup (`wifi/ssh_import.c`).
 
 Kconfig `WIFI_*` / `SSH_DEFAULT_*` (or sim argv) provide a `(default)` profile
 only when storage is empty, so a fresh flash still connects somewhere.

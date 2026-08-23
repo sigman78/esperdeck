@@ -17,7 +17,7 @@ time**. The gap is pacing, not parsing:
   to *ingest*, regardless of how fast the terminal engine runs.
 - Every ≤512 B chunk also triggered a full `refresh_display()` pass
   (~118 dirty-copy passes per 60 KB frame).
-- After the pacing fix, the next ceilings in order: TCP window / RTT
+- After the pacing fix, the next ceilings in order: TCP window / RTT (round-trip time)
   (5760 B window ÷ RTT), WiFi modem power-save RTT inflation, then — far
   behind — libssh2 decrypt (~1–4 MB/s) and tsm parse (~3–8 MB/s).
 
@@ -25,7 +25,8 @@ time**. The gap is pacing, not parsing:
 `tsm_us + draw_us` as a small fraction of wall time, confirming the above
 on hardware.
 
-The display side is *not* a factor: the ISR re-renders every band every frame
+The display side is *not* a factor: the render ISR (interrupt service
+routine) re-renders every band every frame
 from the DRAM cell buffer at constant cost. (The occasional glitch when a
 flash operation stalls the bounce-buffer refill is a separate, unrelated
 issue.)
@@ -37,7 +38,7 @@ issue.)
 `ssh_client.c ssh_read_task`: instead of one 512 B read + 10 ms sleep per
 iteration, the task now drains the channel until EAGAIN or a per-wake budget
 (8 KB or 5 ms, whichever first), then presents the batch once and yields one
-tick. Reads go into a static 2 KB PSRAM buffer (the 8 KB PSRAM task stack
+tick. Reads go into a static 2 KB PSRAM (external RAM) buffer (the 8 KB PSRAM task stack
 also carries libssh2's transport path; internal DRAM is too scarce for a
 bigger stack buffer).
 
@@ -92,7 +93,7 @@ the keyboard *connected*: ping the deck during an idle session before/after.
 ### 3. TCP receive window 5760 → 11520, recvmbox 6 → 12
 
 `sdkconfig.defaults` (+ local `sdkconfig`): `LWIP_TCP_WND_DEFAULT` and
-`LWIP_TCP_SND_BUF_DEFAULT` 5760 → 11520 (4×MSS → 8×MSS, MSS = 1440),
+`LWIP_TCP_SND_BUF_DEFAULT` 5760 → 11520 (4×MSS → 8×MSS; MSS = TCP maximum segment size, 1440 B),
 `LWIP_TCP_RECVMBOX_SIZE` 6 → 12 (rule: WND/MSS + 2). Max in-flight data was
 5760 B, capping throughput at `5760/RTT` (~576 KB/s at 10 ms RTT); 8×MSS
 doubles that ceiling.
