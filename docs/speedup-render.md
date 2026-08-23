@@ -111,6 +111,12 @@ wall-clock a btop refresh / `mc` startup.
 
 ## Not yet implemented (ranked backlog)
 
+> **Superseded (2026-08-23 note).** Everything below was later re-measured
+> and re-ranked in [`speedupsall.md`](speedupsall.md), where most of it has
+> since shipped; item 4 (the memcpy per dirty span) lives on as an open item
+> of that doc's ranked plan. This section is kept unchanged as the pass-1
+> record — do not work from it.
+
 Only worthwhile after 1–3; at ~100 ms wall per frame the ~15 ms CPU cost
 becomes a visible fraction.
 

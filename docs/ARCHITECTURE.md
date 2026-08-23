@@ -21,8 +21,8 @@ logic in one file and the platform half in a `*_sim.c` / `*_dev.c` sibling:
 | Component | Shared | Device backend | Sim backend |
 |-----------|--------|----------------|-------------|
 | `display` | `display_render.c` + `render_*.c` (glyph→pixel core) | `lcd_driver.c` (RGB DMA ISR) | `display_sdl.c` (SDL texture) |
-| `storage` | `storage.c` (INI parse, key blobs) | `storage_dev.c` (LittleFS) | `storage_sim.c` (host FS) |
-| `wifi`    | — | `wifi_manager.c` + `wifi_provision.c` | `wifi_manager_sim.c` + `wifi_provision_sim.c` |
+| `storage` | `storage.c` (INI parse, key blobs) + `keystore.c` (PIN-unlocked key vault, both builds) | `storage_dev.c` (LittleFS) | `storage_sim.c` (host FS) |
+| `wifi`    | — | `wifi_manager.c` + `wifi_provision.c` + `ssh_import.c` | `wifi_manager_sim.c` + `wifi_provision_sim.c` + `ssh_import_sim.c` |
 | `input`   | `input_hal.c` (event queue) | `ble_keyboard.c`, `touch_input.c`, `input_uart.c` | SDL keyboard/mouse in `sim/main.c` |
 
 The composition roots are the only place platform code is assembled:
@@ -44,7 +44,8 @@ main/               device composition root (main.c, splash, Kconfig)
 sim/                 host composition root (SDL event loop)
 components/
   cyberdeck_app/     THE SHELL — boot→picker→session FSM + overlay TUI,
-                     one module per screen (app_home/menu/connect/...)
+                     one module per screen (app_home/menu/connect/unlock/
+                     saver/...)
   display/ + font/   bounce-buffer render core, CRT effects (display_fx),
                      Terminus font in 8x16 / 10x20 / 12x24 with a bold face;
                      glyph tables are compressed (crop + PackBits row-RLE +
@@ -55,14 +56,17 @@ components/
   vterm/             bridge: tsm grid → display cell buffer
   ssh/               libssh2 client (connect, host-key check, PTY, read task)
   wifi/              profile-driven STA + SoftAP provisioning
-  storage/           INI profiles, known-hosts, BLE registry, key blobs
-  input/             BLE HID keyboard, GT911 touch, USB-serial
+  storage/           INI profiles, known-hosts, BLE registry, key blobs,
+                     PIN-unlocked keystore (see storage_auth.md)
+  input/             BLE HID keyboard, GT911 touch, USB-serial, phone-presence
+  esp_hid/           vendored IDF v5.5.2 BLE HID host with local patches
+                     (CYBERDECK_PATCHES.md in that directory is the ledger)
   libssh2_esp/       vendored wrapper; libssh2 cloned+patched by CMake at
                      configure time (mbedTLS backend on device and in the sim)
 idfsim/              host-compilable ESP-IDF stubs (esp_err, heap_caps, ...)
-tests/               Unity suites (tsm: vtparse + termstate; font, keystore, ...)
+tests/               Unity suites: tsm, font, input, keystore, vtkeys
 cmake/               cyberdeck_component_register() — IDF/sim dual registration
-docs/                this document
+docs/                this and the other guides — see the doc index in README
 ```
 
 ---
@@ -207,7 +211,7 @@ Two follow-up smoothing ideas were measured (branch `research/prebuild-task`):
   from the ISR entirely — measured worst chunks 399/241/272 µs at
   8x16/10x20/12x24 (47/45/43% of period), avg==max within 2%, zero
   fallbacks in steady state, −23% average ISR CPU; costs ~4.3 KB DRAM +
-  the task handshake. Kept unmerged as commit `a956418` on that branch —
+  the task handshake. Kept unmerged at the tip of that branch —
   it strictly dominates the retired banking, so if ISR headroom is ever
   needed, land *that*, don't resurrect the look-ahead.
 
@@ -288,8 +292,12 @@ cyberdeck_app_tick(now_ms);           // every main-loop iteration (>=10 Hz)
 cyberdeck_app_handle_input(ev, now);  // one key or touch event
 ```
 
-Flow: **BOOT** → **HOME** (profile picker) → **CONNECTING** → **SESSION**, with
-**PAIRING** and **HOST-KEY** modals overlaid as needed.
+Flow: **BOOT** → (**UNLOCK**, when a keystore exists) → **HOME** (profile
+picker) → **CONNECTING** → **SESSION**. That is the happy path through a
+12-state `SCREENS[]` vtable (`cyberdeck_app.c`); the other states are
+**MENU** (in-session/config overlay), **PROFILE** (editor), **PAIRING**
+(BLE keyboard), **HOSTKEY** (trust prompt), **WIFIPROV** (phone
+onboarding), **SSHIMPORT** (profile import), and **POWEROFF**.
 
 - The UI is **tile-based**: `app_ui` builds a `tilegrid_t` and does two-axis
   hit-testing so touch and arrow-key navigation share one layout (two-tap to
@@ -298,6 +306,9 @@ Flow: **BOOT** → **HOME** (profile picker) → **CONNECTING** → **SESSION**,
   live and cancellable during DNS/TCP/handshake/auth.
 - The BLE keyboard is reached through a **`cyberdeck_ble_ops_t` seam** so the
   shell has no NimBLE dependency; the sim passes `ble = NULL`.
+- Phone presence (the walk-away auto-lock: the deck watches for an enrolled
+  phone's BLE advertisements) goes through the same kind of seam,
+  **`cyberdeck_presence_ops_t`** — again `NULL` in the sim.
 
 ---
 
@@ -338,6 +349,11 @@ they live in a LittleFS partition (`partitions.csv`); in the sim, in a
 - `fx.ini` — CRT effect settings (toggles apply live; the file is written
   once, on leaving the EFFECTS page); `font.ini` — terminal font size
   (applied on reboot)
+- `keystore.kv1` — the PIN-unlocked wrapped key store: once the user creates
+  an access code, private keys and secrets are encrypted at rest under a key
+  derived from it (Argon2id), and the deck boots and wakes locked.
+  [`storage_auth.md`](storage_auth.md) is the full design — threat model,
+  formats, lock triggers, backoff, roadmap.
 - BLE bonds live in **NVS** (not LittleFS) — the NimBLE bond store owns them
 
 Profiles and keys are editable three ways: the on-device editor (menu), a web
@@ -355,11 +371,22 @@ reclaim internal RAM.
 
 ---
 
-## Security — trust on first use
+## Security
 
-Host keys are pinned TOFU-style. The first connect to a host stops after the
-handshake with `SSH_ERR_HOSTKEY_UNKNOWN`; the shell shows the server's SHA256
-fingerprint and, on acceptance, pins it in `known_hosts.ini`. A later mismatch
-returns `SSH_ERR_HOSTKEY_MISMATCH`, is flagged in red, and blocks the connection
+Two independent mechanisms: host keys on the wire, and credentials at rest.
+
+**Trust on first use (host keys).** Host keys are pinned TOFU-style. The
+first connect to a host stops after the handshake with
+`SSH_ERR_HOSTKEY_UNKNOWN`; the shell shows the server's SHA256 fingerprint
+and, on acceptance, pins it in `known_hosts.ini`. A later mismatch returns
+`SSH_ERR_HOSTKEY_MISMATCH`, is flagged in red, and blocks the connection
 **before any credentials are sent**. The fingerprint check happens inside
 `ssh_client_connect()` between handshake and auth.
+
+**Keystore (credentials at rest).** With a keystore created, SSH private
+keys and secrets are wrapped — encrypted under a key derived from the
+user's access code with Argon2id — and the deck gates boot, saver wake, and
+the "Lock deck" button behind a PIN pad, with escalating retry backoff that
+survives reboot. [`storage_auth.md`](storage_auth.md) is the authoritative
+design document (what is protected from whom, formats, parameters, and the
+device-binding roadmap).

@@ -1,5 +1,9 @@
 # Feature ideas & visual backlog
 
+> Every numbered section carries a **Status** line, last audited 2026-08-23.
+> The scorecard at the bottom ranks attractiveness (fun/useful/effort/risk),
+> not progress — status lives here, next to each idea.
+
 Collected 2026-08-21 from a repo survey (docs, TODOs, parked branches) plus a
 design discussion. Ratings are judgment calls, not measurements; anything that
 touches the render ISR (interrupt service routine) graduates only through the
@@ -33,6 +37,8 @@ Every idea below that touches pixels is classified by which hook it folds into.
 
 ## 1. Dynamic sprite glyphs — the enabler
 
+**Status: SHIPPED** — `FONT_SPRITE_BASE` glyphs landed (PR #58); the Pac-Man marquee on HOME is the first consumer.
+
 Reserve ~16 PUA (Private Use Area) codepoints (U+E000…) backed by a writable
 DRAM table (`font_set_sprite(slot, rows[])`, ~768 B at 16 × 48 B worst case)
 and one check in the decode path. Because the row cache rebuilds every row
@@ -51,6 +57,8 @@ active size and accept redefinition on font change. Annoying to retrofit.
 
 ## 2. Palette / LUT color filters
 
+**Status: partially done** — the hook shipped as the phosphor green/amber toggle (`fx_mono565`, live in the EFFECTS menu); the named-palette table-swap tier is still open.
+
 `fx_mono565` (green/amber phosphor) already proves the hook: colors resolve per
 cell per row build, never per pixel. Two tiers:
 
@@ -62,6 +70,8 @@ cell per row build, never per pixel. Two tiers:
 Slots into the existing EFFECTS menu + `fx.ini` + per-frame fx snapshot.
 
 ## 3. CRT fx pack (the viable kind of "post-processing")
+
+**Status: open.**
 
 ### Tier 1 — folds into a hook, essentially free
 
@@ -102,6 +112,8 @@ SIMD pass over a prebuilt row is affordable.
 
 ## 4. Config menu + status/hints rework
 
+**Status: open** (the drag-travel remnant it cites is still in `app_connect.c`).
+
 The real usability debt: the menu is crammed, and large-font single-line items
 make poor touch targets.
 
@@ -116,6 +128,8 @@ make poor touch targets.
 
 ## 5. Screensaver zoo
 
+**Status: partially done** — the rain + clock saver shipped (`app_saver.c`); the saver *registry* (multiple savers, pick/rotate) is still open.
+
 Rain + clock exists. Build a saver *registry* (name, tick fn, palette) behind
 the EFFECTS/SAVER menu; each additional saver is then an afternoon. Best fits
 for a cell grid: classic **fire** (block glyphs ▁▂▄▆█ + color ramp —
@@ -123,6 +137,8 @@ spectacular under scanlines/wobble), cell-plasma (per-cell bg through a
 palette), Game of Life, starfield, DVD-logo bounce, aquarium (sprite fish).
 
 ## 6. Info saver (weather / Home Assistant / homelab)
+
+**Status: open** — prerequisites now exist (keystore secrets API, mbedTLS in tree), no fetch/display code yet.
 
 Two projects in one: a fetch layer and the display.
 
@@ -140,6 +156,8 @@ keeps the offline savers.
 
 ## 7. Animations pass
 
+**Status: partially done** — melt/wipe/marquee primitives exist (`display_fx`, `render_fx_pass`); the apply-consistently pass is open.
+
 Melt/wipe clip machinery, BRIGHT focus wash, and the marquee already exist —
 this is *applying* them consistently (menu enter/exit wipes, toast slide-in,
 focus pulse) plus sprite-based micro-motion. Fold into §4 rather than running
@@ -147,6 +165,8 @@ it as its own project; polish without a convention is how the current
 inconsistency happened.
 
 ## 8. NFC token unlock (tap-to-unlock)
+
+**Status: open** — design only, no NFC hardware or driver in tree.
 
 Fits the keystore unusually cleanly: the store is slot-based (LUKS-style —
 multiple KEKs, key-encryption-keys, wrap one master key), so an NFC token is
@@ -187,6 +207,8 @@ tag; keystore slot type `token`; unlock screen keeps the pinpad and adds a
 Recorded in `storage_auth.md` roadmap (8).
 
 ### 8b. BLE / iPhone variant
+
+**Status: Tier A SHIPPED (as prototype)** — phone presence landed in PR #60 (`ble_presence.c`: enroll, IRK sighting, near tier, walk-away auto-lock). Tiers B/C (phone-side app work) open.
 
 The deck already has the radio (NimBLE), so the hardware cost is zero — but
 the iPhone cannot emulate an NFC tag (Apple reserves card emulation for
@@ -233,6 +255,8 @@ token (real key material, no app, no Apple dependency), and Tier B is the
 maximalist path only if maintaining an iOS app sounds like fun.
 
 ## 9. File transfer + SD card storage
+
+**Status: open** — this section *is* the design (PR #59); the OSC callback plumbing in `tsm` is the only prerequisite landed.
 
 Move files in and out of the deck without leaving the SSH session — and give
 them somewhere real to land.
@@ -301,6 +325,8 @@ Effort: OSC hook + SFTP pull + confirm UI ~= a week; SD mount + a "files"
 lister a few days on top; ZMODEM whenever the retro itch wins.
 
 ## 10. Also on the table (from the repo survey)
+
+**Status: all open** — 10a bracketed paste (still a TODO stub in `termstate.c`), 10b 20 MHz pclk (research done in `speedupsall.md`, not flipped), 10c PIE SIMD scan (gated on the prebuild-task branch landing), 10d in-session idle lock, 10e eFuse PIN slot (keystore roadmap step 3), 10f backlight PWM (code complete on `research/backlight-pwm`, blocked on the GPIO2 hand-wire).
 
 - **Bracketed paste** (`termstate.c:2004` stub): small, and a mild security
   item (paste injection). Do during any terminal-adjacent work.

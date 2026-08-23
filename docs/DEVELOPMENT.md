@@ -29,6 +29,13 @@ Two flash targets matter:
   only to deliberately reprovision — and keep your own data in
   `sim_storage/` (below) so a reprovision restores it instead of erasing it.
 
+**Windows note:** `idf.py` refuses to run inside Git Bash / MSYS shells (it
+checks `MSYSTEM`). Use the ESP-IDF PowerShell/CMD prompt — or, once the
+project is configured, skip `idf.py` entirely: build with `ninja -C build`
+and flash with `python -m esptool --port COMx write_flash
+@build/flash_app_args` (the app-only equivalent of `app-flash`). Do **not**
+pass `@build/flash_args` — that is the full `flash`, storage wipe included.
+
 ### Your profiles and keys in the flash image
 
 The storage partition image is built from **`sim_storage/`** (gitignored —
@@ -53,9 +60,11 @@ from one source. Note the seeding is one-way: profiles created or edited
 `sim_storage/` by hand if they must survive a full reflash (`app-flash`
 never touches them).
 
-The terminal font size is a menu setting (`font.ini`) applied on reboot;
-which font sizes are *linked into the build* is a Kconfig choice
-(`CYBERDECK_FONT`). The sim picks its font at configure time
+The terminal font size is a menu setting (`font.ini`) applied on reboot.
+Which sizes are *linked into the build* — and which one is the boot
+default — are Kconfig options (`CYBERDECK_FONT_RT_8X16` / `_10X20` /
+`_12X24`, plus the `CYBERDECK_FONT_DEFAULT` choice; the bold face is
+`CYBERDECK_FONT_BOLD`). The sim picks its font at configure time
 (`-DFONT_SIZE=8x16|10x20|12x24`).
 
 Every device link ends with `check_iram` (`tools/check_iram.py`): the render
@@ -74,10 +83,17 @@ row-cache decisions in ARCHITECTURE.md were measured with it.
 
 ## Tests
 
-The `tsm` terminal engine has a host-compiled Unity suite (no ESP-IDF
-required): the VT parser (`vtparse`) and the terminal model (`termstate`),
-including scroll-ring, batched-print, and UTF-8/CSI feed-boundary edges —
-150 tests at the time of writing.
+Five host-compiled Unity suites (no ESP-IDF required) live under `tests/`:
+
+- `tsm` — the VT parser (`vtparse`) and terminal model (`termstate`),
+  including scroll-ring, batched-print, and UTF-8/CSI feed-boundary edges
+- `font` — golden per-codepoint CRCs prove the compressed glyph tables
+  still decode pixel-exact after any regeneration
+- `keystore` — the PIN-unlock wrapped key store (create/unlock/backoff)
+- `input` — the BLE HID keycode translator (the device's only keyboard path)
+- `vtkeys` — the shared key-sequence encoder (cursor modes, xterm modifiers)
+
+Each suite builds the same way:
 
 ```bash
 cd tests/tsm && cmake -B build && cmake --build build --config Debug

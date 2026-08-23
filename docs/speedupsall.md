@@ -485,6 +485,13 @@ naive scalar code `-Os` refuses to unroll or strength-reduce. Hence the split.
 overrun from 111 us to 18 us, so it still needs a real wobble fix — but a far
 smaller one than before, and amplitude reduction alone may cover it.
 
+*Amendment 2026-08-23:* the `-O2` override on `render_fx_pass.c` was **dropped
+later in the same PR** (commit `fa27db0`). Once the wobble was folded into the
+scan as a destination offset (step 2 below), the fx pass no longer contained
+the naive shift loop that needed it, and `components/display/` went back to
+the project-default `-Os`. The flag-hygiene finding below stays valid as
+method.
+
 **Flag hygiene** (this idiom appends, producing `-Os ... -O2`): verified by
 disassembly that the trailing `-O2` is a clean override. Compiling
 `render_scan.c` / `render_fx_pass.c` / `render_cache.c` as-configured vs `-O2` alone
@@ -548,7 +555,7 @@ Deadlines fall to 656 / 410 / 492 us at 8x16 / 10x20 / 12x24.
 
 | # | Step | Effect | Status |
 |---|---|---|---|
-| 1 | `-O2` on `render_fx_pass.c` | 8x16 back under deadline; 10x20 overrun 111 -> 18 us | **done, this branch** |
+| 1 | `-O2` on `render_fx_pass.c` | 8x16 back under deadline; 10x20 overrun 111 -> 18 us | **done, then retired** — step 2 removed the loop that needed it; the override was dropped again in `fa27db0` |
 | 2 | Real wobble fix — fold the displacement into the scan as a destination word offset (needs even-pixel displacement), or cut amplitude | closes the remaining 10x20 overrun | **done — see below** |
 | 3 | Per-cell pair LUT in the scan — four `uint32` per cell for glyph bits `00 01 10 11`, built once per cell per row, read *fh* times. Target 7 -> 2-3 cyc/px, ~1.6 KB DRAM | est. −130 us at 10x20 -> ~64% of the 20 MHz deadline | the main lever |
 | 4 | ASCII glyph cache (decode is 31% of the worst band) | up to −122 us at 10x20 | insurance |

@@ -329,7 +329,9 @@ littlefs image never needs plaintext:
   auto-submit feel. Slot 1 may hold a full passphrase (keyboard-entered) for
   the stronger-offline-story crowd.
 - **Two-gates model — a keystore on the deck means the deck is LOCKED.**
-  Nothing to configure (`lock.ini` retired): creating the store *is*
+  Nothing to configure (`lock.ini` retired — the file is never written
+  anymore; its name survives only in the factory-reset wipe list in
+  `storage.c` so old installs get cleaned): creating the store *is*
   opting into the gate, Remove code is opting out. One invariant: *deck
   unlocked ⇔ store unlocked*. The non-skippable **DEVICE pad**
   (`// DEVICE` tag) stands at boot, at saver wake, and behind the menu's
