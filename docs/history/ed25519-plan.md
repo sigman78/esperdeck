@@ -1,5 +1,15 @@
 # Ed25519 support: assessment & plan (2026-07-12)
 
+> **Archived 2026-08-23 — this plan shipped.** Ed25519 host keys, user auth,
+> and curve25519-sha256 key exchange work on both device and simulator. The
+> mechanism differs from what this memo proposed: instead of a patch file on
+> upstream libssh2, the project pins a maintained fork branch
+> (`sigman78/libssh2`, branch `feature/mbedtls-ed25519`). The as-built
+> description lives in the header comment of
+> `components/libssh2_esp/CMakeLists.txt` — trust that over this file.
+> Kept for the why-not-fork-mbedTLS analysis, worth revisiting around
+> mbedTLS 3.6 LTS end-of-life (March 2027).
+
 Question: mbedtls has no Ed25519 and looks frozen — how hard is it to fork mbedtls,
 add Ed25519, integrate it back? Bonus: can we reuse existing work instead?
 
