@@ -11,6 +11,15 @@ There are **no git submodules**; everything arrives at configure time:
   `components/libssh2_esp/` (vendored wrapper + `patches/`). The fork adds
   ed25519 keys (including passphrase-encrypted, bcrypt KDF — key derivation
   function) and curve25519 key exchange via Monocypher.
+
+  *Why this shape:* mbedTLS has no ed25519, and its 3.6 LTS line will never
+  get it (new crypto lands only in the PSA-based successor). So the project
+  patches libssh2's mbedTLS backend and vendors Monocypher for the ed25519
+  math, instead of forking mbedTLS. The fork lives at `sigman78/libssh2`,
+  branch `feature/mbedtls-ed25519`; the header comment in
+  `components/libssh2_esp/CMakeLists.txt` describes the as-built setup.
+  Still open: upstreaming the patch, and a fresh look when mbedTLS 3.6 LTS
+  reaches end of life (March 2027).
 - `esp_littlefs` (`joltwallet/littlefs`), `esp_lcd_touch_gt911`, `qrcode` —
   pulled by the ESP-IDF component manager (device build only).
 - SDL2 and Unity — fetched by CPM.cmake, a CMake package manager (sim and tests).
