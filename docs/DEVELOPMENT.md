@@ -76,14 +76,14 @@ default — are Kconfig options (`CYBERDECK_FONT_RT_8X16` / `_10X20` /
 `CYBERDECK_FONT_BOLD`). The sim picks its font at configure time
 (`-DFONT_SIZE=8x16|10x20|12x24`).
 
-Every device link ends with `check_iram` (`tools/check_iram.py`): the render
-ISR (interrupt service routine) keeps running while the flash cache is
-disabled
-(`LCD_RGB_ISR_IRAM_SAFE`), so any ISR-path function or ISR-read table that
-the linker places in flash would be a Cache exception during a settings
-save — the audit fails the build instead, naming the symbol. When adding
+Every device link ends with `check_iram` (`tools/check_iram.py`). The
+render ISR (interrupt service routine) must keep running while a flash
+write has the flash cache disabled (`LCD_RGB_ISR_IRAM_SAFE`). If the
+linker placed any ISR-path function or ISR-read table in flash, the
+device would hit a Cache exception during a settings save. The audit
+fails the build instead and names the offending symbol. When you add
 ISR-path code, keep names within the script's patterns (`render_fx_*`,
-`scan_band_*`, …) or extend them.
+`scan_band_*`, …) or extend the patterns.
 
 For render/ISR timing work there is a boot-into-bench mode:
 `CYBERDECK_BENCH_STRESS` (Kconfig, default off) skips the shell and
