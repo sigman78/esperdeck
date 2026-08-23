@@ -129,3 +129,21 @@ the plan, the measurements, and the remaining backlog. The firmware ships
 with cheap always-on counters: during an SSH session a `vterm_bench` /
 `render_bench` line is logged every 30 s (parse-vs-state split, scroll
 volume, render-ISR duty).
+
+## Licenses
+
+First-party Cyberdeck code is **MIT** — see [`LICENSE`](../LICENSE).
+Bundled and third-party components keep their own (permissive,
+MIT-compatible) licenses; preserve their notices when redistributing:
+
+| Component | License |
+|-----------|---------|
+| Terminus bitmap font (`components/font/`) | **SIL OFL 1.1** — [`components/font/LICENSE`](../components/font/LICENSE) |
+| `libssh2` (CMake-fetched) + vendored `libssh2_esp` wrapper | BSD-3-Clause |
+| `littlefs` (`joltwallet/littlefs` managed component) | MIT / BSD-3-Clause |
+| `esp_lcd_touch_gt911`, `esp_lcd_touch`, `qrcode` (managed components) | Apache-2.0 |
+| ESP-IDF + mbedTLS | Apache-2.0 |
+| Unity (tests) | MIT |
+
+The MIT license covers only the first-party code; the embedded font in
+particular is OFL 1.1, not MIT.
