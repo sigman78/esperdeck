@@ -6,7 +6,7 @@
  * CONFIG_DISPLAY_ISR_BENCH per-chunk cycle counters, sweeping phases along
  * three axes (overlay / terminal content / effect config). What each phase
  * isolates, and what invalidates a measurement, is docs/bench-methodology.md;
- * results live in docs/speedupsall.md.
+ * results live in docs/performance.md.
  *
  * Compiled out entirely when the option is off; the hooks below reduce to
  * no-ops.

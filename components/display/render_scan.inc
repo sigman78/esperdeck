@@ -16,7 +16,7 @@
  * NULL whenever no line in the band moves (the overwhelming majority). The
  * displaced case gets its own copy of the loop below — folding the offset
  * into one shared loop measured +5.9% on the undisplaced path
- * (docs/speedupsall.md § "Wobble fix").
+ * (docs/performance.md § "Wobble fix").
  */
 
 static IRAM_ATTR void SCAN_FN(const scan_ctx_t *cx)

@@ -271,7 +271,7 @@ static void bench_task(void *arg)
 /*
  * Memory-access microbenchmark — run once at startup. Raw uncached-SRAM
  * load/store cost as the render ISR pays it; rationale and reporting format
- * in docs/bench-methodology.md, distilled rules in docs/speedupsall.md.
+ * in docs/bench-methodology.md, distilled rules in docs/performance.md.
  */
 #ifdef CONFIG_DISPLAY_ISR_BENCH
 #include "esp_cpu.h"

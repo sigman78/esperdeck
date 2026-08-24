@@ -34,7 +34,7 @@ void vterm_write(const char *data, size_t len);
 /**
  * Feed raw bytes WITHOUT refreshing the display cell buffer.
  * Used by the SSH drain loop to parse a batch of chunks and present
- * once via vterm_flush() — see docs/speedup-render.md.
+ * once via vterm_flush() — see docs/performance.md (pass 1).
  */
 void vterm_feed(const char *data, size_t len);
 

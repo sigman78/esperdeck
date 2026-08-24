@@ -134,7 +134,7 @@ IRAM_ATTR void render_fx_clip_apply(color_t *dst, int band_y0, int num_scans,
  * offset (pixels land wobbled as written; no shift pass), which is why it is
  * quantised to EVEN pixels: RGB565 packs two pixels per 32-bit word, and an
  * odd displacement would be a half-word offset the scan cannot express.
- * Design + measured numbers: docs/speedupsall.md § "Wobble fix".
+ * Design + measured numbers: docs/performance.md § "Wobble fix".
  *
  * Fills @p out with one word offset per scanline of the band and returns true
  * if any is non-zero (false lets the scan take its untouched fast path).

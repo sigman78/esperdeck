@@ -1,23 +1,30 @@
-Terminal State Machine
-======================
+Terminal State Machine (tsm)
+============================
 
-Minimalistic VT100 like terminal emulator, consist of:
+Cyberdeck's own terminal-emulation engine — this project's development,
+MIT-licensed (see the source file headers). Two parts:
 
-- VT parser
-- Term state manager
+- `vtparse` — VT100/VT220/xterm escape-sequence parser
+- `termstate` — terminal state model (cell grid, scroll ring, attributes)
 
-Optimized for minimal memory footprint. Keeps own term-buffer.
+Optimized for a small embedded footprint: owns its cell buffer, no
+allocations on the hot path, and the two hot files are compiled `-O2`
+against the project's `-Os` (see `CMakeLists.txt` — measured, not assumed;
+history in `docs/performance.md`).
 
 Supported features:
-- Near full VT100 support
-- UTF8 capable, but capped to 0xffff (mostly limited by bitmap font subset and footprint)
-- 256 Color
+- Near-full VT100 support
+- UTF-8, capped to the Basic Multilingual Plane (U+FFFF) — matches the
+  bitmap-font subset and keeps a cell at 8 bytes
+- 16/256/truecolor foreground and background (quantized to RGB565)
 - Alt screen
 - Cursor save / restore
-- Terminal reporting
+- Terminal reporting (device attributes, cursor position)
 
-Upcoming features:
-- True color support
+Tested by `tests/tsm` — host-compiled Unity suites for both parts; see
+`docs/DEVELOPMENT.md`.
+
+Possible future work:
 - Mouse support
 - Configurable scrollback
 - Double-width cells

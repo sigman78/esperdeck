@@ -115,7 +115,7 @@ static bool              s_libssh2_initialized = false;
 static StaticTask_t      s_read_task_tcb;
 static StackType_t      *s_read_task_stack = NULL;
 
-/* Drain-loop tuning (docs/speedup-render.md #1). Chunks land in a PSRAM
+/* Drain-loop tuning (docs/performance.md pass 1, #1). Chunks land in a PSRAM
  * buffer — only this task touches it (sockets + crypto, no flash I/O), and
  * 2 KB of internal DRAM is too precious. Reused across sessions. The budget
  * bounds core-0 CPU per wake so IDLE0 (task WDT) and the same-core input
@@ -251,7 +251,7 @@ static void log_last_error(const char *context)
  * (SSH_DRAIN_BUDGET bytes / SSH_DRAIN_BUDGET_US), presents the batch once,
  * then ALWAYS yields at least one tick — libssh2_channel_read() can return
  * data continuously and never block; without the yield IDLE0 is starved and
- * the task watchdog fires (drain-loop history: docs/speedup-render.md).
+ * the task watchdog fires (drain-loop history: docs/performance.md, pass 1).
  *
  * The session lock is given back between chunks so ssh_client_send (shell
  * task, core 1) interleaves mid-batch — key echo waits one chunk, not a

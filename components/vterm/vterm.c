@@ -9,7 +9,7 @@
  * Two feeding modes:
  *   vterm_write()          — feed + present (legacy, one-shot writes)
  *   vterm_feed()/_flush()  — batch: the SSH drain loop feeds many chunks,
- *                            then presents once per wake (docs/speedup-render.md)
+ *                            then presents once per wake (docs/performance.md, pass 1)
  */
 
 #include "vterm.h"
