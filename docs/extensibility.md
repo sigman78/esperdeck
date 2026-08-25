@@ -156,7 +156,10 @@ Supporting contracts:
   lookup, no indirection.
 - **Public UI kit**: a curated `cyberdeck_ui.h` exporting the tile grid,
   hit-testing, fields, and widgets — prerequisite for any out-of-component
-  plugin.
+  plugin. The kit's design half — part vocabulary, chrome-row contracts,
+  the three-layer API model, touch rules, and the extensibility
+  compliance checklist — lives in [`ui-spec.md`](ui-spec.md)
+  (2026-08-25, code-audited).
 
 ### Constraints every phase must respect
 
@@ -212,7 +215,10 @@ in-tree features. Tick items as they merge.
       per-screen state behind `void *ctx`, add `nav_push/pop/replace`.
       Core screens re-register through the same API — the shell dogfoods
       its own plugin surface. Behavior-neutral; regression-test the flow
-      with the sim's `--drive` scripted input.
+      with the sim's `--drive` scripted input. This item also inverts
+      present ownership (shell owns clear → screen render → chrome →
+      present; 13 screens self-present today) with a per-screen chrome
+      flag — the composition point [`ui-spec.md`](ui-spec.md) builds on.
       *Kills: the enum, the global-struct growth, 13 state writes, 4
       bespoke back-paths.*
 - [ ] **3. Menus fully data-driven.** Actions/confirm/dim/value move into
@@ -220,12 +226,19 @@ in-tree features. Tick items as they merge.
       `menu_page_register()` + `menu_items_extend()`. Split the settings
       model (cycling + persistence, now on the PR-1 KV API) out of
       `app_menu.c`; the deferred-fx-flush call in the core tick becomes the
-      generic `idle_flush` hook.
+      generic `idle_flush` hook. The *rendition* redesign (two-line touch
+      items, sliders, themed pages) is specced separately in
+      [`ui-spec.md`](ui-spec.md) — model and rendition can land in either
+      order.
       *Kills: the 240-line switch, positional contracts, the 1000-line file.*
-- [ ] **4. Widget gaps + public UI kit.** Scrolling list widget (hard
-      prerequisite — grids silently drop overflow), one shared
-      confirm/modal helper (currently cloned 3×), unified toast, then the
-      curated public `cyberdeck_ui.h`.
+- [ ] **4. Widget gaps + public UI kit.** Deliverables per
+      [`ui-spec.md`](ui-spec.md): ListView (hard prerequisite — grids
+      silently drop overflow), Slider/Stepper, one Modal/Confirm helper
+      (cloned 3× today), the shared drag converter, unified Toast (one
+      row, one impl), then the curated public `cyberdeck_ui.h`.
+      **First consumers and acceptance test: the StatusCluster and the
+      menu rendition redesign** — the kit is right when both build on it
+      without shell internals.
 
 ### Phase 2 — the plugin seam
 
@@ -233,11 +246,15 @@ in-tree features. Tick items as they merge.
       `plugin_table.c`** compiled by both roots. Home-grid extras become
       registered tiles (visibility predicate + activate) on the new list
       widget. BLE/presence ops migrate to named services with enum states.
-- [ ] **6. Build-system convergence.** One `cyberdeck_features.cmake`
-      defining each feature gate once; the sim's mirrored `CONFIG_*`
-      defines generated from the same list; document (or script) the sim's
-      `add_subdirectory` ordering. Optional: a global hotkey registry
-      replacing the per-screen shortcut ladders.
+- [ ] **6. Build-system convergence + input unification.** One
+      `cyberdeck_features.cmake` defining each feature gate once; the
+      sim's mirrored `CONFIG_*` defines generated from the same list;
+      document (or script) the sim's `add_subdirectory` ordering. The
+      input-sim unification (today `sim/main.c` hand-mirrors the GT911
+      state machine) also grows **horizontal-gesture support** —
+      `INPUT_EVENT_SCROLL` is dy-only, and menu swipe-between-pages
+      ([`ui-spec.md`](ui-spec.md)) is blocked on it. Optional: a global
+      hotkey registry replacing the per-screen shortcut ladders.
 
 ### Phase 3 — prove it, then spend it
 
@@ -267,3 +284,15 @@ in-tree features. Tick items as they merge.
   as a fourth up-front decision (seams over glue; localized features
   integrate directly, descriptor and capability registry are opt-in, not
   a gate). Descriptor and capability-registry sections re-scoped to match.
+- **2026-08-25** — [`ui-spec.md`](ui-spec.md) written as the design half of
+  items 2–4 (two review rounds + a code-compliance audit), and its
+  discoveries folded back here: item 2 gains the present-ownership
+  inversion + per-screen chrome flag; item 4's deliverables enumerated
+  with StatusCluster + menu rendition as first consumers; item 6 gains
+  horizontal-gesture input work (SCROLL is dy-only — menu swipe is blocked
+  on it). Audit facts worth keeping: `wifi_manager_get_rssi()` is the
+  shell-legal RSSI source (never `esp_wifi_*` from the shell);
+  `prof_accent` hashes identity over {green, cyan, magenta, amber, blue} —
+  red/white/default stay reserved for alert/focus/body; kit headers follow
+  the idfsim pattern (the standalone Unity tests already build against
+  `idfsim/`), never SDL.
