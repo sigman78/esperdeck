@@ -7,8 +7,9 @@ here requires a rewrite.
 
 **The vision:** feature- and hardware-specific *plugins* that bring their own
 UI — a statically linked, self-describing module (one component, or one file
-in an existing component) that hands the shell a descriptor at init and never
-requires editing shell internals. The backlog this must serve is
+in an existing component) that hands the shell a descriptor — or makes a
+couple of registry calls — at init and never requires editing shell
+internals. The backlog this must serve is
 [`feat-ideas.md`](feat-ideas.md): palette/theme filters, the CRT effects
 pack, screensaver-zoo entries, info-saver widgets (weather / Home Assistant),
 NFC (near-field communication) tap-to-unlock, file transfer + SD card.
@@ -99,12 +100,26 @@ Three scope decisions, made up front:
   ~60 KB-internal-DRAM target; static link + registry gives the
   architectural benefit.
 - **No event bus (yet).** Polling works and is simpler to reason about.
-  Revisit when a real multi-consumer need appears — the second consumer of
-  BLE advertisements will be the tell (`ble_keyboard.c` hard-calls
-  `ble_presence_on_disc()` today).
+  Revisit when a real multi-consumer need appears — the second consumer
+  of BLE (Bluetooth Low Energy) advertisements will be the tell
+  (`ble_keyboard.c` hard-calls `ble_presence_on_disc()` today).
+- **Seams over glue — the proportionality rule.** Clean borders come from
+  *calling* the public seams (KV settings, screen registry + nav, menu
+  registration, UI kit), never from wrapper or adapter layers. A
+  sufficiently localized feature is its own module and integrates
+  directly: it includes its driver's header (its backend is its
+  business), owns its state (in PSRAM, the external RAM pool, with one
+  `kv_field_t` table for the persistent part), and registers exactly the
+  UI surface it needs — a full screen, or just a menu item/submenu.
+  Integration cost target: one registration call site and zero adapter
+  code. If wiring a feature in appears to need new glue, the seam is
+  wrong — fix the seam, don't pay the tax per feature.
 
-The descriptor — every field optional, so a plugin can be just a menu page,
-just a screensaver, or a full hardware capability with UI:
+The descriptor — itself optional: it is an aggregate over the open
+registries for features that want several hooks at once; a feature that
+needs one hook just calls that registry from its init and skips the
+descriptor entirely. Every field optional, so a plugin can be just a menu
+page, just a screensaver, or a full hardware capability with UI:
 
 ```c
 typedef struct {
@@ -135,6 +150,10 @@ Supporting contracts:
   `menu_item_dim()` and the positional-index contracts in one move.
 - **Capability registry**: `service_get("presence")` returning typed ops
   replaces one-config-field-per-capability; states become named enums.
+  For *optional* providers only — consumers that must work whether or not
+  the provider is linked in (the stub-swap features). An always-present
+  dependency is called directly through its own header; no service
+  lookup, no indirection.
 - **Public UI kit**: a curated `cyberdeck_ui.h` exporting the tile grid,
   hit-testing, fields, and widgets — prerequisite for any out-of-component
   plugin.
@@ -150,8 +169,8 @@ Supporting contracts:
    never new ISR hooks.
 2. Descriptor tables live in flash rodata — fine, as long as the ISR never
    walks them.
-3. Plugin state allocates from PSRAM (external RAM) unless the ISR touches
-   it; internal DRAM is the scarce pool.
+3. Plugin state allocates from PSRAM unless the ISR touches it; internal
+   DRAM is the scarce pool.
 4. Everything must still compile in the third context: the standalone Unity
    test projects build component sources with no ESP-IDF and no SDL.
 5. Shared code stays MSVC-clean (and beware `windows.h`-poisoned
@@ -173,7 +192,7 @@ in-tree features. Tick items as they merge.
 
 - [x] **0a** Comment sweep: essays → docs (new `bench-methodology.md`),
       stale comments fixed (PR #61).
-- [ ] **0b** Retire `components/terminal` (+ its suite); fix the
+- [x] **0b** Retire `components/terminal` (+ its suite); fix the
       MSVC-broken sim build (`near` rename); missing `font` REQUIRES;
       stale WinCNG doc lines (PR #62).
 
@@ -240,7 +259,11 @@ in-tree features. Tick items as they merge.
 ## Status log
 
 - **2026-08-22** — plan written from the three-sweep review. 0a merged
-  (#61). 0b in review (#62); it surfaced that the sim build had been broken
+  (#61). 0b merged (#62); it surfaced that the sim build had been broken
   since #60 (`near` vs the `windows.h` legacy-keyword macro) — fixed there,
   and build verification now checks exit codes (piping ninja through `tail`
   had masked failures).
+- **2026-08-22 (later)** — scope clarified: the proportionality rule added
+  as a fourth up-front decision (seams over glue; localized features
+  integrate directly, descriptor and capability registry are opt-in, not
+  a gate). Descriptor and capability-registry sections re-scoped to match.
