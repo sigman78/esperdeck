@@ -21,6 +21,7 @@ Contents:
   - [Glyph tables & the row cache — compressed tables, decode once per row](#glyph-tables--the-row-cache--compressed-tables-decode-once-per-row)
 - [Runtime data flow — two one-way pipes](#runtime-data-flow--two-one-way-pipes)
   - [Threading model (device) — render on core 1, network on core 0](#threading-model-device--render-on-core-1-network-on-core-0)
+  - [Terminal locking — two tasks, one mutex](#terminal-locking--two-tasks-one-mutex)
 - [The shell (`cyberdeck_app`) — a platform-neutral state machine](#the-shell-cyberdeck_app--a-platform-neutral-state-machine)
 - [Memory model — placement is load-bearing](#memory-model--placement-is-load-bearing)
 - [Storage & configuration — settings are data, not firmware](#storage--configuration--settings-are-data-not-firmware)
@@ -335,6 +336,46 @@ to create ssh_read_task" failure.)
 The simulator collapses all of this into one SDL loop. `ssh_read_task`
 exists as a host thread, and `display_render_frame()` is called once per
 iteration.
+
+### Terminal locking — two tasks, one mutex
+
+`tsm` has no locking of its own, and two tasks mutate it: `ssh_read_task`
+(feed and flush) and `main_task` (scrollback paging from the shell).
+Unserialized, the paging path can clamp the view offset against a history
+length that a concurrent feed is about to zero — the remote controls that
+event (RIS, Reset to Initial State, or an alt-screen entry). The stale
+clamp leaves the offset past the history length, and the next repaint
+indexes below the scrollback ring: an out-of-bounds read. Lesser variants
+garble on-screen cells (two tasks interleaving writes into the display
+cell buffer) or lose the feed's view-anchoring offset bump.
+
+So every tsm-touching entry point in `vterm.c` takes one mutex — a plain
+FreeRTOS mutex, the same primitive `ssh_client` uses for its session
+lock. The simulator compiles the identical code against the
+`idfsim/freertos` stubs: `idfsim/` is the project's single header-level
+compatibility layer, so OS specifics never enter the components.
+
+Lock order is fixed and acyclic: `ssh_read_task` already holds
+`ssh_client`'s session lock when it calls `vterm_feed()`, so the global
+order is session lock → vterm lock. Nothing under the vterm lock calls
+back into ssh — the tsm response callback only buffers bytes.
+
+Deliberately outside the lock:
+
+- **The render ISR.** It reads the cell buffer lock-free, as always: a
+  torn cell lasts one frame and the next flush repaints it.
+- **The single-value getters** (`vterm_scroll_offset/len/capacity`,
+  `vterm_app_cursor_keys`). Each is one aligned 32-bit read — atomic on
+  both targets — and the last one runs on the NimBLE host task, which
+  must not block behind a parse in progress.
+
+The cost is noise: an uncontended FreeRTOS mutex pair is a few hundred
+cycles, and the drain loop pays ~5 pairs per 10 ms wake against its 5 ms
+CPU budget (< 0.2%). A lock-free rewrite would not even be cheaper per
+operation on this build: `CONFIG_STDATOMIC_S32C1I_SPIRAM_WORKAROUND`
+compiles the firmware with `-mdisable-hardware-atomics` (the S3's
+compare-and-swap instruction misbehaves on PSRAM), so C11 atomics fall
+back to critical-section library calls of comparable cost.
 
 ---
 

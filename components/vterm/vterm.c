@@ -10,6 +10,10 @@
  *   vterm_write()          — feed + present (legacy, one-shot writes)
  *   vterm_feed()/_flush()  — batch: the SSH drain loop feeds many chunks,
  *                            then presents once per wake (docs/performance.md, pass 1)
+ *
+ * Two tasks mutate tsm (SSH read task, shell scrollback paging), so every
+ * tsm-touching entry point serializes on one module mutex. Race, lock
+ * order, and what stays lock-free: docs/ARCHITECTURE.md, "Terminal locking".
  */
 
 #include "vterm.h"
@@ -17,6 +21,8 @@
 #include "display_fx.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include <string.h>
 #include <stdlib.h>
 #include <inttypes.h>
@@ -53,6 +59,10 @@ static bool                s_initialized;
 
 static tsm_t              *s_tsm;
 static terminal_cell_t    *s_buffer;
+static SemaphoreHandle_t   s_lock;
+
+static inline void vt_lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
+static inline void vt_unlock(void) { xSemaphoreGive(s_lock); }
 
 static void tsm_response_forward(const char *data, size_t len, void *user)
 {
@@ -74,6 +84,14 @@ static inline void copy_row(int row, int l, int r)
     }
 }
 
+/* Push tsm's live cursor to the display. Callers hold the vterm lock. */
+static void cursor_refresh(void)
+{
+    int cx, cy; bool vis;
+    tsm_cursor(s_tsm, &cx, &cy, &vis);
+    display_set_cursor(cx, cy, vis ? CURSOR_BLOCK : CURSOR_NONE);
+}
+
 /* Used when the VIEW moves rather than the content: dirty spans describe
  * the live grid and say nothing about history sliding into frame, so there
  * is no incremental repaint to be had. */
@@ -87,7 +105,7 @@ static void repaint_all(void)
     if (tsm_sb_offset(s_tsm) > 0)
         display_set_cursor(0, 0, CURSOR_NONE);
     else
-        vterm_cursor_refresh();
+        cursor_refresh();
 }
 
 /* Display refresh */
@@ -131,16 +149,16 @@ static inline void refresh_display(void)
     uint32_t t1 = esp_cpu_get_cycle_count();
     s_bench.draw_cycles += (t1 - t0);
 #endif
-    vterm_cursor_refresh();
+    cursor_refresh();
     tsm_clear_dirty(s_tsm);
 }
 
 void vterm_cursor_refresh(void)
 {
     if (!s_initialized) return;
-    int cx, cy; bool vis;
-    tsm_cursor(s_tsm, &cx, &cy, &vis);
-    display_set_cursor(cx, cy, vis ? CURSOR_BLOCK : CURSOR_NONE);
+    vt_lock();
+    cursor_refresh();
+    vt_unlock();
 }
 
 /* Public API */
@@ -169,6 +187,13 @@ esp_err_t vterm_init(int cols, int rows)
         s_buffer[i].fg_color = def_fg;
         s_buffer[i].bg_color = def_bg;
         s_buffer[i].attrs    = 0;
+    }
+
+    if (!s_lock) s_lock = xSemaphoreCreateMutex();
+    if (!s_lock) {
+        ESP_LOGE(TAG, "mutex alloc failed");
+        free(s_buffer);
+        return ESP_ERR_NO_MEM;
     }
 
     s_tsm = tsm_new(cols, rows, CONFIG_VTERM_SCROLLBACK_LINES);
@@ -201,7 +226,9 @@ void vterm_feed(const char *data, size_t len)
 #ifdef CONFIG_VTERM_BENCH
     uint32_t t0 = esp_cpu_get_cycle_count();
 #endif
+    vt_lock();
     tsm_feed(s_tsm, (const uint8_t *)data, len);
+    vt_unlock();
 #ifdef CONFIG_VTERM_BENCH
     uint32_t t1 = esp_cpu_get_cycle_count();
     s_bench.tsm_cycles += (t1 - t0);
@@ -212,12 +239,14 @@ void vterm_feed(const char *data, size_t len)
 void vterm_flush(void)
 {
     if (!s_initialized) return;
+    vt_lock();
     /* ?2026 synchronized update open — hold the frame until ESU. */
-    if (tsm_sync_update(s_tsm)) return;
+    if (tsm_sync_update(s_tsm)) { vt_unlock(); return; }
 #ifdef CONFIG_VTERM_BENCH
     s_bench.flush_count++;
 #endif
     refresh_display();
+    vt_unlock();
 }
 
 void vterm_write(const char *data, size_t len)
@@ -235,8 +264,10 @@ void vterm_set_response_cb(vterm_response_cb_t cb, void *user)
 void vterm_reset(void)
 {
     if (!s_initialized) return;
+    vt_lock();
     tsm_reset(s_tsm);
     refresh_display();
+    vt_unlock();
 }
 
 /* Scrollback */
@@ -244,11 +275,13 @@ void vterm_reset(void)
 int vterm_scroll(int delta)
 {
     if (!s_initialized) return 0;
+    vt_lock();
     int before = tsm_sb_offset(s_tsm);
     int after  = tsm_sb_scroll(s_tsm, delta);
     /* Only on an actual move: holding PageUp at the top of the history
      * would otherwise redraw the same frame on every repeat. */
     if (after != before) repaint_all();
+    vt_unlock();
     return after;
 }
 
@@ -260,11 +293,19 @@ int vterm_scroll_page(int dir)
 
 bool vterm_scroll_reset(void)
 {
-    if (!s_initialized || tsm_sb_offset(s_tsm) == 0) return false;
-    tsm_sb_reset(s_tsm);
-    repaint_all();
-    return true;
+    if (!s_initialized) return false;
+    vt_lock();
+    bool moved = tsm_sb_offset(s_tsm) != 0;
+    if (moved) {
+        tsm_sb_reset(s_tsm);
+        repaint_all();
+    }
+    vt_unlock();
+    return moved;
 }
+
+/* Getters stay lock-free: single aligned reads, and vterm_app_cursor_keys()
+ * runs on the BLE host task, which must not block behind a feed. */
 
 int vterm_scroll_offset(void)
 {
