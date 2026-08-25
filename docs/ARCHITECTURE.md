@@ -13,6 +13,19 @@ Everything above the hardware seam is shared code. The two builds differ
 only in a few platform backends: LCD vs SDL, LittleFS vs host filesystem,
 NimBLE vs SDL keyboard, ESP WiFi vs a stub.
 
+Contents:
+
+- [Two targets, one codebase](#two-targets-one-codebase)
+- [Repository layout — where everything lives](#repository-layout--where-everything-lives)
+- [The render pipeline — no framebuffer](#the-render-pipeline--no-framebuffer)
+  - [Glyph tables & the row cache — compressed tables, decode once per row](#glyph-tables--the-row-cache--compressed-tables-decode-once-per-row)
+- [Runtime data flow — two one-way pipes](#runtime-data-flow--two-one-way-pipes)
+  - [Threading model (device) — render on core 1, network on core 0](#threading-model-device--render-on-core-1-network-on-core-0)
+- [The shell (`cyberdeck_app`) — a platform-neutral state machine](#the-shell-cyberdeck_app--a-platform-neutral-state-machine)
+- [Memory model — placement is load-bearing](#memory-model--placement-is-load-bearing)
+- [Storage & configuration — settings are data, not firmware](#storage--configuration--settings-are-data-not-firmware)
+- [Security — host keys on the wire, credentials at rest](#security--host-keys-on-the-wire-credentials-at-rest)
+
 ---
 
 ## Two targets, one codebase
@@ -30,10 +43,10 @@ platform half lives in a `*_sim.c` / `*_dev.c` sibling:
 
 Platform code is assembled in exactly two places, the composition roots:
 
-- `main/main.c` — device. It brings up NVS (non-volatile storage), netif,
-  display, WiFi, input, and SSH. It then hands control to the shell on a
-  dedicated task.
-- `sim/main.c` — host. It initializes SDL, translates keys and mouse
+- **`main/main.c`** — device. It brings up NVS (non-volatile storage),
+  netif, display, WiFi, input, and SSH. It then hands control to the
+  shell on a dedicated task.
+- **`sim/main.c`** — host. It initializes SDL, translates keys and mouse
   events, and runs the same shell.
 
 Both roots are thin. Everything the user experiences lives in the
@@ -43,7 +56,7 @@ the components.
 
 ---
 
-## Repository layout
+## Repository layout — where everything lives
 
 ```
 main/               device composition root (main.c, splash, Kconfig)
@@ -83,8 +96,11 @@ There is no pixel framebuffer anywhere. An 800×480 RGB565 buffer would
 cost ~750 KB, and the ESP32-S3 does not have that to spare. Instead the
 display is a grid of **8-byte cells**, rasterized to pixels on demand. The
 grid is 100×30, 80×24 or 66×20 cells, depending on the selected font size
-(Terminus 8×16 / 10×20 / 12×24, copied from flash to DRAM — internal data
-RAM — at boot).
+(Terminus 8×16 / 10×20 / 12×24). The selected font is copied from flash to
+DRAM at boot.
+
+The diagram shows the two cell buffers feeding one shared render core,
+and the core serving each build's scan-out path:
 
 ```
          cell buffer (cols×rows × 8 B)       overlay buffer (shell chrome)
@@ -110,18 +126,18 @@ hardware render *identical* output by construction.
 The render core is four single-concern modules; `render_internal.h` is the
 map:
 
-- `display_render.c` — pipeline skeleton and public API.
-- `render_cache.c` — the per-row column cache.
-- `render_scan.c` — the hot per-size scan loop. One plain-C body in
+- **`display_render.c`** — pipeline skeleton and public API.
+- **`render_cache.c`** — the per-row column cache.
+- **`render_scan.c`** — the hot per-size scan loop. One plain-C body in
   `render_scan.inc` is instantiated per font width, the C analog of a size
   template.
-- `render_fx_pass.c` — effect application.
+- **`render_fx_pass.c`** — effect application.
 
 Optional CRT effects (`display_fx`: scanlines, glow, wobble, static,
 transitions) hook into the same band loop and fit inside the ISR's cycle
-budget. The renderer reads a per-frame *snapshot* of the effect config, so
-a toggle always lands on a frame boundary. There is no mid-frame seam and
-no torn read.
+budget. The renderer reads a per-frame **snapshot** of the effect config,
+so a toggle always lands on a frame boundary. There is no mid-frame seam
+and no torn read.
 
 **Cell layout** (`display.h` / `tsm.h`) is 8 bytes, binary-compatible
 between `tsm` and the display:
@@ -136,7 +152,7 @@ offset 7  attrs2   uint8   OVERLINE | PROTECTED | WIDE_RIGHT
 
 `vterm` copies **dirty row-spans** from `tsm`'s grid into the
 internal-DRAM bridge buffer that the ISR reads. The grid lives in PSRAM —
-the external RAM pool — and its rows sit in a scroll *ring*, so
+the external RAM pool — and its rows sit in a scroll **ring**, so
 consecutive logical rows are not contiguous; `tsm_row()` resolves them.
 The copy doubles as the frame snapshot: withholding it is how DEC `?2026`
 synchronized output presents atomically.
@@ -149,7 +165,7 @@ scrim dims the live session behind a modal. Because chrome lives in the
 overlay, it never corrupts the `vterm` cell buffer: a full-screen remote
 app (vim, htop) stays intact behind a menu.
 
-### Glyph tables & the row cache
+### Glyph tables & the row cache — compressed tables, decode once per row
 
 The Terminus glyph tables are **compressed** ("format v1"): per-glyph row
 cropping, record dedup, PackBits row-RLE, and — for the 16-bit-row sizes —
@@ -161,55 +177,61 @@ flat. The boot copy of the selected size is what lives in internal DRAM.
 The tables are **committed generated sources**
 (`components/font/terminusWxH.c`), emitted by `tools/gen_terminus.py`. The
 tool downloads the pinned upstream Terminus BDF release (cached under
-`tools/.cache/`), encodes it, verifies that every codepoint decodes
-pixel-exact against the BDF cells, and writes each file with size stats in
-its header. *Decision:* an earlier pipeline committed binary blobs and
-expanded them to `.c` at build time. That src→bin→src round trip added a
-build step, a container format, and a second tool for no benefit.
-Regeneration is rare — a font-version bump or a subset change — so the
-repo now commits what the compiler eats. Regenerate with
-`python tools/gen_terminus.py`. The `tests/font` suite (golden CRCs per
-codepoint, captured from the original uncompressed tables) proves any
-regeneration is still pixel-exact.
+`tools/.cache/`) and encodes it. It then verifies that every codepoint
+decodes pixel-exact against the BDF cells, and writes each file with size
+stats in its header.
+
+**Decision:** an earlier pipeline committed binary blobs and expanded them
+to `.c` at build time. That src→bin→src round trip added a build step, a
+container format, and a second tool for no benefit. Regeneration is rare —
+a font-version bump or a subset change — so the repo now commits what the
+compiler eats.
+
+Regenerate with `python tools/gen_terminus.py`. The `tests/font` suite
+(golden CRCs per codepoint, captured from the original uncompressed
+tables) proves any regeneration is still pixel-exact.
 
 The records are variable-length, so the ISR cannot point at a glyph — it
 must **decode**. `font_decode_glyph()` expands a record into plain rows.
 It lives in IRAM (always-mapped instruction RAM) and is compiled `-O2`
-against the project's `-Os`; that alone halves decode time. The band loop
-never decodes per pixel. `build_row_cache()` decodes each column's glyph
-**once per character row** into a flat DRAM cache. The cache is rebuilt
-synchronously on a row's first band and reused by the second (tall fonts
-render two bands per row).
+against the project's `-Os`; that alone halves decode time.
+
+The band loop never decodes per pixel. `build_row_cache()` decodes each
+column's glyph **once per character row** into a flat DRAM cache. The
+cache is rebuilt synchronously on a row's first band and reused by the
+second (tall fonts render two bands per row).
 
 Above the row cache sits a **decoded-glyph cache** (`font_renderer.c`):
 256 entries, 2-way set-associative, keyed on `(bold, codepoint)`, filled
-lazily, in internal DRAM (the ISR reads it while the flash cache is
-disabled). The sizing math:
+lazily. It sits in internal DRAM because the ISR reads it while the flash
+cache is disabled. The sizing math:
 
-- A realistic TUI screen — ASCII plus box drawing, blocks and accents —
-  uses roughly 130–190 distinct glyphs including bold. 256 entries leave
-  headroom. Caching all ~1470 Terminus glyphs would cost 70 KB at 12x24.
-- *Why 2-way, not direct-mapped:* with ~150 live items in 256
+- **Why 256 entries:** a realistic TUI screen — ASCII plus box drawing,
+  blocks and accents — uses roughly 130–190 distinct glyphs including
+  bold. 256 entries leave headroom. Caching all ~1470 Terminus glyphs
+  would cost 70 KB at 12x24.
+- **Why 2-way, not direct-mapped:** with ~150 live items in 256
   direct-mapped slots, the birthday bound predicts ~44% of them would
   share a slot. Two ways drop the overflow probability (3+ items in one
   set) to ~12% of sets. 4-way would add tag compares to every hit, to
   improve a miss cost already under 1% of the band.
-- *Why round-robin replacement, advanced only when a line is filled:* true
-  LRU (least-recently-used) would need a recency store on every hit —
+- **Why round-robin replacement, advanced only when a line is filled:**
+  true LRU (least-recently-used) would need a recency store on every hit —
   3000 ISR-context stores per frame — to improve that same under-1% case.
-- Overflow is graceful, not cliff-edged. A set that overflows costs one
-  decode for the loser, not a cascade, amortized over 3000 cells.
+- **Overflow is graceful**, not cliff-edged. A set that overflows costs
+  one decode for the loser, not a cascade, amortized over 3000 cells.
 
 Measured effect and the `t:mixNNN` sizing sweep:
 [`performance.md`](performance.md) § "Glyph cache — decode removed".
 
-*Decision — measured, not assumed* (dense 100%-painted stress screen,
-`CONFIG_DISPLAY_ISR_BENCH`, worst chunk in µs vs the chunk period):
+**Decision — measured, not assumed.** Setup: dense 100%-painted stress
+screen, `CONFIG_DISPLAY_ISR_BENCH`; numbers are the worst chunk in µs vs
+the chunk period:
 
 | row-cache strategy       | 10x20 (534 µs)   | 12x24 (640 µs)   |
 |--------------------------|------------------|------------------|
 | double-banked look-ahead | 311 (58%)        | 341 (53%)        |
-| **sync rebuild (current)** | **389 (73%)**  | **408 (64%)**    |
+| sync rebuild (current)   | 389 (73%)        | 408 (64%)        |
 | no reuse, rebuild per band | 395 + 24% avg  | 409 + 19% avg    |
 
 The double-banked look-ahead split the next row's rebuild across the
@@ -218,7 +240,9 @@ current row's two bands. It was written when the `-Os` decoder overran the
 rebuild fits with ≥27% headroom, so the banking's ~60 lines of ISR state
 machine and ~4.4 KB of DRAM were retired. Dropping the cache entirely
 costs 19–24% *average* ISR time for zero simplification, so the per-row
-cache stays. To re-run the numbers after render or decoder work: enable
+cache stays.
+
+To re-run the numbers after render or decoder work: enable
 `CYBERDECK_BENCH_STRESS` (+ `DISPLAY_ISR_BENCH`), flash, and read the
 5-second `bench_stress` log lines.
 [`bench-methodology.md`](bench-methodology.md) is the full recipe, and
@@ -227,15 +251,15 @@ lists the caveats that invalidate a comparison.
 Two follow-up smoothing ideas were measured on branch
 `research/prebuild-task`:
 
-- *Splitting the rebuild within a row* (band 1 decodes only the rows it
+- **Splitting the rebuild within a row** (band 1 decodes only the rows it
   scans, band 2 completes) is a measured dead end. Terminus glyph content
   is top-heavy and the per-glyph fixed costs don't split, so band 1's
   floor is 382/399 µs — at most 3% below the spike. The row-limit branch
   alone also slowed the `-O2` decode loop ~20%.
-- *A lock-step prebuild task* (a core-1 task, priority above `main_task`,
-  builds the next row's whole cache into a spare bank on an ISR doorbell;
-  the ISR flips banks, or falls back to a sync rebuild) removes the burst
-  from the ISR entirely. Measured worst chunks: 399/241/272 µs at
+- **A lock-step prebuild task** removes the burst from the ISR entirely.
+  A core-1 task, priority above `main_task`, builds the next row's whole
+  cache into a spare bank on an ISR doorbell. The ISR flips banks, or
+  falls back to a sync rebuild. Measured worst chunks: 399/241/272 µs at
   8x16/10x20/12x24 (47/45/43% of period), average equals max within 2%,
   zero fallbacks in steady state, −23% average ISR CPU. Cost: ~4.3 KB DRAM
   plus the task handshake. It is kept unmerged at the tip of that branch.
@@ -244,10 +268,11 @@ Two follow-up smoothing ideas were measured on branch
 
 ---
 
-## Runtime data flow
+## Runtime data flow — two one-way pipes
 
 The terminal is a one-way pipe from the remote, plus a one-way pipe from
-the keyboard. On the device the two pipes run on separate cores.
+the keyboard. On the device the two pipes run on separate cores. The
+diagram traces both pipes; the bullets below it restate each one in words.
 
 ```
   remote host ──► libssh2 ──► ssh_read_task ──► vterm_feed ──► tsm parse
@@ -286,7 +311,7 @@ the keyboard. On the device the two pipes run on separate cores.
   every key byte goes straight to `ssh_client_send()`. The exceptions are
   the menu hotkey (F12) and touch long-press, which open the overlay menu.
 
-### Threading model (device)
+### Threading model (device) — render on core 1, network on core 0
 
 | Context | Core | Stack | Job |
 |---------|------|-------|-----|
@@ -300,7 +325,7 @@ a transient core-1 task (`lcd_driver.c`), so `esp_intr_alloc` pins the
 interrupt there. That keeps the render tax off the core that runs WiFi,
 NimBLE, and the SSH drain.
 
-`main_task`'s stack **must** be internal DRAM. It performs flash I/O
+`main_task`'s stack *must* be internal DRAM. It performs flash I/O
 (LittleFS profile saves, NVS bond persistence), and flash I/O is forbidden
 from an external-RAM stack. `ssh_read_task` runs from PSRAM by necessity:
 once WiFi, NimBLE, and the render path have taken their share, internal
@@ -313,7 +338,7 @@ iteration.
 
 ---
 
-## The shell (`cyberdeck_app`)
+## The shell (`cyberdeck_app`) — a platform-neutral state machine
 
 The shell is a platform-neutral state machine plus an overlay TUI
 (`app_ui.c`). The root calls three entry points:
@@ -326,32 +351,41 @@ cyberdeck_app_handle_input(ev, now);  // one key or touch event
 
 Flow: **BOOT** → (**UNLOCK**, when a keystore exists) → **HOME** (profile
 picker) → **CONNECTING** → **SESSION**. That is the happy path through a
-12-state `SCREENS[]` vtable (`cyberdeck_app.c`). The other states are
-**MENU** (in-session/config overlay), **PROFILE** (editor), **PAIRING**
-(BLE keyboard), **HOSTKEY** (trust prompt), **WIFIPROV** (phone
-onboarding), **SSHIMPORT** (profile import), and **POWEROFF**.
+12-state `SCREENS[]` vtable (`cyberdeck_app.c`). The other seven states:
 
-- The UI is **tile-based**. `app_ui` builds a `tilegrid_t` and does
-  two-axis hit-testing, so touch and arrow-key navigation share one layout
+- **MENU** — in-session/config overlay
+- **PROFILE** — editor
+- **PAIRING** — BLE keyboard
+- **HOSTKEY** — trust prompt
+- **WIFIPROV** — phone onboarding
+- **SSHIMPORT** — profile import
+- **POWEROFF**
+
+Design choices inside the shell:
+
+- **Tile-based UI.** `app_ui` builds a `tilegrid_t` and does two-axis
+  hit-testing, so touch and arrow-key navigation share one layout
   (two-tap to connect).
-- SSH connect is **asynchronous** (`ssh_client_connect_start`). The UI
-  stays live and cancellable during DNS, TCP, handshake, and auth.
-- The shell reaches the BLE keyboard through a **`cyberdeck_ble_ops_t`
-  seam**, so it has no NimBLE dependency. The sim passes `ble = NULL`.
-- Phone presence — the walk-away auto-lock, where the deck watches for an
-  enrolled phone's BLE advertisements — goes through the same kind of
-  seam, **`cyberdeck_presence_ops_t`**. Again `NULL` in the sim.
+- **Asynchronous SSH connect** (`ssh_client_connect_start`). The UI stays
+  live and cancellable during DNS, TCP, handshake, and auth.
+- **BLE seam.** The shell reaches the BLE keyboard through
+  `cyberdeck_ble_ops_t`, so it has no NimBLE dependency. The sim passes
+  `ble = NULL`.
+- **Presence seam.** Phone presence — the walk-away auto-lock, where the
+  deck watches for an enrolled phone's BLE advertisements — goes through
+  the same kind of seam, `cyberdeck_presence_ops_t`. Again `NULL` in the
+  sim.
 
 ---
 
-## Memory model
+## Memory model — placement is load-bearing
 
 The device build lives or dies by *where* memory sits.
 
 - **IRAM/DRAM on the render path.** The render core is IRAM. The cell and
   overlay buffers and the boot-time font copy are internal DRAM. The ISR
   therefore never reads through the PSRAM or flash caches, which makes it
-  fully flash-cache-safe: with `LCD_RGB_ISR_IRAM_SAFE=y` it keeps
+  fully flash-cache-safe. With `LCD_RGB_ISR_IRAM_SAFE=y` it keeps
   rendering while a flash write (profile save, NVS) has the cache
   disabled. Saves no longer glitch the picture. The discipline is
   *enforced*: `tools/check_iram.py` runs after every device link and fails
@@ -369,33 +403,36 @@ inline there.
 
 ---
 
-## Storage & configuration
+## Storage & configuration — settings are data, not firmware
 
-Connection details are **data, not firmware** (`storage` component). On
-the device they live in a LittleFS partition (`partitions.csv`); in the
-sim, in a `sim_storage/` directory. The INI format is the same both ways:
+Connection details are *data, not firmware* (`storage` component). On the
+device they live in a LittleFS partition (`partitions.csv`); in the sim,
+in a `sim_storage/` directory. The INI format is the same both ways:
 
-- `profiles.ini` — SSH profiles (host, port, user, password or key +
+- **`profiles.ini`** — SSH profiles (host, port, user, password or key +
   passphrase)
-- `wifi.ini` — WiFi networks, tried in file order
-- `known_hosts.ini` — pinned host-key fingerprints (see below)
-- `keys/*.pem` — private keys for public-key auth (encrypted ed25519
+- **`wifi.ini`** — WiFi networks, tried in file order
+- **`known_hosts.ini`** — pinned host-key fingerprints (see below)
+- **`keys/*.pem`** — private keys for public-key auth (encrypted ed25519
   supported)
-- `fx.ini` — CRT effect settings (toggles apply live; the file is written
-  once, on leaving the EFFECTS page); `font.ini` — terminal font size
-  (applied on reboot)
-- `keystore.kv1` — the PIN-unlocked wrapped key store. Once the user
+- **`fx.ini`** — CRT effect settings (toggles apply live; the file is
+  written once, on leaving the EFFECTS page)
+- **`font.ini`** — terminal font size (applied on reboot)
+- **`keystore.kv1`** — the PIN-unlocked wrapped key store. Once the user
   creates an access code, private keys and secrets are encrypted at rest
-  under a key derived from it (Argon2id), and the deck boots and wakes
+  under a key derived from it (Argon2id). The deck then boots and wakes
   locked. [`storage_auth.md`](storage_auth.md) is the full design: threat
   model, formats, lock triggers, backoff, roadmap.
-- BLE bonds live in **NVS** (not LittleFS) — the NimBLE bond store owns
+- **BLE bonds** live in NVS (not LittleFS) — the NimBLE bond store owns
   them.
 
-Profiles and keys are editable three ways: the on-device editor (menu), a
-web manager started from the menu ("Web (PC)", served over the LAN), and
-the SoftAP phone flow, where the deck hosts its own temporary WiFi hotspot
-for first-time setup (`wifi/ssh_import.c`).
+Profiles and keys are editable three ways:
+
+- **On-device editor** — from the menu.
+- **Web manager** — started from the menu ("Web (PC)"), served over the
+  LAN.
+- **SoftAP phone flow** — the deck hosts its own temporary WiFi hotspot
+  for first-time setup (`wifi/ssh_import.c`).
 
 Kconfig `WIFI_*` / `SSH_DEFAULT_*` (or sim argv) provide a `(default)`
 profile only when storage is empty, so a fresh flash still connects
@@ -409,7 +446,7 @@ the moment it finishes, to reclaim internal RAM.
 
 ---
 
-## Security
+## Security — host keys on the wire, credentials at rest
 
 Two independent mechanisms: host keys on the wire, and credentials at
 rest.
@@ -419,7 +456,7 @@ first connect to a host stops after the handshake with
 `SSH_ERR_HOSTKEY_UNKNOWN`. The shell shows the server's SHA256 fingerprint
 and, on acceptance, pins it in `known_hosts.ini`. A later mismatch returns
 `SSH_ERR_HOSTKEY_MISMATCH`, is flagged in red, and blocks the connection
-**before any credentials are sent**. The fingerprint check happens inside
+*before any credentials are sent*. The fingerprint check happens inside
 `ssh_client_connect()`, between handshake and auth.
 
 **Keystore (credentials at rest).** With a keystore created, SSH private
