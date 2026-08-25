@@ -1069,6 +1069,32 @@ void test_reset_from_alt_screen(void)
     tsm_free(t);
 }
 
+/* Reset erases with DEFAULT colors, not the SGR state it is resetting —
+ * regression: the erase ran before the color reset, so the whole grid
+ * kept the old session's colors on every untouched cell. */
+void test_reset_erases_with_default_colors(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "\x1b[37;44mX");     /* white on blue, print one cell */
+    tsm_reset(t);
+    TEST_ASSERT_EQUAL_HEX16(' ', cell(t, 0, 0).cp);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 0, 0).bg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 9, 2).bg);
+    tsm_free(t);
+}
+
+/* Same via the wire: RIS (ESC c) sent by the remote mid-session. */
+void test_ris_erases_with_default_colors(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "\x1b[37;44mX\x1b" "c");
+    TEST_ASSERT_EQUAL_HEX16(' ', cell(t, 0, 0).cp);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 0, 0).bg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 9, 2).bg);
+    tsm_free(t);
+}
+
 /* ════════════════════════════════════════════════════════════════════════════
  * Synchronized output — mode ?2026
  * ════════════════════════════════════════════════════════════════════════════ */
@@ -1490,6 +1516,8 @@ int main(void)
     RUN_TEST(test_alt_screen_47_exit);
     RUN_TEST(test_alt_screen_1047_exit);
     RUN_TEST(test_reset_from_alt_screen);
+    RUN_TEST(test_reset_erases_with_default_colors);
+    RUN_TEST(test_ris_erases_with_default_colors);
 
     /* cursor visibility */
     RUN_TEST(test_dectcem_hide_show);

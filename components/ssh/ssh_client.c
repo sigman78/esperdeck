@@ -732,12 +732,19 @@ auth_done:
     libssh2_session_set_blocking(s_session, 0);
     vterm_set_response_cb(ssh_vterm_response_cb, NULL);
 
-    /* ── 11. Clear the terminal, then spawn the read task on core 0 ───── */
-    /* Clear from THIS task before the read task exists: vterm has no lock, so
-     * letting main_task's clear race the read task's feed inside tsm_feed on
-     * two cores could corrupt the grid. Doing it here makes the read task the
-     * session's sole vterm writer. */
-    vterm_write("\x1b[2J\x1b[H", 7);
+    /* ── 11. Reset the terminal, then spawn the read task on core 0 ───── */
+    /* Reset from THIS task before the read task exists: vterm has no lock, so
+     * letting main_task race the read task's feed inside tsm_feed on two
+     * cores could corrupt the grid. Doing it here makes the read task the
+     * session's sole vterm writer.
+     *
+     * A full reset, not a \e[2J clear: everything the previous session left
+     * in the emulator leaks into this one otherwise — SGR colors (an ED
+     * erase fills with the CURRENT fg/bg, so a session that died inside a
+     * white-on-blue dialog(1) UI paints the next greeting white-on-blue),
+     * the alt screen, application cursor keys, charsets, scroll region, a
+     * half-received escape sequence, and the old host's scrollback. */
+    vterm_reset();
 
     s_connected = true;
     s_read_task_done = false;

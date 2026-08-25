@@ -610,11 +610,14 @@ static void do_hard_reset(tsm_t *t)
     if (t->mode.decalt)            /* return to primary first */
         swap_grids(t);
     sb_clear(t);                   /* RIS drops history, as xterm does */
+    /* SGR to defaults BEFORE the erase: blank_cell() clears with the
+     * CURRENT colors (BCE, right for ED), but RIS must not keep them —
+     * erasing first left the whole grid in the old session's colors. */
+    t->attrs = 0; t->attrs2 = 0;
+    t->fg = COLOR_DEFAULT_FG; t->bg = COLOR_DEFAULT_BG;
     erase_screen(t);
     t->base = 0;                   /* freshly erased — mapping is free to reset */
     t->cx = 0; t->cy = 0;
-    t->attrs = 0; t->attrs2 = 0;
-    t->fg = COLOR_DEFAULT_FG; t->bg = COLOR_DEFAULT_BG;
     t->g[0] = CHARSET_ASCII; t->g[1] = CHARSET_ASCII; t->gl = 0;
     t->scroll_top = 0; t->scroll_bot = t->rows - 1;
     memset(&t->mode, 0, sizeof(t->mode));
