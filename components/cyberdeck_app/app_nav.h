@@ -50,7 +50,8 @@ int nav_register(const nav_screen_t *def);
 
 /* Stack ops. Every op exits the departing screen, enters/resumes the
  * arriving one, and invalidates. The bottom entry never pops. False means
- * invalid id, stack full, or (for pop) already at the bottom. */
+ * invalid id, stack full, a push of a screen already on the stack
+ * (per-screen state is single-instance), or a pop at the bottom. */
 bool nav_push(int id, intptr_t arg, uint64_t now);
 bool nav_replace(int id, intptr_t arg, uint64_t now);  /* swap the top  */
 bool nav_reset(int id, intptr_t arg, uint64_t now);    /* whole stack   */

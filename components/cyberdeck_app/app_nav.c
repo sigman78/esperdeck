@@ -95,6 +95,15 @@ bool nav_push(int id, intptr_t arg, uint64_t now)
         ESP_LOGW(TAG, "stack full pushing %s", screen(id)->name);
         return false;
     }
+    /* One stack entry per screen: state is file-static in the owning
+     * module, so a duplicate entry would share (and clobber) it. */
+    for (int i = 0; i < s_depth; i++) {
+        if (s_stack[i].id == id) {
+            ESP_LOGW(TAG, "%s already on the stack, push rejected",
+                     screen(id)->name);
+            return false;
+        }
+    }
     leave_top(now);
     s_stack[s_depth++] = (nav_entry_t){ id, arg };
     enter_top(false, now);
