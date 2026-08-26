@@ -8,8 +8,9 @@
 # at all — between them an encrypted key with no passphrase is indistinguishable
 # from a corrupt key file). There are no git submodules and no manual patch
 # step. See cmake/apply_patch.cmake
-# and patches/. To bump libssh2, change GIT_TAG below and regenerate the patch:
-#   git -C <fetched-src> diff > patches/libssh2-ram-diet.patch
+# and patches/. To bump libssh2, change GIT_TAG below and regenerate the patch
+# (exclude src/monocypher* — this file deletes those from the fetched tree):
+#   git -C <fetched-src> diff -- . ':!src/monocypher*' > patches/libssh2-ram-diet.patch
 #
 # We build from the sigman78/libssh2 fork (feature/mbedtls-ed25519): upstream
 # master + vendored Monocypher 4.0.2 giving the mbedTLS backend ed25519
@@ -20,7 +21,7 @@
 # configure. FetchContent uses define_property(), which is not allowed in script
 # mode — so during early expansion we only declare requirements and return.
 if(CMAKE_BUILD_EARLY_EXPANSION)
-    idf_component_register(REQUIRES mbedtls esp_netif)
+    idf_component_register(REQUIRES mbedtls esp_netif monocypher)
     return()
 endif()
 
@@ -43,6 +44,25 @@ FetchContent_Declare(libssh2_src
 FetchContent_MakeAvailable(libssh2_src)
 
 set(LIBSSH2_DIR ${libssh2_src_SOURCE_DIR})
+
+# Exactly ONE Monocypher in the build: verify the fork's vendored copy is
+# bit-identical to components/monocypher, then delete it so mbedtls.c's
+# quoted includes fall through to ours (whose objects are what gets
+# linked). The check proves the substitution is an identity — a fork-side
+# monocypher divergence (bump or patch) stops the build for a conscious
+# re-pin. A re-fetch restores the files; the next configure re-runs both.
+foreach(_f monocypher.c monocypher.h monocypher-ed25519.c monocypher-ed25519.h)
+    if(NOT EXISTS ${LIBSSH2_DIR}/src/${_f})
+        continue()   # already deleted by a prior configure
+    endif()
+    file(SHA256 ${LIBSSH2_DIR}/src/${_f} _fork_hash)
+    file(SHA256 ${CMAKE_CURRENT_LIST_DIR}/../monocypher/${_f} _ours_hash)
+    if(NOT _fork_hash STREQUAL _ours_hash)
+        message(FATAL_ERROR "components/monocypher/${_f} differs from the "
+                "libssh2 fork's vendored copy — re-pin one side.")
+    endif()
+    file(REMOVE ${LIBSSH2_DIR}/src/${_f})
+endforeach()
 
 # Common libssh2 translation units; the crypto backend file is appended per build.
 set(_libssh2_units
@@ -67,7 +87,7 @@ if(BUILD_SIMULATOR)
     )
 
     set(_srcs "")
-    foreach(u ${_libssh2_units} mbedtls monocypher monocypher-ed25519)
+    foreach(u ${_libssh2_units} mbedtls)
         list(APPEND _srcs ${LIBSSH2_DIR}/src/${u}.c)
     endforeach()
 
@@ -78,7 +98,8 @@ if(BUILD_SIMULATOR)
         ${LIBSSH2_DIR}/src
         ${LIBSSH2_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(libssh2_esp PRIVATE idfsim mbedcrypto ws2_32)
+    target_link_libraries(libssh2_esp PRIVATE idfsim mbedcrypto ws2_32
+        monocypher)   # crypto_* units come from components/monocypher
     if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(libssh2_esp PRIVATE
             -Wno-format -Wno-uninitialized -Wno-narrowing -Wno-error)
@@ -86,15 +107,15 @@ if(BUILD_SIMULATOR)
     return()
 endif()
 
-# ── ESP-IDF: mbedTLS crypto (+ vendored Monocypher for ed25519/x25519) ──────
+# ── ESP-IDF: mbedTLS crypto (Monocypher units come from components/monocypher)
 set(_srcs "")
-foreach(u ${_libssh2_units} mbedtls monocypher monocypher-ed25519)
+foreach(u ${_libssh2_units} mbedtls)
     list(APPEND _srcs ${LIBSSH2_DIR}/src/${u}.c)
 endforeach()
 
 idf_component_register(SRCS ${_srcs}
                        INCLUDE_DIRS ${LIBSSH2_DIR}/src ${LIBSSH2_DIR}/include .
-                       REQUIRES mbedtls esp_netif)
+                       REQUIRES mbedtls esp_netif monocypher)
 
 # libssh2 reads its build config from the vendored libssh2_config.h (on INCLUDE_DIRS ".").
 add_definitions("-DHAVE_CONFIG_H")

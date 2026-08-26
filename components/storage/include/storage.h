@@ -17,14 +17,9 @@
 #define STORAGE_H
 
 #include "esp_err.h"
-#include "display_fx.h"   /* display_fx_cfg_t (fx.ini settings) */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /* -------------------------------------------------------------------------
  * Types
@@ -64,27 +59,7 @@ typedef struct {
     char password[65];              /* WPA passphrase, "" = open net  */
 } wifi_profile_t;
 
-/* -------------------------------------------------------------------------
- * Shared credential scratch
- *
- * One internal-SRAM buffer for every transient profile/PSK staging job
- * (bundle adoption, remove-code restore, NVS migration, fallback seed,
- * the WiFi kick). All users run strictly serially on the app task and
- * finish with the buffer before returning, so they share safely; the
- * storage_save_* diversion layer keeps its OWN scratch because it is
- * called BY these users with this buffer as the source. Callers wipe
- * after use (keystore_wipe / memset).
- * ---------------------------------------------------------------------- */
-
-typedef struct {
-    union {
-        conn_profile_t profiles[STORAGE_MAX_PROFILES];  /* ~1.9 KB */
-        wifi_profile_t nets[STORAGE_WIFI_MAX];          /* ~0.8 KB */
-    } u;                       /* phases within one job never overlap */
-    wifi_profile_t one;        /* single-credential staging (migration) */
-} storage_cred_scratch_t;
-
-storage_cred_scratch_t *storage_cred_scratch(void);
+/* The shared credential scratch lives in storage_cred.h (opt-in). */
 
 /* -------------------------------------------------------------------------
  * Lifecycle
@@ -154,56 +129,7 @@ esp_err_t storage_wifi_load(wifi_profile_t *out, int *count, int max);
  */
 esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count);
 
-/* -------------------------------------------------------------------------
- * Render-effect settings (fx.ini)
- * ---------------------------------------------------------------------- */
-
-/**
- * Overlay fx settings from <mount_point>/fx.ini onto @p cfg.
- * Pre-fill @p cfg with display_fx_defaults(); keys absent from the file
- * keep their pre-filled values. Missing file: ESP_OK, cfg untouched.
- */
-esp_err_t storage_fx_load(display_fx_cfg_t *cfg);
-
-/**
- * Save fx settings to <mount_point>/fx.ini (atomic replace).
- */
-esp_err_t storage_fx_save(const display_fx_cfg_t *cfg);
-
-/* -------------------------------------------------------------------------
- * Terminal font size (font.ini)
- *
- * Kept out of fx.ini: fx settings are live-tunable and pushed to the ISR
- * mid-frame, whereas the font size is read exactly once at boot and only
- * takes effect on the next one.
- * ---------------------------------------------------------------------- */
-
-/**
- * Read the stored font size name ("8x16"/"10x20"/"12x24") into @p buf.
- * Missing file or key: ESP_ERR_NOT_FOUND, @p buf set to "" — the caller
- * applies its build default.
- */
-esp_err_t storage_font_load(char *buf, size_t buf_len);
-
-/**
- * Save the font size by name (atomic replace). Applied on next boot.
- */
-esp_err_t storage_font_save(const char *name);
-
-/**
- * Screensaver idle timeout in minutes (saver.ini) — doubles as the
- * auto-lock interval. Load always outputs a value (default 3, range
- * clamped 1..60); ESP_ERR_NOT_FOUND when no file exists yet.
- */
-esp_err_t storage_saver_load(uint32_t *idle_min);
-esp_err_t storage_saver_save(uint32_t idle_min);
-
-/**
- * Touch gesture toggles (touch.ini). Load always outputs a value
- * (default: enabled); ESP_ERR_NOT_FOUND when no file exists yet.
- */
-esp_err_t storage_touch_load(bool *scroll_edge);
-esp_err_t storage_touch_save(bool scroll_edge);
+/* Settings go through the generic kv API in storage_kv.h. */
 
 /* -------------------------------------------------------------------------
  * Known SSH host keys (TOFU pinning)
@@ -354,9 +280,5 @@ esp_err_t storage_ble_remove(const uint8_t addr[6]);
  * Delete ble_devices.ini entirely (factory reset BLE pairing list).
  */
 esp_err_t storage_ble_clear(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* STORAGE_H */

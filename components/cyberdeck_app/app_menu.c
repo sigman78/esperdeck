@@ -9,6 +9,7 @@
 #include "sdkconfig.h"       /* CONFIG_CYBERDECK_KEYSTORE (sim: -D flag) */
 #endif
 #include "app_screens.h"
+#include "app_settings.h"
 #include "app_widgets.h"
 #include "app_menu_defs.h"
 #include "display_fx.h"
@@ -27,7 +28,7 @@
 
 /* -------------------------------------------------------------------------
  * EFFECTS page — every runtime render-fx tunable as a value-cycling tile.
- * Values are quantized presets; fx.ini keeps byte-granular control.
+ * Values are quantized presets; settings.ini [fx] keeps byte-granular control.
  * ---------------------------------------------------------------------- */
 
 /* Tile order; the row-glow tiles exist only when compiled in. */
@@ -101,17 +102,19 @@ static int fx_menu_items(const char *out[], const char *bodies[],
 #define FONT_MENU_TILES  (FONT_SIZE_COUNT + 1)
 
 /* What the next boot will use — the active size unless a tile tapped this
- * session already wrote font.ini. Resolved when the page OPENS, not per
- * render: render_menu runs ~10 Hz and font.ini lives on littlefs. */
+ * session already wrote [font]. Resolved when the page OPENS, not per
+ * render: render_menu runs ~10 Hz and settings.ini lives on littlefs. */
 static font_size_t s_font_pending = FONT_SIZE_COUNT;   /* COUNT = unresolved */
 
 static void font_menu_refresh_pending(void)
 {
     s_font_pending = font_active_size();
-    char staged[16];
-    if (storage_font_load(staged, sizeof(staged)) == ESP_OK) {
+    cyberdeck_font_cfg_t fc = { .size = "" };
+    if (storage_kv_load(cyberdeck_settings_ini, cyberdeck_font_section,
+                        cyberdeck_font_fields, &fc) == ESP_OK &&
+        fc.size[0]) {
         for (int i = 0; i < FONT_SIZE_COUNT; i++)
-            if (strcmp(staged, font_size_name((font_size_t)i)) == 0) {
+            if (strcmp(fc.size, font_size_name((font_size_t)i)) == 0) {
                 s_font_pending = (font_size_t)i;
                 break;
             }
@@ -206,13 +209,13 @@ static int sys_menu_items(const char *out[], const char *bodies[],
     return SYS_MENU_TILES;
 }
 
-/* saver.ini write DEFERRED like fx.ini — a flash write pauses the render
+/* The [saver] write is DEFERRED like [fx] — a flash write pauses the render
  * ISR for the cache-off window, landing a visible hiccup on the keypress.
  * Flushed by menu_fx_flush() once the user leaves the page. */
 static bool s_saver_dirty = false;
 
 #if CONFIG_INPUT_TOUCH_SCROLL
-/* touch.ini write, deferred for the same reason as saver.ini above. */
+/* The [touch] write, deferred for the same reason as [saver] above. */
 static bool s_touch_dirty = false;
 #endif
 
@@ -231,7 +234,7 @@ static void sys_saver_cycle(void)
 
 /* Step the EFFECTS tunable at @p sel, persist, and (for the event effects)
  * arm a one-shot preview so the change is seen immediately. */
-/* fx changes apply live (display_fx_set) but the fx.ini flash write is
+/* fx changes apply live (display_fx_set) but the [fx] flash write is
  * DEFERRED until the user leaves the EFFECTS page: a write per toggle
  * paused the render ISR for the flash-cache-off window, landing a visible
  * hiccup exactly on the keypress. menu_fx_flush() runs from the app tick,
@@ -243,12 +246,16 @@ void menu_fx_flush(void)
     const bool on_system = (app.state == ST_MENU && app.menu.screen == MS_SYSTEM);
     if (s_saver_dirty && !on_system) {
         s_saver_dirty = false;
-        storage_saver_save(app.saver.idle_ms / 60000u);
+        app_saver_cfg_t sv = { .idle_min = app.saver.idle_ms / 60000u };
+        storage_kv_save(cyberdeck_settings_ini, app_saver_section,
+                        app_saver_fields, &sv);
     }
 #if CONFIG_INPUT_TOUCH_SCROLL
     if (s_touch_dirty && !on_system) {
         s_touch_dirty = false;
-        storage_touch_save(app.touch_scroll);
+        app_touch_cfg_t tc = { .scroll = app.touch_scroll };
+        storage_kv_save(cyberdeck_settings_ini, app_touch_section,
+                        app_touch_fields, &tc);
     }
 #endif
     if (!s_fx_dirty) return;
@@ -256,7 +263,7 @@ void menu_fx_flush(void)
     s_fx_dirty = false;
     display_fx_cfg_t c;
     display_fx_get(&c);
-    storage_fx_save(&c);
+    storage_kv_save(cyberdeck_settings_ini, app_fx_section, app_fx_fields, &c);
 }
 
 static void fx_menu_cycle(int sel)
@@ -298,7 +305,7 @@ static void fx_menu_cycle(int sel)
     default: return;
     }
     display_fx_set(&c);
-    s_fx_dirty = true;   /* fx.ini write deferred — see menu_fx_flush() */
+    s_fx_dirty = true;   /* [fx] write deferred — see menu_fx_flush() */
     if (sel == FXM_WIPE && c.wipe)             display_fx_wipe();
     if (sel == FXM_COLLAPSE && c.collapse)     display_fx_collapse();
     if (sel == FXM_STATIC && c.static_burst)   display_fx_static();
@@ -715,7 +722,10 @@ static void menu_activate(uint64_t now)
             menu_note(now, MENU_MSG_MS, false, note);
             return;
         }
-        if (storage_font_save(font_size_name(want)) != ESP_OK) {
+        cyberdeck_font_cfg_t fc;
+        snprintf(fc.size, sizeof(fc.size), "%s", font_size_name(want));
+        if (storage_kv_save(cyberdeck_settings_ini, cyberdeck_font_section,
+                            cyberdeck_font_fields, &fc) != ESP_OK) {
             menu_note(now, MENU_MSG_MS, false, "could not save font");
             return;
         }

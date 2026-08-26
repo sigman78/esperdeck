@@ -8,6 +8,8 @@
  */
 
 #include "storage.h"
+#include "storage_cred.h"
+#include "storage_kv.h"
 #include "storage_priv.h"
 #include "keystore.h"
 #include "esp_log.h"
@@ -94,28 +96,30 @@ static int parse_kv(const char *line, char *key, size_t keysz,
 }
 
 /* -------------------------------------------------------------------------
- * Atomic file replace: write to <path>.tmp, then swap into place.
- * A power cut mid-write leaves the old file intact (or a stray .tmp).
+ * Atomic file replace (public — see storage_kv.h)
  * ---------------------------------------------------------------------- */
 
-typedef struct {
-    FILE *f;
-    char  tmp[168];
-    char  dst[160];          /* holds key paths too (see storage_set_key) */
-} atomic_file_t;
-
-static FILE *atomic_open(atomic_file_t *af, const char *path)
+FILE *storage_atomic_open(storage_atomic_file_t *af, const char *path)
 {
-    snprintf(af->dst, sizeof(af->dst), "%s", path);
-    snprintf(af->tmp, sizeof(af->tmp), "%s.tmp", path);
+    af->f = NULL;
+    /* A truncated path would make tmp and dst name different files and
+     * the close rename onto the wrong one — refuse instead. */
+    if (snprintf(af->dst, sizeof(af->dst), "%s", path)
+            >= (int)sizeof(af->dst) ||
+        snprintf(af->tmp, sizeof(af->tmp), "%s.tmp", path)
+            >= (int)sizeof(af->tmp)) {
+        ESP_LOGE(TAG, "Path too long: '%s'", path);
+        return NULL;
+    }
     af->f = fopen(af->tmp, "w");
     if (!af->f)
         ESP_LOGE(TAG, "Cannot open '%s' for write: errno=%d", af->tmp, errno);
     return af->f;
 }
 
-static esp_err_t atomic_close(atomic_file_t *af)
+esp_err_t storage_atomic_close(storage_atomic_file_t *af)
 {
+    if (!af->f) return ESP_FAIL;       /* tolerate a failed open */
     if (fclose(af->f) != 0) {
         remove(af->tmp);
         return ESP_FAIL;
@@ -251,8 +255,8 @@ esp_err_t storage_profiles_write_raw(const conn_profile_t *profiles, int count)
     char path[128];
     profiles_path(path, sizeof(path));
 
-    atomic_file_t af;
-    FILE *f = atomic_open(&af, path);
+    storage_atomic_file_t af;
+    FILE *f = storage_atomic_open(&af, path);
     if (!f) return ESP_FAIL;
 
     for (int i = 0; i < count; i++) {
@@ -275,7 +279,7 @@ esp_err_t storage_profiles_write_raw(const conn_profile_t *profiles, int count)
         fprintf(f, "\n");
     }
 
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    if (storage_atomic_close(&af) != ESP_OK) return ESP_FAIL;
     ESP_LOGI(TAG, "Saved %d profile(s) to '%s'", count, path);
     return ESP_OK;
 }
@@ -422,8 +426,8 @@ esp_err_t storage_wifi_write_raw(const wifi_profile_t *profiles, int count)
     char path[128];
     wifi_path(path, sizeof(path));
 
-    atomic_file_t af;
-    FILE *f = atomic_open(&af, path);
+    storage_atomic_file_t af;
+    FILE *f = storage_atomic_open(&af, path);
     if (!f) return ESP_FAIL;
 
     for (int i = 0; i < count; i++) {
@@ -433,7 +437,7 @@ esp_err_t storage_wifi_write_raw(const wifi_profile_t *profiles, int count)
         fprintf(f, "\n");
     }
 
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    if (storage_atomic_close(&af) != ESP_OK) return ESP_FAIL;
     ESP_LOGI(TAG, "Saved %d WiFi profile(s)", count);
     return ESP_OK;
 }
@@ -499,243 +503,207 @@ bool storage_secrets_pending(void)
 }
 
 /* -------------------------------------------------------------------------
- * Render-effect settings — fx.ini, flat "key=value" lines.
- *
- * Table-driven: each key maps to one byte field of display_fx_cfg_t, so
- * load and save can't drift apart. Missing keys keep whatever the caller
- * pre-filled (pass display_fx_defaults() output); unknown keys are ignored,
- * and display_fx_set() range-clamps everything afterwards.
+ * Generic key=value settings — the storage_kv.h engine
  * ---------------------------------------------------------------------- */
 
-typedef struct {
-    const char *key;
-    size_t      off;      /* offsetof the uint8_t field in display_fx_cfg_t */
-} fx_field_t;
-
-static const fx_field_t fx_fields[] = {
-    { "scanlines",       offsetof(display_fx_cfg_t, scanlines)       },
-    { "bold_pop",        offsetof(display_fx_cfg_t, bold_pop)        },
-    { "mono",            offsetof(display_fx_cfg_t, mono)            },
-    { "glow",            offsetof(display_fx_cfg_t, glow)            },
-    { "glow_frames",     offsetof(display_fx_cfg_t, glow_frames)     },
-    { "glow_strength",   offsetof(display_fx_cfg_t, glow_strength)   },
-    { "wipe",            offsetof(display_fx_cfg_t, wipe)            },
-    { "wipe_frames",     offsetof(display_fx_cfg_t, wipe_frames)     },
-    { "collapse",        offsetof(display_fx_cfg_t, collapse)        },
-    { "collapse_frames", offsetof(display_fx_cfg_t, collapse_frames) },
-    { "static",          offsetof(display_fx_cfg_t, static_burst)    },
-    { "static_frames",   offsetof(display_fx_cfg_t, static_frames)   },
-    { "static_lines",    offsetof(display_fx_cfg_t, static_lines)    },
-    { "wobble",          offsetof(display_fx_cfg_t, wobble)          },
-};
-
-static void fx_path(char *buf, size_t bufsz)
+/* Numeric accept-range: explicit min/max, or the type width. */
+static void kv_range(const storage_kv_field_t *fd, uint32_t *lo, uint32_t *hi)
 {
-    snprintf(buf, bufsz, "%s/fx.ini", storage_platform_mount_point());
-}
-
-esp_err_t storage_fx_load(display_fx_cfg_t *cfg)
-{
-    if (!cfg) return ESP_ERR_INVALID_ARG;
-
-    char path[128];
-    fx_path(path, sizeof(path));
-
-    FILE *f = fopen(path, "r");
-    if (!f) return ESP_OK;   /* no file — caller keeps its defaults */
-
-    char line[128];
-    while (fgets(line, sizeof(line), f)) {
-        rtrim(line);
-        if (line[0] == '\0' || line[0] == '#' || line[0] == ';' ||
-            line[0] == '[')
-            continue;
-        char key[32], val[32];
-        if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
-        for (int i = 0; i < (int)(sizeof(fx_fields) / sizeof(fx_fields[0])); i++) {
-            if (strcmp(key, fx_fields[i].key) == 0) {
-                int v = atoi(val);
-                if (v < 0) v = 0;
-                if (v > 255) v = 255;
-                ((uint8_t *)cfg)[fx_fields[i].off] = (uint8_t)v;
-                break;
-            }
+    *lo = fd->min;
+    *hi = fd->max;
+    if (fd->min == 0 && fd->max == 0) {
+        switch (fd->type) {
+        case STORAGE_KV_U8:  *hi = UINT8_MAX;  break;
+        case STORAGE_KV_U16: *hi = UINT16_MAX; break;
+        default:             *hi = UINT32_MAX; break;
         }
     }
-    fclose(f);
-    ESP_LOGI(TAG, "Loaded fx settings");
-    return ESP_OK;
 }
 
-esp_err_t storage_fx_save(const display_fx_cfg_t *cfg)
+esp_err_t storage_kv_load(const char *filename, const char *section,
+                          const storage_kv_field_t *fields, void *obj)
 {
-    if (!cfg) return ESP_ERR_INVALID_ARG;
+    if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
+    if (section && strlen(section) >= STORAGE_KV_KEY_MAX)
+        return ESP_ERR_INVALID_ARG;
 
-    char path[128];
-    fx_path(path, sizeof(path));
-
-    atomic_file_t af;
-    FILE *f = atomic_open(&af, path);
-    if (!f) return ESP_FAIL;
-
-    for (int i = 0; i < (int)(sizeof(fx_fields) / sizeof(fx_fields[0])); i++)
-        fprintf(f, "%s=%u\n", fx_fields[i].key,
-                (unsigned)((const uint8_t *)cfg)[fx_fields[i].off]);
-
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
-    ESP_LOGI(TAG, "Saved fx settings");
-    return ESP_OK;
-}
-
-/* -------------------------------------------------------------------------
- * Terminal font size — font.ini
- *
- *   size=10x20
- *
- * Stored by NAME rather than by enum ordinal so the file stays readable and
- * survives a reordering of font_size_t.
- * ---------------------------------------------------------------------- */
-
-static void font_path(char *buf, size_t bufsz)
-{
-    snprintf(buf, bufsz, "%s/font.ini", storage_platform_mount_point());
-}
-
-esp_err_t storage_font_load(char *buf, size_t buf_len)
-{
-    if (!buf || buf_len == 0) return ESP_ERR_INVALID_ARG;
-    buf[0] = '\0';
-
-    char path[128];
-    font_path(path, sizeof(path));
+    char path[STORAGE_PATH_MAX];
+    snprintf(path, sizeof(path), "%s/%s",
+             storage_platform_mount_point(), filename);
 
     FILE *f = fopen(path, "r");
-    if (!f) return ESP_ERR_NOT_FOUND;
+    if (!f) return ESP_ERR_NOT_FOUND;   /* first boot — caller's defaults */
 
-    char line[64];
-    esp_err_t rc = ESP_ERR_NOT_FOUND;
+    bool in_section = (section == NULL);   /* flat mode: the whole file */
+    bool seen       = (section == NULL);
+    bool in_long    = false;               /* discarding an overlong line */
+
+    char line[STORAGE_KV_LINE_MAX];
     while (fgets(line, sizeof(line), f)) {
+        bool split = (strchr(line, '\n') == NULL && !feof(f));
+        bool tail  = in_long;
+        in_long = split;
+        if (tail || split) continue;       /* overlong lines are invalid */
         rtrim(line);
-        char key[32], val[32];
+        if (line[0] == '[') {
+            if (!section) continue;        /* flat mode ignores headers */
+            char name[STORAGE_KV_KEY_MAX];
+            in_section = parse_section(line, name, sizeof(name)) &&
+                         strcmp(name, section) == 0;
+            if (in_section) seen = true;
+            continue;
+        }
+        if (line[0] == '\0' || line[0] == '#' || line[0] == ';')
+            continue;
+        if (!in_section) continue;
+        char key[STORAGE_KV_KEY_MAX], val[STORAGE_KV_LINE_MAX];
         if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
-        if (strcmp(key, "size") == 0) {
-            snprintf(buf, buf_len, "%s", val);
-            rc = ESP_OK;
+
+        for (const storage_kv_field_t *fd = fields; fd->key; fd++) {
+            if (strcmp(key, fd->key) != 0) continue;
+            uint8_t *p = (uint8_t *)obj + fd->off;
+
+            if (fd->type == STORAGE_KV_STR) {
+                snprintf((char *)p, fd->len, "%s", val);
+            } else if (fd->type == STORAGE_KV_BOOL) {
+                bool b = (strtoul(val, NULL, 10) != 0);
+                memcpy(p, &b, sizeof(b));
+            } else {
+                const char *s = val;
+                while (*s == ' ' || *s == '\t') s++;
+                if (*s == '-') break;            /* negative: default wins */
+                errno = 0;
+                uint32_t v = (uint32_t)strtoul(s, NULL, 10);
+                if (errno == ERANGE) break;      /* overflow: default wins */
+                uint32_t lo, hi;
+                kv_range(fd, &lo, &hi);
+                if (v < lo || v > hi) break;     /* default wins */
+                if (fd->type == STORAGE_KV_U8) {
+                    uint8_t u = (uint8_t)v;   memcpy(p, &u, sizeof(u));
+                } else if (fd->type == STORAGE_KV_U16) {
+                    uint16_t u = (uint16_t)v; memcpy(p, &u, sizeof(u));
+                } else {
+                    memcpy(p, &v, sizeof(v));
+                }
+            }
             break;
         }
     }
     fclose(f);
-    return rc;
-}
-
-esp_err_t storage_font_save(const char *name)
-{
-    if (!name || !name[0]) return ESP_ERR_INVALID_ARG;
-
-    char path[128];
-    font_path(path, sizeof(path));
-
-    atomic_file_t af;
-    FILE *f = atomic_open(&af, path);
-    if (!f) return ESP_FAIL;
-
-    fprintf(f, "size=%s\n", name);
-
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
-    ESP_LOGI(TAG, "Saved font size '%s' (applies on reboot)", name);
+    if (!seen) return ESP_ERR_NOT_FOUND;   /* file there, section not */
+    ESP_LOGI(TAG, "Loaded settings '%s'", filename);
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * Screensaver idle timeout — saver.ini ("idle_min=3"); doubles as the
- * auto-lock interval (the deck locks when the saver engages).
- * ---------------------------------------------------------------------- */
-
-static void saver_path(char *buf, size_t bufsz)
+static void kv_write_fields(FILE *f, const storage_kv_field_t *fields,
+                            const void *obj)
 {
-    snprintf(buf, bufsz, "%s/saver.ini", storage_platform_mount_point());
-}
-
-esp_err_t storage_saver_load(uint32_t *idle_min)
-{
-    if (!idle_min) return ESP_ERR_INVALID_ARG;
-    *idle_min = 3;                              /* default: 3 minutes */
-
-    char path[128];
-    saver_path(path, sizeof(path));
-    FILE *f = fopen(path, "r");
-    if (!f) return ESP_ERR_NOT_FOUND;
-
-    char line[64];
-    while (fgets(line, sizeof(line), f)) {
-        rtrim(line);
-        char key[32], val[32];
-        if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
-        if (strcmp(key, "idle_min") == 0) {
-            unsigned v = (unsigned)strtoul(val, NULL, 10);
-            if (v >= 1 && v <= 60) *idle_min = v;
+    for (const storage_kv_field_t *fd = fields; fd->key; fd++) {
+        const uint8_t *p = (const uint8_t *)obj + fd->off;
+        if (fd->type == STORAGE_KV_STR) {
+            fprintf(f, "%s=%s\n", fd->key, (const char *)p);
+        } else if (fd->type == STORAGE_KV_BOOL) {
+            bool b; memcpy(&b, p, sizeof(b));
+            fprintf(f, "%s=%d\n", fd->key, b ? 1 : 0);
+        } else if (fd->type == STORAGE_KV_U8) {
+            fprintf(f, "%s=%u\n", fd->key, (unsigned)*p);
+        } else if (fd->type == STORAGE_KV_U16) {
+            uint16_t u; memcpy(&u, p, sizeof(u));
+            fprintf(f, "%s=%u\n", fd->key, (unsigned)u);
+        } else {
+            uint32_t u; memcpy(&u, p, sizeof(u));
+            fprintf(f, "%s=%u\n", fd->key, (unsigned)u);
         }
     }
-    fclose(f);
-    return ESP_OK;
 }
 
-esp_err_t storage_saver_save(uint32_t idle_min)
+esp_err_t storage_kv_save(const char *filename, const char *section,
+                          const storage_kv_field_t *fields, const void *obj)
 {
-    char path[128];
-    saver_path(path, sizeof(path));
+    if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
+    if (section && strlen(section) >= STORAGE_KV_KEY_MAX)
+        return ESP_ERR_INVALID_ARG;
+    for (const storage_kv_field_t *fd = fields; fd->key; fd++)
+        if (strlen(fd->key) >= STORAGE_KV_KEY_MAX)
+            return ESP_ERR_INVALID_ARG;   /* would save but never load */
 
-    atomic_file_t af;
-    FILE *f = atomic_open(&af, path);
+    char path[STORAGE_PATH_MAX];
+    snprintf(path, sizeof(path), "%s/%s",
+             storage_platform_mount_point(), filename);
+
+    storage_atomic_file_t af;
+    FILE *f = storage_atomic_open(&af, path);
     if (!f) return ESP_FAIL;
-    fprintf(f, "idle_min=%u\n", (unsigned)idle_min);
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
-    ESP_LOGI(TAG, "Saved saver timeout (%u min)", (unsigned)idle_min);
-    return ESP_OK;
-}
 
-/* -------------------------------------------------------------------------
- * Touch gesture toggles — touch.ini ("scroll=1")
- * ---------------------------------------------------------------------- */
-
-static void touch_path(char *buf, size_t bufsz)
-{
-    snprintf(buf, bufsz, "%s/touch.ini", storage_platform_mount_point());
-}
-
-esp_err_t storage_touch_load(bool *scroll_edge)
-{
-    if (!scroll_edge) return ESP_ERR_INVALID_ARG;
-    *scroll_edge = true;                        /* default: gesture on */
-
-    char path[128];
-    touch_path(path, sizeof(path));
-    FILE *f = fopen(path, "r");
-    if (!f) return ESP_ERR_NOT_FOUND;
-
-    char line[64];
-    while (fgets(line, sizeof(line), f)) {
-        rtrim(line);
-        char key[32], val[32];
-        if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
-        if (strcmp(key, "scroll") == 0)
-            *scroll_edge = (strtoul(val, NULL, 10) != 0);
+    if (!section) {
+        kv_write_fields(f, fields, obj);       /* flat: whole file is ours */
+    } else {
+        /* Streamed RMW: foreign sections pass through verbatim, our
+         * section is regenerated in place (duplicates absorbed).
+         * Single-writer. Overlong lines pass through opaquely — only a
+         * whole line can be a header. */
+        bool written = false, in_ours = false, in_long = false;
+        FILE *src = fopen(path, "r");
+        if (src) {
+            char line[STORAGE_KV_LINE_MAX];
+            while (fgets(line, sizeof(line), src)) {
+                bool split = (strchr(line, '\n') == NULL && !feof(src));
+                bool tail  = in_long;
+                in_long = split;
+                if (!tail && !split) {
+                    char probe[STORAGE_KV_LINE_MAX];
+                    snprintf(probe, sizeof(probe), "%s", line);
+                    rtrim(probe);
+                    if (probe[0] == '[') {
+                        char name[STORAGE_KV_KEY_MAX];
+                        if (parse_section(probe, name, sizeof(name)) &&
+                            strcmp(name, section) == 0) {
+                            in_ours = true;
+                            if (!written) {
+                                fprintf(f, "[%s]\n", section);
+                                kv_write_fields(f, fields, obj);
+                                fputs("\n", f);
+                                written = true;
+                            }
+                            continue;
+                        }
+                        in_ours = false;
+                    }
+                }
+                if (in_ours) continue;         /* old body of our section */
+                fputs(line, f);
+            }
+            fclose(src);
+        }
+        if (!written) {
+            if (ftell(f) > 0) fputs("\n", f);  /* separate from prior text */
+            fprintf(f, "[%s]\n", section);
+            kv_write_fields(f, fields, obj);
+        }
     }
-    fclose(f);
+
+    if (storage_atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    if (section)
+        ESP_LOGI(TAG, "Saved settings '%s' [%s]", filename, section);
+    else
+        ESP_LOGI(TAG, "Saved settings '%s'", filename);
     return ESP_OK;
 }
 
-esp_err_t storage_touch_save(bool scroll_edge)
-{
-    char path[128];
-    touch_path(path, sizeof(path));
+/* ---- factory-reset registry (see storage_reset_register in storage_kv.h) */
 
-    atomic_file_t af;
-    FILE *f = atomic_open(&af, path);
-    if (!f) return ESP_FAIL;
-    fprintf(f, "scroll=%d\n", scroll_edge ? 1 : 0);
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
-    ESP_LOGI(TAG, "Saved touch scroll gesture (%s)", scroll_edge ? "on" : "off");
+#define RESET_REG_MAX 16   /* settings.ini today; headroom for plugins */
+
+static const char *s_reset_files[RESET_REG_MAX];
+static int         s_reset_count;
+
+esp_err_t storage_reset_register(const char *filename)
+{
+    if (!filename || !filename[0]) return ESP_ERR_INVALID_ARG;
+    for (int i = 0; i < s_reset_count; i++)
+        if (strcmp(s_reset_files[i], filename) == 0) return ESP_OK;
+    if (s_reset_count >= RESET_REG_MAX) return ESP_ERR_NO_MEM;
+    s_reset_files[s_reset_count++] = filename;   /* pointer retained */
     return ESP_OK;
 }
 
@@ -839,13 +807,13 @@ esp_err_t storage_known_host_set(const char *host, uint16_t port,
     snprintf(kh->keys[idx], sizeof(kh->keys[idx]), "%s", want);
     snprintf(kh->vals[idx], sizeof(kh->vals[idx]), "%s", fp_hex);
 
-    atomic_file_t af;
-    f = atomic_open(&af, path);
+    storage_atomic_file_t af;
+    f = storage_atomic_open(&af, path);
     if (!f) { free(kh); return ESP_FAIL; }
     for (int i = 0; i < n; i++)
         fprintf(f, "%s=%s\n", kh->keys[i], kh->vals[i]);
     free(kh);
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    if (storage_atomic_close(&af) != ESP_OK) return ESP_FAIL;
 
     ESP_LOGI(TAG, "Pinned host key for %s", want);
     return ESP_OK;
@@ -888,13 +856,13 @@ esp_err_t storage_known_host_delete(const char *host, uint16_t port)
     }
     if (w == n) { free(kh); return ESP_ERR_NOT_FOUND; }
 
-    atomic_file_t af;
-    f = atomic_open(&af, path);
+    storage_atomic_file_t af;
+    f = storage_atomic_open(&af, path);
     if (!f) { free(kh); return ESP_FAIL; }
     for (int i = 0; i < w; i++)
         fprintf(f, "%s=%s\n", kh->keys[i], kh->vals[i]);
     free(kh);
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    if (storage_atomic_close(&af) != ESP_OK) return ESP_FAIL;
 
     ESP_LOGI(TAG, "Unpinned host key for %s", want);
     return ESP_OK;
@@ -996,8 +964,8 @@ esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
 
     /* tmp+rename like the INI writers: a power cut mid-write must never turn
      * an existing, working key into a truncated one. */
-    atomic_file_t af;
-    FILE *f = atomic_open(&af, path);
+    storage_atomic_file_t af;
+    FILE *f = storage_atomic_open(&af, path);
     if (!f) return ESP_FAIL;
 
     size_t n = fwrite(pem, 1, len, f);
@@ -1008,7 +976,7 @@ esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
         remove(af.tmp);
         return ESP_FAIL;
     }
-    if (atomic_close(&af) != ESP_OK) return ESP_FAIL;
+    if (storage_atomic_close(&af) != ESP_OK) return ESP_FAIL;
 
     ESP_LOGI(TAG, "Wrote key '%s' (%zu bytes)", key_id, len);
     return ESP_OK;
@@ -1228,17 +1196,24 @@ static void wipe_keys_dir(void)
 esp_err_t storage_factory_reset(void)
 {
     const char *mp = storage_platform_mount_point();
-    /* profiles.ini and wifi.ini hold plaintext passwords/PSKs — shred them
-     * (best-effort, see storage_shred_file); the rest is not sensitive. */
+    /* profiles.ini and wifi.ini hold plaintext credentials — shred them;
+     * settings files come in via storage_reset_register. The last four
+     * are pre-2026-08 tombstones (the lock.ini precedent): nothing
+     * writes them anymore, but upgraded decks still carry them. */
     static const char *files[] = {
         "profiles.ini", "wifi.ini", "known_hosts.ini", "ble_devices.ini",
-        "fx.ini", "keystore.kv1", "lock.ini", "backoff.cnt", "saver.ini",
+        "keystore.kv1", "lock.ini", "backoff.cnt",
+        "fx.ini", "saver.ini", "touch.ini", "font.ini",
     };
     char path[160];
     for (int i = 0; i < (int)(sizeof(files) / sizeof(files[0])); i++) {
         snprintf(path, sizeof(path), "%s/%s", mp, files[i]);
         if (i < 2) storage_shred_file(path);
         else       remove(path);
+    }
+    for (int i = 0; i < s_reset_count; i++) {
+        snprintf(path, sizeof(path), "%s/%s", mp, s_reset_files[i]);
+        remove(path);
     }
     wipe_keys_dir();
     keystore_reset_cache();   /* wipe the in-RAM MK + stale header cache */

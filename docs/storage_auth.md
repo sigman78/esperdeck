@@ -432,7 +432,8 @@ the littlefs image never needs plaintext:
   derivation meanwhile. Success clears the counter. There is no
   auto-wipe.
 - **Saver timeout / auto-lock interval** — SYSTEM menu "Saver + lock
-  after": 1 / 3 / 5 / 10 / 30 min (`saver.ini`, default 3). One knob
+  after": 1 / 3 / 5 / 10 / 30 min (`settings.ini` `[saver]`, default
+  3). One knob
   on purpose: the saver engaging IS the auto-lock (it wipes the MK),
   so the rain delay and the lock delay cannot drift apart.
 - An empty or absent keystore turns the feature off, with zero

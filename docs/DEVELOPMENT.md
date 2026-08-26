@@ -53,7 +53,8 @@ Two flash targets matter:
   `sim_storage/` (below) so a reprovision restores it instead of erasing
   it.
 
-The terminal font size is a menu setting (`font.ini`) applied on reboot.
+The terminal font size is a menu setting (`settings.ini` `[font]`)
+applied on reboot.
 Which sizes are *linked into the build* — and which one is the boot
 default — are Kconfig options (`CYBERDECK_FONT_RT_8X16` / `_10X20` /
 `_12X24`, plus the `CYBERDECK_FONT_DEFAULT` choice; the bold face is
@@ -87,7 +88,7 @@ cp -r sim_storage.example sim_storage      # once, then edit
 sim_storage/
   profiles.ini       # connection profiles (host/user/auth per section)
   wifi.ini           # WiFi credentials
-  fx.ini             # CRT effect settings (optional)
+  settings.ini       # [fx]/[font]/[saver]/[touch] sections (optional)
   known_hosts.ini    # pinned host-key fingerprints (optional)
   keys/              # SSH private keys (PEM) + optional .pub companions,
                      # referenced from profiles.ini by file name

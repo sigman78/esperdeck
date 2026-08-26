@@ -31,6 +31,7 @@
 #include "splash.h"
 #include "ssh_client.h"
 #include "storage.h"
+#include "storage_kv.h"
 #include "vterm.h"
 #include "wifi_manager.h"
 
@@ -158,14 +159,16 @@ static font_size_t boot_font_size(void)
     font_size_t want = FONT_SIZE_8X16;
 #endif
 
-    char stored[16];
-    if (storage_font_load(stored, sizeof(stored)) == ESP_OK) {
+    cyberdeck_font_cfg_t fc = { .size = "" };
+    storage_kv_load(cyberdeck_settings_ini, cyberdeck_font_section,
+                    cyberdeck_font_fields, &fc);
+    if (fc.size[0]) {
         for (int i = 0; i < FONT_SIZE_COUNT; i++) {
             /* Availability, not just the name: honouring a size this build
              * dropped would send font_init() to its last-resort "first
              * linked size", overriding the configured default. */
             if (font_size_available((font_size_t)i) &&
-                strcmp(stored, font_size_name((font_size_t)i)) == 0) {
+                strcmp(fc.size, font_size_name((font_size_t)i)) == 0) {
                 want = (font_size_t)i;
                 break;
             }

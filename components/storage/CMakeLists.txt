@@ -24,9 +24,9 @@ cyberdeck_component_register(
     SRCS_DEV     storage_dev.c
     SRCS_SIM     storage_sim.c
     INCLUDE_DIRS include
-    REQUIRES     display            # display_fx.h (fx.ini settings struct)
-                 libssh2_esp        # monocypher.h/.c (keystore crypto)
+    REQUIRES     monocypher         # keystore crypto (argon2, AEAD, wipe)
     REQUIRES_DEV nvs_flash          # littlefs auto-required via idf_component.yml
+                 esp_timer          # keystore backoff clock
 )
 
 # Seed the device littlefs partition from sim_storage/ (gitignored — holds

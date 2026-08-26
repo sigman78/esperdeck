@@ -76,9 +76,9 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
 
 *Wiring debt:*
 
-- Leaky edges: `storage → display` (only for `display_fx.h`; the keystore
-  tests fake the header to escape it) and `storage → libssh2_esp` (only to
-  reach vendored monocypher).
+- ~~Leaky edges: `storage → display` and `storage → libssh2_esp`~~ — fixed
+  by item 1 (2026-08-26): fx serialization moved behind the shell's kv
+  table, monocypher became its own component.
 - **Transport fused to presentation** (2026-08-25 boundary audit):
   `ssh_client.c`'s drain loop calls `vterm_feed`/`vterm_flush` directly,
   registers the terminal's response callback itself, and reads the PTY
@@ -92,12 +92,12 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
   keystroke; the shell then *decodes* those same bytes back into logical
   keys (`decode_key`) for UI navigation. The round-trip marks the
   encoding as one layer too low.
-- **`storage.h` is a god-header**: it defines the domain types
-  (`conn_profile_t`, `wifi_profile_t`, `ble_device_info_t` — why wifi,
-  input and the shell include it from their own public headers), pulls in
-  `display_fx.h`, and exports the shared credential scratch — a sharp
-  internal staging contract — to every includer. The types stay (a
-  types-only component is ceremony); the scratch and the fx include go.
+- **`storage.h` is the domain-type home**: it defines `conn_profile_t`,
+  `wifi_profile_t`, `ble_device_info_t` — why wifi, input and the shell
+  include it from their own public headers. Deliberate (a types-only
+  component is ceremony). The god-header aspects — the `display_fx.h`
+  include and the exported credential scratch — were fixed by item 1
+  (2026-08-26): the scratch now lives in opt-in `storage_cred.h`.
 - The `input` component is invisible to the simulator; `sim/main.c`
   hand-mirrors the GT911 touch state machine, constants synced by comment.
   Same hazard class: `cyberdeck_input_t` mirrors `input_event_t`
@@ -230,7 +230,7 @@ in-tree features. Tick items as they merge.
 
 ### Phase 1 — foundations that pay off regardless of plugins
 
-- [ ] **1. Generic settings API.** Public `storage_kv_load/save(file,
+- [x] **1. Generic settings API.** Public `storage_kv_load/save(file,
       const kv_field_t*, void*)` (u8/u16/bool/string) generalizing
       `fx_fields[]`; expose the atomic-write pair; migrate
       `fx/font/saver/touch.ini`; factory reset iterates a registered file
@@ -364,3 +364,33 @@ in-tree features. Tick items as they merge.
   Deliberate non-fixes, per the proportionality rule: `vterm ↔ display`
   stays fused (the render data plane), `wifi`/`input` keep owning their
   persistence, domain types stay in `storage.h`.
+- **2026-08-26** — **item 1 MERGED-READY** (branch `feat/storage-kv`):
+  public `storage_kv.h` (typed field tables, accept-ranges, atomic pair,
+  `storage_reset_register`); fx/saver/touch/font.ini migrated — tables
+  live in the shell's new `app_settings.c` (the seed of item 3's settings
+  model; font.ini's one-field schema is mirrored in `main/main.c`, the
+  boot reader). Both leaky edges broken: fx table moved caller-side
+  (fake test header deleted), monocypher now its own vendored component
+  that libssh2_esp consumes — with a configure-time hash check keeping it
+  bit-identical to the fork's own copy. Cred scratch de-exported to
+  `storage_cred.h`. New bare-context suite `tests/storage_kv` (8 tests).
+  Two behavior notes: factory reset now also clears touch.ini + font.ini
+  (their absence from the old hardcoded list was an oversight), and
+  hand-edited out-of-range numeric values are now ignored (default wins)
+  instead of clamped. Surfaced along the way: storage's device build had
+  been riding `display`'s REQUIRES for `esp_timer.h` — now declared.
+- **2026-08-26 (later)** — review feedback folded in: the per-setting
+  file zoo is gone. `storage_kv_load/save` gained a `section` parameter
+  (NULL = flat file); the sectioned save is a streaming read-modify-write
+  that preserves foreign sections verbatim (single-writer — the shell
+  task, where every settings write already runs). The shell's four
+  settings collapsed into one `settings.ini` (`[fx]/[saver]/[touch]/
+  [font]`); no legacy migration on purpose (pre-release, no installed
+  base) — old per-setting files are simply dead. Registries/security
+  files deliberately stay separate: profiles/wifi/known_hosts/
+  ble_devices are sectioned or growing registries, `keystore.kv1` is the
+  sealed store, `backoff.cnt` is the keystore's adversarial counter
+  (written while LOCKED, must stay writable without the master key), and
+  `lock.ini` is a retired tombstone kept only in the reset wipe list.
+  Suite grown to 11 tests (sectioned round-trip, foreign-line
+  preservation, section-absent).

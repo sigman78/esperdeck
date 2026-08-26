@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
-project(keystore_unit_tests C)
+project(storage_kv_unit_tests C)
 set(CMAKE_C_STANDARD 11)
 
-# CPM.cmake bootstrap — shared with sim/
+# CPM.cmake bootstrap — shared with sim/ and the other suites
 include(../../cmake/get_cpm.cmake)
 
 CPMAddPackage(
@@ -13,25 +13,23 @@ CPMAddPackage(
 )
 
 set(STORAGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../components/storage)
-set(MONO_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/../../components/monocypher)
 
 add_subdirectory(../../idfsim ${CMAKE_CURRENT_BINARY_DIR}/idfsim)
 
-add_executable(test_keystore
-    test_keystore.c
-    ${STORAGE_DIR}/keystore.c
+# keystore_stub.c keeps the vault inert — no crypto compiled at all.
+add_executable(test_storage_kv
+    test_storage_kv.c
     ${STORAGE_DIR}/storage.c
-    ${MONO_DIR}/monocypher.c
+    ${STORAGE_DIR}/keystore_stub.c
 )
 
-target_include_directories(test_keystore PRIVATE
+target_include_directories(test_storage_kv PRIVATE
     ${STORAGE_DIR}
     ${STORAGE_DIR}/include
-    ${MONO_DIR}
     ${unity_SOURCE_DIR}/src
 )
 
-target_link_libraries(test_keystore PRIVATE unity idfsim)
+target_link_libraries(test_storage_kv PRIVATE unity idfsim)
 
 enable_testing()
-add_test(NAME keystore_tests COMMAND test_keystore)
+add_test(NAME storage_kv_tests COMMAND test_storage_kv)
