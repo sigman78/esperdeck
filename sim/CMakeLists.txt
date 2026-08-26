@@ -63,8 +63,6 @@ CPMAddPackage(
 )
 
 # Component dependency order: idfsim -> font -> display -> tsm -> vterm -> ...
-# monocypher must precede libssh2_esp (its pin check reads the global
-# property monocypher publishes) and storage (link dependency).
 add_subdirectory(${ROOT}/idfsim                    idfsim)
 add_subdirectory(${ROOT}/components/font           font)
 add_subdirectory(${ROOT}/components/display        display)

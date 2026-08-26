@@ -63,8 +63,7 @@ typedef struct {
     char password[65];              /* WPA passphrase, "" = open net  */
 } wifi_profile_t;
 
-/* The shared credential scratch lives in storage_cred.h — a deliberate
- * opt-in include for the few staging call sites, not general API. */
+/* The shared credential scratch lives in storage_cred.h (opt-in). */
 
 /* -------------------------------------------------------------------------
  * Lifecycle
@@ -134,9 +133,7 @@ esp_err_t storage_wifi_load(wifi_profile_t *out, int *count, int max);
  */
 esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count);
 
-/* Settings files (fx.ini, font.ini, saver.ini, touch.ini, ...) go through
- * the generic kv API in storage_kv.h — the owning feature keeps the field
- * table and the defaults; storage only knows key=value. */
+/* Settings go through the generic kv API in storage_kv.h. */
 
 /* -------------------------------------------------------------------------
  * Known SSH host keys (TOFU pinning)

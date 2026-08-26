@@ -96,7 +96,7 @@ static int parse_kv(const char *line, char *key, size_t keysz,
 }
 
 /* -------------------------------------------------------------------------
- * Atomic file replace — public since the kv API went public (storage_kv.h).
+ * Atomic file replace (public — see storage_kv.h)
  * ---------------------------------------------------------------------- */
 
 FILE *storage_atomic_open(storage_atomic_file_t *af, const char *path)
@@ -494,14 +494,10 @@ bool storage_secrets_pending(void)
 }
 
 /* -------------------------------------------------------------------------
- * Generic key=value settings — the storage_kv.h engine.
- *
- * Grown from the old fx.ini table: one field table drives both load and
- * save so they cannot drift apart. The tables (and the defaults) belong
- * to the owning feature; storage knows only key=value.
+ * Generic key=value settings — the storage_kv.h engine
  * ---------------------------------------------------------------------- */
 
-/* Numeric accept-range for a field: explicit min/max, or the type width. */
+/* Numeric accept-range: explicit min/max, or the type width. */
 static void kv_range(const storage_kv_field_t *fd, uint32_t *lo, uint32_t *hi)
 {
     *lo = fd->min;
@@ -617,11 +613,8 @@ esp_err_t storage_kv_save(const char *filename, const char *section,
     if (!section) {
         kv_write_fields(f, fields, obj);       /* flat: whole file is ours */
     } else {
-        /* Read-modify-write, streamed line by line: foreign sections and
-         * their comments pass through verbatim; our section is dropped
-         * where found and regenerated in place (a duplicate [section]
-         * later in the file is absorbed). Single-writer only — see
-         * storage_kv.h. */
+        /* Streamed RMW: foreign lines pass through verbatim, our section
+         * is regenerated in place (duplicates absorbed). Single-writer. */
         bool written = false, in_ours = false;
         FILE *src = fopen(path, "r");
         if (src) {
@@ -1171,10 +1164,8 @@ static void wipe_keys_dir(void)
 esp_err_t storage_factory_reset(void)
 {
     const char *mp = storage_platform_mount_point();
-    /* profiles.ini and wifi.ini hold plaintext passwords/PSKs — shred them
-     * (best-effort, see storage_shred_file); the rest is not sensitive.
-     * Settings files (fx/saver/touch/font.ini, ...) are no longer listed
-     * here: their owners register them (storage_reset_register). */
+    /* profiles.ini and wifi.ini hold plaintext credentials — shred them;
+     * settings files come in via storage_reset_register. */
     static const char *files[] = {
         "profiles.ini", "wifi.ini", "known_hosts.ini", "ble_devices.ini",
         "keystore.kv1", "lock.ini", "backoff.cnt",

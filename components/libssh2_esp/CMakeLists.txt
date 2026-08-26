@@ -44,40 +44,17 @@ FetchContent_MakeAvailable(libssh2_src)
 
 set(LIBSSH2_DIR ${libssh2_src_SOURCE_DIR})
 
-# Monocypher comes from components/monocypher (one definition of the
-# crypto_* symbols image-wide; the keystore links the same ones). The fork
-# still VENDORS its own copy — mbedtls.c compiles against that header — so
-# pin-check it against the component's fetched source: silent drift between
-# the two would be an ABI landmine. Fail-open when the property is unset
-# (the standalone test projects configure this file without the component).
-get_property(_mc_dir GLOBAL PROPERTY MONOCYPHER_SRC_DIR)
-if(_mc_dir)
-    foreach(_pair "monocypher.c;monocypher.c"
-                  "monocypher.h;monocypher.h"
-                  "monocypher-ed25519.c;optional/monocypher-ed25519.c"
-                  "monocypher-ed25519.h;optional/monocypher-ed25519.h")
-        list(GET _pair 0 _fork_name)
-        list(GET _pair 1 _upstream_name)
-        file(READ ${LIBSSH2_DIR}/src/${_fork_name} _fork_text)
-        file(READ ${_mc_dir}/${_upstream_name} _upstream_text)
-        # The one sanctioned difference: upstream's git tree says
-        # "version __git__" on line 1 where the fork vendored the stamped
-        # release header. Neutralize it before comparing.
-        string(REGEX REPLACE "^// Monocypher version [^\n]*" ""
-               _fork_text "${_fork_text}")
-        string(REGEX REPLACE "^// Monocypher version [^\n]*" ""
-               _upstream_text "${_upstream_text}")
-        string(SHA256 _fork_hash "${_fork_text}")
-        string(SHA256 _upstream_hash "${_upstream_text}")
-        if(NOT _fork_hash STREQUAL _upstream_hash)
-            message(FATAL_ERROR
-                "libssh2 fork's vendored ${_fork_name} differs from the "
-                "components/monocypher copy (upstream ${_upstream_name}). "
-                "Re-pin one side: both MUST build the same Monocypher, or "
-                "the ed25519/keystore crypto splits ABI.")
-        endif()
-    endforeach()
-endif()
+# Monocypher objects come from components/monocypher, but the fork still
+# vendors its own copy and mbedtls.c compiles against that header — the two
+# must stay bit-identical or the crypto ABI splits.
+foreach(_f monocypher.c monocypher.h monocypher-ed25519.c monocypher-ed25519.h)
+    file(SHA256 ${LIBSSH2_DIR}/src/${_f} _fork_hash)
+    file(SHA256 ${CMAKE_CURRENT_LIST_DIR}/../monocypher/${_f} _ours_hash)
+    if(NOT _fork_hash STREQUAL _ours_hash)
+        message(FATAL_ERROR "components/monocypher/${_f} differs from the "
+                "libssh2 fork's vendored copy — re-pin one side.")
+    endif()
+endforeach()
 
 # Common libssh2 translation units; the crypto backend file is appended per build.
 set(_libssh2_units

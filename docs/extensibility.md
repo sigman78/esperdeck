@@ -370,10 +370,9 @@ in-tree features. Tick items as they merge.
   live in the shell's new `app_settings.c` (the seed of item 3's settings
   model; font.ini's one-field schema is mirrored in `main/main.c`, the
   boot reader). Both leaky edges broken: fx table moved caller-side
-  (fake test header deleted), monocypher now its own CPM-pinned
-  component that libssh2_esp consumes — with a configure-time
-  content check against the fork's vendored copy (it already caught the
-  benign `__git__` version-line difference). Cred scratch de-exported to
+  (fake test header deleted), monocypher now its own vendored component
+  that libssh2_esp consumes — with a configure-time hash check keeping it
+  bit-identical to the fork's own copy. Cred scratch de-exported to
   `storage_cred.h`. New bare-context suite `tests/storage_kv` (8 tests).
   Two behavior notes: factory reset now also clears touch.ini + font.ini
   (their absence from the old hardcoded list was an oversight), and

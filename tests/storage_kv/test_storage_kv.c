@@ -1,9 +1,6 @@
 /*
- * test_storage_kv.c — unit tests for the generic key=value settings API
- * (storage_kv.h): table-driven load/save, defaults, accept-ranges, the
- * atomic-write pair, and the factory-reset registry. Runs against the
- * inert keystore stub — the barest context the public API must serve
- * (docs/extensibility.md, phase 1).
+ * test_storage_kv.c — the generic key=value settings API (storage_kv.h):
+ * load/save, defaults, ranges, sections, the atomic pair, reset registry.
  */
 
 #include "unity.h"

@@ -12,17 +12,8 @@ CPMAddPackage(
     GIT_SHALLOW TRUE
 )
 
-# Same Monocypher version the libssh2 fork vendors — the keystore file
-# formats must be bit-compatible with the sim/device builds.
-CPMAddPackage(
-    NAME       Monocypher
-    GITHUB_REPOSITORY LoupVaillant/Monocypher
-    GIT_TAG    4.0.2
-    GIT_SHALLOW TRUE
-    DOWNLOAD_ONLY YES
-)
-
 set(STORAGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../components/storage)
+set(MONO_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/../../components/monocypher)
 
 add_subdirectory(../../idfsim ${CMAKE_CURRENT_BINARY_DIR}/idfsim)
 
@@ -30,13 +21,13 @@ add_executable(test_keystore
     test_keystore.c
     ${STORAGE_DIR}/keystore.c
     ${STORAGE_DIR}/storage.c
-    ${Monocypher_SOURCE_DIR}/src/monocypher.c
+    ${MONO_DIR}/monocypher.c
 )
 
 target_include_directories(test_keystore PRIVATE
     ${STORAGE_DIR}
     ${STORAGE_DIR}/include
-    ${Monocypher_SOURCE_DIR}/src
+    ${MONO_DIR}
     ${unity_SOURCE_DIR}/src
 )
 

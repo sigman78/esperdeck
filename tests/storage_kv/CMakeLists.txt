@@ -16,9 +16,7 @@ set(STORAGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../components/storage)
 
 add_subdirectory(../../idfsim ${CMAKE_CURRENT_BINARY_DIR}/idfsim)
 
-# keystore_stub.c: the inert vault answers ABSENT forever — the kv engine,
-# the atomic pair and the reset registry get exercised in the barest
-# context the API must serve, with no crypto compiled at all.
+# keystore_stub.c keeps the vault inert — no crypto compiled at all.
 add_executable(test_storage_kv
     test_storage_kv.c
     ${STORAGE_DIR}/storage.c

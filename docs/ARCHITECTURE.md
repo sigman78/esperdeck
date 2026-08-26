@@ -84,8 +84,8 @@ components/
                      (CYBERDECK_PATCHES.md in that directory is the ledger)
   libssh2_esp/       vendored wrapper; libssh2 cloned+patched by CMake at
                      configure time (mbedTLS backend on device and in the sim)
-  monocypher/        Monocypher 4.0.2, CPM-fetched and pinned — keystore
-                     crypto + libssh2's ed25519 (one copy image-wide)
+  monocypher/        vendored Monocypher 4.0.2 — keystore crypto +
+                     libssh2's ed25519 (one copy image-wide)
 idfsim/              host-compilable ESP-IDF stubs (esp_err, heap_caps, ...)
 tests/               Unity suites: tsm, font, input, keystore, storage_kv,
                      vtkeys

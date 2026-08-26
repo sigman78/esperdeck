@@ -26,8 +26,7 @@ cyberdeck_component_register(
     INCLUDE_DIRS include
     REQUIRES     monocypher         # keystore crypto (argon2, AEAD, wipe)
     REQUIRES_DEV nvs_flash          # littlefs auto-required via idf_component.yml
-                 esp_timer          # keystore backoff clock (was transitive
-                                    # via the removed display REQUIRES)
+                 esp_timer          # keystore backoff clock
 )
 
 # Seed the device littlefs partition from sim_storage/ (gitignored — holds
