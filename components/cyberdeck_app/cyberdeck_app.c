@@ -10,6 +10,7 @@
 
 #include "app_internal.h"
 #include "app_screens.h"
+#include "app_settings.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -17,7 +18,8 @@
 
 #include "esp_log.h"
 #include "display_fx.h"
-#include "keystore.h"     /* keystore_wipe for the cred scratch */
+#include "keystore.h"       /* keystore_wipe for the cred scratch */
+#include "storage_cred.h"   /* the shared credential staging buffer */
 #include "wifi_manager.h"
 
 static const char *TAG = "cyberdeck_app";
@@ -318,10 +320,14 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     app.pf.edit_idx    = -1;
     app.pf.key_sel     = -1;
     app.menu.reorder_grab = -1;
-    storage_saver_load(&app.saver.idle_ms);   /* minutes... */
-    app.saver.idle_ms *= 60u * 1000u;         /* ...to ms   */
-    storage_touch_load(&app.touch_scroll);
+    app_saver_cfg_t sv = { .idle_min = APP_SAVER_DEFAULT_MIN };
+    storage_kv_load(APP_SAVER_INI, app_saver_fields, &sv);
+    app.saver.idle_ms = sv.idle_min * 60u * 1000u;
+    app_touch_cfg_t tc = { .scroll = true };
+    storage_kv_load(APP_TOUCH_INI, app_touch_fields, &tc);
+    app.touch_scroll = tc.scroll;
     app_touch_scroll_apply();
+    app_settings_register_reset();
     boot_enter(now_ms);
     saver_reset(now_ms);   /* idle timer starts at boot */
 
@@ -335,7 +341,7 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
      * startup task — flash I/O is safe here). */
     display_fx_cfg_t fxc;
     display_fx_defaults(&fxc);
-    storage_fx_load(&fxc);
+    storage_kv_load(APP_FX_INI, app_fx_fields, &fxc);
     display_fx_set(&fxc);
 
     ESP_LOGI(TAG, "shell up: %d profile(s)", app.profile_count);

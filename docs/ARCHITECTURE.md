@@ -84,8 +84,11 @@ components/
                      (CYBERDECK_PATCHES.md in that directory is the ledger)
   libssh2_esp/       vendored wrapper; libssh2 cloned+patched by CMake at
                      configure time (mbedTLS backend on device and in the sim)
+  monocypher/        Monocypher 4.0.2, CPM-fetched and pinned — keystore
+                     crypto + libssh2's ed25519 (one copy image-wide)
 idfsim/              host-compilable ESP-IDF stubs (esp_err, heap_caps, ...)
-tests/               Unity suites: tsm, font, input, keystore, vtkeys
+tests/               Unity suites: tsm, font, input, keystore, storage_kv,
+                     vtkeys
 cmake/               cyberdeck_component_register() — IDF/sim dual registration
 docs/                this and the other guides — see the doc index in README
 ```
@@ -438,7 +441,7 @@ decision, not an accident. Audited against the full include graph on
 | `input → storage` | the BLE bond registry (`storage_ble_*`) | sound |
 | `input → vterm` | key encoding (`vtkeys`) + one live mode query | **debt** (the query) |
 | `input → display` | the `DISPLAY_WIDTH` constant (touch edge strip) | tolerable |
-| `storage → display`, `storage → libssh2_esp` | fx settings struct in public `storage.h`; vendored monocypher | **debt** |
+| `storage → monocypher` | keystore crypto (Argon2id, AEAD, wipe) | sound — pinned component |
 
 The sound edges, in one breath: `tsm` and `font` depend on nothing;
 `vterm → tsm/display` is the deliberate data-plane fusion — the render
@@ -465,16 +468,20 @@ The debt edges, each in a sentence:
   keystroke to encode arrows, then the shell *decodes* those same bytes
   back into logical keys for UI navigation. The encode/decode round-trip
   marks the encoding as sitting one layer too low.
-- **`storage → display/libssh2_esp`** — known, and phase 1 of the
-  extensibility plan removes both.
+
+(Two former debt edges — `storage → display` for the fx settings struct
+and `storage → libssh2_esp` for vendored monocypher — were removed by
+extensibility phase 1: settings now go through the generic kv API in
+`storage_kv.h` with feature-owned field tables, and monocypher is its own
+pinned component.)
 
 One structural note: **`storage.h` is the domain-type home.**
 `conn_profile_t`, `wifi_profile_t`, and `ble_device_info_t` are defined
 there, which is why `wifi_manager.h`, `ble_keyboard.h`, and
 `cyberdeck_app.h` all include it from their own public headers.
-Deliberate — a types-only component would be pure ceremony — but the
-same header also exports the shared credential scratch buffer to every
-includer, and that is an internal staging contract, not API.
+Deliberate — a types-only component would be pure ceremony. The shared
+credential scratch buffer lives in opt-in `storage_cred.h`, not in
+`storage.h` — it is an internal staging contract, not general API.
 
 ---
 
@@ -525,6 +532,13 @@ in a `sim_storage/` directory. The INI format is the same both ways:
   model, formats, lock triggers, backoff, roadmap.
 - **BLE bonds** live in NVS (not LittleFS) — the NimBLE bond store owns
   them.
+
+Settings files (`fx.ini`, `font.ini`, `saver.ini`, `touch.ini`) ride the
+generic key=value API (`storage_kv.h`): the owning feature keeps one
+field table that drives both load and save, plus the defaults —
+`components/cyberdeck_app/app_settings.c` holds the shell's tables.
+Owners register their files with `storage_reset_register()`, so factory
+reset covers them without storage hardcoding anyone's schema.
 
 Profiles and keys are editable three ways:
 

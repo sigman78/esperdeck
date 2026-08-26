@@ -22,7 +22,6 @@ CPMAddPackage(
     DOWNLOAD_ONLY YES
 )
 
-set(STUBS_DIR   ${CMAKE_CURRENT_SOURCE_DIR}/stubs)
 set(STORAGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../components/storage)
 
 add_subdirectory(../../idfsim ${CMAKE_CURRENT_BINARY_DIR}/idfsim)
@@ -35,7 +34,6 @@ add_executable(test_keystore
 )
 
 target_include_directories(test_keystore PRIVATE
-    ${STUBS_DIR}
     ${STORAGE_DIR}
     ${STORAGE_DIR}/include
     ${Monocypher_SOURCE_DIR}/src

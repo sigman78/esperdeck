@@ -63,11 +63,14 @@ CPMAddPackage(
 )
 
 # Component dependency order: idfsim -> font -> display -> tsm -> vterm -> ...
+# monocypher must precede libssh2_esp (its pin check reads the global
+# property monocypher publishes) and storage (link dependency).
 add_subdirectory(${ROOT}/idfsim                    idfsim)
 add_subdirectory(${ROOT}/components/font           font)
 add_subdirectory(${ROOT}/components/display        display)
 add_subdirectory(${ROOT}/components/tsm            tsm)
 add_subdirectory(${ROOT}/components/vterm          vterm)
+add_subdirectory(${ROOT}/components/monocypher     monocypher)
 add_subdirectory(${ROOT}/components/libssh2_esp    libssh2_esp)
 add_subdirectory(${ROOT}/components/wifi           wifi)
 target_link_libraries(wifi PUBLIC ws2_32)   # wifi_manager_sim.c uses Winsock

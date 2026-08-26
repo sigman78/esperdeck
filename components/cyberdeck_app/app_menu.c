@@ -9,6 +9,7 @@
 #include "sdkconfig.h"       /* CONFIG_CYBERDECK_KEYSTORE (sim: -D flag) */
 #endif
 #include "app_screens.h"
+#include "app_settings.h"
 #include "app_widgets.h"
 #include "app_menu_defs.h"
 #include "display_fx.h"
@@ -108,10 +109,11 @@ static font_size_t s_font_pending = FONT_SIZE_COUNT;   /* COUNT = unresolved */
 static void font_menu_refresh_pending(void)
 {
     s_font_pending = font_active_size();
-    char staged[16];
-    if (storage_font_load(staged, sizeof(staged)) == ESP_OK) {
+    app_font_cfg_t fc = { .size = "" };
+    if (storage_kv_load(APP_FONT_INI, app_font_fields, &fc) == ESP_OK &&
+        fc.size[0]) {
         for (int i = 0; i < FONT_SIZE_COUNT; i++)
-            if (strcmp(staged, font_size_name((font_size_t)i)) == 0) {
+            if (strcmp(fc.size, font_size_name((font_size_t)i)) == 0) {
                 s_font_pending = (font_size_t)i;
                 break;
             }
@@ -243,12 +245,14 @@ void menu_fx_flush(void)
     const bool on_system = (app.state == ST_MENU && app.menu.screen == MS_SYSTEM);
     if (s_saver_dirty && !on_system) {
         s_saver_dirty = false;
-        storage_saver_save(app.saver.idle_ms / 60000u);
+        app_saver_cfg_t sv = { .idle_min = app.saver.idle_ms / 60000u };
+        storage_kv_save(APP_SAVER_INI, app_saver_fields, &sv);
     }
 #if CONFIG_INPUT_TOUCH_SCROLL
     if (s_touch_dirty && !on_system) {
         s_touch_dirty = false;
-        storage_touch_save(app.touch_scroll);
+        app_touch_cfg_t tc = { .scroll = app.touch_scroll };
+        storage_kv_save(APP_TOUCH_INI, app_touch_fields, &tc);
     }
 #endif
     if (!s_fx_dirty) return;
@@ -256,7 +260,7 @@ void menu_fx_flush(void)
     s_fx_dirty = false;
     display_fx_cfg_t c;
     display_fx_get(&c);
-    storage_fx_save(&c);
+    storage_kv_save(APP_FX_INI, app_fx_fields, &c);
 }
 
 static void fx_menu_cycle(int sel)
@@ -715,7 +719,9 @@ static void menu_activate(uint64_t now)
             menu_note(now, MENU_MSG_MS, false, note);
             return;
         }
-        if (storage_font_save(font_size_name(want)) != ESP_OK) {
+        app_font_cfg_t fc;
+        snprintf(fc.size, sizeof(fc.size), "%s", font_size_name(want));
+        if (storage_kv_save(APP_FONT_INI, app_font_fields, &fc) != ESP_OK) {
             menu_note(now, MENU_MSG_MS, false, "could not save font");
             return;
         }

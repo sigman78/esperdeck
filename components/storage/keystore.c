@@ -22,6 +22,7 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "monocypher.h"
+#include "storage_cred.h"   /* the shared credential staging buffer */
 
 #include <stdio.h>
 #include <stdlib.h>

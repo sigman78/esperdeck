@@ -20,7 +20,7 @@
 # configure. FetchContent uses define_property(), which is not allowed in script
 # mode — so during early expansion we only declare requirements and return.
 if(CMAKE_BUILD_EARLY_EXPANSION)
-    idf_component_register(REQUIRES mbedtls esp_netif)
+    idf_component_register(REQUIRES mbedtls esp_netif monocypher)
     return()
 endif()
 
@@ -43,6 +43,41 @@ FetchContent_Declare(libssh2_src
 FetchContent_MakeAvailable(libssh2_src)
 
 set(LIBSSH2_DIR ${libssh2_src_SOURCE_DIR})
+
+# Monocypher comes from components/monocypher (one definition of the
+# crypto_* symbols image-wide; the keystore links the same ones). The fork
+# still VENDORS its own copy — mbedtls.c compiles against that header — so
+# pin-check it against the component's fetched source: silent drift between
+# the two would be an ABI landmine. Fail-open when the property is unset
+# (the standalone test projects configure this file without the component).
+get_property(_mc_dir GLOBAL PROPERTY MONOCYPHER_SRC_DIR)
+if(_mc_dir)
+    foreach(_pair "monocypher.c;monocypher.c"
+                  "monocypher.h;monocypher.h"
+                  "monocypher-ed25519.c;optional/monocypher-ed25519.c"
+                  "monocypher-ed25519.h;optional/monocypher-ed25519.h")
+        list(GET _pair 0 _fork_name)
+        list(GET _pair 1 _upstream_name)
+        file(READ ${LIBSSH2_DIR}/src/${_fork_name} _fork_text)
+        file(READ ${_mc_dir}/${_upstream_name} _upstream_text)
+        # The one sanctioned difference: upstream's git tree says
+        # "version __git__" on line 1 where the fork vendored the stamped
+        # release header. Neutralize it before comparing.
+        string(REGEX REPLACE "^// Monocypher version [^\n]*" ""
+               _fork_text "${_fork_text}")
+        string(REGEX REPLACE "^// Monocypher version [^\n]*" ""
+               _upstream_text "${_upstream_text}")
+        string(SHA256 _fork_hash "${_fork_text}")
+        string(SHA256 _upstream_hash "${_upstream_text}")
+        if(NOT _fork_hash STREQUAL _upstream_hash)
+            message(FATAL_ERROR
+                "libssh2 fork's vendored ${_fork_name} differs from the "
+                "components/monocypher copy (upstream ${_upstream_name}). "
+                "Re-pin one side: both MUST build the same Monocypher, or "
+                "the ed25519/keystore crypto splits ABI.")
+        endif()
+    endforeach()
+endif()
 
 # Common libssh2 translation units; the crypto backend file is appended per build.
 set(_libssh2_units
@@ -67,7 +102,7 @@ if(BUILD_SIMULATOR)
     )
 
     set(_srcs "")
-    foreach(u ${_libssh2_units} mbedtls monocypher monocypher-ed25519)
+    foreach(u ${_libssh2_units} mbedtls)
         list(APPEND _srcs ${LIBSSH2_DIR}/src/${u}.c)
     endforeach()
 
@@ -78,7 +113,8 @@ if(BUILD_SIMULATOR)
         ${LIBSSH2_DIR}/src
         ${LIBSSH2_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(libssh2_esp PRIVATE idfsim mbedcrypto ws2_32)
+    target_link_libraries(libssh2_esp PRIVATE idfsim mbedcrypto ws2_32
+        monocypher)   # crypto_* units come from components/monocypher
     if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(libssh2_esp PRIVATE
             -Wno-format -Wno-uninitialized -Wno-narrowing -Wno-error)
@@ -86,15 +122,15 @@ if(BUILD_SIMULATOR)
     return()
 endif()
 
-# ── ESP-IDF: mbedTLS crypto (+ vendored Monocypher for ed25519/x25519) ──────
+# ── ESP-IDF: mbedTLS crypto (Monocypher units come from components/monocypher)
 set(_srcs "")
-foreach(u ${_libssh2_units} mbedtls monocypher monocypher-ed25519)
+foreach(u ${_libssh2_units} mbedtls)
     list(APPEND _srcs ${LIBSSH2_DIR}/src/${u}.c)
 endforeach()
 
 idf_component_register(SRCS ${_srcs}
                        INCLUDE_DIRS ${LIBSSH2_DIR}/src ${LIBSSH2_DIR}/include .
-                       REQUIRES mbedtls esp_netif)
+                       REQUIRES mbedtls esp_netif monocypher)
 
 # libssh2 reads its build config from the vendored libssh2_config.h (on INCLUDE_DIRS ".").
 add_definitions("-DHAVE_CONFIG_H")
