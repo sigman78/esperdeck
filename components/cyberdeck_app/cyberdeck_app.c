@@ -321,10 +321,10 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     app.pf.key_sel     = -1;
     app.menu.reorder_grab = -1;
     app_saver_cfg_t sv = { .idle_min = APP_SAVER_DEFAULT_MIN };
-    storage_kv_load("settings.ini", "saver", app_saver_fields, &sv);
+    storage_kv_load(cyberdeck_settings_ini, app_saver_section, app_saver_fields, &sv);
     app.saver.idle_ms = sv.idle_min * 60u * 1000u;
     app_touch_cfg_t tc = { .scroll = true };
-    storage_kv_load("settings.ini", "touch", app_touch_fields, &tc);
+    storage_kv_load(cyberdeck_settings_ini, app_touch_section, app_touch_fields, &tc);
     app.touch_scroll = tc.scroll;
     app_touch_scroll_apply();
     app_settings_register_reset();
@@ -341,7 +341,7 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
      * startup task — flash I/O is safe here). */
     display_fx_cfg_t fxc;
     display_fx_defaults(&fxc);
-    storage_kv_load("settings.ini", "fx", app_fx_fields, &fxc);
+    storage_kv_load(cyberdeck_settings_ini, app_fx_section, app_fx_fields, &fxc);
     display_fx_set(&fxc);
 
     ESP_LOGI(TAG, "shell up: %d profile(s)", app.profile_count);

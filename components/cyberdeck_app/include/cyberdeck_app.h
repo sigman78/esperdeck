@@ -13,6 +13,17 @@
 
 #include "esp_err.h"
 #include "storage.h"    /* conn_profile_t, wifi_profile_t, ble_device_info_t */
+#include "storage_kv.h"
+
+/* ---- settings shared with the composition root --------------------------
+ * The shell owns settings.ini; main reads [font] at boot, before the shell
+ * runs. One definition each (app_settings.c) — rename in one place. */
+
+extern const char cyberdeck_settings_ini[];    /* "settings.ini" */
+extern const char cyberdeck_font_section[];    /* "font"         */
+
+typedef struct { char size[16]; } cyberdeck_font_cfg_t;
+extern const storage_kv_field_t cyberdeck_font_fields[];
 
 /* ---- input events (mirrors input_hal layout; sim builds without it) ---- */
 

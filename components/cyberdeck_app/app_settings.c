@@ -6,6 +6,13 @@
 
 #include <stddef.h>
 
+/* The one definition of every settings name. */
+const char cyberdeck_settings_ini[] = "settings.ini";
+const char cyberdeck_font_section[] = "font";
+const char app_fx_section[]         = "fx";
+const char app_saver_section[]      = "saver";
+const char app_touch_section[]      = "touch";
+
 const storage_kv_field_t app_fx_fields[] = {
     { "scanlines",       offsetof(display_fx_cfg_t, scanlines),       STORAGE_KV_U8, 0, 0, 0 },
     { "bold_pop",        offsetof(display_fx_cfg_t, bold_pop),        STORAGE_KV_U8, 0, 0, 0 },
@@ -34,13 +41,13 @@ const storage_kv_field_t app_touch_fields[] = {
     { NULL, 0, 0, 0, 0, 0 },
 };
 
-const storage_kv_field_t app_font_fields[] = {
-    { "size", offsetof(app_font_cfg_t, size), STORAGE_KV_STR,
-      sizeof(((app_font_cfg_t *)0)->size), 0, 0 },
+const storage_kv_field_t cyberdeck_font_fields[] = {
+    { "size", offsetof(cyberdeck_font_cfg_t, size), STORAGE_KV_STR,
+      sizeof(((cyberdeck_font_cfg_t *)0)->size), 0, 0 },
     { NULL, 0, 0, 0, 0, 0 },
 };
 
 void app_settings_register_reset(void)
 {
-    storage_reset_register("settings.ini");
+    storage_reset_register(cyberdeck_settings_ini);
 }
