@@ -23,6 +23,7 @@ Contents:
   - [Threading model (device) — render on core 1, network on core 0](#threading-model-device--render-on-core-1-network-on-core-0)
   - [Terminal locking — two tasks, one mutex](#terminal-locking--two-tasks-one-mutex)
 - [The shell (`cyberdeck_app`) — a platform-neutral state machine](#the-shell-cyberdeck_app--a-platform-neutral-state-machine)
+- [Component boundaries — what each edge actually carries](#component-boundaries--what-each-edge-actually-carries)
 - [Memory model — placement is load-bearing](#memory-model--placement-is-load-bearing)
 - [Storage & configuration — settings are data, not firmware](#storage--configuration--settings-are-data-not-firmware)
 - [Security — host keys on the wire, credentials at rest](#security--host-keys-on-the-wire-credentials-at-rest)
@@ -416,6 +417,64 @@ Design choices inside the shell:
   deck watches for an enrolled phone's BLE advertisements — goes through
   the same kind of seam, `cyberdeck_presence_ops_t`. Again `NULL` in the
   sim.
+
+---
+
+## Component boundaries — what each edge actually carries
+
+The CMake `REQUIRES` lists declare who depends on whom. This section
+records what actually crosses each edge, so widening a contract is a
+decision, not an accident. Audited against the full include graph on
+2026-08-25; the debt edges carry their repair plan in
+[`extensibility.md`](extensibility.md).
+
+| Edge | What crosses it | Verdict |
+|------|-----------------|---------|
+| `vterm → tsm`, `vterm → display` | the render data plane: cells, cursor, bell, two fx nudges | fused by design |
+| `display → font` | glyph decode, active cell size | sound |
+| `ssh → vterm` (+ `display`, undeclared) | the drain loop feeds the terminal; PTY geometry | **debt** |
+| `cyberdeck_app → storage ssh wifi display vterm font` | full consumer of every service API | sound |
+| `wifi → storage` | profile types + wifi.ini persistence | sound |
+| `input → storage` | the BLE bond registry (`storage_ble_*`) | sound |
+| `input → vterm` | key encoding (`vtkeys`) + one live mode query | **debt** (the query) |
+| `input → display` | the `DISPLAY_WIDTH` constant (touch edge strip) | tolerable |
+| `storage → display`, `storage → libssh2_esp` | fx settings struct in public `storage.h`; vendored monocypher | **debt** |
+
+The sound edges, in one breath: `tsm` and `font` depend on nothing;
+`vterm → tsm/display` is the deliberate data-plane fusion — the render
+ISR reads the very cells `tsm` produces, byte-compatible by static
+assert, and an abstraction here would cost per-cell translation at 39 Hz.
+The shell consumes every service but no platform: no FreeRTOS, SDL, or
+`input` headers — BLE, presence, and the touch-scroll edge are injected
+ops structs, and input events arrive as `cyberdeck_input_t`, a field
+mirror of `input_event_t` translated by each composition root. `wifi`
+and `input` reaching into `storage` is the proportionality rule working
+as intended: a feature owns its persistence through the public API.
+
+The debt edges, each in a sentence:
+
+- **`ssh → vterm/display` — transport fused to presentation.**
+  `ssh_client.c`'s drain loop calls `vterm_feed`/`vterm_flush` directly,
+  registers the terminal's response callback itself, and reads the PTY
+  (pseudo-terminal) geometry from `display` — an edge its CMakeLists
+  never declares (it rides vterm's transitive REQUIRES). Nothing can use
+  the SSH transport without a terminal on top — file transfer and
+  capture sinks are blocked on this.
+- **`input → vterm` — encoding in the driver.** `ble_keyboard.c` queries
+  `vterm_app_cursor_keys()` — DECCKM (DEC cursor-key mode) — per
+  keystroke to encode arrows, then the shell *decodes* those same bytes
+  back into logical keys for UI navigation. The encode/decode round-trip
+  marks the encoding as sitting one layer too low.
+- **`storage → display/libssh2_esp`** — known, and phase 1 of the
+  extensibility plan removes both.
+
+One structural note: **`storage.h` is the domain-type home.**
+`conn_profile_t`, `wifi_profile_t`, and `ble_device_info_t` are defined
+there, which is why `wifi_manager.h`, `ble_keyboard.h`, and
+`cyberdeck_app.h` all include it from their own public headers.
+Deliberate — a types-only component would be pure ceremony — but the
+same header also exports the shared credential scratch buffer to every
+includer, and that is an internal staging contract, not API.
 
 ---
 
