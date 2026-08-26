@@ -386,8 +386,8 @@ in-tree features. Tick items as they merge.
   that preserves foreign sections verbatim (single-writer — the shell
   task, where every settings write already runs). The shell's four
   settings collapsed into one `settings.ini` (`[fx]/[saver]/[touch]/
-  [font]`); `app_settings_migrate()` folds legacy files in at init and
-  deletes them (verified live against sim_storage). Registries/security
+  [font]`); no legacy migration on purpose (pre-release, no installed
+  base) — old per-setting files are simply dead. Registries/security
   files deliberately stay separate: profiles/wifi/known_hosts/
   ble_devices are sectioned or growing registries, `keystore.kv1` is the
   sealed store, `backoff.cnt` is the keystore's adversarial counter

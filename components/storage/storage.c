@@ -667,7 +667,7 @@ esp_err_t storage_kv_save(const char *filename, const char *section,
 
 /* ---- factory-reset registry (see storage_reset_register in storage_kv.h) */
 
-#define RESET_REG_MAX 16   /* settings.ini + 4 legacy names + headroom */
+#define RESET_REG_MAX 16   /* settings.ini today; headroom for plugins */
 
 static const char *s_reset_files[RESET_REG_MAX];
 static int         s_reset_count;

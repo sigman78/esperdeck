@@ -320,7 +320,6 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     app.pf.edit_idx    = -1;
     app.pf.key_sel     = -1;
     app.menu.reorder_grab = -1;
-    app_settings_migrate();   /* legacy per-setting files → settings.ini */
     app_saver_cfg_t sv = { .idle_min = APP_SAVER_DEFAULT_MIN };
     storage_kv_load(APP_SETTINGS_INI, APP_SAVER_SECTION, app_saver_fields, &sv);
     app.saver.idle_ms = sv.idle_min * 60u * 1000u;

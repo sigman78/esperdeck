@@ -43,11 +43,6 @@ extern const storage_kv_field_t app_touch_fields[];
 typedef struct { char size[16]; } app_font_cfg_t;
 extern const storage_kv_field_t app_font_fields[];
 
-/** One-shot: fold the legacy per-setting files (fx/saver/touch/font.ini)
- *  into settings.ini sections and delete them. Call at init, BEFORE any
- *  section load; a no-op once no legacy file remains. */
-void app_settings_migrate(void);
-
-/** Register the shell's settings files for factory reset. Call once at
- *  init (after storage_init). */
+/** Register settings.ini for factory reset. Call once at init (after
+ *  storage_init). */
 void app_settings_register_reset(void);

@@ -525,8 +525,7 @@ in a `sim_storage/` directory. The INI format is the same both ways:
 - **`settings.ini`** — one section per concern: `[fx]` CRT effects
   (toggles apply live; written once, on leaving the EFFECTS page),
   `[font]` terminal font size (applied on reboot), `[saver]` idle
-  timeout, `[touch]` gesture toggles. Legacy per-setting files
-  (`fx/font/saver/touch.ini`) are folded in and deleted at first boot.
+  timeout, `[touch]` gesture toggles.
 - **`keystore.kv1`** — the PIN-unlocked wrapped key store. Once the user
   creates an access code, private keys and secrets are encrypted at rest
   under a key derived from it (Argon2id). The deck then boots and wakes

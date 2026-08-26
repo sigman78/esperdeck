@@ -160,16 +160,13 @@ static font_size_t boot_font_size(void)
 #endif
 
     /* [font] schema — keep the "size" key in step with the shell's
-     * app_font_fields (components/cyberdeck_app/app_settings.c). This
-     * runs BEFORE the shell's legacy migration, so fall back to the old
-     * flat font.ini on the first boot after the settings.ini change. */
+     * app_font_fields (components/cyberdeck_app/app_settings.c). */
     struct { char size[16]; } fc = { .size = "" };
     static const storage_kv_field_t font_fields[] = {
         { "size", 0, STORAGE_KV_STR, sizeof(fc.size), 0, 0 },
         { NULL, 0, 0, 0, 0, 0 },
     };
-    if (storage_kv_load("settings.ini", "font", font_fields, &fc) != ESP_OK)
-        storage_kv_load("font.ini", NULL, font_fields, &fc);
+    storage_kv_load("settings.ini", "font", font_fields, &fc);
     if (fc.size[0]) {
         for (int i = 0; i < FONT_SIZE_COUNT; i++) {
             /* Availability, not just the name: honouring a size this build
