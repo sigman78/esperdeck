@@ -28,7 +28,7 @@
 
 /* -------------------------------------------------------------------------
  * EFFECTS page — every runtime render-fx tunable as a value-cycling tile.
- * Values are quantized presets; fx.ini keeps byte-granular control.
+ * Values are quantized presets; settings.ini [fx] keeps byte-granular control.
  * ---------------------------------------------------------------------- */
 
 /* Tile order; the row-glow tiles exist only when compiled in. */
@@ -102,8 +102,8 @@ static int fx_menu_items(const char *out[], const char *bodies[],
 #define FONT_MENU_TILES  (FONT_SIZE_COUNT + 1)
 
 /* What the next boot will use — the active size unless a tile tapped this
- * session already wrote font.ini. Resolved when the page OPENS, not per
- * render: render_menu runs ~10 Hz and font.ini lives on littlefs. */
+ * session already wrote [font]. Resolved when the page OPENS, not per
+ * render: render_menu runs ~10 Hz and settings.ini lives on littlefs. */
 static font_size_t s_font_pending = FONT_SIZE_COUNT;   /* COUNT = unresolved */
 
 static void font_menu_refresh_pending(void)
@@ -209,13 +209,13 @@ static int sys_menu_items(const char *out[], const char *bodies[],
     return SYS_MENU_TILES;
 }
 
-/* saver.ini write DEFERRED like fx.ini — a flash write pauses the render
+/* The [saver] write is DEFERRED like [fx] — a flash write pauses the render
  * ISR for the cache-off window, landing a visible hiccup on the keypress.
  * Flushed by menu_fx_flush() once the user leaves the page. */
 static bool s_saver_dirty = false;
 
 #if CONFIG_INPUT_TOUCH_SCROLL
-/* touch.ini write, deferred for the same reason as saver.ini above. */
+/* The [touch] write, deferred for the same reason as [saver] above. */
 static bool s_touch_dirty = false;
 #endif
 
@@ -234,7 +234,7 @@ static void sys_saver_cycle(void)
 
 /* Step the EFFECTS tunable at @p sel, persist, and (for the event effects)
  * arm a one-shot preview so the change is seen immediately. */
-/* fx changes apply live (display_fx_set) but the fx.ini flash write is
+/* fx changes apply live (display_fx_set) but the [fx] flash write is
  * DEFERRED until the user leaves the EFFECTS page: a write per toggle
  * paused the render ISR for the flash-cache-off window, landing a visible
  * hiccup exactly on the keypress. menu_fx_flush() runs from the app tick,
@@ -305,7 +305,7 @@ static void fx_menu_cycle(int sel)
     default: return;
     }
     display_fx_set(&c);
-    s_fx_dirty = true;   /* fx.ini write deferred — see menu_fx_flush() */
+    s_fx_dirty = true;   /* [fx] write deferred — see menu_fx_flush() */
     if (sel == FXM_WIPE && c.wipe)             display_fx_wipe();
     if (sel == FXM_COLLAPSE && c.collapse)     display_fx_collapse();
     if (sel == FXM_STATIC && c.static_burst)   display_fx_static();

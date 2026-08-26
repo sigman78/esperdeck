@@ -10,7 +10,7 @@
 
 #include <string.h>
 
-/* Idle before the rain — configurable (SYSTEM menu, saver.ini), and it
+/* Idle before the rain — configurable (SYSTEM menu, [saver]), and it
  * doubles as the auto-lock interval since engage wipes the MK. */
 #define SAVER_IDLE_MS  (app.saver.idle_ms)
 

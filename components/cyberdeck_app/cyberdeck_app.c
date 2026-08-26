@@ -337,7 +337,7 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     load_profiles();
     kick_wifi();
 
-    /* Render-effect tunables: defaults overlaid with fx.ini (internal-DRAM
+    /* Render-effect tunables: defaults overlaid with settings.ini [fx] (internal-DRAM
      * startup task — flash I/O is safe here). */
     display_fx_cfg_t fxc;
     display_fx_defaults(&fxc);
@@ -359,7 +359,7 @@ void cyberdeck_app_tick(uint64_t now)
     ui_frame(app.anim_frame);   /* marquee clock for ui_tile */
 
     status_toasts(now);
-    menu_fx_flush();   /* deferred fx.ini save, once the EFFECTS page is left */
+    menu_fx_flush();   /* deferred [fx] save, once the EFFECTS page is left */
 
     if (app.state < ST_COUNT && SCREENS[app.state].tick)
         SCREENS[app.state].tick(now);

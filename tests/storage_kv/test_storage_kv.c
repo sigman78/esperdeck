@@ -244,6 +244,59 @@ static void test_section_absent_not_found(void)
     TEST_ASSERT_EQUAL_UINT8(DEFAULTS.n8, r.n8);        /* untouched */
 }
 
+static void test_overlong_line_skipped_whole(void)
+{
+    /* One physical line of 191 junk chars whose TAIL aligns to "n8=1":
+     * fgets splits it at the buffer edge, and the engine must skip every
+     * chunk — the tail must not be adopted as a real key=value. */
+    char long_line[256];
+    memset(long_line, 'x', 191);
+    long_line[191] = '\0';
+    strcat(long_line, "n8=1\n" "n16=42\n");
+    write_text(KV_PATH, long_line);
+
+    cfg_t r = DEFAULTS;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, NULL, FIELDS, &r));
+    TEST_ASSERT_EQUAL_UINT8(DEFAULTS.n8, r.n8);        /* tail not adopted */
+    TEST_ASSERT_EQUAL_UINT16(42, r.n16);               /* next line fine   */
+}
+
+static void test_long_section_name_rejected(void)
+{
+    static const char LONG_NAME[] =
+        "a_section_name_of_32_characters_plus";
+    cfg_t c = DEFAULTS;
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
+                          storage_kv_save(KV_FILE, LONG_NAME, FIELDS, &c));
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
+                          storage_kv_load(KV_FILE, LONG_NAME, FIELDS, &c));
+}
+
+static void test_atomic_open_rejects_long_path(void)
+{
+    char long_path[240];
+    memset(long_path, 'p', sizeof(long_path) - 1);
+    long_path[sizeof(long_path) - 1] = '\0';
+    storage_atomic_file_t af;
+    TEST_ASSERT_NULL(storage_atomic_open(&af, long_path));
+    TEST_ASSERT_EQUAL_INT(ESP_FAIL, storage_atomic_close(&af));
+}
+
+/* Fills the process-global registry — keep this test LAST. */
+static void test_reset_register_overflow(void)
+{
+    static char names[24][8];
+    int ok = 0, full = 0;
+    for (int i = 0; i < 24; i++) {
+        snprintf(names[i], sizeof(names[i]), "z%02d.x", i);
+        esp_err_t e = storage_reset_register(names[i]);
+        if (e == ESP_OK) ok++;
+        else if (e == ESP_ERR_NO_MEM) full++;
+    }
+    TEST_ASSERT_TRUE(ok > 0);          /* some fit...            */
+    TEST_ASSERT_TRUE(full > 0);        /* ...and the cap holds   */
+}
+
 /* ------------------------------------------------------------------ */
 
 int main(void)
@@ -262,5 +315,9 @@ int main(void)
     RUN_TEST(test_sections_roundtrip);
     RUN_TEST(test_section_save_preserves_foreign_lines);
     RUN_TEST(test_section_absent_not_found);
+    RUN_TEST(test_overlong_line_skipped_whole);
+    RUN_TEST(test_long_section_name_rejected);
+    RUN_TEST(test_atomic_open_rejects_long_path);
+    RUN_TEST(test_reset_register_overflow);   /* fills the registry — last */
     return UNITY_END();
 }

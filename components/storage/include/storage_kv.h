@@ -11,9 +11,10 @@
 #include <stdint.h>
 #include <stdio.h>
 
-/* Parser caps. Oversize input truncates, it never overflows: writes are
- * fgets/snprintf-bounded, and a longer physical line is read in chunks
- * whose tails fail key=value parsing. */
+/* Parser caps. Oversize input truncates or is skipped, it never
+ * overflows: writes are fgets/snprintf-bounded; an overlong physical
+ * line is skipped whole on load and passes through opaquely on save.
+ * A section or table key that does not fit KEY_MAX is INVALID_ARG. */
 #define STORAGE_KV_LINE_MAX 192   /* whole "key=value" line           */
 #define STORAGE_KV_KEY_MAX   32   /* key or [section] name, incl. NUL */
 #define STORAGE_PATH_MAX    160   /* <mount>/<name>, incl. NUL        */
@@ -42,8 +43,10 @@ esp_err_t storage_kv_load(const char *filename, const char *section,
                           const storage_kv_field_t *fields, void *obj);
 
 /* Regenerate @p section (NULL = the whole file) from the table, atomic
- * replace; every other line passes through verbatim. The sectioned save is
- * read-modify-write — single-writer only (the shell task, in practice). */
+ * replace; foreign sections pass through verbatim. Our section owns its
+ * whole span up to the next [header] — comments inside it are regenerated
+ * away. The sectioned save is read-modify-write — single-writer only (the
+ * shell task, in practice). */
 esp_err_t storage_kv_save(const char *filename, const char *section,
                           const storage_kv_field_t *fields, const void *obj);
 

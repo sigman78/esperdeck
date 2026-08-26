@@ -16,7 +16,7 @@
 #include <stdint.h>
 
 /* Row-recency back glow didn't hold up on hardware (2026-07): compiled out by
- * default, -DDISPLAY_FX_ROW_GLOW=1 to experiment. The cfg fields and fx.ini
+ * default, -DDISPLAY_FX_ROW_GLOW=1 to experiment. The cfg fields and settings.ini [fx]
  * keys survive either way so saved settings round-trip. */
 #ifndef DISPLAY_FX_ROW_GLOW
 #define DISPLAY_FX_ROW_GLOW 0

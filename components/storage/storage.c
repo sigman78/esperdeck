@@ -101,8 +101,16 @@ static int parse_kv(const char *line, char *key, size_t keysz,
 
 FILE *storage_atomic_open(storage_atomic_file_t *af, const char *path)
 {
-    snprintf(af->dst, sizeof(af->dst), "%s", path);
-    snprintf(af->tmp, sizeof(af->tmp), "%s.tmp", path);
+    af->f = NULL;
+    /* A truncated path would make tmp and dst name different files and
+     * the close rename onto the wrong one — refuse instead. */
+    if (snprintf(af->dst, sizeof(af->dst), "%s", path)
+            >= (int)sizeof(af->dst) ||
+        snprintf(af->tmp, sizeof(af->tmp), "%s.tmp", path)
+            >= (int)sizeof(af->tmp)) {
+        ESP_LOGE(TAG, "Path too long: '%s'", path);
+        return NULL;
+    }
     af->f = fopen(af->tmp, "w");
     if (!af->f)
         ESP_LOGE(TAG, "Cannot open '%s' for write: errno=%d", af->tmp, errno);
@@ -111,6 +119,7 @@ FILE *storage_atomic_open(storage_atomic_file_t *af, const char *path)
 
 esp_err_t storage_atomic_close(storage_atomic_file_t *af)
 {
+    if (!af->f) return ESP_FAIL;       /* tolerate a failed open */
     if (fclose(af->f) != 0) {
         remove(af->tmp);
         return ESP_FAIL;
@@ -515,6 +524,8 @@ esp_err_t storage_kv_load(const char *filename, const char *section,
                           const storage_kv_field_t *fields, void *obj)
 {
     if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
+    if (section && strlen(section) >= STORAGE_KV_KEY_MAX)
+        return ESP_ERR_INVALID_ARG;
 
     char path[STORAGE_PATH_MAX];
     snprintf(path, sizeof(path), "%s/%s",
@@ -525,9 +536,14 @@ esp_err_t storage_kv_load(const char *filename, const char *section,
 
     bool in_section = (section == NULL);   /* flat mode: the whole file */
     bool seen       = (section == NULL);
+    bool in_long    = false;               /* discarding an overlong line */
 
     char line[STORAGE_KV_LINE_MAX];
     while (fgets(line, sizeof(line), f)) {
+        bool split = (strchr(line, '\n') == NULL && !feof(f));
+        bool tail  = in_long;
+        in_long = split;
+        if (tail || split) continue;       /* overlong lines are invalid */
         rtrim(line);
         if (line[0] == '[') {
             if (!section) continue;        /* flat mode ignores headers */
@@ -553,8 +569,12 @@ esp_err_t storage_kv_load(const char *filename, const char *section,
                 bool b = (strtoul(val, NULL, 10) != 0);
                 memcpy(p, &b, sizeof(b));
             } else {
-                if (val[0] == '-') break;        /* out of range: skip */
-                uint32_t v = (uint32_t)strtoul(val, NULL, 10);
+                const char *s = val;
+                while (*s == ' ' || *s == '\t') s++;
+                if (*s == '-') break;            /* negative: default wins */
+                errno = 0;
+                uint32_t v = (uint32_t)strtoul(s, NULL, 10);
+                if (errno == ERANGE) break;      /* overflow: default wins */
                 uint32_t lo, hi;
                 kv_range(fd, &lo, &hi);
                 if (v < lo || v > hi) break;     /* default wins */
@@ -601,6 +621,11 @@ esp_err_t storage_kv_save(const char *filename, const char *section,
                           const storage_kv_field_t *fields, const void *obj)
 {
     if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
+    if (section && strlen(section) >= STORAGE_KV_KEY_MAX)
+        return ESP_ERR_INVALID_ARG;
+    for (const storage_kv_field_t *fd = fields; fd->key; fd++)
+        if (strlen(fd->key) >= STORAGE_KV_KEY_MAX)
+            return ESP_ERR_INVALID_ARG;   /* would save but never load */
 
     char path[STORAGE_PATH_MAX];
     snprintf(path, sizeof(path), "%s/%s",
@@ -613,30 +638,37 @@ esp_err_t storage_kv_save(const char *filename, const char *section,
     if (!section) {
         kv_write_fields(f, fields, obj);       /* flat: whole file is ours */
     } else {
-        /* Streamed RMW: foreign lines pass through verbatim, our section
-         * is regenerated in place (duplicates absorbed). Single-writer. */
-        bool written = false, in_ours = false;
+        /* Streamed RMW: foreign sections pass through verbatim, our
+         * section is regenerated in place (duplicates absorbed).
+         * Single-writer. Overlong lines pass through opaquely — only a
+         * whole line can be a header. */
+        bool written = false, in_ours = false, in_long = false;
         FILE *src = fopen(path, "r");
         if (src) {
             char line[STORAGE_KV_LINE_MAX];
             while (fgets(line, sizeof(line), src)) {
-                char probe[STORAGE_KV_LINE_MAX];
-                snprintf(probe, sizeof(probe), "%s", line);
-                rtrim(probe);
-                if (probe[0] == '[') {
-                    char name[STORAGE_KV_KEY_MAX];
-                    if (parse_section(probe, name, sizeof(name)) &&
-                        strcmp(name, section) == 0) {
-                        in_ours = true;
-                        if (!written) {
-                            fprintf(f, "[%s]\n", section);
-                            kv_write_fields(f, fields, obj);
-                            fputs("\n", f);
-                            written = true;
+                bool split = (strchr(line, '\n') == NULL && !feof(src));
+                bool tail  = in_long;
+                in_long = split;
+                if (!tail && !split) {
+                    char probe[STORAGE_KV_LINE_MAX];
+                    snprintf(probe, sizeof(probe), "%s", line);
+                    rtrim(probe);
+                    if (probe[0] == '[') {
+                        char name[STORAGE_KV_KEY_MAX];
+                        if (parse_section(probe, name, sizeof(name)) &&
+                            strcmp(name, section) == 0) {
+                            in_ours = true;
+                            if (!written) {
+                                fprintf(f, "[%s]\n", section);
+                                kv_write_fields(f, fields, obj);
+                                fputs("\n", f);
+                                written = true;
+                            }
+                            continue;
                         }
-                        continue;
+                        in_ours = false;
                     }
-                    in_ours = false;
                 }
                 if (in_ours) continue;         /* old body of our section */
                 fputs(line, f);
@@ -1165,10 +1197,13 @@ esp_err_t storage_factory_reset(void)
 {
     const char *mp = storage_platform_mount_point();
     /* profiles.ini and wifi.ini hold plaintext credentials — shred them;
-     * settings files come in via storage_reset_register. */
+     * settings files come in via storage_reset_register. The last four
+     * are pre-2026-08 tombstones (the lock.ini precedent): nothing
+     * writes them anymore, but upgraded decks still carry them. */
     static const char *files[] = {
         "profiles.ini", "wifi.ini", "known_hosts.ini", "ble_devices.ini",
         "keystore.kv1", "lock.ini", "backoff.cnt",
+        "fx.ini", "saver.ini", "touch.ini", "font.ini",
     };
     char path[160];
     for (int i = 0; i < (int)(sizeof(files) / sizeof(files[0])); i++) {
