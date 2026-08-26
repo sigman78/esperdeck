@@ -8,8 +8,9 @@
 # at all — between them an encrypted key with no passphrase is indistinguishable
 # from a corrupt key file). There are no git submodules and no manual patch
 # step. See cmake/apply_patch.cmake
-# and patches/. To bump libssh2, change GIT_TAG below and regenerate the patch:
-#   git -C <fetched-src> diff > patches/libssh2-ram-diet.patch
+# and patches/. To bump libssh2, change GIT_TAG below and regenerate the patch
+# (exclude src/monocypher* — this file deletes those from the fetched tree):
+#   git -C <fetched-src> diff -- . ':!src/monocypher*' > patches/libssh2-ram-diet.patch
 #
 # We build from the sigman78/libssh2 fork (feature/mbedtls-ed25519): upstream
 # master + vendored Monocypher 4.0.2 giving the mbedTLS backend ed25519
@@ -44,17 +45,12 @@ FetchContent_MakeAvailable(libssh2_src)
 
 set(LIBSSH2_DIR ${libssh2_src_SOURCE_DIR})
 
-# Monocypher objects come from components/monocypher, but the fork still
-# vendors its own copy and mbedtls.c compiles against that header — the two
-# must stay bit-identical or the crypto ABI splits.
-foreach(_f monocypher.c monocypher.h monocypher-ed25519.c monocypher-ed25519.h)
-    file(SHA256 ${LIBSSH2_DIR}/src/${_f} _fork_hash)
-    file(SHA256 ${CMAKE_CURRENT_LIST_DIR}/../monocypher/${_f} _ours_hash)
-    if(NOT _fork_hash STREQUAL _ours_hash)
-        message(FATAL_ERROR "components/monocypher/${_f} differs from the "
-                "libssh2 fork's vendored copy — re-pin one side.")
-    endif()
-endforeach()
+# Exactly ONE Monocypher in the build: delete the fork's vendored copy so
+# mbedtls.c's quoted includes fall through to components/monocypher (whose
+# objects are what gets linked). Idempotent; a re-fetch restores + re-deletes.
+file(REMOVE ${LIBSSH2_DIR}/src/monocypher.c ${LIBSSH2_DIR}/src/monocypher.h
+            ${LIBSSH2_DIR}/src/monocypher-ed25519.c
+            ${LIBSSH2_DIR}/src/monocypher-ed25519.h)
 
 # Common libssh2 translation units; the crypto backend file is appended per build.
 set(_libssh2_units
