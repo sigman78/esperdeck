@@ -58,10 +58,9 @@ static int draw_status_led(int row, bool on, const char *label, const char *valu
     return 9 + (int)strlen(value);
 }
 
-void render_home(void)
+static void render_home(uint64_t now)
 {
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
+    (void)now;
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     /* ── Status HUD on the LEFT (rows 0-2) ─────────────────────────── */
@@ -239,14 +238,11 @@ void render_home(void)
     } else {
         draw_footer(hint);
     }
-
-    ui_no_cursor();
-    ui_present();
 }
 
-void enter_home(uint64_t now)
+static void home_enter(intptr_t arg, uint64_t now)
 {
-    app.state = ST_HOME;
+    (void)arg;
     app.home.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
     s_ks_present = keystore_state() != KEYSTORE_ABSENT;  /* "Lock deck" tile */
     pacman_reset();   /* session entry blanked the sprite slots */
@@ -254,7 +250,11 @@ void enter_home(uint64_t now)
     /* Arriving on HOME counts as activity: a session drop or provisioning
      * toast must live its full lifetime before the rain paints over it. */
     saver_reset(now);
-    render_home();
+}
+
+void enter_home(uint64_t now)
+{
+    nav_reset(SCR_HOME, 0, now);
 }
 
 /* If HOME tile @p slot is a trailing extra, return its home_extra_t, else -1. */
@@ -278,7 +278,7 @@ static bool home_activate_extra(int slot, uint64_t now)
         app_creds_wipe();               /* ...and the hydrated copies */
         unlock_open_gate(now);
         return true;
-    case HX_CONFIG: menu_open_config();                  return true;
+    case HX_CONFIG: menu_open_config(now);               return true;
     default:        return false;
     }
 }
@@ -286,6 +286,14 @@ static bool home_activate_extra(int slot, uint64_t now)
 /* Session teardown: hide the overlay so the CRT collapse plays over the last
  * live terminal frame, and enter HOME only once it finishes. Toasts set by
  * the caller survive — they are state, rendered when HOME appears. */
+static void poweroff_enter(intptr_t arg, uint64_t now)
+{
+    ui_hide();
+    ui_no_cursor();
+    display_fx_collapse();
+    app.home.poweroff_until = now + (uint64_t)arg * 17 + 80;
+}
+
 void enter_home_after_collapse(uint64_t now)
 {
     display_fx_cfg_t c;
@@ -294,14 +302,10 @@ void enter_home_after_collapse(uint64_t now)
         enter_home(now);
         return;
     }
-    ui_hide();
-    ui_no_cursor();
-    display_fx_collapse();
-    app.state        = ST_POWEROFF;
-    app.home.poweroff_until = now + (uint64_t)c.collapse_frames * 17 + 80;
+    nav_reset(SCR_POWEROFF, c.collapse_frames, now);
 }
 
-void home_tick(uint64_t now)
+static void home_tick(uint64_t now)
 {
     /* Expire toasts regardless of the saver, so a wake never flashes
      * a long-dead message. */
@@ -330,17 +334,18 @@ void home_tick(uint64_t now)
     if (saver_tick_home(now)) return;
     if (now >= app.home.next_refresh) {
         app.home.next_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
-        render_home();   /* live wifi/ble status */
+        nav_invalidate();   /* live wifi/ble status */
     }
 }
 
-void poweroff_tick(uint64_t now)
+static void poweroff_tick(uint64_t now)
 {
     /* Collapse finished (or was cut short by input) — bring HOME up. */
     if (now >= app.home.poweroff_until) enter_home(now);
 }
 
-void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                       uint64_t now)
 {
     /* Long-press anywhere = open pairing (works without a keyboard). */
     if (ev->type == CYBERDECK_INPUT_LONG_PRESS) {
@@ -354,10 +359,10 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
             /* handled */
         } else if (app.home.sel != slot) {              /* first tap: select + show */
             app.home.sel = slot;
-            render_home();
+            nav_invalidate();
         } else if (!wifi_manager_is_connected()) {
             toast(now, "wifi not connected yet");
-            render_home();
+            nav_invalidate();
         } else {                                 /* second tap on same tile */
             start_connect(slot, now, now);
         }
@@ -381,7 +386,7 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
         }
         int ns = tile_nav(&app.grid, app.home.sel, k);
         if (ns != app.home.sel) app.home.sel = ns;
-        render_home();
+        nav_invalidate();
         break;
     }
     case K_ENTER:
@@ -390,7 +395,7 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
         } else if (app.profile_count > 0) {
             if (!wifi_manager_is_connected()) {
                 toast(now, "wifi not connected yet");
-                render_home();
+                nav_invalidate();
             } else {
                 start_connect(app.home.sel, now, now);
             }
@@ -401,13 +406,13 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
         else if (ch == 'n' || ch == 'N') {
             if (app.stored_count >= MAX_PROFILES - 1) {
                 toast(now, "profile list full");
-                render_home();
+                nav_invalidate();
             } else {
                 enter_profile(now, -1);
             }
         }
-        else if (ch == 'r' || ch == 'R') { load_profiles(); render_home(); }
-        else if (ch == 'w' || ch == 'W') { kick_wifi(); render_home(); }
+        else if (ch == 'r' || ch == 'R') { load_profiles(); nav_invalidate(); }
+        else if (ch == 'w' || ch == 'W') { kick_wifi(); nav_invalidate(); }
         else if ((ch == 'l' || ch == 'L') && s_ks_present) {
             keystore_lock();                /* keyboard panic button */
             app_creds_wipe();
@@ -443,7 +448,7 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
                           (unsigned)(age / 1000));
             }
             s_p_last = now;
-            render_home();
+            nav_invalidate();
         }
         break;
     default:
@@ -451,9 +456,21 @@ void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
     }
 }
 
-void poweroff_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void poweroff_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                           uint64_t now)
 {
     (void)ev; (void)k; (void)ch;
     /* Any input skips the rest of the power-off animation. */
     enter_home(now);
 }
+
+const nav_screen_t home_screen = {
+    .name = "home", .enter = home_enter, .tick = home_tick,
+    .input = home_input, .render = render_home, .chrome = NAV_CHROME_NONE,
+};
+
+/* No render: the collapse fx plays over the dead terminal frame. */
+const nav_screen_t poweroff_screen = {
+    .name = "poweroff", .enter = poweroff_enter, .tick = poweroff_tick,
+    .input = poweroff_input, .chrome = NAV_CHROME_NONE,
+};

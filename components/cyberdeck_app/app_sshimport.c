@@ -16,8 +16,6 @@ static void render_sshimport(uint64_t now)
 {
     (void)now;
     bool web = (ssh_import_mode() == SSH_IMPORT_WEB);
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     draw_titlebar(2, "SSH IMPORT");
@@ -118,8 +116,14 @@ static void render_sshimport(uint64_t now)
 
     draw_footer(cnt > 0 || del > 0 ? "tap or Esc when done - changes are saved"
                                    : "tap or Esc to cancel");
-    ui_no_cursor();
-    ui_present();
+}
+
+static void sshimport_enter(intptr_t arg, uint64_t now)
+{
+    (void)arg; (void)now;
+    app.imp.seen    = 0;
+    app.imp.last[0] = '\0';
+    app.next_anim   = 0;
 }
 
 void enter_sshimport(uint64_t now, ssh_import_mode_t mode)
@@ -133,11 +137,7 @@ void enter_sshimport(uint64_t now, ssh_import_mode_t mode)
         enter_home(now);
         return;
     }
-    app.imp.seen        = 0;
-    app.imp.last[0]     = '\0';
-    app.next_anim = 0;
-    app.state     = ST_SSHIMPORT;
-    render_sshimport(now);
+    nav_push(SCR_SSHIMPORT, (intptr_t)mode, now);
 }
 
 /* Tear down the import server, refresh the profile list, go home. Only SoftAP
@@ -157,7 +157,7 @@ static void exit_sshimport(uint64_t now)
     enter_home(now);
 }
 
-void sshimport_tick(uint64_t now)
+static void sshimport_tick(uint64_t now)
 {
     /* A submission lands on the httpd task; re-render on its activity bump
      * so the confirmation appears at once. Snapshot the name via the locked
@@ -166,14 +166,15 @@ void sshimport_tick(uint64_t now)
         app.imp.seen = ssh_import_count() + ssh_import_deleted();
         snprintf(app.imp.last, sizeof(app.imp.last), "%s", ssh_import_last());
         app.next_anim = now + ANIM_PERIOD_MS;
-        render_sshimport(now);
+        nav_invalidate();
     } else if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
-        render_sshimport(now);
+        nav_invalidate();
     }
 }
 
-void sshimport_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void sshimport_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                            uint64_t now)
 {
     (void)ch;
     /* Esc / tap / long-press finishes the session (any imports are already
@@ -183,3 +184,9 @@ void sshimport_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t 
         exit_sshimport(now);
     }
 }
+
+const nav_screen_t sshimport_screen = {
+    .name = "sshimport", .enter = sshimport_enter, .tick = sshimport_tick,
+    .input = sshimport_input, .render = render_sshimport,
+    .chrome = NAV_CHROME_NONE,
+};

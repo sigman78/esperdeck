@@ -20,8 +20,6 @@ static int pairing_ndev(const tilegrid_t *g)
 
 static void render_pairing(uint64_t now)
 {
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     draw_titlebar(2, "PAIR KEYBOARD");
@@ -91,33 +89,30 @@ static void render_pairing(uint64_t now)
     ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_footer("keyboard in pairing mode, then tap it \xB7 Esc cancel");
-    ui_no_cursor();
-    ui_present();
 }
 
-void enter_pairing(uint64_t now)
+static void pairing_enter(intptr_t arg, uint64_t now)
 {
-    if (!app.cfg.ble || !app.cfg.ble->enter_pairing) return;
+    (void)arg;
     app.cfg.ble->enter_pairing();
-    app.state = ST_PAIRING;
     app.pair.ndevs = 0;
     app.pair.sel = 0;
     app.pair.last_poll = 0;
     app.pair.last_activity = now;
     app.pair.forget_armed = false;
-    render_pairing(now);
 }
 
-/* Leave pairing: back to the live session if one exists, else HOME. */
-static void exit_pairing(uint64_t now)
+static void pairing_exit(uint64_t now)
 {
+    (void)now;
     if (app.cfg.ble && app.cfg.ble->exit_pairing)
         app.cfg.ble->exit_pairing();
-    if (ssh_client_is_connected()) {
-        session_resume();
-    } else {
-        enter_home(now);
-    }
+}
+
+void enter_pairing(uint64_t now)
+{
+    if (!app.cfg.ble || !app.cfg.ble->enter_pairing) return;
+    nav_push(SCR_PAIRING, 0, now);
 }
 
 /* Act on a PAIRING tile: a device (pair it), "Forget bonds", or "Cancel". */
@@ -127,32 +122,32 @@ static void pairing_select(int slot, uint64_t now)
     if (slot < nd && app.cfg.ble) {                /* a discovered device */
         app.cfg.ble->select_device(app.pair.devs[slot].addr, app.pair.devs[slot].addr_type);
         toast(now, "pairing %.32s...", app.pair.devs[slot].name);
-        exit_pairing(now);
+        nav_pop(now);
     } else if (slot == nd) {                       /* Forget bonds */
         /* Destructive: arm on the first activation like hostkey REPLACE. */
         if (!app.pair.forget_armed) {
             app.pair.forget_armed = true;
-            render_pairing(now);
+            nav_invalidate();
         } else if (app.cfg.ble && app.cfg.ble->forget) {
             app.cfg.ble->forget();
             toast(now, "bonds cleared - re-scanning");
-            enter_pairing(now);                    /* restart the scan fresh */
+            nav_replace(SCR_PAIRING, 0, now);      /* restart the scan fresh */
         }
     } else {                                       /* Cancel */
-        exit_pairing(now);
+        nav_pop(now);
     }
 }
 
-void pairing_tick(uint64_t now)
+static void pairing_tick(uint64_t now)
 {
     if (now - app.pair.last_activity > PAIR_TIMEOUT_MS) {
         toast(now, "pairing timed out");
-        exit_pairing(now);
+        nav_pop(now);
         return;
     }
     if (now >= app.next_anim) {          /* advance spinner / comet */
         app.next_anim = now + ANIM_PERIOD_MS;
-        render_pairing(now);
+        nav_invalidate();
     }
     if (now - app.pair.last_poll >= PAIR_POLL_MS && app.cfg.ble) {
         app.pair.last_poll = now;
@@ -164,12 +159,13 @@ void pairing_tick(uint64_t now)
             app.pair.ndevs = n;
             if (app.pair.sel >= n) app.pair.sel = n ? n - 1 : 0;
             app.pair.last_activity = now;   /* results still arriving */
-            render_pairing(now);
+            nav_invalidate();
         }
     }
 }
 
-void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                          uint64_t now)
 {
     (void)ch;
     app.pair.last_activity = now;
@@ -184,7 +180,7 @@ void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
         if (ns != app.pair.sel) {
             app.pair.sel = ns;
             app.pair.forget_armed = false;   /* moving away backs down */
-            render_pairing(now);
+            nav_invalidate();
         }
         break;
     }
@@ -192,9 +188,15 @@ void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
         pairing_select(app.pair.sel, now);
         break;
     case K_ESC:
-        exit_pairing(now);
+        nav_pop(now);
         break;
     default:
         break;
     }
 }
+
+const nav_screen_t pairing_screen = {
+    .name = "pairing", .enter = pairing_enter, .exit = pairing_exit,
+    .tick = pairing_tick, .input = pairing_input, .render = render_pairing,
+    .chrome = NAV_CHROME_NONE,
+};

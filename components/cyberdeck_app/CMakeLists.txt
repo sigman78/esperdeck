@@ -16,8 +16,8 @@ else()
 endif()
 
 cyberdeck_component_register(
-    SRCS         cyberdeck_app.c app_ui.c app_widgets.c app_menu_defs.c
-                 app_settings.c
+    SRCS         cyberdeck_app.c app_nav.c app_ui.c app_widgets.c
+                 app_menu_defs.c app_settings.c
                  app_boot.c app_home.c app_pacman.c app_saver.c app_pairing.c
                  app_hostkey.c app_connect.c app_profile.c app_menu.c
                  app_wifiprov.c app_sshimport.c ${UNLOCK_SRC}

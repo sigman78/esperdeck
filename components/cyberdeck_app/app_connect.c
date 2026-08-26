@@ -17,10 +17,13 @@
 
 #include "esp_heap_caps.h"   /* key-PEM buffers (idfsim stubs it) */
 
-static void render_connecting(const char *msg, uint64_t now)
+static void render_connecting(uint64_t now)
 {
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
+    /* The status word falls out of the connect state machine. */
+    const char *msg = app.conn.armed
+        ? (now < app.conn.connect_at ? "Retrying" : "Connecting to")
+        : (app.conn.cancelled ? "Cancelling" : "Connecting to");
+
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     draw_screen_header("CONNECTING", "// SSH DECK");
@@ -75,8 +78,6 @@ static void render_connecting(const char *msg, uint64_t now)
     ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_footer("tap or Esc to cancel");
-    ui_no_cursor();
-    ui_present();
 }
 
 #define SCROLLBAR_LINGER_MS  1400
@@ -106,7 +107,7 @@ static void render_session_chrome(uint64_t now)
     if (!s_scrollbar_until || now >= s_scrollbar_until) s_scrollbar_until = 0;
 
     if (!toast_on && !bar_on) {
-        if (app.state == ST_SESSION) ui_hide();
+        if (nav_current() == SCR_SESSION) ui_hide();
         return;
     }
 
@@ -154,8 +155,8 @@ static void arm_connect(uint64_t not_before, uint64_t now)
 {
     app.conn.connect_at = not_before;
     app.conn.armed      = true;
-    app.state    = ST_CONNECTING;
-    render_connecting(now < not_before ? "Retrying" : "Connecting to", now);
+    if (nav_current() == SCR_CONNECTING) nav_invalidate();
+    else nav_replace(SCR_CONNECTING, 0, now);
 }
 
 /* Arm a connect to profile @p idx, snapshotting it into app.conn.active. */
@@ -221,19 +222,20 @@ void session_dropped(uint64_t now)
     enter_home_after_collapse(now);    /* CRT power-off over the dead screen */
 }
 
-/* Hand the screen back to a live session. Every full-screen modal parks the
- * terminal cursor (ui_no_cursor) and a vterm flush only happens when the
- * host sends bytes — without the explicit refresh the cursor stays gone
- * until the first input after leaving the menu/pairing screen. */
-void session_resume(void)
+/* Hand the screen back to a live session (nav resume: menu/pairing pop).
+ * Every full-screen modal parks the terminal cursor (ui_no_cursor) and a
+ * vterm flush only happens when the host sends bytes — without the
+ * explicit refresh the cursor stays gone until the first input. */
+static void session_resume(intptr_t arg, uint64_t now)
 {
-    app.state = ST_SESSION;
+    (void)arg; (void)now;
     ui_hide();
     vterm_cursor_refresh();
 }
 
-static void enter_session(uint64_t now)
+static void session_enter(intptr_t arg, uint64_t now)
 {
+    (void)arg;
     /* The display now belongs to remote content: blank every sprite slot so
      * terminal text in U+E000.. (e.g. Nerd-Font icons) renders blank cells,
      * not leftover HOME marquee art (font.h: local UI namespace). */
@@ -242,7 +244,7 @@ static void enter_session(uint64_t now)
     app.conn.session_start = now;
     app.conn.attempt       = 0;   /* a future drop counts retries from 1 again */
     display_fx_wipe();     /* raster-reveal the fresh session */
-    session_resume();
+    session_resume(0, now);
     /* The terminal was cleared inside ssh_client_connect() before the read
      * task spawned — doing it here would race that task inside vterm. */
     static const char *const HELLO[] = {
@@ -357,7 +359,7 @@ static void do_connect_start(uint64_t now)
     app.conn.cancelled   = false;
     app.conn.started     = now;
     app.next_anim = 0;
-    render_connecting("Connecting to", now);
+    nav_invalidate();
 }
 
 /* Handle the async connect result once the worker finishes. */
@@ -375,15 +377,15 @@ static void do_connect_finish(uint64_t now, esp_err_t err)
     }
     switch (err) {
     case ESP_OK:
-        enter_session(now);
+        nav_replace(SCR_SESSION, 0, now);
         break;
 
     case SSH_ERR_HOSTKEY_UNKNOWN:
-        hostkey_open(false);
+        hostkey_open(false, now);
         break;
 
     case SSH_ERR_HOSTKEY_MISMATCH:
-        hostkey_open(true);
+        hostkey_open(true, now);
         break;
 
     case SSH_ERR_AUTH:
@@ -405,28 +407,23 @@ static void do_connect_finish(uint64_t now, esp_err_t err)
     }
 }
 
-void connecting_tick(uint64_t now)
+static void connecting_tick(uint64_t now)
 {
     if (app.conn.armed && now >= app.conn.connect_at) {
         app.conn.armed = false;
         do_connect_start(now);           /* launches worker; returns at once */
-    } else if (app.conn.armed) {                /* retry pre-delay: drain the bar */
-        if (now >= app.next_anim) {
-            app.next_anim = now + ANIM_PERIOD_MS;
-            render_connecting("Retrying", now);
-        }
-    } else if (app.conn.connecting) {
-        if (ssh_client_connect_ready()) {
+    } else if (app.conn.armed || app.conn.connecting) {
+        if (app.conn.connecting && ssh_client_connect_ready()) {
             app.conn.connecting = false;
             do_connect_finish(now, ssh_client_connect_take_result());
-        } else if (now >= app.next_anim) {  /* keep the bar alive while it runs */
+        } else if (now >= app.next_anim) {  /* keep the bar/countdown alive */
             app.next_anim = now + ANIM_PERIOD_MS;
-            render_connecting(app.conn.cancelled ? "Cancelling" : "Connecting to", now);
+            nav_invalidate();
         }
     }
 }
 
-void session_tick(uint64_t now)
+static void session_tick(uint64_t now)
 {
     if (!ssh_client_is_connected()) {
         if (ssh_client_session_eof()) {
@@ -446,7 +443,8 @@ void session_tick(uint64_t now)
     render_session_chrome(now);
 }
 
-void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                             uint64_t now)
 {
     (void)ch;
     /* ESC (keyboard) or any tap/long-press (touch) cancels. */
@@ -459,12 +457,13 @@ void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t
         } else if (app.conn.connecting && !app.conn.cancelled) {
             app.conn.cancelled = true;
             ssh_client_connect_cancel();        /* best-effort unblock */
-            render_connecting("Cancelling", now);
+            nav_invalidate();
         }
     }
 }
 
-void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                          uint64_t now)
 {
     (void)ch;
     /* Every byte goes to SSH except the menu triggers. */
@@ -505,3 +504,18 @@ void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
 
     ssh_client_send(ev->buf, ev->len);
 }
+
+const nav_screen_t connecting_screen = {
+    .name = "connecting", .tick = connecting_tick,
+    .input = connecting_input, .render = render_connecting,
+    .chrome = NAV_CHROME_NONE,
+    /* No enter hook: arm_connect() sets the state before navigating. */
+};
+
+/* No render: the overlay belongs to the remote; the toast chip and the
+ * scrollback indicator ride a self-managed pass in session_tick. */
+const nav_screen_t session_screen = {
+    .name = "session", .enter = session_enter, .resume = session_resume,
+    .tick = session_tick, .input = session_input,
+    .chrome = NAV_CHROME_NONE,
+};

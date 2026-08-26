@@ -67,8 +67,6 @@ static void render_boot(uint64_t now)
     int reveal = reveal_ms ? (int)((uint64_t)el * total_w / reveal_ms) : total_w;
     if (reveal > total_w) reveal = total_w;
 
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     bool done = (reveal == total_w);
@@ -100,16 +98,13 @@ static void render_boot(uint64_t now)
     /* Fixed anchor: the full-dots form's width (dot count varies per frame). */
     ui_puts((ui_cols() - ((int)strlen(tag) + 3)) / 2, y0 + GH + 2, sub, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-
-    ui_no_cursor();
-    ui_present();
 }
 
-void boot_enter(uint64_t now)
+static void boot_enter(intptr_t arg, uint64_t now)
 {
+    (void)arg;
     s_boot_seq++;   /* next tagline (RTC-resident, see decl above) */
     app.boot.until = now + app.cfg.boot_delay_ms;
-    app.state    = ST_BOOT;
 }
 
 /* Splash over (elapsed or skipped): HOME — behind the DEVICE gate whenever
@@ -124,7 +119,7 @@ static void boot_done(uint64_t now)
         enter_home(now);
 }
 
-void boot_tick(uint64_t now)
+static void boot_tick(uint64_t now)
 {
     if (now >= app.boot.until) {
         boot_done(now);
@@ -132,11 +127,12 @@ void boot_tick(uint64_t now)
     }
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
-        render_boot(now);
+        nav_invalidate();
     }
 }
 
-void boot_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void boot_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                       uint64_t now)
 {
     (void)ch;
     /* Any key OR touch skips the splash — touch-only decks have no
@@ -145,3 +141,8 @@ void boot_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
         ev->type == CYBERDECK_INPUT_LONG_PRESS)
         boot_done(now);
 }
+
+const nav_screen_t boot_screen = {
+    .name = "boot", .enter = boot_enter, .tick = boot_tick,
+    .input = boot_input, .render = render_boot, .chrome = NAV_CHROME_NONE,
+};

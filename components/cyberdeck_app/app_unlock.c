@@ -41,8 +41,10 @@
 /* Entry phase (app.unlock.mode). */
 enum { UM_UNLOCK = 0, UM_OLD, UM_NEW, UM_CONFIRM, UM_REMOVE };
 
-/* Where to land when the screen closes (app.unlock.ret). */
-enum { UR_HOME = 0, UR_CONNECT, UR_MENU };
+/* Intent arg (nav): why this pad is up. Where to land when it closes is
+ * the nav stack's business — except the connect continuation. */
+enum { UA_PROMPT = 0, UA_RESUME, UA_GATE, UA_SETPIN, UA_REMOVE };
+static uint8_t s_flavor;
 
 /* Worker op — the keystore call made on the worker task. */
 enum { OP_UNLOCK = 0, OP_CREATE, OP_CHANGE, OP_REMOVE };
@@ -88,10 +90,9 @@ static const char *phase_title(void)
     }
 }
 
-static void render_unlock(void)
+static void render_unlock(uint64_t now)
 {
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
+    (void)now;
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     bool tall = ui_rows() >= 24;
@@ -100,9 +101,9 @@ static void render_unlock(void)
      * device gate, a key-connect prompt, or a keystore menu flow. */
     ui_pen(OVERLAY_COL_BLUE);
     ui_puts(ui_cols() - 12, 0,
-            app.unlock.gate              ? "// DEVICE  "
-          : app.unlock.ret == UR_CONNECT ? "// CONNECT "
-                                         : "// KEYSTORE", 0);
+            app.unlock.gate          ? "// DEVICE  "
+          : s_flavor == UA_RESUME    ? "// CONNECT "
+                                     : "// KEYSTORE", 0);
     ui_pen(OVERLAY_COL_DEFAULT);
     if (tall) draw_rule(3);
 
@@ -217,8 +218,6 @@ static void render_unlock(void)
               : app.unlock.mode == UM_REMOVE
                   ? "keys revert to plain \xB7 Esc cancel"
                   : "digits \xB7 Enter OK \xB7 Esc cancel");
-    ui_no_cursor();
-    ui_present();
 }
 
 static void flash_note(uint64_t now, const char *msg)
@@ -251,10 +250,17 @@ static void unlock_finish(uint64_t now)
 {
     wipe_entry();
     memset(s_staged, 0, sizeof(s_staged));
-    switch (app.unlock.ret) {
-    case UR_CONNECT: connect_resume_active(now); break;
-    case UR_MENU:    app.state = ST_MENU; menu_goto(MS_KEYSTORE); break;
-    default:         enter_home(now); break;
+    switch (s_flavor) {
+    case UA_RESUME:                       /* re-arm the gated connect */
+        connect_resume_active(now);
+        break;
+    case UA_SETPIN:
+    case UA_REMOVE:                       /* back to the KEYSTORE page */
+        nav_pop(now);
+        break;
+    default:
+        enter_home(now);
+        break;
     }
 }
 
@@ -262,9 +268,9 @@ static void unlock_cancel(uint64_t now)
 {
     if (app.unlock.gate) return;       /* DEVICE gate: no Esc, no way out */
     memset(s_old, 0, sizeof(s_old));
-    if (app.unlock.ret == UR_CONNECT) {
+    if (s_flavor == UA_RESUME) {
         toast(now, "cancelled");
-        app.unlock.ret = UR_HOME;      /* don't arm the connect */
+        s_flavor = UA_PROMPT;          /* don't arm the connect */
     }
     unlock_finish(now);
 }
@@ -286,7 +292,7 @@ static void start_worker(uint64_t now, uint8_t op)
         return;
     }
     app.next_anim = 0;
-    render_unlock();
+    nav_invalidate();
 }
 
 /* Auto-submit length for the CONFIRM phase: mirror an all-digit new code so
@@ -306,7 +312,7 @@ static void enter_phase(uint8_t mode, uint8_t expected)
     app.unlock.expected    = expected;
     app.unlock.press_until = 0;       /* don't carry a lit pad key over */
     app.next_anim = 0;
-    render_unlock();
+    nav_invalidate();
 }
 
 static void submit(uint64_t now)
@@ -367,7 +373,7 @@ static void append_char(char c, uint64_t now)
         submit(now);
         return;
     }
-    render_unlock();
+    nav_invalidate();
 }
 
 static void erase_char(void)
@@ -377,50 +383,61 @@ static void erase_char(void)
     app.unlock.reveal_until = 0;
     if (app.unlock.len > 0)
         app.unlock.code[--app.unlock.len] = '\0';
-    render_unlock();
+    nav_invalidate();
+}
+
+static void unlock_enter(intptr_t arg, uint64_t now)
+{
+    s_flavor = (uint8_t)arg;
+    app.unlock.last_input = now;
+    app.unlock.gate     = (s_flavor == UA_GATE);
+    app.unlock.creating = false;
+    app.unlock.deriving = false;
+    app.unlock.note_until = 0;
+    switch (s_flavor) {
+    case UA_SETPIN:
+        app.unlock.creating = keystore_state() == KEYSTORE_ABSENT;
+        if (app.unlock.creating) enter_phase(UM_NEW, 0);
+        else                     enter_phase(UM_OLD, keystore_pin_len());
+        break;
+    case UA_REMOVE:
+        enter_phase(UM_REMOVE, keystore_pin_len());
+        break;
+    default:
+        enter_phase(UM_UNLOCK, keystore_pin_len());
+        break;
+    }
+}
+
+/* Every departure wipes the transient entry, however it happens. */
+static void unlock_exit(uint64_t now)
+{
+    (void)now;
+    wipe_entry();
+    memset(s_staged, 0, sizeof(s_staged));
+    memset(s_old, 0, sizeof(s_old));
 }
 
 void unlock_open(uint64_t now, bool resume_connect)
 {
-    app.unlock.last_input = now;
-    app.unlock.gate     = false;
-    app.unlock.ret      = resume_connect ? UR_CONNECT : UR_HOME;
-    app.unlock.creating = false;
-    app.unlock.deriving = false;
-    app.unlock.note_until = 0;
-    app.state = ST_UNLOCK;
-    enter_phase(UM_UNLOCK, keystore_pin_len());
+    intptr_t arg = resume_connect ? UA_RESUME : UA_PROMPT;
+    if (nav_current() == SCR_CONNECTING) nav_replace(SCR_UNLOCK, arg, now);
+    else                                 nav_push(SCR_UNLOCK, arg, now);
 }
 
 void unlock_open_gate(uint64_t now)
 {
-    unlock_open(now, false);
-    app.unlock.gate = true;            /* non-skippable, rain-capable */
+    nav_reset(SCR_UNLOCK, UA_GATE, now);   /* nothing behind the gate */
 }
 
 void unlock_open_setpin(uint64_t now)
 {
-    app.unlock.last_input = now;
-    app.unlock.gate     = false;
-    app.unlock.ret      = UR_MENU;
-    app.unlock.creating = keystore_state() == KEYSTORE_ABSENT;
-    app.unlock.deriving = false;
-    app.unlock.note_until = 0;
-    app.state = ST_UNLOCK;
-    if (app.unlock.creating) enter_phase(UM_NEW, 0);
-    else                     enter_phase(UM_OLD, keystore_pin_len());
+    nav_push(SCR_UNLOCK, UA_SETPIN, now);
 }
 
 void unlock_open_remove(uint64_t now)
 {
-    app.unlock.last_input = now;
-    app.unlock.gate     = false;
-    app.unlock.ret      = UR_MENU;
-    app.unlock.creating = false;
-    app.unlock.deriving = false;
-    app.unlock.note_until = 0;
-    app.state = ST_UNLOCK;
-    enter_phase(UM_REMOVE, keystore_pin_len());
+    nav_push(SCR_UNLOCK, UA_REMOVE, now);
 }
 
 /* The worker finished — route the result by op. */
@@ -473,14 +490,14 @@ static void worker_result(uint64_t now, esp_err_t r)
     unlock_finish(now);
 }
 
-void unlock_tick(uint64_t now)
+static void unlock_tick(uint64_t now)
 {
     if (app.unlock.deriving && s_done) {
         app.unlock.deriving   = false;
         app.unlock.last_input = now;   /* fresh idle window after a bounce */
         wipe_entry();
         worker_result(now, (esp_err_t)s_result);
-        if (app.state != ST_UNLOCK) return;
+        if (nav_current() != SCR_UNLOCK) return;
     }
     if (app.unlock.note_until && now >= app.unlock.note_until)
         app.unlock.note_until = 0;
@@ -500,7 +517,9 @@ void unlock_tick(uint64_t now)
         if (app.unlock.gate) {
             if (saver_tick_gate(now)) return;   /* rain owns the screen */
         } else if (now - app.unlock.last_input >= IDLE_CANCEL_MS) {
-            if (app.unlock.ret == UR_MENU) app.unlock.ret = UR_HOME;
+            /* An abandoned pad always lands HOME, even a menu flow. */
+            if (s_flavor == UA_SETPIN || s_flavor == UA_REMOVE)
+                s_flavor = UA_PROMPT;
             unlock_cancel(now);
             return;
         }
@@ -508,7 +527,7 @@ void unlock_tick(uint64_t now)
 
     if (now >= app.next_anim) {                     /* spinner/caret/blink */
         app.next_anim = now + ANIM_PERIOD_MS;
-        render_unlock();
+        nav_invalidate();
     }
 }
 
@@ -521,7 +540,8 @@ static void pad_flash(int slot, uint64_t now)
     app.unlock.press_until = now + PRESS_MS;
 }
 
-void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                         uint64_t now)
 {
     app.unlock.last_input = now;           /* any touch/key holds the pad */
     if (app.unlock.deriving) return;       /* KDF running: not cancellable */
@@ -546,3 +566,9 @@ void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now
     else if (k == K_BACKSPACE) erase_char();
     else if (k == K_CHAR)      append_char(ch, now);
 }
+
+const nav_screen_t unlock_screen = {
+    .name = "unlock", .enter = unlock_enter, .exit = unlock_exit,
+    .tick = unlock_tick, .input = unlock_input, .render = render_unlock,
+    .chrome = NAV_CHROME_NONE,
+};

@@ -243,7 +243,8 @@ static bool s_fx_dirty = false;
 
 void menu_fx_flush(void)
 {
-    const bool on_system = (app.state == ST_MENU && app.menu.screen == MS_SYSTEM);
+    const bool on_system = (nav_current() == SCR_MENU &&
+                            app.menu.screen == MS_SYSTEM);
     if (s_saver_dirty && !on_system) {
         s_saver_dirty = false;
         app_saver_cfg_t sv = { .idle_min = app.saver.idle_ms / 60000u };
@@ -259,7 +260,7 @@ void menu_fx_flush(void)
     }
 #endif
     if (!s_fx_dirty) return;
-    if (app.state == ST_MENU && app.menu.screen == MS_EFFECTS) return;
+    if (nav_current() == SCR_MENU && app.menu.screen == MS_EFFECTS) return;
     s_fx_dirty = false;
     display_fx_cfg_t c;
     display_fx_get(&c);
@@ -327,9 +328,9 @@ static int picker_items(const char *out[], const char *bodies[],
     return n;
 }
 
-static void render_menu(void)
+static void render_menu(uint64_t now)
 {
-    ui_colors(UI_FG, UI_BG);
+    (void)now;
     ui_dim();   /* dim the live session behind the menu so it pops */
 
     const int sc = app.menu.screen;
@@ -556,7 +557,7 @@ void menu_goto(int sc)
     if (sc == MS_FONT) s_font_pending = FONT_SIZE_COUNT;  /* re-read on open */
     if (sc == MS_KEYSTORE) s_ks_snap = keystore_state();  /* see ks_menu_items */
     menu_clear_note();
-    render_menu();
+    nav_invalidate();
 }
 
 /* Discard a grabbed-but-not-dropped reorder: the pending moves only live in
@@ -577,16 +578,16 @@ static void menu_back(uint64_t now)
     if (app.menu.screen == MS_REORDER && app.menu.reorder_grab >= 0) {
         menu_abort_reorder();
         menu_clear_note();
-        render_menu();
+        nav_invalidate();
         return;
     }
     switch (app.menu.screen) {
     case MS_MAIN:                              /* resume the live session */
         app.menu.armed = false;
-        session_resume();
+        nav_pop(now);
         break;
     case MS_CONFIG:
-        if (app.menu.from_home) enter_home(now);
+        if (app.menu.from_home) nav_pop(now);  /* opened from HOME */
         else             menu_goto(MS_MAIN);
         break;
     case MS_DELPROFILE:
@@ -655,7 +656,7 @@ static void menu_activate(uint64_t now)
     switch (sc) {
     case MS_MAIN:
         switch (sel) {
-        case 0: session_resume();                         return;  /* resume  */
+        case 0: nav_pop(now);                             return;  /* resume  */
         case 1:                                                    /* discon. */
             ssh_client_disconnect();
             enter_home_after_collapse(now);   /* deliberate CRT power-off */
@@ -735,7 +736,12 @@ static void menu_activate(uint64_t now)
 #ifndef BUILD_SIMULATOR
         snprintf(note, sizeof(note), "%s set - rebooting", font_size_name(want));
         menu_note(now, MENU_MSG_MS, false, note);
-        render_menu();
+        /* Present NOW: the blocking delay below means no next tick. */
+        ui_colors(UI_FG, UI_BG);
+        ui_clear();
+        render_menu(now);
+        ui_no_cursor();
+        ui_present();
         vTaskDelay(pdMS_TO_TICKS(1200));
         esp_restart();
 #else
@@ -886,31 +892,40 @@ static void menu_activate(uint64_t now)
         }
         break;
     }
-    render_menu();
+    nav_invalidate();
 }
 
-/* Open the in-session root menu (F12 / long-press). */
-void menu_open(uint64_t now)
+/* @p arg = the root page: MS_MAIN in-session, MS_CONFIG from HOME. */
+static void menu_enter(intptr_t arg, uint64_t now)
 {
     (void)now;
     app.menu.sel       = 0;
-    app.menu.screen    = MS_MAIN;
-    app.menu.from_home = false;
+    app.menu.screen    = (int)arg;
+    app.menu.from_home = (arg == MS_CONFIG);
     app.menu.armed     = false;
     menu_clear_note();
-    app.state = ST_MENU;
-    render_menu();
+    if (arg == MS_CONFIG) menu_goto(MS_CONFIG);   /* resolve page snapshots */
 }
 
-/* Open the config hub directly from HOME (no session behind it). */
-void menu_open_config(void)
+/* Revealed by a pop (profile editor, keystore pad): re-land on the page
+ * the user left, selection reset. */
+static void menu_resume(intptr_t arg, uint64_t now)
 {
-    app.menu.from_home = true;
-    app.state   = ST_MENU;
-    menu_goto(MS_CONFIG);
+    (void)arg; (void)now;
+    menu_goto(app.menu.screen);
 }
 
-void menu_tick(uint64_t now)
+void menu_open(uint64_t now)
+{
+    nav_push(SCR_MENU, MS_MAIN, now);
+}
+
+void menu_open_config(uint64_t now)
+{
+    nav_push(SCR_MENU, MS_CONFIG, now);
+}
+
+static void menu_tick(uint64_t now)
 {
     /* A menu opened from HOME has no session to monitor. */
     if (!app.menu.from_home && !ssh_client_is_connected()) {
@@ -931,11 +946,12 @@ void menu_tick(uint64_t now)
         }
         if (app.menu.msg[0] && app.menu.msg_until && now >= app.menu.msg_until)
             menu_clear_note();
-        render_menu();
+        nav_invalidate();
     }
 }
 
-void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                       uint64_t now)
 {
     (void)ch;
     /* Esc / F12 / tap-outside all step back one level. */
@@ -969,7 +985,7 @@ void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
                 app.profiles[app.menu.sel]  = t;
                 app.menu.reorder_grab = ns;
                 app.menu.sel          = ns;
-                render_menu();
+                nav_invalidate();
             }
             break;
         }
@@ -979,7 +995,7 @@ void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
                 app.menu.armed = false;
                 menu_clear_note();
             }
-            render_menu();
+            nav_invalidate();
         }
         break;
     }
@@ -990,3 +1006,9 @@ void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
         break;
     }
 }
+
+const nav_screen_t menu_screen = {
+    .name = "menu", .enter = menu_enter, .resume = menu_resume,
+    .tick = menu_tick, .input = menu_input, .render = render_menu,
+    .chrome = NAV_CHROME_NONE,
+};

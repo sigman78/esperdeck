@@ -17,8 +17,6 @@
 /* Full-screen SoftAP onboarding modal. */
 static void render_wifiprov(uint64_t now)
 {
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     draw_titlebar(2, "WIFI SETUP");
@@ -44,8 +42,6 @@ static void render_wifiprov(uint64_t now)
                 ui_putch(22 + i, 8, 0x2713, 0);
         }
         ui_pen(OVERLAY_COL_DEFAULT);
-        ui_no_cursor();
-        ui_present();
         return;
     }
     if (st == WIFI_PROV_ST_FAILED) {
@@ -54,8 +50,6 @@ static void render_wifiprov(uint64_t now)
         ui_puts(6, 6, "failed - wrong password or network not found", 0);
         ui_pen(OVERLAY_COL_DEFAULT);
         ui_puts(6, 8, "retry from the app, or tap/Esc to cancel", 0);
-        ui_no_cursor();
-        ui_present();
         return;
     }
 
@@ -102,8 +96,13 @@ static void render_wifiprov(uint64_t now)
 
     draw_footer(recv ? "testing - long-press or Esc to abort"
                      : "tap or Esc to cancel");
-    ui_no_cursor();
-    ui_present();
+}
+
+static void wifiprov_enter(intptr_t arg, uint64_t now)
+{
+    (void)arg; (void)now;
+    app.prov.done_at = 0;
+    app.next_anim    = 0;
 }
 
 void enter_wifiprov(uint64_t now)
@@ -113,22 +112,19 @@ void enter_wifiprov(uint64_t now)
         enter_home(now);
         return;
     }
-    app.prov.done_at     = 0;
-    app.next_anim = 0;
-    app.state     = ST_WIFIPROV;
-    render_wifiprov(now);
+    nav_push(SCR_WIFIPROV, 0, now);
 }
 
-void wifiprov_tick(uint64_t now)
+static void wifiprov_tick(uint64_t now)
 {
     if (wifi_provision_state() == WIFI_PROV_ST_SUCCESS) {
         if (app.prov.done_at == 0) {
             app.prov.done_at = now + PROV_ACK_HOLD_MS;  /* phone reads the ack */
-            render_wifiprov(now);
+            nav_invalidate();
         } else if (now < app.prov.done_at) {        /* keep the check-bar filling */
             if (now >= app.next_anim) {
                 app.next_anim = now + ANIM_PERIOD_MS;
-                render_wifiprov(now);
+                nav_invalidate();
             }
         } else if (now >= app.prov.done_at) {
             char ssid[33];
@@ -147,11 +143,12 @@ void wifiprov_tick(uint64_t now)
         }
     } else if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
-        render_wifiprov(now);
+        nav_invalidate();
     }
 }
 
-void wifiprov_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void wifiprov_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                           uint64_t now)
 {
     (void)ch;
     /* Esc or any tap cancels — except while the phone's credentials are
@@ -170,3 +167,9 @@ void wifiprov_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t n
         enter_home(now);
     }
 }
+
+const nav_screen_t wifiprov_screen = {
+    .name = "wifiprov", .enter = wifiprov_enter, .tick = wifiprov_tick,
+    .input = wifiprov_input, .render = render_wifiprov,
+    .chrome = NAV_CHROME_NONE,
+};

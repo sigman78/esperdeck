@@ -285,29 +285,29 @@ static void status_toasts(uint64_t now)
     }
 }
 
-/* ------------------------------------------------------------- dispatch */
+/* --------------------------------------------------------- registration */
 
-typedef struct {
-    void (*tick)(uint64_t now);
-    void (*input)(const cyberdeck_input_t *ev, ui_key_t k, char ch,
-                  uint64_t now);
-} screen_ops_t;
+int SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
+    SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
+    SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK;
 
-/* One row per app_state_t — the whole FSM surface at a glance. */
-static const screen_ops_t SCREENS[ST_COUNT] = {
-    [ST_BOOT]       = { boot_tick,       boot_input       },
-    [ST_HOME]       = { home_tick,       home_input       },
-    [ST_PAIRING]    = { pairing_tick,    pairing_input    },
-    [ST_HOSTKEY]    = { hostkey_tick,    hostkey_input    },
-    [ST_CONNECTING] = { connecting_tick, connecting_input },
-    [ST_SESSION]    = { session_tick,    session_input    },
-    [ST_POWEROFF]   = { poweroff_tick,   poweroff_input   },
-    [ST_MENU]       = { menu_tick,       menu_input       },
-    [ST_WIFIPROV]   = { wifiprov_tick,   wifiprov_input   },
-    [ST_PROFILE]    = { profile_tick,    profile_input    },
-    [ST_SSHIMPORT]  = { sshimport_tick,  sshimport_input  },
-    [ST_UNLOCK]     = { unlock_tick,     unlock_input     },
-};
+/* One call per screen — the whole surface at a glance. The same registry
+ * the plugin seam (extensibility item 5) will feed from plugin_table.c. */
+static void register_screens(void)
+{
+    SCR_BOOT       = nav_register(&boot_screen);
+    SCR_HOME       = nav_register(&home_screen);
+    SCR_POWEROFF   = nav_register(&poweroff_screen);
+    SCR_PAIRING    = nav_register(&pairing_screen);
+    SCR_HOSTKEY    = nav_register(&hostkey_screen);
+    SCR_CONNECTING = nav_register(&connecting_screen);
+    SCR_SESSION    = nav_register(&session_screen);
+    SCR_MENU       = nav_register(&menu_screen);
+    SCR_WIFIPROV   = nav_register(&wifiprov_screen);
+    SCR_PROFILE    = nav_register(&profile_screen);
+    SCR_SSHIMPORT  = nav_register(&sshimport_screen);
+    SCR_UNLOCK     = nav_register(&unlock_screen);
+}
 
 /* ---------------------------------------------------------- public API */
 
@@ -328,7 +328,6 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     app.touch_scroll = tc.scroll;
     app_touch_scroll_apply();
     app_settings_register_reset();
-    boot_enter(now_ms);
     saver_reset(now_ms);   /* idle timer starts at boot */
 
     esp_err_t err = ui_init();
@@ -336,6 +335,9 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 
     load_profiles();
     kick_wifi();
+
+    register_screens();
+    nav_reset(SCR_BOOT, 0, now_ms);
 
     /* Render-effect tunables: defaults overlaid with settings.ini [fx] (internal-DRAM
      * startup task — flash I/O is safe here). */
@@ -350,7 +352,7 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 
 bool cyberdeck_app_in_session(void)
 {
-    return app.state == ST_SESSION || app.state == ST_MENU;
+    return nav_current() == SCR_SESSION || nav_current() == SCR_MENU;
 }
 
 void cyberdeck_app_tick(uint64_t now)
@@ -361,8 +363,7 @@ void cyberdeck_app_tick(uint64_t now)
     status_toasts(now);
     menu_fx_flush();   /* deferred [fx] save, once the EFFECTS page is left */
 
-    if (app.state < ST_COUNT && SCREENS[app.state].tick)
-        SCREENS[app.state].tick(now);
+    nav_frame(now);
 }
 
 void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
@@ -378,6 +379,5 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
     ui_key_t k = (ev->type == CYBERDECK_INPUT_KEY)
                  ? decode_key(ev, &ch) : K_NONE;
 
-    if (app.state < ST_COUNT && SCREENS[app.state].input)
-        SCREENS[app.state].input(ev, k, ch, now);
+    nav_dispatch_input(ev, k, ch, now);
 }

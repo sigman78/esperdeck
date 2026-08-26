@@ -132,10 +132,9 @@ static void pf_draw_selector(int row, bool focused, const char *value)
     ui_puts(pf_fx(), row, bar, focused ? OVERLAY_ATTR_INVERSE : 0);
 }
 
-static void render_profile(void)
+static void render_profile(uint64_t now)
 {
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
+    (void)now;
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     draw_screen_header(app.pf.edit_idx >= 0 ? "EDIT PROFILE" : "NEW PROFILE",
@@ -197,16 +196,14 @@ static void render_profile(void)
     ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_footer("type to edit \xB7 Tab/arrows move \xB7 Enter next \xB7 Esc cancel");
-    ui_no_cursor();
-    ui_present();
 }
 
-/* Open the editor: @p edit_idx = stored profile to edit, or -1 for a new
- * one. Remembers whether it was entered from the menu (to return there). */
-void enter_profile(uint64_t now, int edit_idx)
+/* @p arg = stored profile to edit, or -1 for a new one. */
+static void profile_enter(intptr_t arg, uint64_t now)
 {
+    int edit_idx = (int)arg;
+    (void)now;
     memset(&app.pf.draft, 0, sizeof(app.pf.draft));
-    app.pf.return_menu  = (app.state == ST_MENU);
     app.pf.edit_idx     = (edit_idx >= 0 && edit_idx < app.stored_count)
                    ? edit_idx : -1;
     app.pf.orig_name[0] = '\0';
@@ -221,9 +218,11 @@ void enter_profile(uint64_t now, int edit_idx)
     app.pf.field  = PF_NAME;
     app.pf.cursor = (int)strlen(app.pf.draft.name);
     app.pf.err[0] = '\0';
-    app.state = ST_PROFILE;
-    (void)now;
-    render_profile();
+}
+
+void enter_profile(uint64_t now, int edit_idx)
+{
+    nav_push(SCR_PROFILE, edit_idx, now);
 }
 
 /* Validate the draft and persist it: append for a new profile, replace the
@@ -312,28 +311,28 @@ static void pf_focus_step(int dir)
     pf_focus(f);
 }
 
-/* Leave the profile editor for wherever it was entered from. */
+/* Leave the editor: the stack knows where it was opened from. */
 static void exit_profile(uint64_t now, bool saved)
 {
-    if (app.pf.return_menu) {
-        app.state = ST_MENU;
-        menu_goto(MS_PROFILES);
-        if (saved) menu_note(now, MENU_MSG_MS, false, "profile saved");
-    } else {
-        if (saved) toast(now, "profile saved");
-        enter_home(now);
+    nav_pop(now);
+    if (saved) {
+        if (nav_current() == SCR_MENU)
+            menu_note(now, MENU_MSG_MS, false, "profile saved");
+        else
+            toast(now, "profile saved");
     }
 }
 
-void profile_tick(uint64_t now)
+static void profile_tick(uint64_t now)
 {
     if (now >= app.next_anim) {   /* titlebar spark + comet + caret life */
         app.next_anim = now + ANIM_PERIOD_MS;
-        render_profile();
+        nav_invalidate();
     }
 }
 
-void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                          uint64_t now)
 {
     if (k == K_ESC) { exit_profile(now, false); return; }
 
@@ -358,7 +357,7 @@ void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
             else if (f == PF_KEY) pf_key_cycle(+1);
             app.pf.err[0] = '\0';
             pf_focus(f);
-            render_profile();
+            nav_invalidate();
             return;
         }
     }
@@ -366,19 +365,19 @@ void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
     /* ---- button focus (Save / Cancel) ---- */
     if (app.pf.field >= PF_SAVE) {
         switch (k) {
-        case K_LEFT:  pf_focus(PF_SAVE);   render_profile(); break;
-        case K_RIGHT: pf_focus(PF_CANCEL); render_profile(); break;
+        case K_LEFT:  pf_focus(PF_SAVE);   nav_invalidate(); break;
+        case K_RIGHT: pf_focus(PF_CANCEL); nav_invalidate(); break;
         case K_UP:                              /* backward through ring */
-            pf_focus_step(-1); render_profile(); break;
+            pf_focus_step(-1); nav_invalidate(); break;
         case K_DOWN: case K_TAB:                /* forward (Cancel wraps) */
-            pf_focus_step(+1); render_profile(); break;
+            pf_focus_step(+1); nav_invalidate(); break;
         case K_ENTER:
             if (app.pf.field == PF_CANCEL) { exit_profile(now, false); break; }
             else {
                 const char *err = profile_commit();
                 if (err[0]) {   /* inline — a modal has no toast strip */
                     snprintf(app.pf.err, sizeof(app.pf.err), "%s", err);
-                    render_profile();
+                    nav_invalidate();
                 } else {
                     load_profiles();
                     exit_profile(now, true);
@@ -397,18 +396,18 @@ void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
             if (app.pf.field == PF_AUTH) pf_auth_toggle();
             else pf_key_cycle(k == K_RIGHT ? +1 : -1);
             app.pf.err[0] = '\0';
-            render_profile();
+            nav_invalidate();
             break;
         case K_CHAR:
             if (ch != ' ') break;               /* space also steps it */
             if (app.pf.field == PF_AUTH) pf_auth_toggle();
             else pf_key_cycle(+1);
             app.pf.err[0] = '\0';
-            render_profile();
+            nav_invalidate();
             break;
-        case K_UP:    pf_focus_step(-1); render_profile(); break;
+        case K_UP:    pf_focus_step(-1); nav_invalidate(); break;
         case K_DOWN: case K_TAB:
-        case K_ENTER: pf_focus_step(+1); render_profile(); break;
+        case K_ENTER: pf_focus_step(+1); nav_invalidate(); break;
         default: break;
         }
         return;
@@ -428,7 +427,7 @@ void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
             memmove(buf + app.pf.cursor + 1, buf + app.pf.cursor, len - app.pf.cursor + 1);
             buf[app.pf.cursor++] = ch;
             app.pf.err[0] = '\0';              /* an edit clears the error */
-            render_profile();
+            nav_invalidate();
         }
         break;
     case K_BACKSPACE:
@@ -436,14 +435,20 @@ void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
             memmove(buf + app.pf.cursor - 1, buf + app.pf.cursor, len - app.pf.cursor + 1);
             app.pf.cursor--;
             app.pf.err[0] = '\0';
-            render_profile();
+            nav_invalidate();
         }
         break;
-    case K_LEFT:  if (app.pf.cursor > 0)   { app.pf.cursor--; render_profile(); } break;
-    case K_RIGHT: if (app.pf.cursor < len) { app.pf.cursor++; render_profile(); } break;
-    case K_UP:    pf_focus_step(-1); render_profile(); break;
+    case K_LEFT:  if (app.pf.cursor > 0)   { app.pf.cursor--; nav_invalidate(); } break;
+    case K_RIGHT: if (app.pf.cursor < len) { app.pf.cursor++; nav_invalidate(); } break;
+    case K_UP:    pf_focus_step(-1); nav_invalidate(); break;
     case K_DOWN: case K_TAB:
-    case K_ENTER: pf_focus_step(+1); render_profile(); break;
+    case K_ENTER: pf_focus_step(+1); nav_invalidate(); break;
     default: break;
     }
 }
+
+const nav_screen_t profile_screen = {
+    .name = "profile", .enter = profile_enter, .tick = profile_tick,
+    .input = profile_input, .render = render_profile,
+    .chrome = NAV_CHROME_NONE,
+};

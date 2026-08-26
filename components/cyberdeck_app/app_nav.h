@@ -1,0 +1,64 @@
+/*
+ * app_nav.h — screen registry + navigation stack (internal to the shell).
+ *
+ * Screens register a hook table and get an id; navigation is a small
+ * stack of (screen, arg) entries, so "back" is nav_pop instead of a
+ * bespoke destination per screen. The shell owns the frame:
+ * clear → render(now) → [chrome, item 4] → present, once per tick and
+ * only when something invalidated — screens never clear or present.
+ * (docs/extensibility.md item 2; the design half is docs/ui-spec.md.)
+ */
+
+#pragma once
+
+#include "cyberdeck_app.h"
+#include <stdint.h>
+
+/* Decoded UI keys — decoded once by the core, screens get the result. */
+typedef enum {
+    K_NONE = 0, K_UP, K_DOWN, K_LEFT, K_RIGHT,
+    K_ENTER, K_ESC, K_F12, K_CHAR, K_BACKSPACE, K_TAB,
+    K_SCROLL_UP, K_SCROLL_DOWN,
+} ui_key_t;
+
+/* Shared chrome policy (composited by the shell once item 4's kit lands;
+ * recorded per screen now so the descriptor is stable). */
+enum { NAV_CHROME_NONE = 0, NAV_CHROME_FULL };
+
+typedef struct {
+    const char *name;                    /* debug/logging id            */
+    /* Becoming current via push/replace/reset. @p arg is the intent:
+     * profile index, import mode, unlock flavor... 0 when unused. */
+    void (*enter)(intptr_t arg, uint64_t now);
+    /* Revealed again by nav_pop; NULL = use enter with the entry's arg. */
+    void (*resume)(intptr_t arg, uint64_t now);
+    void (*exit)(uint64_t now);          /* leaving the top; optional   */
+    void (*tick)(uint64_t now);
+    void (*input)(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                  uint64_t now);
+    /* Draw the body into the cleared overlay. NULL = self-managed
+     * (SESSION: overlay hidden except its transient chrome pass). */
+    void (*render)(uint64_t now);
+    uint8_t chrome;                      /* NAV_CHROME_*                */
+} nav_screen_t;
+
+/* Register a screen; returns its id. Call at init, before any nav op. */
+int nav_register(const nav_screen_t *def);
+
+/* Stack ops. Every op exits the departing screen, enters/resumes the
+ * arriving one, and invalidates. The bottom entry never pops. */
+void nav_push(int id, intptr_t arg, uint64_t now);
+void nav_replace(int id, intptr_t arg, uint64_t now);  /* swap the top  */
+void nav_reset(int id, intptr_t arg, uint64_t now);    /* whole stack   */
+void nav_pop(uint64_t now);
+
+int  nav_current(void);                  /* id of the top screen        */
+
+/* Request a render this tick (coalesced: one present per frame). */
+void nav_invalidate(void);
+
+/* Core loop hooks (cyberdeck_app.c): tick the top screen then run the
+ * clear → render → present pass if invalidated; feed one input event. */
+void nav_frame(uint64_t now);
+void nav_dispatch_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                        uint64_t now);

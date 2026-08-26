@@ -216,8 +216,8 @@ bool saver_on_input(uint64_t now)
     }
     /* Rain can cover HOME or the gate pad; repaint whichever is under it
      * (an early keypress inside the 1 s grace still acts on that screen). */
-    if (app.state == ST_UNLOCK) app.next_anim = 0;
-    else                        render_home();
+    app.next_anim = 0;
+    nav_invalidate();
     return swallow;
 }
 

@@ -22,11 +22,12 @@ static tilegrid_t hostkey_grid(void)
     return g;
 }
 
-static void render_hostkey(void)
+static void render_hostkey(uint64_t now)
 {
+    (void)now;
+    /* Overrides the shell's default overlay colors: mismatch = hazard red. */
     ui_colors(app.hostkey.mismatch ? COLOR_WHITE : UI_FG,
               app.hostkey.mismatch ? RGB565(96, 0, 0) : UI_BG);
-    ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     const conn_profile_t *p = &app.conn.active;
@@ -95,8 +96,6 @@ static void render_hostkey(void)
     draw_footer(app.hostkey.mismatch
                 ? "arrows+Enter \xB7 Y replace \xB7 Esc cancel"
                 : "arrows+Enter trust \xB7 Esc cancel");
-    ui_no_cursor();
-    ui_present();
 }
 
 /* Pin the server's current fingerprint and (re)connect. */
@@ -108,30 +107,34 @@ static void hostkey_trust_and_connect(uint64_t now)
     connect_arm_pinned(fp, now);
 }
 
-/* Enter the prompt for the fingerprint ssh_client just reported. A first-
- * seen host defaults to Trust; a CHANGED key defaults to Cancel. */
-void hostkey_open(bool mismatch)
+/* A first-seen host defaults to Trust; a CHANGED key defaults to Cancel. */
+static void hostkey_enter(intptr_t arg, uint64_t now)
 {
-    app.hostkey.mismatch    = mismatch;
+    (void)now;
+    app.hostkey.mismatch    = arg != 0;
     app.hostkey.armed       = false;
     app.hostkey.arm_src     = 0;
-    app.hostkey.sel         = mismatch ? 1 : 0;
+    app.hostkey.sel         = arg ? 1 : 0;
     app.hostkey.frame0      = app.anim_frame;   /* start the decode reveal */
     app.next_anim = 0;
-    app.state     = ST_HOSTKEY;
-    render_hostkey();
 }
 
-void hostkey_tick(uint64_t now)
+void hostkey_open(bool mismatch, uint64_t now)
+{
+    nav_replace(SCR_HOSTKEY, mismatch, now);
+}
+
+static void hostkey_tick(uint64_t now)
 {
     /* Keep the whole screen animated (spark, decode reveal, hazard tape). */
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
-        render_hostkey();
+        nav_invalidate();
     }
 }
 
-void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t now)
+static void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                          uint64_t now)
 {
     if (ev->type == CYBERDECK_INPUT_TAP) {
         int slot = tile_hit(&app.grid, ev->x, ev->y);
@@ -139,7 +142,7 @@ void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
             if (app.hostkey.armed) {
                 app.hostkey.armed   = false;
                 app.hostkey.arm_src = 0;
-                render_hostkey();
+                nav_invalidate();
             }
         } else if (slot == 1) {                  /* Cancel tile */
             enter_home(now);
@@ -154,7 +157,7 @@ void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
                  * second TAP — an accidental tap + habitual Enter can't re-pin. */
                 app.hostkey.armed   = true;
                 app.hostkey.arm_src = 1;
-                render_hostkey();
+                nav_invalidate();
             }
         }
         return;
@@ -168,7 +171,7 @@ void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
             app.hostkey.arm_src = 0;
             redraw = true;
         }
-        if (redraw) render_hostkey();
+        if (redraw) nav_invalidate();
         return;
     }
     if (k == K_ESC) { enter_home(now); return; }
@@ -193,16 +196,22 @@ void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch, uint64_t no
             } else if (app.hostkey.armed) {                /* tap-armed: back down */
                 app.hostkey.armed   = false;
                 app.hostkey.arm_src = 0;
-                render_hostkey();
+                nav_invalidate();
             } else {
                 app.hostkey.armed   = true;
                 app.hostkey.arm_src = 2;
-                render_hostkey();
+                nav_invalidate();
             }
         } else if (app.hostkey.armed) {                    /* anything else backs down */
             app.hostkey.armed   = false;
             app.hostkey.arm_src = 0;
-            render_hostkey();
+            nav_invalidate();
         }
     }
 }
+
+const nav_screen_t hostkey_screen = {
+    .name = "hostkey", .enter = hostkey_enter, .tick = hostkey_tick,
+    .input = hostkey_input, .render = render_hostkey,
+    .chrome = NAV_CHROME_NONE,
+};

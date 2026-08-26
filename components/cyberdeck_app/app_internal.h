@@ -10,24 +10,9 @@
 #pragma once
 
 #include "cyberdeck_app.h"
+#include "app_nav.h"
 #include "app_ui.h"
 #include "storage.h"
-
-typedef enum {
-    ST_BOOT = 0,
-    ST_HOME,        /* profile picker + status                       */
-    ST_PAIRING,     /* BLE keyboard scan list (modal)                */
-    ST_HOSTKEY,     /* trust-on-first-use fingerprint prompt (modal) */
-    ST_CONNECTING,  /* pending/armed SSH connect                     */
-    ST_SESSION,     /* bytes flow to/from SSH                        */
-    ST_POWEROFF,    /* CRT collapse playing over the dead session    */
-    ST_MENU,        /* in-session overlay menu                       */
-    ST_WIFIPROV,    /* SoftAP WiFi onboarding (modal)                */
-    ST_PROFILE,     /* on-device profile editor (modal)              */
-    ST_SSHIMPORT,   /* SoftAP + HTTP SSH-profile import (modal)      */
-    ST_UNLOCK,      /* keystore PIN pad (modal)                      */
-    ST_COUNT,
-} app_state_t;
 
 #define MAX_PROFILES     (STORAGE_MAX_PROFILES + 1)   /* stored + synth fallback */
 
@@ -57,16 +42,6 @@ typedef struct {
 /** Push app.touch_scroll down to the touch driver (no-op without the
  *  gesture compiled in). Call after boot load and after every toggle. */
 void app_touch_scroll_apply(void);
-
-/* Decoded UI keys (core decodes once per event; screens get the result).
- * K_SCROLL_* are Shift+PageUp/PageDown: the deck keeps those for its own
- * scrollback rather than forwarding them, the same bargain every terminal
- * emulator makes. Unshifted PageUp/PageDown still go to the remote. */
-typedef enum {
-    K_NONE = 0, K_UP, K_DOWN, K_LEFT, K_RIGHT,
-    K_ENTER, K_ESC, K_F12, K_CHAR, K_BACKSPACE, K_TAB,
-    K_SCROLL_UP, K_SCROLL_DOWN,
-} ui_key_t;
 
 /* ------------------------------------------------- per-module state
  * One struct per screen module, owned and mutated by the named app_*.c
@@ -186,7 +161,6 @@ typedef struct {                    /* app_unlock.c */
 
 struct app_state {
     cyberdeck_app_config_t cfg;
-    app_state_t state;
 
     conn_profile_t profiles[MAX_PROFILES];
     int  profile_count;
