@@ -11,6 +11,11 @@
 #include <stdio.h>
 #include <string.h>
 
+static struct {
+    int      seen;                  /* count already acknowledged on screen */
+    char     last[32];              /* snapshot of the last imported name   */
+} s_imp;
+
 /* Full-screen HTTP SSH-profile import modal (SoftAP or Web transport). */
 static void render_sshimport(uint64_t now)
 {
@@ -86,13 +91,13 @@ static void render_sshimport(uint64_t now)
     } else if (cnt > 0 || del > 0) {
         if (del > 0 && cnt > 0)
             snprintf(stat, sizeof(stat), "last: '%s'  (%d saved, %d removed)",
-                     app.imp.last, cnt, del);
+                     s_imp.last, cnt, del);
         else if (del > 0)
             snprintf(stat, sizeof(stat), "removed '%s'  (%d removed)",
-                     app.imp.last, del);
+                     s_imp.last, del);
         else
             snprintf(stat, sizeof(stat), "imported '%s'  (%d saved)",
-                     app.imp.last, cnt);
+                     s_imp.last, cnt);
         ui_pen(OVERLAY_COL_GREEN);
         ui_putch(4, y, UI_LED_ON, 0);
     } else {
@@ -121,8 +126,8 @@ static void render_sshimport(uint64_t now)
 static void sshimport_enter(intptr_t arg, uint64_t now)
 {
     (void)arg; (void)now;
-    app.imp.seen    = 0;
-    app.imp.last[0] = '\0';
+    s_imp.seen    = 0;
+    s_imp.last[0] = '\0';
     app.next_anim   = 0;
 }
 
@@ -162,9 +167,9 @@ static void sshimport_tick(uint64_t now)
     /* A submission lands on the httpd task; re-render on its activity bump
      * so the confirmation appears at once. Snapshot the name via the locked
      * getter once per bump so the render never samples a half-write. */
-    if (ssh_import_count() + ssh_import_deleted() != app.imp.seen) {
-        app.imp.seen = ssh_import_count() + ssh_import_deleted();
-        snprintf(app.imp.last, sizeof(app.imp.last), "%s", ssh_import_last());
+    if (ssh_import_count() + ssh_import_deleted() != s_imp.seen) {
+        s_imp.seen = ssh_import_count() + ssh_import_deleted();
+        snprintf(s_imp.last, sizeof(s_imp.last), "%s", ssh_import_last());
         app.next_anim = now + ANIM_PERIOD_MS;
         nav_invalidate();
     } else if (now >= app.next_anim) {

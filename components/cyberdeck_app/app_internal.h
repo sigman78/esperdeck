@@ -43,122 +43,8 @@ typedef struct {
  *  gesture compiled in). Call after boot load and after every toggle. */
 void app_touch_scroll_apply(void);
 
-/* ------------------------------------------------- per-module state
- * One struct per screen module, owned and mutated by the named app_*.c
- * alone; collected below into the app_state composite. */
-
-typedef struct {                    /* app_boot.c */
-    uint64_t until;                 /* when the splash ends */
-} boot_state_t;
-
-typedef struct {                    /* app_home.c */
-    int      sel;                   /* selected HOME tile                  */
-    bool     kbd_bonded;            /* gates the "Pair keyboard" tile      */
-    uint8_t  kon_idx;               /* Konami sequence progress            */
-    uint64_t next_refresh;          /* next live-status re-render          */
-    uint64_t poweroff_until;        /* ST_POWEROFF: when the collapse ends */
-} home_state_t;
-
-typedef struct {                    /* app_saver.c */
-    uint64_t last_input;            /* any key/touch; drives the idle timer  */
-    bool     on;                    /* rain actually on screen (not derived) */
-    uint64_t since;                 /* when the rain went up (wake grace)    */
-    uint32_t idle_ms;               /* [saver] idle timeout (= auto-lock)  */
-} saver_state_t;
-
-#define PAIR_MAX  STORAGE_BLE_MAX
-
-typedef struct {                    /* app_pairing.c */
-    ble_device_info_t devs[PAIR_MAX];
-    int      ndevs;
-    int      sel;
-    uint64_t last_poll;
-    uint64_t last_activity;
-    bool     forget_armed;          /* "Forget bonds" needs a 2nd tap */
-} pair_state_t;
-
-typedef struct {                    /* app_hostkey.c */
-    bool     mismatch;              /* pinned key CHANGED (vs first contact)  */
-    bool     armed;                 /* mismatch REPLACE needs a 2nd activation */
-    uint8_t  arm_src;               /* what armed it: 1 = tap, 2 = Enter       */
-    uint32_t frame0;                /* anim_frame at entry (decode reveal)     */
-    int      sel;                   /* 0 = trust/replace, 1 = cancel           */
-} hostkey_state_t;
-
-typedef struct {                    /* app_connect.c */
-    conn_profile_t active;          /* snapshot of the profile being
-                                     * connected/connected: list mutations
-                                     * must never redirect a live session  */
-    bool     armed;                 /* render one frame, then connect     */
-    bool     connecting;            /* async connect worker is running    */
-    bool     cancelled;             /* user aborted the in-flight connect */
-    uint64_t connect_at;            /* not before (auto-reconnect delay)  */
-    uint64_t started;               /* when the in-flight attempt began   */
-    int      attempt;               /* 0 = user-initiated, >0 = auto-retry # */
-    char     pinned_fp[65];         /* fp to pass as expected_fp, "" = none */
-    uint64_t session_start;         /* enter_session() time, for NO CARRIER */
-} conn_state_t;
-
-typedef struct {                    /* app_menu.c */
-    int      sel;
-    int      screen;                /* menu_screen_t: page of the menu tree */
-    bool     from_home;             /* config opened from HOME (no session) */
-    bool     armed;                 /* a destructive item needs a 2nd hit   */
-    char     msg[48];               /* action result, shown under the tiles */
-    uint64_t msg_until;             /* auto-clear time; 0 = sticky          */
-    bool     msg_wifi;              /* live-track wifi_status_str()         */
-    int      reorder_grab;          /* grabbed stored index, -1 = none      */
-} menu_state_t;
-
-typedef struct {                    /* app_profile.c */
-    conn_profile_t draft;           /* profile being entered            */
-    char     port[6];               /* port as text (parsed on save)    */
-    int      field;                 /* focused field (pf_field_t)       */
-    int      cursor;                /* caret within the focused field   */
-    char     err[40];               /* inline validation error, "" = ok */
-    int      edit_idx;              /* stored index being edited, -1 = new */
-    char     orig_name[32];         /* name at edit entry (slot re-found
-                                     * by name at save time)            */
-    bool     return_menu;           /* editor was entered from the menu */
-    char   (*keys)[STORAGE_KEY_ID_LEN];  /* SPIRAM, PF_KEY_MAX entries  */
-    int      nkeys;
-    int      key_sel;               /* index into keys, -1 = none       */
-    char     key_type[24];          /* cached type of the selected key  */
-} pf_state_t;
-
-typedef struct {                    /* app_wifiprov.c */
-    uint64_t done_at;               /* finish after CRED_SUCCESS (0 = unset) */
-} prov_state_t;
-
-typedef struct {                    /* app_sshimport.c */
-    int      seen;                  /* count already acknowledged on screen */
-    char     last[32];              /* snapshot of the last imported name   */
-} import_state_t;
-
-typedef struct {                    /* app_unlock.c */
-    char     code[65];              /* typed code, KEYSTORE_PIN_MAX + 1;
-                                     * app is .bss = internal SRAM; wiped
-                                     * on submit/leave                     */
-    int      len;
-    uint8_t  expected;              /* auto-submit length (0 = Enter only) */
-    uint8_t  mode;                  /* entry phase (um_mode in app_unlock)  */
-    uint8_t  ret;                   /* where to land after (ur_ret)         */
-    bool     creating;              /* set-code flow on an ABSENT store     */
-    bool     deriving;              /* KDF worker running; input swallowed */
-    const char *note;               /* status-row flash (static string)    */
-    uint64_t note_until;
-    int8_t   press;                 /* pad slot lit by a press...          */
-    uint64_t press_until;           /* ...until then (0 = none lit)        */
-    uint64_t last_input;            /* idle-cancel clock (IDLE_CANCEL_MS)  */
-    char     reveal_ch;             /* newest typed char, echoed briefly...*/
-    uint64_t reveal_until;          /* ...while defining a code (0 = off)  */
-    /* Two-gates model: a keystore on the deck means the deck is LOCKED.
-     * gate = this pad is the DEVICE gate (boot/wake): non-skippable, no
-     * idle-cancel, the saver rains over it. Otherwise it's a cancellable
-     * keystore prompt (connect fallback / menu flows). */
-    bool     gate;
-} unlock_state_t;
-
+/* The shared core. Per-screen state lives with its module (file-static
+ * behind the nav hooks); what remains here is genuinely cross-cutting. */
 struct app_state {
     cyberdeck_app_config_t cfg;
 
@@ -186,18 +72,6 @@ struct app_state {
     uint32_t anim_frame;   /* advances ~10 fps for subtle animation */
     uint64_t next_anim;    /* next animated re-render */
 
-    /* per-module state (owned by the named module) */
-    boot_state_t    boot;
-    home_state_t    home;
-    saver_state_t   saver;
-    pair_state_t    pair;
-    hostkey_state_t hostkey;
-    conn_state_t    conn;
-    menu_state_t    menu;
-    pf_state_t      pf;
-    prov_state_t    prov;
-    import_state_t  imp;
-    unlock_state_t  unlock;
 };
 
 extern struct app_state app;

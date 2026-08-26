@@ -32,13 +32,35 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+static struct {
+    char     code[65];              /* typed code, KEYSTORE_PIN_MAX + 1;
+                                     * .bss = internal SRAM; wiped on
+                                     * submit/leave                        */
+    int      len;
+    uint8_t  expected;              /* auto-submit length (0 = Enter only) */
+    uint8_t  mode;                  /* entry phase (um_mode)               */
+    bool     creating;              /* set-code flow on an ABSENT store    */
+    bool     deriving;              /* KDF worker running; input swallowed */
+    const char *note;               /* status-row flash (static string)    */
+    uint64_t note_until;
+    int8_t   press;                 /* pad slot lit by a press...          */
+    uint64_t press_until;           /* ...until then (0 = none lit)        */
+    uint64_t last_input;            /* idle-cancel clock (IDLE_CANCEL_MS)  */
+    char     reveal_ch;             /* newest typed char, echoed briefly...*/
+    uint64_t reveal_until;          /* ...while defining a code (0 = off)  */
+    /* Two-gates model: a keystore on the deck means the deck is LOCKED.
+     * gate = this pad is the DEVICE gate (boot/wake): non-skippable, no
+     * idle-cancel, the saver rains over it. */
+    bool     gate;
+} s_unlock;
+
 #define NOTE_MS      1200         /* status-row flash duration        */
 #define CODE_MIN     4            /* UI floor for a new code's length */
 #define PRESS_MS     160          /* pad tile lit after a press       */
 #define REVEAL_MS    800          /* newest char shown while defining */
 #define IDLE_CANCEL_MS 60000      /* unattended pad cancels to HOME   */
 
-/* Entry phase (app.unlock.mode). */
+/* Entry phase (s_unlock.mode). */
 enum { UM_UNLOCK = 0, UM_OLD, UM_NEW, UM_CONFIRM, UM_REMOVE };
 
 /* Intent arg (nav): why this pad is up. Where to land when it closes is
@@ -51,7 +73,7 @@ enum { OP_UNLOCK = 0, OP_CREATE, OP_CHANGE, OP_REMOVE };
 
 /* Worker exchange + flow stashes — .bss (internal SRAM), wiped as soon as
  * each value has served its purpose. */
-static char          s_try[sizeof(((unlock_state_t *)0)->code)];
+static char          s_try[sizeof(s_unlock.code)];
 static char          s_old[sizeof(s_try)];      /* change flow: current code */
 static char          s_staged[sizeof(s_try)];   /* set flow: new, pre-confirm */
 static uint8_t       s_op;
@@ -81,7 +103,7 @@ static const char *PAD_LBL[12] = { "1", "2", "3", "4", "5", "6",
 
 static const char *phase_title(void)
 {
-    switch (app.unlock.mode) {
+    switch (s_unlock.mode) {
     case UM_OLD:     return "CURRENT ACCESS CODE";
     case UM_NEW:     return "NEW ACCESS CODE";
     case UM_CONFIRM: return "CONFIRM NEW CODE";
@@ -101,7 +123,7 @@ static void render_unlock(uint64_t now)
      * device gate, a key-connect prompt, or a keystore menu flow. */
     ui_pen(OVERLAY_COL_BLUE);
     ui_puts(ui_cols() - 12, 0,
-            app.unlock.gate          ? "// DEVICE  "
+            s_unlock.gate          ? "// DEVICE  "
           : s_flavor == UA_RESUME    ? "// CONNECT "
                                      : "// KEYSTORE", 0);
     ui_pen(OVERLAY_COL_DEFAULT);
@@ -120,17 +142,17 @@ static void render_unlock(uint64_t now)
 
     /* Status / entry row: the code being typed, or what the deck is doing
      * with it. A note (wrong code, mismatch) flashes until input resumes. */
-    if (app.unlock.deriving) {
+    if (s_unlock.deriving) {
         static const char MSG[] = "DERIVING KEY";
         int x = (ui_cols() - (int)sizeof(MSG) + 1) / 2;
         ui_pen(OVERLAY_COL_CYAN);
         ui_putch(x - 2, entry_row, spinner_glyph(app.anim_frame), 0);
         ui_puts(x, entry_row, MSG, 0);
-    } else if (app.unlock.note_until) {
+    } else if (s_unlock.note_until) {
         uint8_t blink = ((app.anim_frame / 3) & 1) ? OVERLAY_ATTR_INVERSE : 0;
         ui_pen(OVERLAY_COL_AMBER);
-        ui_puts((ui_cols() - (int)strlen(app.unlock.note)) / 2, entry_row,
-                app.unlock.note, blink);
+        ui_puts((ui_cols() - (int)strlen(s_unlock.note)) / 2, entry_row,
+                s_unlock.note, blink);
     } else if (keystore_backoff_ms() > 0) {
         /* Failed-attempt wait: a live countdown owns the entry row (the
          * ~10 Hz re-render keeps it ticking; submits are refused anyway). */
@@ -147,8 +169,8 @@ static void render_unlock(uint64_t now)
          * entry briefly shows its character while defining a code. A
          * free-length row appends a blinking caret cell; a row too long
          * for the screen falls back to compact marks. */
-        int len = app.unlock.len;
-        int n   = app.unlock.expected ? app.unlock.expected : len + 1;
+        int len = s_unlock.len;
+        int n   = s_unlock.expected ? s_unlock.expected : len + 1;
         if (n * 4 - 1 <= ui_cols() - 2) {
             int x0 = (ui_cols() - (n * 4 - 1)) / 2;
             for (int i = 0; i < n; i++) {
@@ -162,11 +184,11 @@ static void render_unlock(uint64_t now)
                 ui_putch(x,     entry_row, '[', a);
                 ui_putch(x + 2, entry_row, ']', a);
                 if (filled) {
-                    bool show = i == len - 1 && app.unlock.reveal_until;
+                    bool show = i == len - 1 && s_unlock.reveal_until;
                     if (show) ui_pen(OVERLAY_COL_WHITE);
                     ui_putch(x + 1, entry_row,
-                             show ? (uint16_t)app.unlock.reveal_ch : 'X', a);
-                } else if (!app.unlock.expected) {   /* caret cell */
+                             show ? (uint16_t)s_unlock.reveal_ch : 'X', a);
+                } else if (!s_unlock.expected) {   /* caret cell */
                     ui_pen(OVERLAY_COL_GREEN);
                     ui_putch(x + 1, entry_row,
                              ((app.anim_frame / 4) & 1) ? UI_VBAR : '_',
@@ -194,7 +216,7 @@ static void render_unlock(uint64_t now)
      * Only touch lights a tile (see unlock_input): mirroring keystrokes
      * onto the pad would shoulder-surf the code onto a screen the typist
      * isn't even looking at. */
-    int lit = app.unlock.press_until ? app.unlock.press : -1;
+    int lit = s_unlock.press_until ? s_unlock.press : -1;
     for (int i = 0; i < 12; i++) {
         if (i == lit) continue;
         ui_pen(i == 9 ? OVERLAY_COL_AMBER :
@@ -210,20 +232,20 @@ static void render_unlock(uint64_t now)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer(app.unlock.deriving ? "working..."
-              : app.unlock.gate
+    draw_footer(s_unlock.deriving ? "working..."
+              : s_unlock.gate
                   ? "deck locked \xB7 digits \xB7 Enter OK"
-              : app.unlock.mode == UM_NEW
+              : s_unlock.mode == UM_NEW
                   ? "4+ chars \xB7 Enter OK \xB7 Esc cancel"
-              : app.unlock.mode == UM_REMOVE
+              : s_unlock.mode == UM_REMOVE
                   ? "keys revert to plain \xB7 Esc cancel"
                   : "digits \xB7 Enter OK \xB7 Esc cancel");
 }
 
 static void flash_note(uint64_t now, const char *msg)
 {
-    app.unlock.note       = msg;
-    app.unlock.note_until = now + NOTE_MS;
+    s_unlock.note       = msg;
+    s_unlock.note_until = now + NOTE_MS;
     app.next_anim = 0;
 }
 
@@ -239,10 +261,10 @@ static void flash_backoff(uint64_t now)
 
 static void wipe_entry(void)
 {
-    memset(app.unlock.code, 0, sizeof(app.unlock.code));
-    app.unlock.len          = 0;
-    app.unlock.reveal_ch    = 0;      /* echoes a code char — wipe with it */
-    app.unlock.reveal_until = 0;
+    memset(s_unlock.code, 0, sizeof(s_unlock.code));
+    s_unlock.len          = 0;
+    s_unlock.reveal_ch    = 0;      /* echoes a code char — wipe with it */
+    s_unlock.reveal_until = 0;
 }
 
 /* Land wherever this screen was opened from. */
@@ -266,7 +288,7 @@ static void unlock_finish(uint64_t now)
 
 static void unlock_cancel(uint64_t now)
 {
-    if (app.unlock.gate) return;       /* DEVICE gate: no Esc, no way out */
+    if (s_unlock.gate) return;       /* DEVICE gate: no Esc, no way out */
     memset(s_old, 0, sizeof(s_old));
     if (s_flavor == UA_RESUME) {
         toast(now, "cancelled");
@@ -277,16 +299,16 @@ static void unlock_cancel(uint64_t now)
 
 static void start_worker(uint64_t now, uint8_t op)
 {
-    memcpy(s_try, app.unlock.code, sizeof(s_try));
+    memcpy(s_try, s_unlock.code, sizeof(s_try));
     wipe_entry();
     s_op   = op;
     s_done = false;
-    app.unlock.deriving = true;
+    s_unlock.deriving = true;
     if (xTaskCreatePinnedToCore(unlock_worker, "ks_unlock", 8192, NULL,
                                 5, NULL, 0) != pdPASS) {
         memset(s_try, 0, sizeof(s_try));
         memset(s_old, 0, sizeof(s_old));
-        app.unlock.deriving = false;
+        s_unlock.deriving = false;
         toast_for(now, ERR_TOAST_MS, "unlock worker failed");
         enter_home(now);
         return;
@@ -308,46 +330,46 @@ static uint8_t staged_expected(void)
 static void enter_phase(uint8_t mode, uint8_t expected)
 {
     wipe_entry();
-    app.unlock.mode        = mode;
-    app.unlock.expected    = expected;
-    app.unlock.press_until = 0;       /* don't carry a lit pad key over */
+    s_unlock.mode        = mode;
+    s_unlock.expected    = expected;
+    s_unlock.press_until = 0;       /* don't carry a lit pad key over */
     app.next_anim = 0;
     nav_invalidate();
 }
 
 static void submit(uint64_t now)
 {
-    if (app.unlock.len == 0 || app.unlock.deriving) return;
+    if (s_unlock.len == 0 || s_unlock.deriving) return;
     /* Current-code phases refuse to burn a derivation during the wait. */
-    if ((app.unlock.mode == UM_UNLOCK || app.unlock.mode == UM_OLD ||
-         app.unlock.mode == UM_REMOVE) && keystore_backoff_ms() > 0) {
+    if ((s_unlock.mode == UM_UNLOCK || s_unlock.mode == UM_OLD ||
+         s_unlock.mode == UM_REMOVE) && keystore_backoff_ms() > 0) {
         wipe_entry();
         flash_backoff(now);
         return;
     }
-    switch (app.unlock.mode) {
+    switch (s_unlock.mode) {
     case UM_OLD:                       /* stash, then ask for the new code */
-        memcpy(s_old, app.unlock.code, sizeof(s_old));
+        memcpy(s_old, s_unlock.code, sizeof(s_old));
         enter_phase(UM_NEW, 0);
         return;
     case UM_NEW:
-        if (app.unlock.len < CODE_MIN) {
+        if (s_unlock.len < CODE_MIN) {
             flash_note(now, "AT LEAST 4 CHARACTERS");
             return;                    /* entry kept — extend it */
         }
-        memcpy(s_staged, app.unlock.code, sizeof(s_staged));
+        memcpy(s_staged, s_unlock.code, sizeof(s_staged));
         enter_phase(UM_CONFIRM, staged_expected());
         return;
     case UM_CONFIRM:
-        if (strcmp(app.unlock.code, s_staged) != 0) {
+        if (strcmp(s_unlock.code, s_staged) != 0) {
             memset(s_staged, 0, sizeof(s_staged));
             enter_phase(UM_NEW, 0);
             flash_note(now, "CODES DON'T MATCH");
             return;
         }
-        memcpy(app.unlock.code, s_staged, sizeof(app.unlock.code));
+        memcpy(s_unlock.code, s_staged, sizeof(s_unlock.code));
         memset(s_staged, 0, sizeof(s_staged));
-        start_worker(now, app.unlock.creating ? OP_CREATE : OP_CHANGE);
+        start_worker(now, s_unlock.creating ? OP_CREATE : OP_CHANGE);
         return;
     case UM_REMOVE:
         start_worker(now, OP_REMOVE);
@@ -360,16 +382,16 @@ static void submit(uint64_t now)
 
 static void append_char(char c, uint64_t now)
 {
-    app.unlock.note_until = 0;
-    if (app.unlock.len >= (int)sizeof(app.unlock.code) - 1) return;
-    app.unlock.code[app.unlock.len++] = c;
+    s_unlock.note_until = 0;
+    if (s_unlock.len >= (int)sizeof(s_unlock.code) - 1) return;
+    s_unlock.code[s_unlock.len++] = c;
     /* Echo the newest character briefly — only while DEFINING a code
      * (typo insurance); unlock/old entry stays fully masked. */
-    if (app.unlock.mode == UM_NEW || app.unlock.mode == UM_CONFIRM) {
-        app.unlock.reveal_ch    = c;
-        app.unlock.reveal_until = now + REVEAL_MS;
+    if (s_unlock.mode == UM_NEW || s_unlock.mode == UM_CONFIRM) {
+        s_unlock.reveal_ch    = c;
+        s_unlock.reveal_until = now + REVEAL_MS;
     }
-    if (app.unlock.expected && app.unlock.len == app.unlock.expected) {
+    if (s_unlock.expected && s_unlock.len == s_unlock.expected) {
         submit(now);
         return;
     }
@@ -378,26 +400,26 @@ static void append_char(char c, uint64_t now)
 
 static void erase_char(void)
 {
-    app.unlock.note_until   = 0;
-    app.unlock.reveal_ch    = 0;
-    app.unlock.reveal_until = 0;
-    if (app.unlock.len > 0)
-        app.unlock.code[--app.unlock.len] = '\0';
+    s_unlock.note_until   = 0;
+    s_unlock.reveal_ch    = 0;
+    s_unlock.reveal_until = 0;
+    if (s_unlock.len > 0)
+        s_unlock.code[--s_unlock.len] = '\0';
     nav_invalidate();
 }
 
 static void unlock_enter(intptr_t arg, uint64_t now)
 {
     s_flavor = (uint8_t)arg;
-    app.unlock.last_input = now;
-    app.unlock.gate     = (s_flavor == UA_GATE);
-    app.unlock.creating = false;
-    app.unlock.deriving = false;
-    app.unlock.note_until = 0;
+    s_unlock.last_input = now;
+    s_unlock.gate     = (s_flavor == UA_GATE);
+    s_unlock.creating = false;
+    s_unlock.deriving = false;
+    s_unlock.note_until = 0;
     switch (s_flavor) {
     case UA_SETPIN:
-        app.unlock.creating = keystore_state() == KEYSTORE_ABSENT;
-        if (app.unlock.creating) enter_phase(UM_NEW, 0);
+        s_unlock.creating = keystore_state() == KEYSTORE_ABSENT;
+        if (s_unlock.creating) enter_phase(UM_NEW, 0);
         else                     enter_phase(UM_OLD, keystore_pin_len());
         break;
     case UA_REMOVE:
@@ -458,7 +480,7 @@ static void worker_result(uint64_t now, esp_err_t r)
             load_profiles();
             wifi_migrate_nvs_cred();
             if (!wifi_manager_is_connected()) kick_wifi();
-            toast(now, app.unlock.gate ? "deck unlocked"
+            toast(now, s_unlock.gate ? "deck unlocked"
                                        : "keystore unlocked");
             unlock_finish(now);
         } else if (r == ESP_FAIL) {                 /* wrong code */
@@ -492,20 +514,20 @@ static void worker_result(uint64_t now, esp_err_t r)
 
 static void unlock_tick(uint64_t now)
 {
-    if (app.unlock.deriving && s_done) {
-        app.unlock.deriving   = false;
-        app.unlock.last_input = now;   /* fresh idle window after a bounce */
+    if (s_unlock.deriving && s_done) {
+        s_unlock.deriving   = false;
+        s_unlock.last_input = now;   /* fresh idle window after a bounce */
         wipe_entry();
         worker_result(now, (esp_err_t)s_result);
         if (nav_current() != SCR_UNLOCK) return;
     }
-    if (app.unlock.note_until && now >= app.unlock.note_until)
-        app.unlock.note_until = 0;
-    if (app.unlock.press_until && now >= app.unlock.press_until)
-        app.unlock.press_until = 0;
-    if (app.unlock.reveal_until && now >= app.unlock.reveal_until) {
-        app.unlock.reveal_until = 0;
-        app.unlock.reveal_ch    = 0;
+    if (s_unlock.note_until && now >= s_unlock.note_until)
+        s_unlock.note_until = 0;
+    if (s_unlock.press_until && now >= s_unlock.press_until)
+        s_unlock.press_until = 0;
+    if (s_unlock.reveal_until && now >= s_unlock.reveal_until) {
+        s_unlock.reveal_until = 0;
+        s_unlock.reveal_ch    = 0;
     }
 
     /* An unattended pad must not sit lit forever, and the two pad kinds
@@ -513,10 +535,10 @@ static void unlock_tick(uint64_t now)
      * be a bypass): the rain falls over it and wake lands right back on
      * the pad. A cancellable pad — connect fallback, abandoned set-code
      * flow — gives up after a minute and lands on HOME. */
-    if (!app.unlock.deriving) {
-        if (app.unlock.gate) {
+    if (!s_unlock.deriving) {
+        if (s_unlock.gate) {
             if (saver_tick_gate(now)) return;   /* rain owns the screen */
-        } else if (now - app.unlock.last_input >= IDLE_CANCEL_MS) {
+        } else if (now - s_unlock.last_input >= IDLE_CANCEL_MS) {
             /* An abandoned pad always lands HOME, even a menu flow. */
             if (s_flavor == UA_SETPIN || s_flavor == UA_REMOVE)
                 s_flavor = UA_PROMPT;
@@ -536,15 +558,15 @@ static void unlock_tick(uint64_t now)
  * already given the digit away to anyone watching, a keystroke has not. */
 static void pad_flash(int slot, uint64_t now)
 {
-    app.unlock.press       = (int8_t)slot;
-    app.unlock.press_until = now + PRESS_MS;
+    s_unlock.press       = (int8_t)slot;
+    s_unlock.press_until = now + PRESS_MS;
 }
 
 static void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                          uint64_t now)
 {
-    app.unlock.last_input = now;           /* any touch/key holds the pad */
-    if (app.unlock.deriving) return;       /* KDF running: not cancellable */
+    s_unlock.last_input = now;           /* any touch/key holds the pad */
+    if (s_unlock.deriving) return;       /* KDF running: not cancellable */
 
     if (ev->type == CYBERDECK_INPUT_TAP) {
         int slot = tile_hit(&app.grid, ev->x, ev->y);

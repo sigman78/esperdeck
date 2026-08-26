@@ -28,6 +28,11 @@ void enter_home(uint64_t now);
 void enter_home_after_collapse(uint64_t now);
 
 /* ---- screensaver (app_saver.c) ---- */
+/** Load the [saver] setting and start the idle timer. Call once at init. */
+void saver_init(uint64_t now);
+/** Idle timeout in minutes (= the auto-lock interval; SYSTEM menu knob). */
+uint32_t saver_idle_min(void);
+void     saver_set_idle_min(uint32_t min);
 /** Count activity: restart the idle timer, rain off. */
 void saver_reset(uint64_t now);
 /** Feed an input event; true = it woke the rain and must be swallowed. */
@@ -60,7 +65,13 @@ void unlock_open_gate(uint64_t now);
 
 /* ---- connect + session (app_connect.c) ---- */
 extern const nav_screen_t connecting_screen, session_screen;
-/** Arm a connect to profile @p idx (snapshots it into app.conn.active). */
+/** The profile snapshot being connected / connected (hostkey prompt). */
+const conn_profile_t *conn_active(void);
+/** session_enter() time — the menu's UP clock. */
+uint64_t conn_session_start(void);
+/** Wipe the snapshot's secret (app_creds_wipe companion). */
+void conn_creds_wipe(void);
+/** Arm a connect to profile @p idx (snapshots it into the conn state). */
 void start_connect(int idx, uint64_t not_before, uint64_t now);
 /** Re-arm a connect to the ACTIVE snapshot (unlock-screen resume). */
 void connect_resume_active(uint64_t now);
@@ -76,6 +87,8 @@ void session_scroll_seen(uint64_t now);
 extern const nav_screen_t profile_screen;
 /** Open the editor: @p edit_idx = stored profile to edit, -1 = new. */
 void enter_profile(uint64_t now, int edit_idx);
+/** Wipe the draft's secret (app_creds_wipe companion). */
+void profile_creds_wipe(void);
 
 /* ---- menu (app_menu.c) ---- */
 extern const nav_screen_t menu_screen;

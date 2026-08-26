@@ -5,14 +5,22 @@
 
 #include "app_internal.h"
 #include "app_screens.h"
+#include "app_settings.h"
 #include "app_widgets.h"
 #include "keystore.h"
 
 #include <string.h>
 
+static struct {
+    uint64_t last_input;            /* any key/touch; drives the idle timer  */
+    bool     on;                    /* rain actually on screen (not derived) */
+    uint64_t since;                 /* when the rain went up (wake grace)    */
+    uint32_t idle_ms;               /* [saver] idle timeout (= auto-lock)    */
+} s_saver;
+
 /* Idle before the rain — configurable (SYSTEM menu, [saver]), and it
  * doubles as the auto-lock interval since engage wipes the MK. */
-#define SAVER_IDLE_MS  (app.saver.idle_ms)
+#define SAVER_IDLE_MS  (s_saver.idle_ms)
 
 /* Bold 6x7 block font (2-px strokes) for the screensaver clock, bit 5 =
  * leftmost column. Digits 0-9 plus ':' at index 10 (blinked by clk_mask). */
@@ -191,22 +199,34 @@ static void render_saver(void)
     ui_present();
 }
 
+void saver_init(uint64_t now)
+{
+    app_saver_cfg_t sv = { .idle_min = APP_SAVER_DEFAULT_MIN };
+    storage_kv_load(cyberdeck_settings_ini, app_saver_section,
+                    app_saver_fields, &sv);
+    s_saver.idle_ms = sv.idle_min * 60u * 1000u;
+    saver_reset(now);
+}
+
+uint32_t saver_idle_min(void)          { return s_saver.idle_ms / 60000u; }
+void saver_set_idle_min(uint32_t min)  { s_saver.idle_ms = min * 60000u; }
+
 void saver_reset(uint64_t now)
 {
-    app.saver.last_input = now;
-    app.saver.on         = false;
+    s_saver.last_input = now;
+    s_saver.on         = false;
 }
 
 bool saver_on_input(uint64_t now)
 {
-    app.saver.last_input = now;
-    if (!app.saver.on) return false;
-    app.saver.on = false;
+    s_saver.last_input = now;
+    if (!s_saver.on) return false;
+    s_saver.on = false;
     if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
     /* Only swallow once the rain has been up for a moment: the main loop
      * ticks before it drains input, so a keypress aimed at a HOME visible
      * milliseconds ago must still act, not vanish into a wake. */
-    bool swallow = now - app.saver.since >= 1000;
+    bool swallow = now - s_saver.since >= 1000;
     /* DEVICE gate (two-gates model): a keystore on the deck means the deck
      * is locked — the store went cold when the rain came up, and a real
      * wake lands on the non-skippable device pad, never on HOME. */
@@ -223,15 +243,15 @@ bool saver_on_input(uint64_t now)
 
 bool saver_tick_home(uint64_t now)
 {
-    if (now - app.saver.last_input <= SAVER_IDLE_MS) {
-        app.saver.on = false;
+    if (now - s_saver.last_input <= SAVER_IDLE_MS) {
+        s_saver.on = false;
         return false;
     }
     if (now >= app.next_anim) {          /* idle: let it rain */
         app.next_anim = now + ANIM_PERIOD_MS;
-        if (!app.saver.on) {
-            app.saver.on    = true;   /* input handling keys off what's on screen */
-            app.saver.since = now;
+        if (!s_saver.on) {
+            s_saver.on    = true;   /* input handling keys off what's on screen */
+            s_saver.since = now;
             /* The deck locks as the rain goes up, so a lifted deck is
              * already cold — the vault AND the hydrated copies out in app
              * state. No-op when locked or without a store. */
@@ -248,15 +268,15 @@ bool saver_tick_home(uint64_t now)
  * saver_on_input routes the wake straight back onto the pad. */
 bool saver_tick_gate(uint64_t now)
 {
-    if (now - app.saver.last_input <= SAVER_IDLE_MS) {
-        app.saver.on = false;
+    if (now - s_saver.last_input <= SAVER_IDLE_MS) {
+        s_saver.on = false;
         return false;
     }
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
-        if (!app.saver.on) {
-            app.saver.on    = true;
-            app.saver.since = now;
+        if (!s_saver.on) {
+            s_saver.on    = true;
+            s_saver.since = now;
         }
         render_saver();
     }

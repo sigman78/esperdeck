@@ -9,6 +9,17 @@
 
 #include <string.h>
 
+#define PAIR_MAX  STORAGE_BLE_MAX
+
+static struct {
+    ble_device_info_t devs[PAIR_MAX];
+    int      ndevs;
+    int      sel;
+    uint64_t last_poll;
+    uint64_t last_activity;
+    bool     forget_armed;          /* "Forget bonds" needs a 2nd tap */
+} s_pair;
+
 #define PAIR_TIMEOUT_MS  30000
 #define PAIR_POLL_MS     250
 
@@ -23,17 +34,17 @@ static void render_pairing(uint64_t now)
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     draw_titlebar(2, "PAIR KEYBOARD");
-    ui_pen(app.pair.ndevs ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER);
-    ui_putch(2, 1, app.pair.ndevs ? UI_LED_ON : spinner_glyph(app.anim_frame), 0);
+    ui_pen(s_pair.ndevs ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER);
+    ui_putch(2, 1, s_pair.ndevs ? UI_LED_ON : spinner_glyph(app.anim_frame), 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    if (app.pair.ndevs)
-        ui_printf(4, 1, 0, "%d found - select your keyboard", app.pair.ndevs);
+    if (s_pair.ndevs)
+        ui_printf(4, 1, 0, "%d found - select your keyboard", s_pair.ndevs);
     else
         ui_puts(4, 1, "scanning for keyboards...", 0);
 
     /* The scan self-dismisses after PAIR_TIMEOUT_MS of inactivity; give the
      * last 10 s a visible countdown instead of vanishing without warning. */
-    uint64_t idle = now - app.pair.last_activity;
+    uint64_t idle = now - s_pair.last_activity;
     if (idle > PAIR_TIMEOUT_MS - 10000) {
         uint32_t left = (uint32_t)((PAIR_TIMEOUT_MS - idle + 999) / 1000);
         ui_pen(OVERLAY_COL_AMBER);
@@ -46,10 +57,10 @@ static void render_pairing(uint64_t now)
      * Cap devices so both special tiles fit on the page. */
     tilegrid_t g = picker_grid(0);
     int cap  = g.ncols * g.nrows;
-    int ndev = app.pair.ndevs > cap - 2 ? cap - 2 : app.pair.ndevs;
+    int ndev = s_pair.ndevs > cap - 2 ? cap - 2 : s_pair.ndevs;
     g.count  = ndev + 2;
     app.grid = g;
-    if (app.pair.sel >= g.count) app.pair.sel = g.count - 1;
+    if (s_pair.sel >= g.count) s_pair.sel = g.count - 1;
 
     if (ndev == 0) {
         /* Empty-scan theater: a cyan radar beam sweeps the tile field with
@@ -74,18 +85,18 @@ static void render_pairing(uint64_t now)
     ui_pen(OVERLAY_COL_GREEN);
     for (int i = 0; i < ndev; i++) {
         ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th,
-                app.pair.devs[i].name,
-                app.pair.devs[i].addr_type ? "random addr" : "public addr",
-                i == app.pair.sel);
+                s_pair.devs[i].name,
+                s_pair.devs[i].addr_type ? "random addr" : "public addr",
+                i == s_pair.sel);
     }
     /* Color law: RED = destructive (Forget), BLUE = safe navigation. */
     ui_pen(OVERLAY_COL_RED);
     ui_tile(tile_x(&g, ndev), tile_y(&g, ndev), g.tw, g.th,
-            app.pair.forget_armed ? "TAP AGAIN to forget" : "Forget bonds",
-            "clear + re-pair", ndev == app.pair.sel);
+            s_pair.forget_armed ? "TAP AGAIN to forget" : "Forget bonds",
+            "clear + re-pair", ndev == s_pair.sel);
     ui_pen(OVERLAY_COL_BLUE);
     ui_tile(tile_x(&g, ndev + 1), tile_y(&g, ndev + 1), g.tw, g.th,
-            "Cancel", "", (ndev + 1) == app.pair.sel);
+            "Cancel", "", (ndev + 1) == s_pair.sel);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_footer("keyboard in pairing mode, then tap it \xB7 Esc cancel");
@@ -95,11 +106,11 @@ static void pairing_enter(intptr_t arg, uint64_t now)
 {
     (void)arg;
     app.cfg.ble->enter_pairing();
-    app.pair.ndevs = 0;
-    app.pair.sel = 0;
-    app.pair.last_poll = 0;
-    app.pair.last_activity = now;
-    app.pair.forget_armed = false;
+    s_pair.ndevs = 0;
+    s_pair.sel = 0;
+    s_pair.last_poll = 0;
+    s_pair.last_activity = now;
+    s_pair.forget_armed = false;
 }
 
 static void pairing_exit(uint64_t now)
@@ -120,13 +131,13 @@ static void pairing_select(int slot, uint64_t now)
 {
     int nd = pairing_ndev(&app.grid);
     if (slot < nd && app.cfg.ble) {                /* a discovered device */
-        app.cfg.ble->select_device(app.pair.devs[slot].addr, app.pair.devs[slot].addr_type);
-        toast(now, "pairing %.32s...", app.pair.devs[slot].name);
+        app.cfg.ble->select_device(s_pair.devs[slot].addr, s_pair.devs[slot].addr_type);
+        toast(now, "pairing %.32s...", s_pair.devs[slot].name);
         nav_pop(now);
     } else if (slot == nd) {                       /* Forget bonds */
         /* Destructive: arm on the first activation like hostkey REPLACE. */
-        if (!app.pair.forget_armed) {
-            app.pair.forget_armed = true;
+        if (!s_pair.forget_armed) {
+            s_pair.forget_armed = true;
             nav_invalidate();
         } else if (app.cfg.ble && app.cfg.ble->forget) {
             app.cfg.ble->forget();
@@ -140,7 +151,7 @@ static void pairing_select(int slot, uint64_t now)
 
 static void pairing_tick(uint64_t now)
 {
-    if (now - app.pair.last_activity > PAIR_TIMEOUT_MS) {
+    if (now - s_pair.last_activity > PAIR_TIMEOUT_MS) {
         toast(now, "pairing timed out");
         nav_pop(now);
         return;
@@ -149,16 +160,16 @@ static void pairing_tick(uint64_t now)
         app.next_anim = now + ANIM_PERIOD_MS;
         nav_invalidate();
     }
-    if (now - app.pair.last_poll >= PAIR_POLL_MS && app.cfg.ble) {
-        app.pair.last_poll = now;
+    if (now - s_pair.last_poll >= PAIR_POLL_MS && app.cfg.ble) {
+        s_pair.last_poll = now;
         ble_device_info_t fresh[PAIR_MAX];
         int n = app.cfg.ble->get_scan_results(fresh, PAIR_MAX);
-        if (n != app.pair.ndevs ||
-            memcmp(fresh, app.pair.devs, (size_t)n * sizeof(fresh[0])) != 0) {
-            memcpy(app.pair.devs, fresh, sizeof(fresh));
-            app.pair.ndevs = n;
-            if (app.pair.sel >= n) app.pair.sel = n ? n - 1 : 0;
-            app.pair.last_activity = now;   /* results still arriving */
+        if (n != s_pair.ndevs ||
+            memcmp(fresh, s_pair.devs, (size_t)n * sizeof(fresh[0])) != 0) {
+            memcpy(s_pair.devs, fresh, sizeof(fresh));
+            s_pair.ndevs = n;
+            if (s_pair.sel >= n) s_pair.sel = n ? n - 1 : 0;
+            s_pair.last_activity = now;   /* results still arriving */
             nav_invalidate();
         }
     }
@@ -168,7 +179,7 @@ static void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                           uint64_t now)
 {
     (void)ch;
-    app.pair.last_activity = now;
+    s_pair.last_activity = now;
     if (ev->type == CYBERDECK_INPUT_TAP) {
         int slot = tile_hit(&app.grid, ev->x, ev->y);
         if (slot >= 0) pairing_select(slot, now);   /* gutter tap: ignore */
@@ -176,16 +187,16 @@ static void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     }
     switch (k) {
     case K_UP: case K_DOWN: case K_LEFT: case K_RIGHT: {
-        int ns = tile_nav(&app.grid, app.pair.sel, k);
-        if (ns != app.pair.sel) {
-            app.pair.sel = ns;
-            app.pair.forget_armed = false;   /* moving away backs down */
+        int ns = tile_nav(&app.grid, s_pair.sel, k);
+        if (ns != s_pair.sel) {
+            s_pair.sel = ns;
+            s_pair.forget_armed = false;   /* moving away backs down */
             nav_invalidate();
         }
         break;
     }
     case K_ENTER:
-        pairing_select(app.pair.sel, now);
+        pairing_select(s_pair.sel, now);
         break;
     case K_ESC:
         nav_pop(now);

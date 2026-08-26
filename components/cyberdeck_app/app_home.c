@@ -15,6 +15,14 @@
 #include <stdio.h>
 #include <string.h>
 
+static struct {
+    int      sel;                   /* selected HOME tile                */
+    bool     kbd_bonded;            /* gates the "Pair keyboard" tile    */
+    uint8_t  kon_idx;               /* Konami sequence progress          */
+    uint64_t next_refresh;          /* next live-status re-render        */
+    uint64_t poweroff_until;        /* POWEROFF: when the collapse ends  */
+} s_home;
+
 static const char *TAG = "app_home";
 
 /* Trailing HOME tiles after the profiles: "New profile" only as a first-run
@@ -35,7 +43,7 @@ static int home_extras(home_extra_t *out)
 {
     int n = 0;
     if (app.stored_count == 0)          out[n++] = HX_NEW;   /* first-run help */
-    if (app.cfg.ble && !app.home.kbd_bonded)   out[n++] = HX_PAIR;  /* not yet bonded */
+    if (app.cfg.ble && !s_home.kbd_bonded)   out[n++] = HX_PAIR;  /* not yet bonded */
     if (s_ks_present)                   out[n++] = HX_LOCK;  /* panic button   */
     out[n++] = HX_CONFIG;                                    /* always, last   */
     return n;
@@ -157,14 +165,14 @@ static void render_home(uint64_t now)
     int nx = home_extras(xt);
     tilegrid_t g = picker_grid(app.profile_count + nx);
     app.grid = g;
-    if (app.home.sel >= g.count) app.home.sel = g.count ? g.count - 1 : 0;
+    if (s_home.sel >= g.count) s_home.sel = g.count ? g.count - 1 : 0;
     if (app.profile_count + nx > g.ncols * g.nrows)
         ESP_LOGW(TAG, "%d profiles exceed one page; showing first %d",
                  app.profile_count, g.count - nx);
 
     for (int i = 0; i < g.count; i++) {
         int cx = tile_x(&g, i), cy = tile_y(&g, i);
-        bool sel = (i == app.home.sel);
+        bool sel = (i == s_home.sel);
         if (i < app.profile_count) {
             const conn_profile_t *p = &app.profiles[i];
             char body[48];
@@ -243,10 +251,10 @@ static void render_home(uint64_t now)
 static void home_enter(intptr_t arg, uint64_t now)
 {
     (void)arg;
-    app.home.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
+    s_home.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
     s_ks_present = keystore_state() != KEYSTORE_ABSENT;  /* "Lock deck" tile */
     pacman_reset();   /* session entry blanked the sprite slots */
-    app.home.next_refresh = 0;
+    s_home.next_refresh = 0;
     /* Arriving on HOME counts as activity: a session drop or provisioning
      * toast must live its full lifetime before the rain paints over it. */
     saver_reset(now);
@@ -291,7 +299,7 @@ static void poweroff_enter(intptr_t arg, uint64_t now)
     ui_hide();
     ui_no_cursor();
     display_fx_collapse();
-    app.home.poweroff_until = now + (uint64_t)arg * 17 + 80;
+    s_home.poweroff_until = now + (uint64_t)arg * 17 + 80;
 }
 
 void enter_home_after_collapse(uint64_t now)
@@ -332,8 +340,8 @@ static void home_tick(uint64_t now)
     }
 
     if (saver_tick_home(now)) return;
-    if (now >= app.home.next_refresh) {
-        app.home.next_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
+    if (now >= s_home.next_refresh) {
+        s_home.next_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
         nav_invalidate();   /* live wifi/ble status */
     }
 }
@@ -341,7 +349,7 @@ static void home_tick(uint64_t now)
 static void poweroff_tick(uint64_t now)
 {
     /* Collapse finished (or was cut short by input) — bring HOME up. */
-    if (now >= app.home.poweroff_until) enter_home(now);
+    if (now >= s_home.poweroff_until) enter_home(now);
 }
 
 static void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
@@ -357,8 +365,8 @@ static void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
         if (slot < 0) return;                    /* gutter/margin: ignore */
         if (home_activate_extra(slot, now)) {    /* New / Pair / Config */
             /* handled */
-        } else if (app.home.sel != slot) {              /* first tap: select + show */
-            app.home.sel = slot;
+        } else if (s_home.sel != slot) {              /* first tap: select + show */
+            s_home.sel = slot;
             nav_invalidate();
         } else if (!wifi_manager_is_connected()) {
             toast(now, "wifi not connected yet");
@@ -376,28 +384,28 @@ static void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
         static const ui_key_t KONAMI[8] = {
             K_UP, K_UP, K_DOWN, K_DOWN, K_LEFT, K_RIGHT, K_LEFT, K_RIGHT,
         };
-        if (k == KONAMI[app.home.kon_idx])   app.home.kon_idx++;
-        else if (k == K_UP)           app.home.kon_idx = (app.home.kon_idx == 2) ? 2 : 1;
-        else                          app.home.kon_idx = 0;
-        if (app.home.kon_idx == 8) {
-            app.home.kon_idx = 0;
+        if (k == KONAMI[s_home.kon_idx])   s_home.kon_idx++;
+        else if (k == K_UP)           s_home.kon_idx = (s_home.kon_idx == 2) ? 2 : 1;
+        else                          s_home.kon_idx = 0;
+        if (s_home.kon_idx == 8) {
+            s_home.kon_idx = 0;
             display_bell();
             toast(now, "CHEAT ACCEPTED - RAM +30K (not really)");
         }
-        int ns = tile_nav(&app.grid, app.home.sel, k);
-        if (ns != app.home.sel) app.home.sel = ns;
+        int ns = tile_nav(&app.grid, s_home.sel, k);
+        if (ns != s_home.sel) s_home.sel = ns;
         nav_invalidate();
         break;
     }
     case K_ENTER:
-        if (home_activate_extra(app.home.sel, now)) {               /* New/Pair/Config */
+        if (home_activate_extra(s_home.sel, now)) {               /* New/Pair/Config */
             /* handled */
         } else if (app.profile_count > 0) {
             if (!wifi_manager_is_connected()) {
                 toast(now, "wifi not connected yet");
                 nav_invalidate();
             } else {
-                start_connect(app.home.sel, now, now);
+                start_connect(s_home.sel, now, now);
             }
         }
         break;

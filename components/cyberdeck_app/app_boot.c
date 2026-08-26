@@ -15,6 +15,10 @@
 #include "esp_attr.h"   /* RTC_NOINIT_ATTR */
 #endif
 
+static struct {
+    uint64_t until;                     /* when the splash ends */
+} s_boot;
+
 /* 5x5 block glyphs for the boot logo (row-major, '#' = filled). */
 static const char *boot_glyph(char c)
 {
@@ -61,7 +65,7 @@ static void render_boot(uint64_t now)
     int x0 = (ui_cols() - total_w) / 2;
     int y0 = ui_rows() / 4;
 
-    uint64_t start     = app.boot.until - app.cfg.boot_delay_ms;
+    uint64_t start     = s_boot.until - app.cfg.boot_delay_ms;
     uint32_t reveal_ms = app.cfg.boot_delay_ms * 4 / 5;
     uint32_t el        = (uint32_t)(now - start);
     int reveal = reveal_ms ? (int)((uint64_t)el * total_w / reveal_ms) : total_w;
@@ -104,7 +108,7 @@ static void boot_enter(intptr_t arg, uint64_t now)
 {
     (void)arg;
     s_boot_seq++;   /* next tagline (RTC-resident, see decl above) */
-    app.boot.until = now + app.cfg.boot_delay_ms;
+    s_boot.until = now + app.cfg.boot_delay_ms;
 }
 
 /* Splash over (elapsed or skipped): HOME — behind the DEVICE gate whenever
@@ -121,7 +125,7 @@ static void boot_done(uint64_t now)
 
 static void boot_tick(uint64_t now)
 {
-    if (now >= app.boot.until) {
+    if (now >= s_boot.until) {
         boot_done(now);
         return;
     }

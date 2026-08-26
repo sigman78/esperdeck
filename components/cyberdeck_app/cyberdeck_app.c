@@ -99,7 +99,7 @@ void load_profiles(void)
 /* Lock companion — see app_internal.h. keystore_lock() wipes the MK and the
  * secrets cache inside the vault, but load_profiles() has already copied the
  * hydrated passwords out here: the HOME list (app.profiles), the connect
- * snapshot (app.conn.active) and the editor draft (app.pf.draft) each carry a
+ * snapshot (conn) and the editor draft (profile) each carry a
  * plaintext login password or key passphrase. Without this the panic button
  * and the idle auto-lock leave every credential sitting in .bss, and the lock
  * only really covers the key files.
@@ -113,9 +113,8 @@ void app_creds_wipe(void)
     for (int i = 0; i < MAX_PROFILES; i++)
         keystore_wipe(app.profiles[i].password,
                       sizeof(app.profiles[i].password));
-    keystore_wipe(app.conn.active.password,
-                  sizeof(app.conn.active.password));
-    keystore_wipe(app.pf.draft.password, sizeof(app.pf.draft.password));
+    conn_creds_wipe();      /* the active-connect snapshot */
+    profile_creds_wipe();   /* the editor draft            */
 }
 
 bool ble_has_bond(void)
@@ -317,18 +316,12 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 
     memset(&app, 0, sizeof(app));
     app.cfg = *cfg;
-    app.pf.edit_idx    = -1;
-    app.pf.key_sel     = -1;
-    app.menu.reorder_grab = -1;
-    app_saver_cfg_t sv = { .idle_min = APP_SAVER_DEFAULT_MIN };
-    storage_kv_load(cyberdeck_settings_ini, app_saver_section, app_saver_fields, &sv);
-    app.saver.idle_ms = sv.idle_min * 60u * 1000u;
     app_touch_cfg_t tc = { .scroll = true };
     storage_kv_load(cyberdeck_settings_ini, app_touch_section, app_touch_fields, &tc);
     app.touch_scroll = tc.scroll;
     app_touch_scroll_apply();
     app_settings_register_reset();
-    saver_reset(now_ms);   /* idle timer starts at boot */
+    saver_init(now_ms);    /* [saver] load + idle timer starts at boot */
 
     esp_err_t err = ui_init();
     if (err != ESP_OK) return err;
