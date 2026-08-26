@@ -42,17 +42,26 @@ typedef struct {
     uint8_t chrome;                      /* NAV_CHROME_*                */
 } nav_screen_t;
 
+/* Clear registry + stack state. Call once before registering screens. */
+void nav_init(void);
+
 /* Register a screen; returns its id. Call at init, before any nav op. */
 int nav_register(const nav_screen_t *def);
 
 /* Stack ops. Every op exits the departing screen, enters/resumes the
- * arriving one, and invalidates. The bottom entry never pops. */
-void nav_push(int id, intptr_t arg, uint64_t now);
-void nav_replace(int id, intptr_t arg, uint64_t now);  /* swap the top  */
-void nav_reset(int id, intptr_t arg, uint64_t now);    /* whole stack   */
-void nav_pop(uint64_t now);
+ * arriving one, and invalidates. The bottom entry never pops. False means
+ * invalid id, stack full, or (for pop) already at the bottom. */
+bool nav_push(int id, intptr_t arg, uint64_t now);
+bool nav_replace(int id, intptr_t arg, uint64_t now);  /* swap the top  */
+bool nav_reset(int id, intptr_t arg, uint64_t now);    /* whole stack   */
+bool nav_pop(uint64_t now);
 
 int  nav_current(void);                  /* id of the top screen        */
+
+#ifdef BUILD_SIMULATOR
+/* Simulator regression hook: stable descriptor name of the top screen. */
+const char *nav_current_name(void);
+#endif
 
 /* Request a render this tick (coalesced: one present per frame). */
 void nav_invalidate(void);

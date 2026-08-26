@@ -292,20 +292,33 @@ int SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
 
 /* One call per screen — the whole surface at a glance. The same registry
  * the plugin seam (extensibility item 5) will feed from plugin_table.c. */
-static void register_screens(void)
+static esp_err_t register_screens(void)
 {
-    SCR_BOOT       = nav_register(&boot_screen);
-    SCR_HOME       = nav_register(&home_screen);
-    SCR_POWEROFF   = nav_register(&poweroff_screen);
-    SCR_PAIRING    = nav_register(&pairing_screen);
-    SCR_HOSTKEY    = nav_register(&hostkey_screen);
-    SCR_CONNECTING = nav_register(&connecting_screen);
-    SCR_SESSION    = nav_register(&session_screen);
-    SCR_MENU       = nav_register(&menu_screen);
-    SCR_WIFIPROV   = nav_register(&wifiprov_screen);
-    SCR_PROFILE    = nav_register(&profile_screen);
-    SCR_SSHIMPORT  = nav_register(&sshimport_screen);
-    SCR_UNLOCK     = nav_register(&unlock_screen);
+    struct {
+        int *id;
+        const nav_screen_t *def;
+    } core[] = {
+        { &SCR_BOOT,       &boot_screen       },
+        { &SCR_HOME,       &home_screen       },
+        { &SCR_POWEROFF,   &poweroff_screen   },
+        { &SCR_PAIRING,    &pairing_screen    },
+        { &SCR_HOSTKEY,    &hostkey_screen    },
+        { &SCR_CONNECTING, &connecting_screen },
+        { &SCR_SESSION,    &session_screen    },
+        { &SCR_MENU,       &menu_screen       },
+        { &SCR_WIFIPROV,   &wifiprov_screen   },
+        { &SCR_PROFILE,    &profile_screen    },
+        { &SCR_SSHIMPORT,  &sshimport_screen  },
+        { &SCR_UNLOCK,     &unlock_screen     },
+    };
+    for (int i = 0; i < NELEM(core); i++) {
+        *core[i].id = nav_register(core[i].def);
+        if (*core[i].id < 0) {
+            ESP_LOGE(TAG, "failed to register screen %s", core[i].def->name);
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    return ESP_OK;
 }
 
 /* ---------------------------------------------------------- public API */
@@ -329,8 +342,10 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     load_profiles();
     kick_wifi();
 
-    register_screens();
-    nav_reset(SCR_BOOT, 0, now_ms);
+    nav_init();
+    err = register_screens();
+    if (err != ESP_OK) return err;
+    if (!nav_reset(SCR_BOOT, 0, now_ms)) return ESP_FAIL;
 
     /* Render-effect tunables: defaults overlaid with settings.ini [fx] (internal-DRAM
      * startup task — flash I/O is safe here). */
@@ -347,6 +362,18 @@ bool cyberdeck_app_in_session(void)
 {
     return nav_current() == SCR_SESSION || nav_current() == SCR_MENU;
 }
+
+#ifdef BUILD_SIMULATOR
+const char *cyberdeck_app_debug_screen(void)
+{
+    return nav_current_name();
+}
+
+bool cyberdeck_app_debug_overlay_contains(const char *text)
+{
+    return ui_debug_contains(text);
+}
+#endif
 
 void cyberdeck_app_tick(uint64_t now)
 {

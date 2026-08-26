@@ -115,3 +115,9 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now_ms);
 
 /** True while an SSH session is active (bytes are being forwarded). */
 bool cyberdeck_app_in_session(void);
+
+#ifdef BUILD_SIMULATOR
+/* Simulator-only regression hooks; not part of the device/plugin API. */
+const char *cyberdeck_app_debug_screen(void);
+bool cyberdeck_app_debug_overlay_contains(const char *text);
+#endif

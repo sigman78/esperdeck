@@ -409,7 +409,8 @@ with the UI kit) → present, once per tick and only when a screen
 invalidated — screens never clear or present themselves. Per-screen
 state is file-static in its owning module; `app_internal.h` holds only
 the cross-cutting core. `tools/sim_regress.py` walks the main flows
-through the simulator's `--drive` hook and asserts clean exits.
+through the simulator's `--drive` hook and asserts the active screen and
+published overlay contents, as well as clean exits.
 
 Design choices inside the shell:
 

@@ -35,10 +35,9 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
 - **Polled ticks, no event bus — by design.** Everything the shell reacts to
   is polled from one tick loop. Plugin-friendly: a plugin gets `tick(now)`
   and polls like everything else.
-- **A generic key/value (KV) idiom, private.** `fx_fields[]` — an offsetof
-  table driving both load and save so they cannot drift (`storage.c`), plus
-  `parse_kv` and the `atomic_open`/`atomic_close` write-temp-then-rename
-  pair. None of it is exported.
+- **The generic key/value (KV) settings API** (`storage_kv.h`, item 1):
+  typed field tables drive sectioned load/save without schema drift; the
+  atomic-write pair and factory-reset registration are public contracts.
 - **Model screens.** `app_sshimport.c` (185 lines, one service API) and
   `app_wifiprov.c` are what a plugin screen should look like.
 
@@ -124,7 +123,7 @@ Three scope decisions, made up front:
   of BLE (Bluetooth Low Energy) advertisements will be the tell
   (`ble_keyboard.c` hard-calls `ble_presence_on_disc()` today).
 - **Seams over glue — the proportionality rule.** Clean borders come from
-  *calling* the public seams (KV settings, screen registry + nav, menu
+  *calling* the established seams (KV settings, screen registry + nav, menu
   registration, UI kit), never from wrapper or adapter layers. A
   sufficiently localized feature is its own module and integrates
   directly: it includes its driver's header (its backend is its
@@ -160,11 +159,14 @@ typedef struct {
 
 Supporting contracts:
 
-- **Open screen registry**: `screen_ops_t` grows `enter`/`exit`/`render`/
-  `name` and a `void *ctx`; `app_screen_register()` returns an id; per-screen
-  state leaves the global `app` struct. A small **navigation stack**
-  (`nav_push/pop/replace`) replaces the bespoke state writes and hardcoded
-  return destinations.
+- **Screen registry + navigation foundation** (item 2): internal
+  `nav_screen_t` descriptors carry name, lifecycle/input/render hooks and
+  chrome policy; `nav_register()` returns an id, and per-screen state lives
+  in the owning module. The **navigation stack** (`nav_push/pop/replace`)
+  carries intent arguments and replaces bespoke state writes and hardcoded
+  return destinations. Item 5 promotes registration to the plugin boundary;
+  a context pointer is deferred until an external or multi-instance screen
+  demonstrates the need.
 - **Menu items carry their behavior**: `menu_item_t { label, color, action,
   confirm, dim, value }` — kills `menu_activate()`, `menu_confirm()`,
   `menu_item_dim()` and the positional-index contracts in one move.
@@ -240,18 +242,21 @@ in-tree features. Tick items as they merge.
       `storage_cred_scratch` leaves the public header — it is an internal
       staging contract, not API.
       *Kills: 4 bespoke load/save pairs, 2 leaky edges.*
-- [x] **2. Screen registry + navigation stack.** Extend `screen_ops_t`
-      (enter/exit/render/name/ctx), add `app_screen_register()`, move
-      per-screen state behind `void *ctx`, add `nav_push/pop/replace`.
+- [x] **2. Screen registry + navigation stack.** Add internal
+      `nav_screen_t` descriptors (enter/resume/exit/tick/input/render/name +
+      chrome policy), register every core screen from one table, move
+      per-screen state into its owning module, and add
+      `nav_push/pop/replace/reset` with explicit failure results.
       The stack must carry an **intent argument**: today's cross-screen
       entries are parameterized — `enter_profile(edit_idx)`,
       `hostkey_open(mismatch)`, `enter_sshimport(mode)`, unlock's four
       open flavors with a return target and a resume-connect
       continuation — and a bare `nav_push(id)` cannot express them. The
       unlock return enum and the connect resume become stack entries,
-      not private state. Core screens re-register through the same API — the shell dogfoods
-      its own plugin surface. Behavior-neutral; regression-test the flow
-      with the sim's `--drive` scripted input. This item also inverts
+      not private state. Core screens dogfood the descriptor/registry shape
+      that item 5 will expose at the plugin boundary. Behavior-neutral;
+      regression-test the flow with the sim's `--drive` scripted input.
+      This item also inverts
       present ownership (shell owns clear → screen render → chrome →
       present; 13 screens self-present today) with a per-screen chrome
       flag — the composition point [`ui-spec.md`](ui-spec.md) builds on.
@@ -279,7 +284,9 @@ in-tree features. Tick items as they merge.
 ### Phase 2 — the plugin seam
 
 - [ ] **5. `cyberdeck_plugin_t` + capability registry + shared
-      `plugin_table.c`** compiled by both roots. Home-grid extras become
+      `plugin_table.c`** compiled by both roots. Promote screen registration
+      to a public plugin-facing API; add per-registration context only if an
+      external or multi-instance consumer requires it. Home-grid extras become
       registered tiles (visibility predicate + activate) on the new list
       widget. BLE/presence ops migrate to named services with enum states.
 - [ ] **6. Build-system convergence + input unification.** One
@@ -393,8 +400,8 @@ in-tree features. Tick items as they merge.
   `lock.ini` is a retired tombstone kept only in the reset wipe list.
   Suite grown to 11 tests (sectioned round-trip, foreign-line
   preservation, section-absent).
-- **2026-08-26 (item 2)** — **screen registry + nav stack LANDED**
-  (branch `feat/screen-registry`, three commits): `app_nav.h/.c` hook
+- **2026-08-26 (item 2)** — **screen registry + nav stack MERGED-READY**
+  (PR #8, branch `feat/screen-registry`, four commits): `app_nav.h/.c` hook
   tables (enter(arg)/resume/exit/tick/input/render + chrome flag),
   (screen, arg) nav stack with intent args, shell-owned
   clear→render→[chrome]→present pass (render cadence preserved via
@@ -408,5 +415,11 @@ in-tree features. Tick items as they merge.
   file-static state satisfies the ownership goal, ctx can ride the
   public registry later (proportionality). Self-managed exceptions per
   ui-spec: SESSION's transient chrome pass, the saver rain (item 7),
-  the pre-reboot font note. New: `--drive` gained a `quit` verb and
-  `tools/sim_regress.py` asserts three scripted flow round-trips.
+  the pre-reboot font note. Review hardening: the registry was expanded to
+  32 entries and resets explicitly at init; registration and nav failures
+  are surfaced without destroying the stack; the keystore-disabled build
+  exports the same screen descriptor; and MENU no longer double-presents.
+  `--drive` gained `quit`, active-screen and published-overlay assertions;
+  `tools/sim_regress.py` checks four scripted flows, including the
+  configuration-menu round-trip. Both keystore configurations build and run
+  the suite 4/4; a deliberately false screen expectation exits nonzero.

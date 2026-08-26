@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Shell-flow regression via the simulator's --drive hook.
 
-Each scenario walks a screen flow with scripted input and ends with
-`quit` (exit 0); a crash or assert anywhere on the way is a nonzero
-exit or a timeout. Keyboard-only steps on purpose - no tile coordinates
-to go stale. Run from the repo root after building the simulator:
+Each scenario walks a screen flow, asserts the active screen (and important
+published overlay text), then ends with `quit`. A mismatch, crash, or timeout
+fails the scenario. Keyboard-only steps on purpose - no tile coordinates to
+go stale. Run from the repo root after building the simulator:
 
     python tools/sim_regress.py [path\\to\\cyberdeck_sim.exe]
 """
@@ -21,15 +21,24 @@ TIMEOUT_S = 25
 SCENARIOS = {
     # boot -> HOME, arrow navigation, profile reload + wifi kick keys
     "home-nav":
-        "key:esc|wait:400|key:right|key:down|key:left|key:up"
-        "|key:r|key:w|wait:600|quit",
+        "key:esc|wait:400|expect:home|expect-text:CYBERDECK"
+        "|key:right|key:down|key:left|key:up|key:r|key:w"
+        "|wait:600|expect:home|quit",
     # HOME -> profile editor (push) -> Esc (pop) -> HOME
     "editor-roundtrip":
-        "key:esc|wait:400|key:n|wait:500|key:esc|wait:500|quit",
+        "key:esc|wait:400|expect:home|key:n|wait:500|expect:profile"
+        "|expect-text:NEW PROFILE|key:esc|wait:500|expect:home|quit",
     # editor field focus + typing + selector row, then cancel
     "editor-typing":
-        "key:esc|wait:400|key:n|wait:400|key:a|key:b|key:tab|key:h"
-        "|key:tab|key:down|key:down|key:left|wait:300|key:esc|wait:400|quit",
+        "key:esc|wait:400|key:n|wait:400|expect:profile|key:a|key:b"
+        "|key:tab|key:h|key:tab|key:down|key:down|key:left|wait:300"
+        "|expect:profile|key:esc|wait:400|expect:home|quit",
+    # HOME -> last tile (Configuration) -> MENU; also verifies the published
+    # overlay is the menu frame, catching an accidental second ui_present().
+    "config-menu-roundtrip":
+        "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
+        "|key:right|key:right|key:enter|wait:500|expect:menu"
+        "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
 }
 
 

@@ -539,8 +539,6 @@ static void render_menu(uint64_t now)
         ui_puts(g.x0 + (g.tw - (int)strlen(flex)) / 2, ly + 2, flex, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
-    ui_no_cursor();
-    ui_present();
 }
 
 /* Post an action-feedback line under the menu tiles.
