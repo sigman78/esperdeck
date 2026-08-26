@@ -8,10 +8,6 @@
 
 #include "storage.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /**
  * True if @p key_id is safe to interpolate into a keys/<id>.<ext> path:
  * non-empty, fits STORAGE_KEY_ID_LEN, and carries no path separator, no
@@ -59,9 +55,5 @@ esp_err_t storage_wifi_write_raw(const wifi_profile_t *profiles, int count);
  * or absent, waiting for bundle adoption at the next unlock.
  */
 bool storage_secrets_pending(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* STORAGE_PRIV_H */

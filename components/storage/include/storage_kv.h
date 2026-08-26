@@ -11,10 +11,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* BOOL saves 0/1 and loads != 0; STR is a truncating copy. */
 typedef enum {
     STORAGE_KV_U8 = 0,
@@ -58,9 +54,5 @@ typedef struct {
 
 FILE *storage_atomic_open(storage_atomic_file_t *af, const char *path);
 esp_err_t storage_atomic_close(storage_atomic_file_t *af);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* STORAGE_KV_H */

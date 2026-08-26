@@ -21,10 +21,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* -------------------------------------------------------------------------
  * Types
  * ---------------------------------------------------------------------- */
@@ -284,9 +280,5 @@ esp_err_t storage_ble_remove(const uint8_t addr[6]);
  * Delete ble_devices.ini entirely (factory reset BLE pairing list).
  */
 esp_err_t storage_ble_clear(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* STORAGE_H */

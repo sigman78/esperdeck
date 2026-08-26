@@ -9,10 +9,6 @@
 
 #include "storage.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* One internal-SRAM buffer for every transient credential staging job.
  * Users run strictly serially on the app task and finish before returning;
  * wipe after use (keystore_wipe). The storage_save_* diversion layer keeps
@@ -26,9 +22,5 @@ typedef struct {
 } storage_cred_scratch_t;
 
 storage_cred_scratch_t *storage_cred_scratch(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* STORAGE_CRED_H */

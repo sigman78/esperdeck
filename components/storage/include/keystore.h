@@ -30,10 +30,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /* content_type values for wrapped files */
 #define KEYSTORE_CONTENT_PEM     1   /* PEM private key */
 #define KEYSTORE_CONTENT_SECRETS 2   /* secrets bundle (see below) */
@@ -177,9 +173,5 @@ uint32_t keystore_backoff_ms(void);
  * one). Resets the cached backoff state so the boot penalty re-derives.
  */
 void keystore_set_uptime_hook(uint64_t (*fn)(void));
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* KEYSTORE_H */
