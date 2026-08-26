@@ -380,3 +380,18 @@ in-tree features. Tick items as they merge.
   hand-edited out-of-range numeric values are now ignored (default wins)
   instead of clamped. Surfaced along the way: storage's device build had
   been riding `display`'s REQUIRES for `esp_timer.h` — now declared.
+- **2026-08-26 (later)** — review feedback folded in: the per-setting
+  file zoo is gone. `storage_kv_load/save` gained a `section` parameter
+  (NULL = flat file); the sectioned save is a streaming read-modify-write
+  that preserves foreign sections verbatim (single-writer — the shell
+  task, where every settings write already runs). The shell's four
+  settings collapsed into one `settings.ini` (`[fx]/[saver]/[touch]/
+  [font]`); `app_settings_migrate()` folds legacy files in at init and
+  deletes them (verified live against sim_storage). Registries/security
+  files deliberately stay separate: profiles/wifi/known_hosts/
+  ble_devices are sectioned or growing registries, `keystore.kv1` is the
+  sealed store, `backoff.cnt` is the keystore's adversarial counter
+  (written while LOCKED, must stay writable without the master key), and
+  `lock.ini` is a retired tombstone kept only in the reset wipe list.
+  Suite grown to 11 tests (sectioned round-trip, foreign-line
+  preservation, section-absent).

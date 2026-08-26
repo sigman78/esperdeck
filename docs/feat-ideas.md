@@ -72,7 +72,8 @@ per cell, per row build, never per pixel. There are two tiers:
 - **Resolve-stage math** — for truecolor cells: sepia, night-red,
   high-contrast, P4/P11 phosphor variants. Costs the same per cell as mono.
 
-Slots into the existing EFFECTS menu + `fx.ini` + per-frame fx snapshot.
+Slots into the existing EFFECTS menu + `settings.ini` `[fx]` + per-frame
+fx snapshot.
 
 ## 3. CRT fx pack (the viable kind of "post-processing")
 

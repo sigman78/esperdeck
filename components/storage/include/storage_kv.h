@@ -37,21 +37,32 @@ typedef struct {
 
 /**
  * Overlay <mount>/<filename> onto @p obj. Pre-fill @p obj with defaults;
- * keys absent from the file keep their pre-filled values. Unknown keys,
- * [section] lines and comments are ignored (forward compatibility), and a
- * numeric value outside the accept-range skips the line — the pre-filled
- * default wins over a hand-edited out-of-range value.
+ * keys absent from the file keep their pre-filled values. Unknown keys and
+ * comments are ignored (forward compatibility), and a numeric value
+ * outside the accept-range skips the line — the pre-filled default wins
+ * over a hand-edited out-of-range value.
  *
- * @return ESP_OK, or ESP_ERR_NOT_FOUND when the file does not exist
- *         (@p obj untouched — not an error on first boot).
+ * @param section  NULL: flat file, [section] lines ignored. Otherwise only
+ *                 keys inside "[section]" apply — several features share
+ *                 one file (settings.ini) without sharing tables.
+ * @return ESP_OK, or ESP_ERR_NOT_FOUND when the file does not exist or
+ *         the named section is absent (@p obj untouched — not an error
+ *         on first boot).
  */
-esp_err_t storage_kv_load(const char *filename,
+esp_err_t storage_kv_load(const char *filename, const char *section,
                           const storage_kv_field_t *fields, void *obj);
 
 /**
- * Write every table field of @p obj to <mount>/<filename> (atomic replace).
+ * Write every table field of @p obj to <mount>/<filename> (atomic
+ * replace). @p section NULL regenerates the whole file; otherwise only
+ * "[section]" is regenerated (created if absent) and every other line of
+ * the file — foreign sections, their comments — is preserved verbatim.
+ *
+ * The sectioned save is read-modify-write and NOT concurrent-safe:
+ * writers of a shared file must run on one task (the shell task, where
+ * every settings write already lives).
  */
-esp_err_t storage_kv_save(const char *filename,
+esp_err_t storage_kv_save(const char *filename, const char *section,
                           const storage_kv_field_t *fields, const void *obj);
 
 /**

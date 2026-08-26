@@ -522,9 +522,11 @@ in a `sim_storage/` directory. The INI format is the same both ways:
 - **`known_hosts.ini`** — pinned host-key fingerprints (see below)
 - **`keys/*.pem`** — private keys for public-key auth (encrypted ed25519
   supported)
-- **`fx.ini`** — CRT effect settings (toggles apply live; the file is
-  written once, on leaving the EFFECTS page)
-- **`font.ini`** — terminal font size (applied on reboot)
+- **`settings.ini`** — one section per concern: `[fx]` CRT effects
+  (toggles apply live; written once, on leaving the EFFECTS page),
+  `[font]` terminal font size (applied on reboot), `[saver]` idle
+  timeout, `[touch]` gesture toggles. Legacy per-setting files
+  (`fx/font/saver/touch.ini`) are folded in and deleted at first boot.
 - **`keystore.kv1`** — the PIN-unlocked wrapped key store. Once the user
   creates an access code, private keys and secrets are encrypted at rest
   under a key derived from it (Argon2id). The deck then boots and wakes
@@ -533,12 +535,14 @@ in a `sim_storage/` directory. The INI format is the same both ways:
 - **BLE bonds** live in NVS (not LittleFS) — the NimBLE bond store owns
   them.
 
-Settings files (`fx.ini`, `font.ini`, `saver.ini`, `touch.ini`) ride the
-generic key=value API (`storage_kv.h`): the owning feature keeps one
-field table that drives both load and save, plus the defaults —
-`components/cyberdeck_app/app_settings.c` holds the shell's tables.
-Owners register their files with `storage_reset_register()`, so factory
-reset covers them without storage hardcoding anyone's schema.
+Settings ride the generic key=value API (`storage_kv.h`): the owning
+feature keeps one field table per `settings.ini` section, driving both
+load and save, plus the defaults — `components/cyberdeck_app/
+app_settings.c` holds the shell's tables. The sectioned save is
+read-modify-write and preserves foreign sections verbatim (single-writer:
+every settings write runs on the shell task). Owners register their files
+with `storage_reset_register()`, so factory reset covers them without
+storage hardcoding anyone's schema.
 
 Profiles and keys are editable three ways:
 

@@ -78,10 +78,10 @@ void tearDown(void) {}
 static void test_roundtrip_all_types(void)
 {
     cfg_t c = { 255, 65535, 4000000000u, false, "abcdefg" };
-    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_save(KV_FILE, FIELDS, &c));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_save(KV_FILE, NULL, FIELDS, &c));
 
     cfg_t r = DEFAULTS;
-    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, FIELDS, &r));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, NULL, FIELDS, &r));
     TEST_ASSERT_EQUAL_UINT8(255, r.n8);
     TEST_ASSERT_EQUAL_UINT16(65535, r.n16);
     TEST_ASSERT_EQUAL_UINT32(4000000000u, r.n32);
@@ -93,7 +93,7 @@ static void test_absent_file_not_found_defaults_kept(void)
 {
     cfg_t r = DEFAULTS;
     TEST_ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND,
-                          storage_kv_load(KV_FILE, FIELDS, &r));
+                          storage_kv_load(KV_FILE, NULL, FIELDS, &r));
     TEST_ASSERT_EQUAL_UINT8(DEFAULTS.n8, r.n8);
     TEST_ASSERT_EQUAL_UINT32(DEFAULTS.n32, r.n32);
     TEST_ASSERT_EQUAL_STRING(DEFAULTS.name, r.name);
@@ -103,7 +103,7 @@ static void test_missing_and_unknown_keys(void)
 {
     write_text(KV_PATH, "# comment\n[sect]\nn16=42\nbogus=9\n");
     cfg_t r = DEFAULTS;
-    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, FIELDS, &r));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, NULL, FIELDS, &r));
     TEST_ASSERT_EQUAL_UINT16(42, r.n16);               /* from the file */
     TEST_ASSERT_EQUAL_UINT8(DEFAULTS.n8, r.n8);        /* untouched     */
     TEST_ASSERT_TRUE(r.flag);
@@ -114,7 +114,7 @@ static void test_out_of_range_keeps_default(void)
 {
     write_text(KV_PATH, "n8=300\nn16=-5\n");
     cfg_t r = DEFAULTS;
-    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, FIELDS, &r));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, NULL, FIELDS, &r));
     TEST_ASSERT_EQUAL_UINT8(DEFAULTS.n8, r.n8);        /* > type width  */
     TEST_ASSERT_EQUAL_UINT16(DEFAULTS.n16, r.n16);     /* negative      */
 }
@@ -128,10 +128,10 @@ static void test_accept_range(void)
     };
     cfg_t r = DEFAULTS;
     write_text(KV_PATH, "idle=0\n");
-    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, RANGED, &r));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, NULL, RANGED, &r));
     TEST_ASSERT_EQUAL_UINT32(DEFAULTS.n32, r.n32);
     write_text(KV_PATH, "idle=60\n");
-    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, RANGED, &r));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, NULL, RANGED, &r));
     TEST_ASSERT_EQUAL_UINT32(60, r.n32);
 }
 
@@ -139,7 +139,7 @@ static void test_str_truncates(void)
 {
     write_text(KV_PATH, "name=waytoolongvalue\n");
     cfg_t r = DEFAULTS;
-    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, FIELDS, &r));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, NULL, FIELDS, &r));
     TEST_ASSERT_EQUAL_STRING("waytool", r.name);       /* 8 incl. NUL */
 }
 
@@ -163,7 +163,7 @@ static void test_atomic_pair_replaces(void)
 static void test_factory_reset_covers_registered_only(void)
 {
     cfg_t c = DEFAULTS;
-    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_save(KV_FILE, FIELDS, &c));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_save(KV_FILE, NULL, FIELDS, &c));
     write_text(TEST_MOUNT "/keepme.ini", "x=1\n");
 
     TEST_ASSERT_EQUAL_INT(ESP_OK, storage_reset_register(KV_FILE));
@@ -176,6 +176,75 @@ static void test_factory_reset_covers_registered_only(void)
     TEST_ASSERT_NOT_NULL(f);                           /* unregistered: kept */
     fclose(f);
     remove(TEST_MOUNT "/keepme.ini");
+}
+
+/* ------------------------------------------------------------------
+ * Sections — several features share one file (settings.ini model)
+ * ---------------------------------------------------------------- */
+
+static void test_sections_roundtrip(void)
+{
+    /* Two owners, two tables, one file: the second save must append its
+     * section without touching the first. */
+    static const storage_kv_field_t OTHER[] = {
+        { "idle", offsetof(cfg_t, n32), STORAGE_KV_U32, 0, 0, 0 },
+        { NULL, 0, 0, 0, 0, 0 },
+    };
+    cfg_t a = { 11, 1100, 110000, false, "alpha" };
+    cfg_t b = DEFAULTS; b.n32 = 42;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_save(KV_FILE, "one", FIELDS, &a));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_save(KV_FILE, "two", OTHER, &b));
+
+    cfg_t r = DEFAULTS;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, "one", FIELDS, &r));
+    TEST_ASSERT_EQUAL_UINT8(11, r.n8);
+    TEST_ASSERT_EQUAL_STRING("alpha", r.name);
+    r = DEFAULTS;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, "two", OTHER, &r));
+    TEST_ASSERT_EQUAL_UINT32(42, r.n32);
+    TEST_ASSERT_EQUAL_UINT8(DEFAULTS.n8, r.n8);   /* [one] didn't bleed */
+}
+
+static void test_section_save_preserves_foreign_lines(void)
+{
+    write_text(KV_PATH,
+               "# top comment\n"
+               "[keep]\n"
+               "x=1\n"
+               "\n"
+               "[mine]\n"
+               "n8=99\n"
+               "stale=1\n"
+               "[tail]\n"
+               "y=2\n");
+    cfg_t c = DEFAULTS;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_save(KV_FILE, "mine", FIELDS, &c));
+
+    /* Our section regenerated in place; everything else verbatim. */
+    static char text[1024];
+    FILE *f = fopen(KV_PATH, "r");
+    TEST_ASSERT_NOT_NULL(f);
+    size_t n = fread(text, 1, sizeof(text) - 1, f);
+    fclose(f);
+    text[n] = '\0';
+    TEST_ASSERT_NOT_NULL(strstr(text, "# top comment"));
+    TEST_ASSERT_NOT_NULL(strstr(text, "[keep]\nx=1"));
+    TEST_ASSERT_NOT_NULL(strstr(text, "[tail]\ny=2"));
+    TEST_ASSERT_NULL(strstr(text, "stale=1"));         /* old body gone */
+
+    cfg_t r; memset(&r, 0, sizeof(r));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_kv_load(KV_FILE, "mine", FIELDS, &r));
+    TEST_ASSERT_EQUAL_UINT8(DEFAULTS.n8, r.n8);
+    TEST_ASSERT_EQUAL_STRING(DEFAULTS.name, r.name);
+}
+
+static void test_section_absent_not_found(void)
+{
+    write_text(KV_PATH, "[other]\nn8=1\n");
+    cfg_t r = DEFAULTS;
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND,
+                          storage_kv_load(KV_FILE, "mine", FIELDS, &r));
+    TEST_ASSERT_EQUAL_UINT8(DEFAULTS.n8, r.n8);        /* untouched */
 }
 
 /* ------------------------------------------------------------------ */
@@ -193,5 +262,8 @@ int main(void)
     RUN_TEST(test_str_truncates);
     RUN_TEST(test_atomic_pair_replaces);
     RUN_TEST(test_factory_reset_covers_registered_only);
+    RUN_TEST(test_sections_roundtrip);
+    RUN_TEST(test_section_save_preserves_foreign_lines);
+    RUN_TEST(test_section_absent_not_found);
     return UNITY_END();
 }

@@ -515,7 +515,7 @@ static void kv_range(const storage_kv_field_t *fd, uint32_t *lo, uint32_t *hi)
     }
 }
 
-esp_err_t storage_kv_load(const char *filename,
+esp_err_t storage_kv_load(const char *filename, const char *section,
                           const storage_kv_field_t *fields, void *obj)
 {
     if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
@@ -527,12 +527,23 @@ esp_err_t storage_kv_load(const char *filename,
     FILE *f = fopen(path, "r");
     if (!f) return ESP_ERR_NOT_FOUND;   /* first boot — caller's defaults */
 
+    bool in_section = (section == NULL);   /* flat mode: the whole file */
+    bool seen       = (section == NULL);
+
     char line[192];
     while (fgets(line, sizeof(line), f)) {
         rtrim(line);
-        if (line[0] == '\0' || line[0] == '#' || line[0] == ';' ||
-            line[0] == '[')
+        if (line[0] == '[') {
+            if (!section) continue;        /* flat mode ignores headers */
+            char name[32];
+            in_section = parse_section(line, name, sizeof(name)) &&
+                         strcmp(name, section) == 0;
+            if (in_section) seen = true;
             continue;
+        }
+        if (line[0] == '\0' || line[0] == '#' || line[0] == ';')
+            continue;
+        if (!in_section) continue;
         char key[32], val[144];
         if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
 
@@ -563,23 +574,14 @@ esp_err_t storage_kv_load(const char *filename,
         }
     }
     fclose(f);
+    if (!seen) return ESP_ERR_NOT_FOUND;   /* file there, section not */
     ESP_LOGI(TAG, "Loaded settings '%s'", filename);
     return ESP_OK;
 }
 
-esp_err_t storage_kv_save(const char *filename,
-                          const storage_kv_field_t *fields, const void *obj)
+static void kv_write_fields(FILE *f, const storage_kv_field_t *fields,
+                            const void *obj)
 {
-    if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
-
-    char path[160];
-    snprintf(path, sizeof(path), "%s/%s",
-             storage_platform_mount_point(), filename);
-
-    storage_atomic_file_t af;
-    FILE *f = storage_atomic_open(&af, path);
-    if (!f) return ESP_FAIL;
-
     for (const storage_kv_field_t *fd = fields; fd->key; fd++) {
         const uint8_t *p = (const uint8_t *)obj + fd->off;
         if (fd->type == STORAGE_KV_STR) {
@@ -597,15 +599,75 @@ esp_err_t storage_kv_save(const char *filename,
             fprintf(f, "%s=%u\n", fd->key, (unsigned)u);
         }
     }
+}
+
+esp_err_t storage_kv_save(const char *filename, const char *section,
+                          const storage_kv_field_t *fields, const void *obj)
+{
+    if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
+
+    char path[160];
+    snprintf(path, sizeof(path), "%s/%s",
+             storage_platform_mount_point(), filename);
+
+    storage_atomic_file_t af;
+    FILE *f = storage_atomic_open(&af, path);
+    if (!f) return ESP_FAIL;
+
+    if (!section) {
+        kv_write_fields(f, fields, obj);       /* flat: whole file is ours */
+    } else {
+        /* Read-modify-write, streamed line by line: foreign sections and
+         * their comments pass through verbatim; our section is dropped
+         * where found and regenerated in place (a duplicate [section]
+         * later in the file is absorbed). Single-writer only — see
+         * storage_kv.h. */
+        bool written = false, in_ours = false;
+        FILE *src = fopen(path, "r");
+        if (src) {
+            char line[192];
+            while (fgets(line, sizeof(line), src)) {
+                char probe[192];
+                snprintf(probe, sizeof(probe), "%s", line);
+                rtrim(probe);
+                if (probe[0] == '[') {
+                    char name[32];
+                    if (parse_section(probe, name, sizeof(name)) &&
+                        strcmp(name, section) == 0) {
+                        in_ours = true;
+                        if (!written) {
+                            fprintf(f, "[%s]\n", section);
+                            kv_write_fields(f, fields, obj);
+                            fputs("\n", f);
+                            written = true;
+                        }
+                        continue;
+                    }
+                    in_ours = false;
+                }
+                if (in_ours) continue;         /* old body of our section */
+                fputs(line, f);
+            }
+            fclose(src);
+        }
+        if (!written) {
+            if (ftell(f) > 0) fputs("\n", f);  /* separate from prior text */
+            fprintf(f, "[%s]\n", section);
+            kv_write_fields(f, fields, obj);
+        }
+    }
 
     if (storage_atomic_close(&af) != ESP_OK) return ESP_FAIL;
-    ESP_LOGI(TAG, "Saved settings '%s'", filename);
+    if (section)
+        ESP_LOGI(TAG, "Saved settings '%s' [%s]", filename, section);
+    else
+        ESP_LOGI(TAG, "Saved settings '%s'", filename);
     return ESP_OK;
 }
 
 /* ---- factory-reset registry (see storage_reset_register in storage_kv.h) */
 
-#define RESET_REG_MAX 8
+#define RESET_REG_MAX 16   /* settings.ini + 4 legacy names + headroom */
 
 static const char *s_reset_files[RESET_REG_MAX];
 static int         s_reset_count;
