@@ -395,16 +395,21 @@ cyberdeck_app_handle_input(ev, now);  // one key or touch event
 ```
 
 Flow: **BOOT** → (**UNLOCK**, when a keystore exists) → **HOME** (profile
-picker) → **CONNECTING** → **SESSION**. That is the happy path through a
-12-state `SCREENS[]` vtable (`cyberdeck_app.c`). The other seven states:
+picker) → **CONNECTING** → **SESSION**, with MENU, PROFILE, PAIRING,
+HOSTKEY, WIFIPROV, SSHIMPORT and POWEROFF as modal screens along the way.
 
-- **MENU** — in-session/config overlay
-- **PROFILE** — editor
-- **PAIRING** — BLE keyboard
-- **HOSTKEY** — trust prompt
-- **WIFIPROV** — phone onboarding
-- **SSHIMPORT** — profile import
-- **POWEROFF**
+Screens are **registered, not enumerated** (`app_nav.h`): each module
+exports a hook table — `enter(arg)`, `resume`, `exit`, `tick`, `input`,
+`render`, and a chrome flag — and gets an id at init. Navigation is a
+small (screen, arg) stack: cross-screen jumps push or replace with an
+intent argument (profile index, unlock flavor, ...), and "back" is
+`nav_pop` — the revealed screen resumes with its original intent. The
+**shell owns the frame**: clear → `render(now)` → shared chrome (arrives
+with the UI kit) → present, once per tick and only when a screen
+invalidated — screens never clear or present themselves. Per-screen
+state is file-static in its owning module; `app_internal.h` holds only
+the cross-cutting core. `tools/sim_regress.py` walks the main flows
+through the simulator's `--drive` hook and asserts clean exits.
 
 Design choices inside the shell:
 

@@ -20,10 +20,10 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
 
 ### Seams that already exist (build on, don't replace)
 
-- **A screen vtable.** `SCREENS[ST_COUNT]` (`cyberdeck_app.c`) dispatches
-  `tick`/`input` per state — no switch. It lacks `enter`/`exit`/`render`, a
-  name, and a state pointer, and it is *closed*: indexed by a compile-time
-  enum.
+- **The screen registry + nav stack** (`app_nav.h`, item 2, 2026-08-26):
+  screens register enter/resume/exit/tick/input/render hook tables and
+  navigate via a (screen, arg) stack; the shell owns the
+  clear→render→chrome→present frame.
 - **Ops-struct injection.** `cyberdeck_ble_ops_t` / `cyberdeck_presence_ops_t`
   (`cyberdeck_app.h`) — NULL-able capability structs filled by the
   composition root. This is the plugin shape in miniature.
@@ -46,20 +46,19 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
 
 *Closed tables* — the structural ones:
 
-1. Adding a screen touches ~9 sites in 6 files, all inside `cyberdeck_app`
-   (enum, state struct inlined into the one global `app` struct,
-   `app_screens.h`, the `SCREENS[]` row, CMake, and a menu/home entry).
-   Telling: the two newest features dodged the cost — pacman is a widget,
-   the saver is a tick-hijack wedged into the dispatcher.
+1. ~~Adding a screen touches ~9 sites in 6 files~~ — item 2 (2026-08-26)
+   cut it to: the module (hooks + file-static state), one registration
+   line, CMake, and a menu/home entry (the last falls with items 3/5).
+   Still telling: pacman is a widget, the saver a tick-hijack (item 7).
 2. Menu actions are a ~240-line positional `(page, index)` switch
    (`menu_activate()`, `app_menu.c`); array order is the API, a hazard the
    code itself documents (`app_menu_defs.h`). Five of eleven pages bypass
    the descriptor table entirely.
 3. Home-grid extras are an enum plus three switches (`app_home.c`);
    overflow tiles are silently dropped — there is no scrolling list widget.
-4. No navigation stack: "back" is re-derived per screen (13 bespoke
-   `app.state =` writes; unlock keeps a private return enum). A plugin
-   screen cannot be "returned to" by code that does not know its name.
+4. ~~No navigation stack~~ — fixed by item 2 (2026-08-26): back is
+   `nav_pop`, intents ride the stack entries, the state writes and
+   unlock's private return enum are gone.
 5. The UI API is component-private — only `cyberdeck_app.h` is exported. An
    out-of-component plugin cannot draw a tile.
 
@@ -241,7 +240,7 @@ in-tree features. Tick items as they merge.
       `storage_cred_scratch` leaves the public header — it is an internal
       staging contract, not API.
       *Kills: 4 bespoke load/save pairs, 2 leaky edges.*
-- [ ] **2. Screen registry + navigation stack.** Extend `screen_ops_t`
+- [x] **2. Screen registry + navigation stack.** Extend `screen_ops_t`
       (enter/exit/render/name/ctx), add `app_screen_register()`, move
       per-screen state behind `void *ctx`, add `nav_push/pop/replace`.
       The stack must carry an **intent argument**: today's cross-screen
@@ -394,3 +393,20 @@ in-tree features. Tick items as they merge.
   `lock.ini` is a retired tombstone kept only in the reset wipe list.
   Suite grown to 11 tests (sectioned round-trip, foreign-line
   preservation, section-absent).
+- **2026-08-26 (item 2)** — **screen registry + nav stack LANDED**
+  (branch `feat/screen-registry`, three commits): `app_nav.h/.c` hook
+  tables (enter(arg)/resume/exit/tick/input/render + chrome flag),
+  (screen, arg) nav stack with intent args, shell-owned
+  clear→render→[chrome]→present pass (render cadence preserved via
+  `nav_invalidate()`). Killed as promised: the ST_ enum, SCREENS[],
+  14 state writes, the four bespoke back-paths (unlock's UR_ enum
+  became nav intent flavors; unlock gained an exit-hook entry wipe).
+  Per-screen state moved to module file-statics; the cross-module
+  surface is five measured accessors (conn_active/session_start,
+  conn/profile_creds_wipe, saver idle knob). One documented deviation:
+  no `void *ctx` hook param — core screens are single-instance,
+  file-static state satisfies the ownership goal, ctx can ride the
+  public registry later (proportionality). Self-managed exceptions per
+  ui-spec: SESSION's transient chrome pass, the saver rain (item 7),
+  the pre-reboot font note. New: `--drive` gained a `quit` verb and
+  `tools/sim_regress.py` asserts three scripted flow round-trips.

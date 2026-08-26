@@ -240,10 +240,10 @@ static void touch_tick(uint64_t now)
 }
 
 /* -------------------------------------------------------------------------
- * --drive "tap:x,y|key:enter|hold:x,y|wait:800" — scripted input for UI
- * screenshot automation (framebuffer pixel coords; key names: enter, esc,
- * tab, up/down/left/right, f12, sbup/sbdn for scrollback paging, or a
- * single character). Steps fire 450 ms
+ * --drive "tap:x,y|key:enter|hold:x,y|wait:800|quit" — scripted input for
+ * UI screenshot automation and regression runs (framebuffer pixel coords;
+ * key names: enter, esc, tab, up/down/left/right, f12, sbup/sbdn for
+ * scrollback paging, or a single character; quit = exit 0). Steps fire 450 ms
  * apart (wait:N overrides the gap) starting 2.5 s after boot, injected
  * through the same paths as real input. Sim-only test hook.
  * ---------------------------------------------------------------------- */
@@ -284,6 +284,10 @@ static void drive_tick(uint64_t now)
     int x = 0, y = 0;
     if (!strncmp(step, "wait:", 5)) {
         gap = strtoul(step + 5, NULL, 10);
+    } else if (!strcmp(step, "quit")) {
+        /* Clean scripted exit — regression runs assert on exit code 0
+         * (tools/sim_regress.py); a crash anywhere earlier is nonzero. */
+        exit(0);
     } else if (sscanf(step, "tap:%d,%d", &x, &y) == 2) {
         send_touch(CYBERDECK_INPUT_TAP, (uint16_t)x, (uint16_t)y, now);
     } else if (sscanf(step, "hold:%d,%d", &x, &y) == 2) {
