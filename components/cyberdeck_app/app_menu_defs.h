@@ -1,19 +1,16 @@
 /*
- * app_menu_defs.h — the static menu tree (internal).
+ * app_menu_defs.h — the data-driven menu tree (internal).
  *
- * Menu is a shallow tree of tile pages: a root (MAIN in-session), a CONFIG
- * hub, and topic submenus. HOME opens straight into CONFIG. Each page holds
- * few enough big tiles to fit the screen without scrolling. The definitions
- * live in app_menu_defs.c; rendering and actions in app_menu.c.
+ * A page is a table of menu_item_t: behavior (action / confirm / dim /
+ * value) rides the table, not a positional switch. Tables and their
+ * action callbacks live in app_menu_defs.c; rendering, input and the
+ * dynamic profile pickers in app_menu.c. (extensibility.md item 3)
  */
 
 #pragma once
 
-#ifdef ESP_PLATFORM
-#include "sdkconfig.h"   /* CONFIG_INPUT_TOUCH_SCROLL (sim: -D flag) */
-#endif
-
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef enum {
@@ -24,47 +21,59 @@ typedef enum {
     MS_WIFI,       /* Reconnect / Add network / Back                          */
     MS_KEYBOARD,   /* Pair / Forget bonds / Back                             */
     MS_SYSTEM,     /* Saver / Clear host keys / Factory reset / Back          */
-    MS_EFFECTS,    /* dynamic bodies: every runtime render-fx tunable        */
-    MS_FONT,       /* dynamic bodies: terminal font size, applied on reboot  */
-    MS_KEYSTORE,   /* dynamic bodies: lock now / set code / lock triggers    */
+    MS_EFFECTS,    /* value tiles: every runtime render-fx tunable           */
+    MS_FONT,       /* value tiles: terminal font size, applied on reboot     */
+    MS_KEYSTORE,   /* contextual: lock now / set code / remove code          */
     MS_DELPROFILE, /* dynamic: pick a stored profile to delete               */
     MS_EDITPROFILE,/* dynamic: pick a stored profile to edit                 */
     MS_REORDER,    /* dynamic: grab a profile, move it, drop it              */
 } menu_screen_t;
 
-#define CFG_KEYBOARD 2   /* MS_CONFIG index of "Keyboard >" (needs BLE) */
-#define CFG_KEYSTORE 5   /* MS_CONFIG index of "Keystore >" (excludable) */
+/* One tile. Static parts inline; dynamic parts are callbacks taking the
+ * item's @p arg, so one function serves a family of items (font sizes,
+ * fx tunables). Only label and one of color/color_fn are required. */
+typedef struct {
+    const char *label;
+    const char *(*label_fn)(intptr_t arg);       /* overrides label      */
+    uint8_t     color;                           /* OVERLAY_COL_*        */
+    uint8_t   (*color_fn)(intptr_t arg);         /* overrides color      */
+    intptr_t    arg;
+    void      (*action)(intptr_t arg, uint64_t now);
+    const char *confirm;       /* 2-step: tile label while armed         */
+    const char *arm_note;      /* 2-step: feedback on the arming hit     */
+    bool      (*hidden)(intptr_t arg);           /* tile not rendered    */
+    bool      (*dim)(intptr_t arg);              /* shown, unavailable   */
+    const char *dim_note;      /* feedback for activating a dim item     */
+    const char *(*value)(intptr_t arg, char *buf, size_t sz);  /* body   */
+} menu_item_t;
 
-/* MS_SYSTEM tile indices. Named because the page mixes harmless tunables
- * with the two destructive actions, and menu_confirm() picks those out by
- * index — inserting a tile above them without moving the confirm gate would
- * arm "factory reset" from the wrong tile. */
-typedef enum {
-    SYS_SAVER = 0,
-#if CONFIG_INPUT_TOUCH_SCROLL
-    SYS_TOUCHSCROLL,
-#endif
-    SYS_CLEARHOSTS,
-    SYS_FACTORY,
-    SYS_BACK,
-    SYS_MENU_TILES,     /* count — keeps the page array sized with the enum */
-} sys_menu_item_t;
+enum {
+    MENU_PAGE_WIDE = 1 << 0,   /* multi-column picker_grid layout        */
+    MENU_PAGE_VALS = 1 << 1,   /* value right-aligned on the title row   */
+};
+
+#define MENU_BACK_LEAVE (-1)   /* back_to: leave the menu screen (pop)   */
 
 typedef struct {
-    const char        *title;
-    const char *const *items;
-    const uint8_t     *cols;
-    int                count;
-} menu_def_t;
+    const char *title;
+    const menu_item_t *items;
+    uint8_t count;
+    int8_t  back_to;           /* menu_screen_t target, or MENU_BACK_LEAVE */
+    uint8_t flags;             /* MENU_PAGE_*                            */
+    void  (*on_open)(void);    /* snapshot volatile state at page open   */
+} menu_page_t;
 
-/** Static definition for a screen; the profile pickers are built dynamically. */
-menu_def_t menu_def(int sc);
+/* Largest items[] count across the pages (slot-map sizing in app_menu.c;
+ * checked against the tables by a static assert in app_menu_defs.c). */
+#define MENU_MAX_TILES 12
+
+/** The page table for @p sc, or NULL for the dynamic pickers. */
+const menu_page_t *menu_page(int sc);
 
 /** True for the dynamically built stored-profile pickers. */
 bool menu_is_picker(int sc);
 
-/** CONFIRM label if (sc,sel) is a destructive 2-step action, else NULL. */
-const char *menu_confirm(int sc, int sel);
-
-/** Is (sc,sel) unavailable because BLE support is absent? */
-bool menu_item_dim(int sc, int sel);
+/* app_menu.c internals the tables call back into. Shell-wide callers use
+ * menu_goto/menu_note (app_screens.h); these stay menu-private. */
+void menu_back(uint64_t now);
+void menu_present_now(uint64_t now);   /* paint + present before a reboot */

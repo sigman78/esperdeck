@@ -264,12 +264,13 @@ in-tree features. Tick items as they merge.
       flag — the composition point [`ui-spec.md`](ui-spec.md) builds on.
       *Kills: the enum, the global-struct growth, 13 state writes, 4
       bespoke back-paths.*
-- [ ] **3. Menus fully data-driven.** Actions/confirm/dim/value move into
-      `menu_item_t`; convert the five bespoke pages; add
-      `menu_page_register()` + `menu_items_extend()`. Split the settings
+- [x] **3. Menus fully data-driven.** Actions/confirm/dim/value move into
+      `menu_item_t`; convert the five bespoke pages; extension = a new row
+      in the compile-time page/item tables (no runtime registration —
+      the 2026-08-26 scope decision). Split the settings
       model (cycling + persistence, now on the PR-1 KV API) out of
       `app_menu.c`; the deferred-fx-flush call in the core tick becomes the
-      generic `idle_flush` hook. The *rendition* redesign (two-line touch
+      settings model's generic idle flush. The *rendition* redesign (two-line touch
       items, sliders, themed pages) is specced separately in
       [`ui-spec.md`](ui-spec.md) — model and rendition can land in either
       order.
@@ -440,3 +441,26 @@ in-tree features. Tick items as they merge.
   same id (the app_unlock_stub.c pattern). Future plugin screens are
   rows in the same table — it *is* the shared plugin_table.c shape,
   arriving early.
+- **2026-08-26 (item 3)** — **menus fully data-driven MERGED-READY**
+  (branch `feat/menu-model`): `menu_item_t` carries label(/label_fn),
+  color(/color_fn), arg, action, confirm + arm_note, hidden,
+  dim + dim_note, value; `menu_page_t` adds back_to, layout flags
+  (WIDE/VALS) and an on_open snapshot hook (FONT pending, KEYSTORE
+  state). The 240-line `menu_activate()` switch became a generic
+  dispatch (dim gate → confirm arm → action); `menu_confirm()`,
+  `menu_item_dim()` and the CFG_*/SYS_* positional defines are gone;
+  KEYSTORE's slot→action remap generalized into the hidden-item slot
+  map. The three profile pickers stay bespoke by design — they are the
+  ListView consumers item 4 absorbs. Settings model split into
+  app_settings.c (fx/saver/touch cycling + formatting, dirty flags,
+  hold mask); the core tick calls `app_settings_idle_flush()` — the
+  menu holds writes while EFFECTS/SYSTEM is open, releases on page
+  change or screen exit (one flusher today; generalize when a second
+  appears). app_menu.c 1023 → 502 lines (+453 of tables/actions in
+  app_menu_defs.c). Two deliberate behavior deltas: a BLE-less
+  KEYBOARD page no longer dims its Back tile, and "forget bonds" dims
+  with a note instead of failing after the arm. sim_regress gained
+  `config-pages` (EFFECTS value cycle + deferred [fx] flush lands,
+  FONT, SYSTEM, the back_to chain) and a step-scaled timeout — a
+  ~50-step script exceeded the old flat 25 s budget. Both keystore
+  configs build and pass 5/5; device build + check_iram OK.
