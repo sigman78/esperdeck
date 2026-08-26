@@ -516,7 +516,7 @@ esp_err_t storage_kv_load(const char *filename, const char *section,
 {
     if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
 
-    char path[160];
+    char path[STORAGE_PATH_MAX];
     snprintf(path, sizeof(path), "%s/%s",
              storage_platform_mount_point(), filename);
 
@@ -526,12 +526,12 @@ esp_err_t storage_kv_load(const char *filename, const char *section,
     bool in_section = (section == NULL);   /* flat mode: the whole file */
     bool seen       = (section == NULL);
 
-    char line[192];
+    char line[STORAGE_KV_LINE_MAX];
     while (fgets(line, sizeof(line), f)) {
         rtrim(line);
         if (line[0] == '[') {
             if (!section) continue;        /* flat mode ignores headers */
-            char name[32];
+            char name[STORAGE_KV_KEY_MAX];
             in_section = parse_section(line, name, sizeof(name)) &&
                          strcmp(name, section) == 0;
             if (in_section) seen = true;
@@ -540,7 +540,7 @@ esp_err_t storage_kv_load(const char *filename, const char *section,
         if (line[0] == '\0' || line[0] == '#' || line[0] == ';')
             continue;
         if (!in_section) continue;
-        char key[32], val[144];
+        char key[STORAGE_KV_KEY_MAX], val[STORAGE_KV_LINE_MAX];
         if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
 
         for (const storage_kv_field_t *fd = fields; fd->key; fd++) {
@@ -602,7 +602,7 @@ esp_err_t storage_kv_save(const char *filename, const char *section,
 {
     if (!filename || !fields || !obj) return ESP_ERR_INVALID_ARG;
 
-    char path[160];
+    char path[STORAGE_PATH_MAX];
     snprintf(path, sizeof(path), "%s/%s",
              storage_platform_mount_point(), filename);
 
@@ -618,13 +618,13 @@ esp_err_t storage_kv_save(const char *filename, const char *section,
         bool written = false, in_ours = false;
         FILE *src = fopen(path, "r");
         if (src) {
-            char line[192];
+            char line[STORAGE_KV_LINE_MAX];
             while (fgets(line, sizeof(line), src)) {
-                char probe[192];
+                char probe[STORAGE_KV_LINE_MAX];
                 snprintf(probe, sizeof(probe), "%s", line);
                 rtrim(probe);
                 if (probe[0] == '[') {
-                    char name[32];
+                    char name[STORAGE_KV_KEY_MAX];
                     if (parse_section(probe, name, sizeof(name)) &&
                         strcmp(name, section) == 0) {
                         in_ours = true;

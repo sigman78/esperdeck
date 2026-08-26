@@ -11,6 +11,13 @@
 #include <stdint.h>
 #include <stdio.h>
 
+/* Parser caps. Oversize input truncates, it never overflows: writes are
+ * fgets/snprintf-bounded, and a longer physical line is read in chunks
+ * whose tails fail key=value parsing. */
+#define STORAGE_KV_LINE_MAX 192   /* whole "key=value" line           */
+#define STORAGE_KV_KEY_MAX   32   /* key or [section] name, incl. NUL */
+#define STORAGE_PATH_MAX    160   /* <mount>/<name>, incl. NUL        */
+
 /* BOOL saves 0/1 and loads != 0; STR is a truncating copy. */
 typedef enum {
     STORAGE_KV_U8 = 0,
@@ -48,8 +55,8 @@ esp_err_t storage_reset_register(const char *filename);
  * power cut mid-write leaves the old file intact. */
 typedef struct {
     FILE *f;
-    char  tmp[168];
-    char  dst[160];
+    char  tmp[STORAGE_PATH_MAX + 8];   /* dst + ".tmp" */
+    char  dst[STORAGE_PATH_MAX];
 } storage_atomic_file_t;
 
 FILE *storage_atomic_open(storage_atomic_file_t *af, const char *path);
