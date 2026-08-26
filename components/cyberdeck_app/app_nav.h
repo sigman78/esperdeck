@@ -1,7 +1,8 @@
 /*
- * app_nav.h — screen registry + navigation stack (internal to the shell).
+ * app_nav.h — screen table + navigation stack (internal to the shell).
  *
- * Screens register a hook table and get an id; navigation is a small
+ * Screens are hook tables in one compile-time, id-indexed table
+ * (SCREENS[], cyberdeck_app.c); navigation is a small
  * stack of (screen, arg) entries, so "back" is nav_pop instead of a
  * bespoke destination per screen. The shell owns the frame:
  * clear → render(now) → [chrome, item 4] → present, once per tick and
@@ -42,11 +43,10 @@ typedef struct {
     uint8_t chrome;                      /* NAV_CHROME_*                */
 } nav_screen_t;
 
-/* Clear registry + stack state. Call once before registering screens. */
-void nav_init(void);
-
-/* Register a screen; returns its id. Call at init, before any nav op. */
-int nav_register(const nav_screen_t *def);
+/* Adopt the screen table (ids index into it) and reset the stack. Call
+ * once at init, before any nav op. False = NULL/empty table or an entry
+ * with no descriptor or name. */
+bool nav_init(const nav_screen_t *const *screens, int count);
 
 /* Stack ops. Every op exits the departing screen, enters/resumes the
  * arriving one, and invalidates. The bottom entry never pops. False means

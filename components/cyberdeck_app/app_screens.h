@@ -1,8 +1,8 @@
 /*
  * app_screens.h — per-screen module surface (internal).
  *
- * Each module exports its nav_screen_t hook table; cyberdeck_app.c
- * registers them all and owns the SCR_* ids. Cross-screen jumps go
+ * Each module exports its nav_screen_t hook table; the id-indexed
+ * SCREENS[] table in cyberdeck_app.c maps them. Cross-screen jumps go
  * through the semantic entry points below — thin wrappers that set up
  * intent state and call nav_push/replace/reset.
  */
@@ -12,10 +12,15 @@
 #include "app_internal.h"
 #include "ssh_import.h"     /* ssh_import_mode_t */
 
-/* Screen ids, assigned at registration (cyberdeck_app.c). */
-extern int SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
-           SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
-           SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK;
+/* Screen ids — indices into SCREENS[] (cyberdeck_app.c). One
+ * compile-time table for every screen, future plugins included; a
+ * compiled-out feature stub-swaps its descriptor, never its id. */
+typedef enum {
+    SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
+    SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
+    SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK,
+    SCR_COUNT
+} scr_id_t;
 
 /* ---- boot (app_boot.c) ---- */
 extern const nav_screen_t boot_screen;

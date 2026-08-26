@@ -284,42 +284,26 @@ static void status_toasts(uint64_t now)
     }
 }
 
-/* --------------------------------------------------------- registration */
+/* -------------------------------------------------------- screen table */
 
-int SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
-    SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
-    SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK;
-
-/* One call per screen — the whole surface at a glance. The same registry
- * the plugin seam (extensibility item 5) will feed from plugin_table.c. */
-static esp_err_t register_screens(void)
-{
-    struct {
-        int *id;
-        const nav_screen_t *def;
-    } core[] = {
-        { &SCR_BOOT,       &boot_screen       },
-        { &SCR_HOME,       &home_screen       },
-        { &SCR_POWEROFF,   &poweroff_screen   },
-        { &SCR_PAIRING,    &pairing_screen    },
-        { &SCR_HOSTKEY,    &hostkey_screen    },
-        { &SCR_CONNECTING, &connecting_screen },
-        { &SCR_SESSION,    &session_screen    },
-        { &SCR_MENU,       &menu_screen       },
-        { &SCR_WIFIPROV,   &wifiprov_screen   },
-        { &SCR_PROFILE,    &profile_screen    },
-        { &SCR_SSHIMPORT,  &sshimport_screen  },
-        { &SCR_UNLOCK,     &unlock_screen     },
-    };
-    for (int i = 0; i < NELEM(core); i++) {
-        *core[i].id = nav_register(core[i].def);
-        if (*core[i].id < 0) {
-            ESP_LOGE(TAG, "failed to register screen %s", core[i].def->name);
-            return ESP_ERR_NO_MEM;
-        }
-    }
-    return ESP_OK;
-}
+/* The whole surface at a glance, scr_id_t-indexed (designated, so array
+ * order can't drift from the enum). Every screen — future plugins
+ * included — is a line here; no runtime registration (extensibility.md
+ * status log 2026-08-26). */
+static const nav_screen_t *const SCREENS[SCR_COUNT] = {
+    [SCR_BOOT]       = &boot_screen,
+    [SCR_HOME]       = &home_screen,
+    [SCR_POWEROFF]   = &poweroff_screen,
+    [SCR_PAIRING]    = &pairing_screen,
+    [SCR_HOSTKEY]    = &hostkey_screen,
+    [SCR_CONNECTING] = &connecting_screen,
+    [SCR_SESSION]    = &session_screen,
+    [SCR_MENU]       = &menu_screen,
+    [SCR_WIFIPROV]   = &wifiprov_screen,
+    [SCR_PROFILE]    = &profile_screen,
+    [SCR_SSHIMPORT]  = &sshimport_screen,
+    [SCR_UNLOCK]     = &unlock_screen,
+};
 
 /* ---------------------------------------------------------- public API */
 
@@ -342,9 +326,7 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     load_profiles();
     kick_wifi();
 
-    nav_init();
-    err = register_screens();
-    if (err != ESP_OK) return err;
+    if (!nav_init(SCREENS, SCR_COUNT)) return ESP_FAIL;
     if (!nav_reset(SCR_BOOT, 0, now_ms)) return ESP_FAIL;
 
     /* Render-effect tunables: defaults overlaid with settings.ini [fx] (internal-DRAM

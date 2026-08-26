@@ -20,8 +20,9 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
 
 ### Seams that already exist (build on, don't replace)
 
-- **The screen registry + nav stack** (`app_nav.h`, item 2, 2026-08-26):
-  screens register enter/resume/exit/tick/input/render hook tables and
+- **The screen table + nav stack** (`app_nav.h`, item 2, 2026-08-26):
+  screens are enter/resume/exit/tick/input/render hook tables in one
+  compile-time id-indexed table, and
   navigate via a (screen, arg) stack; the shell owns the
   clear→render→chrome→present frame.
 - **Ops-struct injection.** `cyberdeck_ble_ops_t` / `cyberdeck_presence_ops_t`
@@ -146,7 +147,7 @@ typedef struct {
     esp_err_t (*init)(const plugin_env_t *env);   // after core services are up
     void (*tick)(uint32_t now_ms);        // polled from cyberdeck_app_tick
     void (*idle_flush)(void);             // deferred flash writes (generalizes menu_fx_flush)
-    const screen_def_t   *screens;        // registered screens (opaque ids returned)
+    const screen_def_t   *screens;        // rows for the shared screen table
     const menu_page_t    *menu_pages;     // full pages, actions as callbacks in the table
     const menu_item_t    *menu_items;     // items contributed into existing pages
     const home_tile_t    *home_tiles;     // visibility predicate + activate callback
@@ -159,13 +160,14 @@ typedef struct {
 
 Supporting contracts:
 
-- **Screen registry + navigation foundation** (item 2): internal
+- **Screen table + navigation foundation** (item 2): internal
   `nav_screen_t` descriptors carry name, lifecycle/input/render hooks and
-  chrome policy; `nav_register()` returns an id, and per-screen state lives
+  chrome policy; the compile-time `scr_id_t`-indexed `SCREENS[]` table
+  maps ids to descriptors, and per-screen state lives
   in the owning module. The **navigation stack** (`nav_push/pop/replace`)
   carries intent arguments and replaces bespoke state writes and hardcoded
-  return destinations. Item 5 promotes registration to the plugin boundary;
-  a context pointer is deferred until an external or multi-instance screen
+  return destinations. Item 5 adds plugin screens as rows in the same
+  table; a context pointer is deferred until a multi-instance screen
   demonstrates the need.
 - **Menu items carry their behavior**: `menu_item_t { label, color, action,
   confirm, dim, value }` — kills `menu_activate()`, `menu_confirm()`,
@@ -284,9 +286,10 @@ in-tree features. Tick items as they merge.
 ### Phase 2 — the plugin seam
 
 - [ ] **5. `cyberdeck_plugin_t` + capability registry + shared
-      `plugin_table.c`** compiled by both roots. Promote screen registration
-      to a public plugin-facing API; add per-registration context only if an
-      external or multi-instance consumer requires it. Home-grid extras become
+      `plugin_table.c`** compiled by both roots. Plugin screens join the
+      shared `SCREENS[]` table (no runtime registration — 2026-08-26 scope
+      decision); add per-screen context only if a
+      multi-instance consumer requires it. Home-grid extras become
       registered tiles (visibility predicate + activate) on the new list
       widget. BLE/presence ops migrate to named services with enum states.
 - [ ] **6. Build-system convergence + input unification.** One
@@ -423,3 +426,17 @@ in-tree features. Tick items as they merge.
   `tools/sim_regress.py` checks four scripted flows, including the
   configuration-menu round-trip. Both keystore configurations build and run
   the suite 4/4; a deliberately false screen expectation exits nonzero.
+- **2026-08-26 (item 2 follow-ups)** — two changes on the branch.
+  (a) `nav_push` gained a duplicate-id guard: per-screen state is
+  file-static, so a screen can hold only one live stack entry — state
+  must stay re-derivable from its (id, arg) entry. (b) Registration
+  simplified on a **scope decision**: "plugins" here means statically
+  linked parts of this app (an interfacing/cleanliness discipline, not
+  dynamic extension), so runtime `nav_register()` and the
+  `extern int SCR_*` id-stamping are gone. Screens live in one
+  compile-time `scr_id_t`-indexed designated table (`SCREENS[]`,
+  cyberdeck_app.c): ids are constants again, order can't drift from the
+  enum, and a compiled-out feature stub-swaps its descriptor under the
+  same id (the app_unlock_stub.c pattern). Future plugin screens are
+  rows in the same table — it *is* the shared plugin_table.c shape,
+  arriving early.

@@ -1,5 +1,5 @@
 /*
- * app_nav.c — screen registry, navigation stack, and the shell-owned
+ * app_nav.c — screen table, navigation stack, and the shell-owned
  * frame pass. See app_nav.h.
  */
 
@@ -11,10 +11,9 @@
 
 static const char *TAG = "nav";
 
-#define NAV_SCREENS_MAX 32
-#define NAV_STACK_MAX    6
+#define NAV_STACK_MAX 6
 
-static const nav_screen_t *s_screens[NAV_SCREENS_MAX];
+static const nav_screen_t *const *s_screens;
 static int s_screen_count;
 
 typedef struct { int id; intptr_t arg; } nav_entry_t;
@@ -22,33 +21,30 @@ static nav_entry_t s_stack[NAV_STACK_MAX];
 static int  s_depth;       /* 0 = nothing entered yet (init only) */
 static bool s_dirty;
 
-void nav_init(void)
+bool nav_init(const nav_screen_t *const *screens, int count)
 {
-    for (int i = 0; i < NAV_SCREENS_MAX; i++) s_screens[i] = NULL;
+    if (!screens || count <= 0) {
+        ESP_LOGE(TAG, "no screen table");
+        return false;
+    }
+    for (int i = 0; i < count; i++) {
+        if (!screens[i] || !screens[i]->name) {
+            ESP_LOGE(TAG, "screen table entry %d invalid", i);
+            return false;
+        }
+    }
+    s_screens      = screens;
+    s_screen_count = count;
     memset(s_stack, 0, sizeof(s_stack));
-    s_screen_count = 0;
-    s_depth        = 0;
-    s_dirty        = false;
-}
-
-int nav_register(const nav_screen_t *def)
-{
-    if (!def || !def->name) {
-        ESP_LOGE(TAG, "invalid screen descriptor");
-        return -1;
-    }
-    if (s_screen_count >= NAV_SCREENS_MAX) {
-        ESP_LOGE(TAG, "screen registry full (%d), rejected %s",
-                 NAV_SCREENS_MAX, def->name);
-        return -1;
-    }
-    s_screens[s_screen_count] = def;
-    return s_screen_count++;
+    s_depth = 0;
+    s_dirty = false;
+    return true;
 }
 
 static const nav_screen_t *screen(int id)
 {
-    return (id >= 0 && id < s_screen_count) ? s_screens[id] : NULL;
+    return (s_screens && id >= 0 && id < s_screen_count) ? s_screens[id]
+                                                         : NULL;
 }
 
 int nav_current(void)
