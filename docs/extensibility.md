@@ -79,8 +79,29 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
 - Leaky edges: `storage → display` (only for `display_fx.h`; the keystore
   tests fake the header to escape it) and `storage → libssh2_esp` (only to
   reach vendored monocypher).
+- **Transport fused to presentation** (2026-08-25 boundary audit):
+  `ssh_client.c`'s drain loop calls `vterm_feed`/`vterm_flush` directly,
+  registers the terminal's response callback itself, and reads the PTY
+  (pseudo-terminal) geometry from `display` — an edge its CMakeLists never
+  declares (it rides vterm's transitive REQUIRES). Every vterm-less use of
+  the transport — file transfer, a capture/log sink, both on the backlog —
+  is blocked on this.
+- **Encoding in the driver**: `input` turns HID keys into VT byte
+  sequences at the source, so `ble_keyboard.c` queries
+  `vterm_app_cursor_keys()` — DECCKM (DEC cursor-key mode) — per
+  keystroke; the shell then *decodes* those same bytes back into logical
+  keys (`decode_key`) for UI navigation. The round-trip marks the
+  encoding as one layer too low.
+- **`storage.h` is a god-header**: it defines the domain types
+  (`conn_profile_t`, `wifi_profile_t`, `ble_device_info_t` — why wifi,
+  input and the shell include it from their own public headers), pulls in
+  `display_fx.h`, and exports the shared credential scratch — a sharp
+  internal staging contract — to every includer. The types stay (a
+  types-only component is ceremony); the scratch and the fx include go.
 - The `input` component is invisible to the simulator; `sim/main.c`
   hand-mirrors the GT911 touch state machine, constants synced by comment.
+  Same hazard class: `cyberdeck_input_t` mirrors `input_event_t`
+  field-for-field, translated by hand in both composition roots.
 - Feature gates triplicated: the keystore `option()` appears verbatim in
   three CMakeLists; every `CONFIG_*` shared code reads must be hand-mirrored
   in `sim/CMakeLists.txt` (the sim has no Kconfig).
@@ -156,7 +177,18 @@ Supporting contracts:
   lookup, no indirection.
 - **Public UI kit**: a curated `cyberdeck_ui.h` exporting the tile grid,
   hit-testing, fields, and widgets — prerequisite for any out-of-component
-  plugin.
+  plugin. The kit's design half — part vocabulary, chrome-row contracts,
+  the three-layer API model, touch rules, and the extensibility
+  compliance checklist — lives in [`ui-spec.md`](ui-spec.md)
+  (2026-08-25, code-audited).
+- **`plugin_env_t` — measured, not invented.** What screens actually
+  consume from the core today (counted from `app_internal.h` usage):
+  toasts (`toast_for`), cross-screen jumps, the profile list
+  (`app.profiles` + `load_profiles`), `kick_wifi`, `ble_has_bond`, the
+  injected ops seams, the anim frame, and the tile grid for hit-testing.
+  So the env is: nav ops, toast, a KV settings handle, service lookup,
+  and a read view of the profile list. A screen that needs more marks a
+  missing seam — grow the seam, not the env.
 
 ### Constraints every phase must respect
 
@@ -205,14 +237,25 @@ in-tree features. Tick items as they merge.
       list instead of the hardcoded array. Same PR: break `storage → display`
       (fx serialization moves behind a caller-owned kv table; deletes the
       fake header in `tests/keystore/stubs/`) and `storage → libssh2_esp`
-      (monocypher becomes its own small component).
+      (monocypher becomes its own small component), and
+      `storage_cred_scratch` leaves the public header — it is an internal
+      staging contract, not API.
       *Kills: 4 bespoke load/save pairs, 2 leaky edges.*
 - [ ] **2. Screen registry + navigation stack.** Extend `screen_ops_t`
       (enter/exit/render/name/ctx), add `app_screen_register()`, move
       per-screen state behind `void *ctx`, add `nav_push/pop/replace`.
-      Core screens re-register through the same API — the shell dogfoods
+      The stack must carry an **intent argument**: today's cross-screen
+      entries are parameterized — `enter_profile(edit_idx)`,
+      `hostkey_open(mismatch)`, `enter_sshimport(mode)`, unlock's four
+      open flavors with a return target and a resume-connect
+      continuation — and a bare `nav_push(id)` cannot express them. The
+      unlock return enum and the connect resume become stack entries,
+      not private state. Core screens re-register through the same API — the shell dogfoods
       its own plugin surface. Behavior-neutral; regression-test the flow
-      with the sim's `--drive` scripted input.
+      with the sim's `--drive` scripted input. This item also inverts
+      present ownership (shell owns clear → screen render → chrome →
+      present; 13 screens self-present today) with a per-screen chrome
+      flag — the composition point [`ui-spec.md`](ui-spec.md) builds on.
       *Kills: the enum, the global-struct growth, 13 state writes, 4
       bespoke back-paths.*
 - [ ] **3. Menus fully data-driven.** Actions/confirm/dim/value move into
@@ -220,12 +263,19 @@ in-tree features. Tick items as they merge.
       `menu_page_register()` + `menu_items_extend()`. Split the settings
       model (cycling + persistence, now on the PR-1 KV API) out of
       `app_menu.c`; the deferred-fx-flush call in the core tick becomes the
-      generic `idle_flush` hook.
+      generic `idle_flush` hook. The *rendition* redesign (two-line touch
+      items, sliders, themed pages) is specced separately in
+      [`ui-spec.md`](ui-spec.md) — model and rendition can land in either
+      order.
       *Kills: the 240-line switch, positional contracts, the 1000-line file.*
-- [ ] **4. Widget gaps + public UI kit.** Scrolling list widget (hard
-      prerequisite — grids silently drop overflow), one shared
-      confirm/modal helper (currently cloned 3×), unified toast, then the
-      curated public `cyberdeck_ui.h`.
+- [ ] **4. Widget gaps + public UI kit.** Deliverables per
+      [`ui-spec.md`](ui-spec.md): ListView (hard prerequisite — grids
+      silently drop overflow), Slider/Stepper, one Modal/Confirm helper
+      (cloned 3× today), the shared drag converter, unified Toast (one
+      row, one impl), then the curated public `cyberdeck_ui.h`.
+      **First consumers and acceptance test: the StatusCluster and the
+      menu rendition redesign** — the kit is right when both build on it
+      without shell internals.
 
 ### Phase 2 — the plugin seam
 
@@ -233,11 +283,24 @@ in-tree features. Tick items as they merge.
       `plugin_table.c`** compiled by both roots. Home-grid extras become
       registered tiles (visibility predicate + activate) on the new list
       widget. BLE/presence ops migrate to named services with enum states.
-- [ ] **6. Build-system convergence.** One `cyberdeck_features.cmake`
-      defining each feature gate once; the sim's mirrored `CONFIG_*`
-      defines generated from the same list; document (or script) the sim's
-      `add_subdirectory` ordering. Optional: a global hotkey registry
-      replacing the per-screen shortcut ladders.
+- [ ] **6. Build-system convergence + input unification.** One
+      `cyberdeck_features.cmake` defining each feature gate once; the
+      sim's mirrored `CONFIG_*` defines generated from the same list;
+      document (or script) the sim's `add_subdirectory` ordering. The
+      input-sim unification (today `sim/main.c` hand-mirrors the GT911
+      state machine) also grows **horizontal-gesture support** —
+      `INPUT_EVENT_SCROLL` is dy-only, and menu swipe-between-pages
+      ([`ui-spec.md`](ui-spec.md)) is blocked on it. Two additions from
+      the 2026-08-25 boundary audit: (a) fix the input **currency** —
+      drivers deliver logical keys (HID usage + modifiers) and the
+      session screen encodes VT bytes at the point of send via `vtkeys`,
+      where the DECCKM query naturally lives; that deletes
+      `input → vterm` and the shell's decode-back step. (b) add
+      `tools/check_boundaries.py` in the `check_iram.py` mold: the
+      include graph diffed against an allowed-edges list on every build,
+      so a fixed edge stays fixed (it would have caught ssh's undeclared
+      `display` include). Optional: a global hotkey registry replacing
+      the per-screen shortcut ladders.
 
 ### Phase 3 — prove it, then spend it
 
@@ -247,6 +310,15 @@ in-tree features. Tick items as they merge.
       policy from `app_home.c` — security policy leaves the eye-candy);
       pacman becomes a sprite-widget plugin; connection policy extracts
       from `app_connect.c` into the ssh component, leaving a thin screen.
+      The extraction lands as **two layers inside `ssh`**: a transport
+      core (`ssh_client`) that stops knowing vterm — the drain loop hands
+      bytes to a registered sink (`data`/`flush`/`closed`), PTY geometry
+      becomes `ssh_config_t` fields, and the buffered reply-write trick
+      becomes an explicit `ssh_client_queue_reply()` for the terminal's
+      response callback to target — and a session controller that owns
+      policy (retry, key resolution, hostkey flow) and does the wiring.
+      File transfer and capture sinks then consume the transport without
+      the terminal.
 - [ ] **8+. The backlog lands as plugins** ([`feat-ideas.md`](feat-ideas.md)):
       palette/theme filters and the CRT fx pack (menu page + KV settings +
       fx snapshot), screensaver-zoo entries (saver ops), info-saver widgets
@@ -267,3 +339,28 @@ in-tree features. Tick items as they merge.
   as a fourth up-front decision (seams over glue; localized features
   integrate directly, descriptor and capability registry are opt-in, not
   a gate). Descriptor and capability-registry sections re-scoped to match.
+- **2026-08-25** — [`ui-spec.md`](ui-spec.md) written as the design half of
+  items 2–4 (two review rounds + a code-compliance audit), and its
+  discoveries folded back here: item 2 gains the present-ownership
+  inversion + per-screen chrome flag; item 4's deliverables enumerated
+  with StatusCluster + menu rendition as first consumers; item 6 gains
+  horizontal-gesture input work (SCROLL is dy-only — menu swipe is blocked
+  on it). Audit facts worth keeping: `wifi_manager_get_rssi()` is the
+  shell-legal RSSI source (never `esp_wifi_*` from the shell);
+  `prof_accent` hashes identity over {green, cyan, magenta, amber, blue} —
+  red/white/default stay reserved for alert/focus/body; kit headers follow
+  the idfsim pattern (the standalone Unity tests already build against
+  `idfsim/`), never SDL.
+- **2026-08-25 (later)** — component-boundary audit: the full include
+  graph checked against the declared REQUIRES, contract width measured
+  per edge. New wiring-debt entries: the ssh transport–presentation
+  fusion, input's DECCKM query (encoding one layer too low), the
+  `storage.h` god-header, the hand-synced struct mirrors. Folded into the
+  phases: item 1 gains the cred-scratch de-export, item 2 gains
+  nav-with-args (parameterized entries + the unlock continuation), item 6
+  gains the logical-key input currency and `tools/check_boundaries.py`,
+  item 7 gains the ssh transport/session split with the byte-sink seam.
+  [`ARCHITECTURE.md`](ARCHITECTURE.md) gains the boundary table.
+  Deliberate non-fixes, per the proportionality rule: `vterm ↔ display`
+  stays fused (the render data plane), `wifi`/`input` keep owning their
+  persistence, domain types stay in `storage.h`.
