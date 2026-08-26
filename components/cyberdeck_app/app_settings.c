@@ -42,5 +42,5 @@ const storage_kv_field_t app_font_fields[] = {
 
 void app_settings_register_reset(void)
 {
-    storage_reset_register(APP_SETTINGS_INI);
+    storage_reset_register("settings.ini");
 }

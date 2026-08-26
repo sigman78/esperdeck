@@ -12,12 +12,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define APP_SETTINGS_INI   "settings.ini"
-#define APP_FX_SECTION     "fx"
-#define APP_SAVER_SECTION  "saver"
-#define APP_TOUCH_SECTION  "touch"
-#define APP_FONT_SECTION   "font"
-
 /* [fx] — display_fx_cfg_t; pre-fill with display_fx_defaults(), the
  * apply path range-clamps, so the table carries no ranges. */
 extern const storage_kv_field_t app_fx_fields[];

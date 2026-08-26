@@ -110,7 +110,7 @@ static void font_menu_refresh_pending(void)
 {
     s_font_pending = font_active_size();
     app_font_cfg_t fc = { .size = "" };
-    if (storage_kv_load(APP_SETTINGS_INI, APP_FONT_SECTION,
+    if (storage_kv_load("settings.ini", "font",
                         app_font_fields, &fc) == ESP_OK &&
         fc.size[0]) {
         for (int i = 0; i < FONT_SIZE_COUNT; i++)
@@ -247,14 +247,14 @@ void menu_fx_flush(void)
     if (s_saver_dirty && !on_system) {
         s_saver_dirty = false;
         app_saver_cfg_t sv = { .idle_min = app.saver.idle_ms / 60000u };
-        storage_kv_save(APP_SETTINGS_INI, APP_SAVER_SECTION,
+        storage_kv_save("settings.ini", "saver",
                         app_saver_fields, &sv);
     }
 #if CONFIG_INPUT_TOUCH_SCROLL
     if (s_touch_dirty && !on_system) {
         s_touch_dirty = false;
         app_touch_cfg_t tc = { .scroll = app.touch_scroll };
-        storage_kv_save(APP_SETTINGS_INI, APP_TOUCH_SECTION,
+        storage_kv_save("settings.ini", "touch",
                         app_touch_fields, &tc);
     }
 #endif
@@ -263,7 +263,7 @@ void menu_fx_flush(void)
     s_fx_dirty = false;
     display_fx_cfg_t c;
     display_fx_get(&c);
-    storage_kv_save(APP_SETTINGS_INI, APP_FX_SECTION, app_fx_fields, &c);
+    storage_kv_save("settings.ini", "fx", app_fx_fields, &c);
 }
 
 static void fx_menu_cycle(int sel)
@@ -724,7 +724,7 @@ static void menu_activate(uint64_t now)
         }
         app_font_cfg_t fc;
         snprintf(fc.size, sizeof(fc.size), "%s", font_size_name(want));
-        if (storage_kv_save(APP_SETTINGS_INI, APP_FONT_SECTION,
+        if (storage_kv_save("settings.ini", "font",
                             app_font_fields, &fc) != ESP_OK) {
             menu_note(now, MENU_MSG_MS, false, "could not save font");
             return;

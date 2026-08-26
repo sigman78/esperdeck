@@ -10,7 +10,8 @@ To bump (fork-first, or the hash check fails the build):
 1. Update `sigman78/libssh2` `feature/mbedtls-ed25519` with the new
    monocypher files; note the new commit SHA.
 2. Point `libssh2_esp/CMakeLists.txt` `GIT_TAG` at that SHA.
-3. Copy the same four files (+ LICENCE.md) here.
+3. Copy the same four files here (the license text is embedded in the
+   sources).
 4. Run `tests/keystore` — it compiles this copy; stored formats must
    round-trip.
 
