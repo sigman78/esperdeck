@@ -45,12 +45,24 @@ FetchContent_MakeAvailable(libssh2_src)
 
 set(LIBSSH2_DIR ${libssh2_src_SOURCE_DIR})
 
-# Exactly ONE Monocypher in the build: delete the fork's vendored copy so
-# mbedtls.c's quoted includes fall through to components/monocypher (whose
-# objects are what gets linked). Idempotent; a re-fetch restores + re-deletes.
-file(REMOVE ${LIBSSH2_DIR}/src/monocypher.c ${LIBSSH2_DIR}/src/monocypher.h
-            ${LIBSSH2_DIR}/src/monocypher-ed25519.c
-            ${LIBSSH2_DIR}/src/monocypher-ed25519.h)
+# Exactly ONE Monocypher in the build: verify the fork's vendored copy is
+# bit-identical to components/monocypher, then delete it so mbedtls.c's
+# quoted includes fall through to ours (whose objects are what gets
+# linked). The check proves the substitution is an identity — a fork-side
+# monocypher divergence (bump or patch) stops the build for a conscious
+# re-pin. A re-fetch restores the files; the next configure re-runs both.
+foreach(_f monocypher.c monocypher.h monocypher-ed25519.c monocypher-ed25519.h)
+    if(NOT EXISTS ${LIBSSH2_DIR}/src/${_f})
+        continue()   # already deleted by a prior configure
+    endif()
+    file(SHA256 ${LIBSSH2_DIR}/src/${_f} _fork_hash)
+    file(SHA256 ${CMAKE_CURRENT_LIST_DIR}/../monocypher/${_f} _ours_hash)
+    if(NOT _fork_hash STREQUAL _ours_hash)
+        message(FATAL_ERROR "components/monocypher/${_f} differs from the "
+                "libssh2 fork's vendored copy — re-pin one side.")
+    endif()
+    file(REMOVE ${LIBSSH2_DIR}/src/${_f})
+endforeach()
 
 # Common libssh2 translation units; the crypto backend file is appended per build.
 set(_libssh2_units
