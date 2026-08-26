@@ -99,7 +99,7 @@ void load_profiles(void)
 /* Lock companion — see app_internal.h. keystore_lock() wipes the MK and the
  * secrets cache inside the vault, but load_profiles() has already copied the
  * hydrated passwords out here: the HOME list (app.profiles), the connect
- * snapshot (app.conn.active) and the editor draft (app.pf.draft) each carry a
+ * snapshot (conn) and the editor draft (profile) each carry a
  * plaintext login password or key passphrase. Without this the panic button
  * and the idle auto-lock leave every credential sitting in .bss, and the lock
  * only really covers the key files.
@@ -113,9 +113,8 @@ void app_creds_wipe(void)
     for (int i = 0; i < MAX_PROFILES; i++)
         keystore_wipe(app.profiles[i].password,
                       sizeof(app.profiles[i].password));
-    keystore_wipe(app.conn.active.password,
-                  sizeof(app.conn.active.password));
-    keystore_wipe(app.pf.draft.password, sizeof(app.pf.draft.password));
+    conn_creds_wipe();      /* the active-connect snapshot */
+    profile_creds_wipe();   /* the editor draft            */
 }
 
 bool ble_has_bond(void)
@@ -285,28 +284,25 @@ static void status_toasts(uint64_t now)
     }
 }
 
-/* ------------------------------------------------------------- dispatch */
+/* -------------------------------------------------------- screen table */
 
-typedef struct {
-    void (*tick)(uint64_t now);
-    void (*input)(const cyberdeck_input_t *ev, ui_key_t k, char ch,
-                  uint64_t now);
-} screen_ops_t;
-
-/* One row per app_state_t — the whole FSM surface at a glance. */
-static const screen_ops_t SCREENS[ST_COUNT] = {
-    [ST_BOOT]       = { boot_tick,       boot_input       },
-    [ST_HOME]       = { home_tick,       home_input       },
-    [ST_PAIRING]    = { pairing_tick,    pairing_input    },
-    [ST_HOSTKEY]    = { hostkey_tick,    hostkey_input    },
-    [ST_CONNECTING] = { connecting_tick, connecting_input },
-    [ST_SESSION]    = { session_tick,    session_input    },
-    [ST_POWEROFF]   = { poweroff_tick,   poweroff_input   },
-    [ST_MENU]       = { menu_tick,       menu_input       },
-    [ST_WIFIPROV]   = { wifiprov_tick,   wifiprov_input   },
-    [ST_PROFILE]    = { profile_tick,    profile_input    },
-    [ST_SSHIMPORT]  = { sshimport_tick,  sshimport_input  },
-    [ST_UNLOCK]     = { unlock_tick,     unlock_input     },
+/* The whole surface at a glance, scr_id_t-indexed (designated, so array
+ * order can't drift from the enum). Every screen — future plugins
+ * included — is a line here; no runtime registration (extensibility.md
+ * status log 2026-08-26). */
+static const nav_screen_t *const SCREENS[SCR_COUNT] = {
+    [SCR_BOOT]       = &boot_screen,
+    [SCR_HOME]       = &home_screen,
+    [SCR_POWEROFF]   = &poweroff_screen,
+    [SCR_PAIRING]    = &pairing_screen,
+    [SCR_HOSTKEY]    = &hostkey_screen,
+    [SCR_CONNECTING] = &connecting_screen,
+    [SCR_SESSION]    = &session_screen,
+    [SCR_MENU]       = &menu_screen,
+    [SCR_WIFIPROV]   = &wifiprov_screen,
+    [SCR_PROFILE]    = &profile_screen,
+    [SCR_SSHIMPORT]  = &sshimport_screen,
+    [SCR_UNLOCK]     = &unlock_screen,
 };
 
 /* ---------------------------------------------------------- public API */
@@ -317,25 +313,21 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 
     memset(&app, 0, sizeof(app));
     app.cfg = *cfg;
-    app.pf.edit_idx    = -1;
-    app.pf.key_sel     = -1;
-    app.menu.reorder_grab = -1;
-    app_saver_cfg_t sv = { .idle_min = APP_SAVER_DEFAULT_MIN };
-    storage_kv_load(cyberdeck_settings_ini, app_saver_section, app_saver_fields, &sv);
-    app.saver.idle_ms = sv.idle_min * 60u * 1000u;
     app_touch_cfg_t tc = { .scroll = true };
     storage_kv_load(cyberdeck_settings_ini, app_touch_section, app_touch_fields, &tc);
     app.touch_scroll = tc.scroll;
     app_touch_scroll_apply();
     app_settings_register_reset();
-    boot_enter(now_ms);
-    saver_reset(now_ms);   /* idle timer starts at boot */
+    saver_init(now_ms);    /* [saver] load + idle timer starts at boot */
 
     esp_err_t err = ui_init();
     if (err != ESP_OK) return err;
 
     load_profiles();
     kick_wifi();
+
+    if (!nav_init(SCREENS, SCR_COUNT)) return ESP_FAIL;
+    if (!nav_reset(SCR_BOOT, 0, now_ms)) return ESP_FAIL;
 
     /* Render-effect tunables: defaults overlaid with settings.ini [fx] (internal-DRAM
      * startup task — flash I/O is safe here). */
@@ -350,8 +342,20 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 
 bool cyberdeck_app_in_session(void)
 {
-    return app.state == ST_SESSION || app.state == ST_MENU;
+    return nav_current() == SCR_SESSION || nav_current() == SCR_MENU;
 }
+
+#ifdef BUILD_SIMULATOR
+const char *cyberdeck_app_debug_screen(void)
+{
+    return nav_current_name();
+}
+
+bool cyberdeck_app_debug_overlay_contains(const char *text)
+{
+    return ui_debug_contains(text);
+}
+#endif
 
 void cyberdeck_app_tick(uint64_t now)
 {
@@ -361,8 +365,7 @@ void cyberdeck_app_tick(uint64_t now)
     status_toasts(now);
     menu_fx_flush();   /* deferred [fx] save, once the EFFECTS page is left */
 
-    if (app.state < ST_COUNT && SCREENS[app.state].tick)
-        SCREENS[app.state].tick(now);
+    nav_frame(now);
 }
 
 void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
@@ -378,6 +381,5 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
     ui_key_t k = (ev->type == CYBERDECK_INPUT_KEY)
                  ? decode_key(ev, &ch) : K_NONE;
 
-    if (app.state < ST_COUNT && SCREENS[app.state].input)
-        SCREENS[app.state].input(ev, k, ch, now);
+    nav_dispatch_input(ev, k, ch, now);
 }

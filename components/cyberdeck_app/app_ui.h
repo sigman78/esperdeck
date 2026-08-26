@@ -112,6 +112,11 @@ void ui_tile(int col, int row, int w, int h,
 /** Feed the ~10 fps animation frame counter (drives the tile marquee). */
 void ui_frame(uint32_t frame);
 
+#ifdef BUILD_SIMULATOR
+/** True when one row of the currently published overlay contains @p text. */
+bool ui_debug_contains(const char *text);
+#endif
+
 /** Single-line text-entry field with a block cursor at @p cursor when
  *  @p focused; scrolls to keep the cursor visible. @p mask renders '*'. */
 void ui_field(int col, int row, int width, const char *text,

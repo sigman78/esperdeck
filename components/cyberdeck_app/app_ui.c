@@ -103,6 +103,31 @@ void ui_hide(void)
 
 bool ui_visible(void) { return s_visible; }
 
+#ifdef BUILD_SIMULATOR
+bool ui_debug_contains(const char *text)
+{
+    if (!s_visible || !text || !text[0] || !s_draw) return false;
+    size_t len = strlen(text);
+    if (len > (size_t)s_cols) return false;
+
+    /* ui_present() swaps s_draw after publishing, so the other buffer is
+     * the one the display currently owns. Scanning it catches accidental
+     * double-presents that publish a stale frame. */
+    const display_overlay_cell_t *front =
+        s_draw == s_buf[0] ? s_buf[1] : s_buf[0];
+    for (int row = 0; row < s_rows; row++) {
+        for (int col = 0; col <= s_cols - (int)len; col++) {
+            size_t i = 0;
+            while (i < len &&
+                   front[row * s_cols + col + (int)i].cp == (uint8_t)text[i])
+                i++;
+            if (i == len) return true;
+        }
+    }
+    return false;
+}
+#endif
+
 void ui_no_cursor(void)
 {
     /* Park the terminal cursor off-screen so its blinking XOR block does not

@@ -3,9 +3,9 @@
  *
  * Compiled when the secure store is disabled or its sources are absent.
  * With keystore_state() stubbed to ABSENT, no gate ever fires and nothing
- * routes to ST_UNLOCK — these exist only so the screen table and the few
- * explicit call sites link. The KEYSTORE menu entry is dimmed separately
- * (menu_item_dim).
+ * navigates to this screen. The descriptor and semantic entry points exist
+ * only so both feature configurations expose the same shell linkage surface.
+ * The KEYSTORE menu entry is dimmed separately (menu_item_dim).
  */
 
 #include "app_internal.h"
@@ -20,13 +20,7 @@ void unlock_open_setpin(uint64_t now) { (void)now; }
 void unlock_open_remove(uint64_t now) { (void)now; }
 void unlock_open_gate(uint64_t now)   { (void)now; }
 
-/* saver_tick_gate stays in app_saver.c — it is plain screensaver
- * machinery with no vault dependency. */
-
-void unlock_tick(uint64_t now) { (void)now; }
-
-void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
-                  uint64_t now)
-{
-    (void)ev; (void)k; (void)ch; (void)now;
-}
+const nav_screen_t unlock_screen = {
+    .name = "unlock-disabled",
+    .chrome = NAV_CHROME_NONE,
+};

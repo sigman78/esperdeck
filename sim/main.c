@@ -240,10 +240,11 @@ static void touch_tick(uint64_t now)
 }
 
 /* -------------------------------------------------------------------------
- * --drive "tap:x,y|key:enter|hold:x,y|wait:800" — scripted input for UI
- * screenshot automation (framebuffer pixel coords; key names: enter, esc,
- * tab, up/down/left/right, f12, sbup/sbdn for scrollback paging, or a
- * single character). Steps fire 450 ms
+ * --drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|quit" —
+ * scripted input for UI screenshot automation and regression runs
+ * (framebuffer pixel coords; key names: enter, esc, tab, up/down/left/right,
+ * f12, sbup/sbdn for scrollback paging, or a single character). Expectations
+ * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms
  * apart (wait:N overrides the gap) starting 2.5 s after boot, injected
  * through the same paths as real input. Sim-only test hook.
  * ---------------------------------------------------------------------- */
@@ -284,6 +285,24 @@ static void drive_tick(uint64_t now)
     int x = 0, y = 0;
     if (!strncmp(step, "wait:", 5)) {
         gap = strtoul(step + 5, NULL, 10);
+    } else if (!strncmp(step, "expect-text:", 12)) {
+        const char *want = step + 12;
+        if (!cyberdeck_app_debug_overlay_contains(want)) {
+            fprintf(stderr, "drive: expected overlay text '%s' on screen '%s'\n",
+                    want, cyberdeck_app_debug_screen());
+            exit(4);
+        }
+    } else if (!strncmp(step, "expect:", 7)) {
+        const char *want = step + 7;
+        const char *got  = cyberdeck_app_debug_screen();
+        if (strcmp(got, want) != 0) {
+            fprintf(stderr, "drive: expected screen '%s', got '%s'\n", want, got);
+            exit(3);
+        }
+    } else if (!strcmp(step, "quit")) {
+        /* Clean scripted exit after any preceding state/UI assertions;
+         * a mismatch or crash anywhere earlier is nonzero. */
+        exit(0);
     } else if (sscanf(step, "tap:%d,%d", &x, &y) == 2) {
         send_touch(CYBERDECK_INPUT_TAP, (uint16_t)x, (uint16_t)y, now);
     } else if (sscanf(step, "hold:%d,%d", &x, &y) == 2) {

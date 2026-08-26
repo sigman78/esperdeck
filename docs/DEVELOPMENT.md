@@ -136,8 +136,8 @@ cmake --build build-sim
   empty.
 - **Mouse emulates touch** faithfully (tap, drag, long-press =
   right-click).
-- **`--drive "tap:x,y|key:enter|wait:800|..."`** scripts input for
-  demos/tests.
+- **`--drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|..."`**
+  scripts input and screen/overlay assertions for demos and tests.
 - **Alt+Enter** toggles window scale; **F12** opens the in-session menu.
 - **MSVC toolchain.** On Windows the sim links against MSVC. Build from
   an environment where `cl` is available (a VS developer prompt, for
