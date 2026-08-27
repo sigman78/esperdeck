@@ -15,7 +15,9 @@ if(DEFINED ENV{IDF_PATH} AND NOT BUILD_SIMULATOR)
     add_custom_command(TARGET ${CMAKE_PROJECT_NAME}.elf POST_BUILD
         COMMAND ${_py} ${CMAKE_CURRENT_LIST_DIR}/tools/check_iram.py
                 --nm ${CMAKE_NM} $<TARGET_FILE:${CMAKE_PROJECT_NAME}.elf>
-        COMMENT "check_iram: auditing ISR-path symbol placement"
+        COMMAND ${_py} ${CMAKE_CURRENT_LIST_DIR}/tools/check_boundaries.py
+                ${CMAKE_CURRENT_LIST_DIR}
+        COMMENT "check_iram + check_boundaries: symbol placement, component edges"
         VERBATIM)
 else()
     # -----------------------------------------------------------------------

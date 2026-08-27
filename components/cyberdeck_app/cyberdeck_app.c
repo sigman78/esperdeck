@@ -21,6 +21,7 @@
 #include "display_fx.h"
 #include "keystore.h"       /* keystore_wipe for the cred scratch */
 #include "storage_cred.h"   /* the shared credential staging buffer */
+#include "vtkeys.h"         /* HIDKEY events -> ui_key_t */
 #include "wifi_manager.h"
 
 static const char *TAG = "cyberdeck_app";
@@ -32,29 +33,29 @@ struct app_state app;
 
 static ui_key_t decode_key(const cyberdeck_input_t *ev, char *ch)
 {
-    const uint8_t *b = ev->buf;
-    int len = ev->len;
+    if (ev->type == CYBERDECK_INPUT_HIDKEY) {
+        const bool shift = vtkeys_mods_from_hid(ev->mods) & VTMOD_SHIFT;
+        switch (vtkeys_from_hid(ev->key)) {
+        case VTKEY_UP:    return K_UP;
+        case VTKEY_DOWN:  return K_DOWN;
+        case VTKEY_LEFT:  return K_LEFT;
+        case VTKEY_RIGHT: return K_RIGHT;
+        case VTKEY_F12:   return K_F12;
+        /* Shift+PageUp / Shift+PageDown — scrollback, kept by the deck. */
+        case VTKEY_PGUP:  return shift ? K_SCROLL_UP   : K_NONE;
+        case VTKEY_PGDN:  return shift ? K_SCROLL_DOWN : K_NONE;
+        default:          return K_NONE;
+        }
+    }
 
-    if (len == 1) {
+    const uint8_t *b = ev->buf;
+    if (ev->len == 1) {
         if (b[0] == 0x1B) return K_ESC;
         if (b[0] == '\r' || b[0] == '\n') return K_ENTER;
         if (b[0] == 0x08 || b[0] == 0x7F) return K_BACKSPACE;
         if (b[0] == 0x09) return K_TAB;
         if (b[0] >= 0x20 && b[0] < 0x7F) { if (ch) *ch = (char)b[0]; return K_CHAR; }
-        return K_NONE;
     }
-    if (len >= 3 && b[0] == 0x1B && (b[1] == '[' || b[1] == 'O')) {
-        switch (b[2]) {
-        case 'A': return K_UP;
-        case 'B': return K_DOWN;
-        case 'C': return K_RIGHT;
-        case 'D': return K_LEFT;
-        }
-    }
-    if (len == 5 && memcmp(b, "\x1b[24~", 5) == 0) return K_F12;
-    /* Shift+PageUp / Shift+PageDown — scrollback, kept by the deck. */
-    if (len == 6 && memcmp(b, "\x1b[5;2~", 6) == 0) return K_SCROLL_UP;
-    if (len == 6 && memcmp(b, "\x1b[6;2~", 6) == 0) return K_SCROLL_DOWN;
     return K_NONE;
 }
 
@@ -408,7 +409,8 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
         return;
 
     char ch = 0;
-    ui_key_t k = (ev->type == CYBERDECK_INPUT_KEY)
+    ui_key_t k = (ev->type == CYBERDECK_INPUT_KEY ||
+                  ev->type == CYBERDECK_INPUT_HIDKEY)
                  ? decode_key(ev, &ch) : K_NONE;
 
     nav_dispatch_input(ev, k, ch, now);

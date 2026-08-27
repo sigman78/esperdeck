@@ -519,7 +519,7 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     (void)ch;
     const bool picker = menu_is_picker(s_menu.screen);
     /* Esc / F12 / tap-outside all step back one level. */
-    if (k == K_ESC || (ev->type == CYBERDECK_INPUT_KEY && k == K_F12)) {
+    if (k == K_ESC || k == K_F12) {
         menu_back(now);
         return;
     }

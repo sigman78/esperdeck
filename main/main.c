@@ -94,6 +94,9 @@ _Static_assert((int)CYBERDECK_ENROLL_IDLE        == (int)BLE_PRESENCE_IDLE &&
                (int)CYBERDECK_ENROLL_ADVERTISING == (int)BLE_PRESENCE_ADVERTISING &&
                (int)CYBERDECK_ENROLL_DONE_NOW    == (int)BLE_PRESENCE_ENROLLED_NOW,
                "cyberdeck_enroll_state_t drifted from ble_presence_enroll_t");
+_Static_assert(CYBERDECK_KBD_LOCK_CAPS == BLE_KBD_LOCK_CAPS &&
+               CYBERDECK_KBD_LOCK_NUM  == BLE_KBD_LOCK_NUM,
+               "CYBERDECK_KBD_LOCK_* drifted from BLE_KBD_LOCK_*");
 
 static cyberdeck_ble_state_t ble_ops_get_state(void)
 {
@@ -107,6 +110,7 @@ static const cyberdeck_ble_ops_t s_ble_ops = {
     .get_scan_results = ble_keyboard_get_scan_results,
     .select_device    = ble_keyboard_select_device,
     .get_name         = ble_keyboard_get_connected_name,
+    .get_locks        = ble_keyboard_get_locks,
     .forget           = ble_keyboard_forget_all,
 };
 
@@ -155,6 +159,8 @@ static void main_task(void *pvParameters)
         cyberdeck_input_t app_ev = {
             .type = ev.type,
             .len  = ev.len,
+            .key  = ev.key,
+            .mods = ev.mods,
             .x    = ev.x,
             .y    = ev.y,
             .dy   = ev.dy,

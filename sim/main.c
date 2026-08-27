@@ -32,48 +32,25 @@
 #include "wifi_manager.h"
 
 
-/* SDL keysym → logical key; the byte sequences live in vtkeys.c, shared
- * with the device's HID backend so the two backends cannot drift. */
-static vtkey_t sdl_to_vtkey(SDL_Keycode sym)
+/* SDL modifier state → the HID modifier byte the input event carries.
+ * Bit0 LCtrl, bit1 LShift, bit2 LAlt; bits 4-6 the right-hand copies. */
+static uint8_t sdl_to_hidmods(SDL_Keymod mod)
 {
-    switch (sym) {
-    case SDLK_UP:        return VTKEY_UP;
-    case SDLK_DOWN:      return VTKEY_DOWN;
-    case SDLK_LEFT:      return VTKEY_LEFT;
-    case SDLK_RIGHT:     return VTKEY_RIGHT;
-    case SDLK_HOME:      return VTKEY_HOME;
-    case SDLK_END:       return VTKEY_END;
-    case SDLK_INSERT:    return VTKEY_INSERT;
-    case SDLK_DELETE:    return VTKEY_DELETE;
-    case SDLK_PAGEUP:    return VTKEY_PGUP;
-    case SDLK_PAGEDOWN:  return VTKEY_PGDN;
-    case SDLK_F1:        return VTKEY_F1;
-    case SDLK_F2:        return VTKEY_F2;
-    case SDLK_F3:        return VTKEY_F3;
-    case SDLK_F4:        return VTKEY_F4;
-    case SDLK_F5:        return VTKEY_F5;
-    case SDLK_F6:        return VTKEY_F6;
-    case SDLK_F7:        return VTKEY_F7;
-    case SDLK_F8:        return VTKEY_F8;
-    case SDLK_F9:        return VTKEY_F9;
-    case SDLK_F10:       return VTKEY_F10;
-    case SDLK_F11:       return VTKEY_F11;
-    case SDLK_F12:       return VTKEY_F12;
-    default:             return VTKEY_NONE;
-    }
-}
-
-/* SDL modifier state → the three modifiers the wire format can carry. */
-static uint8_t sdl_to_vtmods(SDL_Keymod mod)
-{
-    return (uint8_t)(((mod & KMOD_SHIFT) ? VTMOD_SHIFT : 0u) |
-                     ((mod & KMOD_ALT)   ? VTMOD_ALT   : 0u) |
-                     ((mod & KMOD_CTRL)  ? VTMOD_CTRL  : 0u));
+    return (uint8_t)(((mod & KMOD_LCTRL)  ? 0x01u : 0u) |
+                     ((mod & KMOD_LSHIFT) ? 0x02u : 0u) |
+                     ((mod & KMOD_LALT)   ? 0x04u : 0u) |
+                     ((mod & KMOD_RCTRL)  ? 0x10u : 0u) |
+                     ((mod & KMOD_RSHIFT) ? 0x20u : 0u) |
+                     ((mod & KMOD_RALT)   ? 0x40u : 0u));
 }
 
 /*
- * Translate an SDL keydown event to a terminal escape sequence.
- * Returns NULL for printable characters (handled by SDL_TEXTINPUT).
+ * Translate an SDL keydown event to its bytes — the layout-free singles
+ * and Ctrl-letter combos only. Returns NULL for printable characters
+ * (SDL_TEXTINPUT handles those) and for special keys, which travel as
+ * HID usages instead. SDL defines its scancodes FROM the USB HID usage
+ * tables. The keydown's scancode IS the value the device's BLE backend
+ * would post. The two backends share one currency by construction.
  */
 static const char *translate_key(SDL_Keycode sym, SDL_Keymod mod)
 {
@@ -90,20 +67,15 @@ static const char *translate_key(SDL_Keycode sym, SDL_Keymod mod)
     case SDLK_BACKSPACE: return "\x7f";
     case SDLK_TAB:       return "\t";
     case SDLK_ESCAPE:    return "\x1b";
-    default:             break;
+    default:             return NULL;
     }
+}
 
-    vtkey_t key = sdl_to_vtkey(sym);
-    if (key == VTKEY_NONE) return NULL;
-
-    /* Encoded sequences never contain NUL, so a NUL-terminated static
-     * buffer keeps the caller's strlen() contract intact. */
-    static char seq[VTKEYS_MAX_LEN + 1];
-    size_t n = vtkeys_encode(key, sdl_to_vtmods(mod), vterm_app_cursor_keys(),
-                             (uint8_t *)seq, VTKEYS_MAX_LEN);
-    if (n == 0) return NULL;
-    seq[n] = '\0';
-    return seq;
+static void send_hidkey(uint8_t usage, uint8_t mods, uint64_t now)
+{
+    cyberdeck_input_t ev = { .type = CYBERDECK_INPUT_HIDKEY,
+                             .key = usage, .mods = mods };
+    cyberdeck_app_handle_input(&ev, now);
 }
 
 static void send_key_bytes(const char *seq, size_t len, uint64_t now)
@@ -253,20 +225,24 @@ static uint64_t    s_drive_next = 0;
 
 static void drive_key(const char *name, uint64_t now)
 {
+    /* HID left-shift bit — sbup/sbdn are Shift+PgUp/PgDn on a keyboard. */
+    const uint8_t SHIFT = 0x02;
+
     const char *seq = NULL;
     char one[2] = { 0, 0 };
     if      (!strcmp(name, "enter")) seq = "\r";
     else if (!strcmp(name, "esc"))   seq = "\x1b";
     else if (!strcmp(name, "tab"))   seq = "\t";
-    else if (!strcmp(name, "up"))    seq = "\x1b[A";
-    else if (!strcmp(name, "down"))  seq = "\x1b[B";
-    else if (!strcmp(name, "right")) seq = "\x1b[C";
-    else if (!strcmp(name, "left"))  seq = "\x1b[D";
-    else if (!strcmp(name, "f12"))   seq = "\x1b[24~";
-    /* Scrollback paging — the deck keeps these rather than forwarding. */
-    else if (!strcmp(name, "sbup"))  seq = "\x1b[5;2~";
-    else if (!strcmp(name, "sbdn"))  seq = "\x1b[6;2~";
     else if (name[0] && !name[1])    { one[0] = name[0]; seq = one; }
+    /* Special keys travel as HID usages (SDL scancodes ARE the usages). */
+    else if (!strcmp(name, "up"))    send_hidkey(SDL_SCANCODE_UP,    0, now);
+    else if (!strcmp(name, "down"))  send_hidkey(SDL_SCANCODE_DOWN,  0, now);
+    else if (!strcmp(name, "right")) send_hidkey(SDL_SCANCODE_RIGHT, 0, now);
+    else if (!strcmp(name, "left"))  send_hidkey(SDL_SCANCODE_LEFT,  0, now);
+    else if (!strcmp(name, "f12"))   send_hidkey(SDL_SCANCODE_F12,   0, now);
+    /* Scrollback paging — the deck keeps these rather than forwarding. */
+    else if (!strcmp(name, "sbup"))  send_hidkey(SDL_SCANCODE_PAGEUP,   SHIFT, now);
+    else if (!strcmp(name, "sbdn"))  send_hidkey(SDL_SCANCODE_PAGEDOWN, SHIFT, now);
     if (seq) send_key_bytes(seq, strlen(seq), now);
 }
 
@@ -418,7 +394,13 @@ int main(int argc, char *argv[])
                 }
                 const char *seq = translate_key(ev.key.keysym.sym,
                                                 ev.key.keysym.mod);
-                if (seq) send_key_bytes(seq, strlen(seq), now);
+                if (seq) {
+                    send_key_bytes(seq, strlen(seq), now);
+                } else if (vtkeys_from_hid((uint8_t)ev.key.keysym.scancode)
+                           != VTKEY_NONE) {
+                    send_hidkey((uint8_t)ev.key.keysym.scancode,
+                                sdl_to_hidmods(ev.key.keysym.mod), now);
+                }
                 got_input = true;
                 break;
             }

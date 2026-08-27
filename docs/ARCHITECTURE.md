@@ -437,9 +437,13 @@ Design choices inside the shell:
 
 The CMake `REQUIRES` lists declare who depends on whom. This section
 records what actually crosses each edge, so widening a contract is a
-decision, not an accident. Audited against the full include graph on
-2026-08-25; the debt edges carry their repair plan in
-[`extensibility.md`](extensibility.md).
+decision, not an accident. First audited against the full include graph
+on 2026-08-25; since 2026-08-27 the table is *enforced* —
+`tools/check_boundaries.py` diffs the in-tree include graph against it
+after every link (device and simulator) and fails the build on an edge
+the table does not sanction, a cross-component include of a private
+header, or a stale table entry. The debt edges carry their repair plan
+in [`extensibility.md`](extensibility.md).
 
 | Edge | What crosses it | Verdict |
 |------|-----------------|---------|
@@ -449,7 +453,6 @@ decision, not an accident. Audited against the full include graph on
 | `cyberdeck_app → storage ssh wifi display vterm font` | full consumer of every service API | sound |
 | `wifi → storage` | profile types + wifi.ini persistence | sound |
 | `input → storage` | the BLE bond registry (`storage_ble_*`) | sound |
-| `input → vterm` | key encoding (`vtkeys`) + one live mode query | **debt** (the query) |
 | `input → display` | the `DISPLAY_WIDTH` constant (touch edge strip) | tolerable |
 | `storage → monocypher` | keystore crypto (Argon2id, AEAD, wipe) | sound — pinned component |
 
@@ -473,17 +476,16 @@ The debt edges, each in a sentence:
   never declares (it rides vterm's transitive REQUIRES). Nothing can use
   the SSH transport without a terminal on top — file transfer and
   capture sinks are blocked on this.
-- **`input → vterm` — encoding in the driver.** `ble_keyboard.c` queries
-  `vterm_app_cursor_keys()` — DECCKM (DEC cursor-key mode) — per
-  keystroke to encode arrows, then the shell *decodes* those same bytes
-  back into logical keys for UI navigation. The encode/decode round-trip
-  marks the encoding as sitting one layer too low.
 
-(Two former debt edges — `storage → display` for the fx settings struct
-and `storage → libssh2_esp` for vendored monocypher — were removed by
-extensibility phase 1: settings now go through the generic kv API in
+(Three former debt edges: `storage → display` for the fx settings struct
+and `storage → libssh2_esp` for vendored monocypher were removed by
+extensibility phase 1 — settings now go through the generic kv API in
 `storage_kv.h` with feature-owned field tables, and monocypher is its own
-pinned component.)
+pinned component. `input → vterm` — the driver querying DECCKM (DEC
+cursor-key mode) per keystroke to encode arrows the shell then *decoded
+back* — was removed by item 6: special keys cross the input queue as
+USB HID usage + modifier byte, and the session screen encodes them at
+the point of send, where the terminal mode lives.)
 
 One structural note: **`storage.h` is the domain-type home.**
 `conn_profile_t`, `wifi_profile_t`, and `ble_device_info_t` are defined

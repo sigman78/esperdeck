@@ -319,15 +319,21 @@ void ui_statusbar(uint64_t now)
                 OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BRIGHT |
                 OVERLAY_ATTR_BOLD);
     } else {
-        /* NET + KBD only. CAP/NUM wait on lock-state tracking in the
-         * input component (item 6); a keystore-lock indicator is
-         * deliberately absent — a locked deck shows the PIN pad, the
-         * state is self-evident (user call, 2026-08-27). */
+        /* A keystore-lock indicator is deliberately absent (user call,
+         * 2026-08-27). A locked deck shows the PIN pad; the state is
+         * self-evident. Caps is a keyboard sub-state, not a peer of
+         * NET/KBD (design round, 2026-08-27). It renders as an amber
+         * chip fused to the KBD patch, only while the lock is ON. Num
+         * lock never renders — the keymap ignores it, an indicator would
+         * have no referent (get_locks still reports the bit). */
         int x = sb_patch(1, sr, " NET ", OVERLAY_COL_GREEN,
                          wifi_manager_is_connected());
         const bool kbd = app.ble && app.ble->get_state &&
                          app.ble->get_state() == CYBERDECK_BLE_CONNECTED;
-        sb_patch(x, sr, " KBD ", OVERLAY_COL_CYAN, kbd);
+        x = sb_patch(x, sr, " KBD ", OVERLAY_COL_CYAN, kbd);
+        if (kbd && app.ble->get_locks &&
+            (app.ble->get_locks() & CYBERDECK_KBD_LOCK_CAPS))
+            sb_patch(x, sr, " C ", OVERLAY_COL_AMBER, true);
     }
 
     char clk[10];

@@ -11,6 +11,7 @@
 #include "keystore.h"
 #include "ssh_client.h"
 #include "vterm.h"
+#include "vtkeys.h"      /* the session encodes HIDKEY events at send */
 
 #include <stdio.h>
 #include <string.h>
@@ -481,9 +482,8 @@ static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                           uint64_t now)
 {
     (void)ch;
-    /* Every byte goes to SSH except the menu triggers. */
-    if (ev->type == CYBERDECK_INPUT_LONG_PRESS ||
-        (ev->type == CYBERDECK_INPUT_KEY && k == K_F12)) {
+    /* Every key goes to SSH except the menu triggers. */
+    if (ev->type == CYBERDECK_INPUT_LONG_PRESS || k == K_F12) {
         menu_open(now);
         return;
     }
@@ -497,7 +497,8 @@ static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
         return;
     }
 
-    if (ev->type != CYBERDECK_INPUT_KEY) return;
+    if (ev->type != CYBERDECK_INPUT_KEY &&
+        ev->type != CYBERDECK_INPUT_HIDKEY) return;
 
     /* Paging is local, but only in builds that have scrollback — otherwise
      * these keys belong to the remote. Capacity, not length: length is also
@@ -510,6 +511,18 @@ static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 
     /* Any other key snaps to live, and is still sent. */
     vterm_scroll_reset();
+
+    if (ev->type == CYBERDECK_INPUT_HIDKEY) {
+        /* The point of send — the one place a special key becomes wire
+         * bytes. It encodes against the DECCKM state the remote set on
+         * THIS vterm. */
+        uint8_t seq[VTKEYS_MAX_LEN];
+        size_t n = vtkeys_encode(vtkeys_from_hid(ev->key),
+                                 vtkeys_mods_from_hid(ev->mods),
+                                 vterm_app_cursor_keys(), seq, sizeof(seq));
+        if (n) ssh_client_send(seq, n);
+        return;
+    }
 
     ssh_client_send(ev->buf, ev->len);
 }

@@ -2,13 +2,10 @@ include(${PROJECT_DIR}/cmake/cyberdeck_component.cmake)
 
 # Secure-store perimeter (see components/storage/CMakeLists.txt): the PIN
 # pad screen is part of the excludable vault; the stub keeps the screen
-# table linking while nothing ever routes to ST_UNLOCK.
-if(BUILD_SIMULATOR)
-    option(CYBERDECK_KEYSTORE "Secure store (PIN vault, secrets bundle)" ON)
-    set(KEYSTORE_ENABLED ${CYBERDECK_KEYSTORE})
-else()
-    set(KEYSTORE_ENABLED ${CONFIG_CYBERDECK_KEYSTORE})
-endif()
+# table linking while nothing ever routes to ST_UNLOCK. The gate is
+# defined once in cyberdeck_features.cmake.
+include(${PROJECT_DIR}/cmake/cyberdeck_features.cmake)
+cyberdeck_keystore_gate()
 if(KEYSTORE_ENABLED AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/app_unlock.c)
     set(UNLOCK_SRC app_unlock.c)
 else()

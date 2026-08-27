@@ -4,14 +4,10 @@ include(${PROJECT_DIR}/cmake/cyberdeck_component.cmake)
 # excludable — a closed-source drop may strip keystore.c entirely. The
 # inert stub (keystore_stub.c, always shipped) answers ABSENT forever,
 # which every caller already treats as "feature off, plaintext behavior".
-# Device builds gate on CONFIG_CYBERDECK_KEYSTORE; the simulator on the
-# CYBERDECK_KEYSTORE cmake option (default ON).
-if(BUILD_SIMULATOR)
-    option(CYBERDECK_KEYSTORE "Secure store (PIN vault, secrets bundle)" ON)
-    set(KEYSTORE_ENABLED ${CYBERDECK_KEYSTORE})
-else()
-    set(KEYSTORE_ENABLED ${CONFIG_CYBERDECK_KEYSTORE})
-endif()
+# The gate (Kconfig on device, cmake option on sim) is defined once in
+# cyberdeck_features.cmake.
+include(${PROJECT_DIR}/cmake/cyberdeck_features.cmake)
+cyberdeck_keystore_gate()
 if(KEYSTORE_ENABLED AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/keystore.c)
     set(KEYSTORE_SRC keystore.c)
 else()

@@ -10,46 +10,20 @@ set(PROJECT_DIR ${ROOT})
 # Preprocessor flag consumed by display.h and display_sdl.c
 add_compile_definitions(BUILD_SIMULATOR=1)
 
-# SSH configuration used by ssh_client.c
-add_compile_definitions(
-    CONFIG_SSH_RECV_WINDOW=32768
-    CONFIG_SSH_KEEPALIVE_INTERVAL=60
-)
+# The mirrored feature gates (CONFIG_* defines the device takes from
+# Kconfig) live in ONE place: cmake/cyberdeck_features.cmake.
+include(${ROOT}/cmake/cyberdeck_features.cmake)
+cyberdeck_sim_features()
 
-# Terminal scrollback — the device takes this from Kconfig; keep the two in
-# step so history behaves the same in the simulator.
-set(CYBERDECK_SCROLLBACK_LINES 1000 CACHE STRING "Terminal scrollback lines")
-add_compile_definitions(CONFIG_VTERM_SCROLLBACK_LINES=${CYBERDECK_SCROLLBACK_LINES})
-
-# Right-edge scroll drag. Mirrors the device Kconfig, including its "useless
-# without scrollback" dependency, so the menu tile appears in both builds
-# under the same condition.
-if(CYBERDECK_SCROLLBACK_LINES GREATER 0)
-    add_compile_definitions(
-        CONFIG_INPUT_TOUCH_SCROLL=1
-        CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX=48
-        CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT=150
-    )
-endif()
-
-# Secure-store perimeter (mirrors components/storage/CMakeLists.txt): the
-# vault is optional AND excludable; sources absent -> inert stubs.
-option(CYBERDECK_KEYSTORE "Secure store (PIN vault, secrets bundle)" ON)
-if(CYBERDECK_KEYSTORE AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/keystore_cli.c)
+# Secure-store perimeter (gate shared with storage/ and cyberdeck_app/):
+# the vault is optional AND excludable; sources absent -> inert stubs.
+# The CONFIG_ define is coupled to the CLI source's presence on purpose.
+cyberdeck_keystore_gate()
+if(KEYSTORE_ENABLED AND EXISTS ${CMAKE_CURRENT_LIST_DIR}/keystore_cli.c)
     add_compile_definitions(CONFIG_CYBERDECK_KEYSTORE=1)
     set(KEYSTORE_CLI_SRC keystore_cli.c)
 else()
     set(KEYSTORE_CLI_SRC keystore_cli_stub.c)
-endif()
-
-# Terminal font: 8x16 (100x30), 10x20 (80x24) or 12x24 (66x20).
-set(FONT_SIZE "8x16" CACHE STRING "Terminal font size: 8x16, 10x20 or 12x24")
-if(FONT_SIZE STREQUAL "10x20")
-    add_compile_definitions(CYBERDECK_FONT_10X20=1)
-elseif(FONT_SIZE STREQUAL "12x24")
-    add_compile_definitions(CYBERDECK_FONT_12X24=1)
-elseif(NOT FONT_SIZE STREQUAL "8x16")
-    message(FATAL_ERROR "FONT_SIZE must be 8x16, 10x20 or 12x24 (got '${FONT_SIZE}')")
 endif()
 
 include(${ROOT}/cmake/get_cpm.cmake)
@@ -62,7 +36,13 @@ CPMAddPackage(
     OPTIONS "SDL_SHARED OFF" "SDL_STATIC ON" "SDL_TEST OFF"
 )
 
-# Component dependency order: idfsim -> font -> display -> tsm -> vterm -> ...
+# Components in dependency order (a component before everything that
+# REQUIRES it — the same partial order the IDF build derives from the
+# REQUIRES graph). CMake tolerates forward references in
+# target_link_libraries, so this ordering is a readability contract,
+# not a build necessity: keep it sorted so the list reads as the layer
+# diagram in docs/ARCHITECTURE.md. New components slot in after their
+# last dependency.
 add_subdirectory(${ROOT}/idfsim                    idfsim)
 add_subdirectory(${ROOT}/components/font           font)
 add_subdirectory(${ROOT}/components/display        display)
@@ -79,6 +59,13 @@ add_subdirectory(${ROOT}/components/cyberdeck_app  cyberdeck_app)
 add_executable(cyberdeck_sim main.c ${KEYSTORE_CLI_SRC})
 # SDL2main provides WinMain on Windows (SDL.h renames main -> SDL_main)
 target_link_libraries(cyberdeck_sim PRIVATE SDL2::SDL2main cyberdeck_app ssh wifi storage)
+
+# Component-edge guard — same check the device build runs post-link.
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_custom_command(TARGET cyberdeck_sim POST_BUILD
+    COMMAND ${Python3_EXECUTABLE} ${ROOT}/tools/check_boundaries.py ${ROOT}
+    COMMENT "check_boundaries: auditing component edges"
+    VERBATIM)
 
 set_target_properties(cyberdeck_sim PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_PROJECT_DIR}/"
