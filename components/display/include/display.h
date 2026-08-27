@@ -186,6 +186,10 @@ void display_toggle_scale(void);
 /** Map window coordinates (SDL mouse) to framebuffer coordinates — the
  *  texture is stretched to the window size; results are clamped. */
 void display_window_to_fb(int wx, int wy, uint16_t *fx, uint16_t *fy);
+
+/** Render the current frame off-screen and write it as a 24-bit BMP —
+ *  the --drive `shot:` verb (ui-spec mockup rounds). */
+esp_err_t display_screenshot_bmp(const char *path);
 #endif /* BUILD_SIMULATOR */
 
 #endif // DISPLAY_H

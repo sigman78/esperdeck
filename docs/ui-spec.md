@@ -1,9 +1,10 @@
 # UI spec — formal parts, menus, status, touch, and the public UI API
 
-> **Status: DRAFT (round 2)** — target-state spec under review. The design
-> half of [`extensibility.md`](extensibility.md) phase-1 items 2–4: this
-> file names the parts and the API contract, the kit implements them.
-> Backlog context: [`feat-ideas.md`](feat-ideas.md) §4, absorbed here.
+> **Status: rendition LOCKED (2026-08-26, five sim mockup rounds).**
+> The design half of [`extensibility.md`](extensibility.md) phase-1
+> items 2–4: this file names the parts and the API contract, the kit
+> implements them. Backlog context: [`feat-ideas.md`](feat-ideas.md)
+> §4, absorbed here.
 
 **Purpose:** one vocabulary and one API for the shell's UI, generalized far
 enough that the next extensibility step (plugins that bring their own UI)
@@ -34,34 +35,36 @@ touching this spec. Nothing below means "keep the pixels."
 
 ## Part vocabulary
 
-Chrome rows carry a stable left-info / right-event split; the body belongs
-to the screen. Grid is 100×30 / 80×24 / 66×20 by font.
+Grid is 100×30 / 80×24 / 66×20 by font. Locked composition
+(2026-08-26 mockup rounds): a breadcrumb bar on top, the body, a
+status bar on the bottom — no hint row, no tab row.
 
 ```
- row 0        ┌ TitleBar ─────────────── Toast ┐   ← Toast owns the right
- row 1        │ Rule                           │
- rows 2..n-2  │ Body: Menu / TileGrid /        │ ScrollIndicator
-              │  ListView / Fields / StepRows  │   (right edge)
- row n-1      └ HintBar ──────── StatusCluster ┘
+ rows 0..2    ┌ BreadcrumbBar — place name + THE back target ┐
+ rows 3..n-2  │ Body: section grid / value tiles /           │
+              │  ListView (pickers) / Fields                 │
+ row n-1      └ StatusBar ─ indicators ─ (Toast) ─── clock ──┘
 ```
 
 | Part | Contract (what is fixed) | Rendition |
 |---|---|---|
-| **TitleBar** | row 0 left; names the screen | free to redesign |
-| **Toast** | row 0 right, one impl, all screens | free |
-| **Rule** | optional separator, row 1 | free |
-| **HintBar** | row n-1 left; hint grammar below | free |
-| **StatusCluster** | row n-1 right; indicator set below | free |
-| **Menu** | data-driven items; touch rules below | **redesign — own section** |
+| **BreadcrumbBar** | rows 0–2, full width; names the place (`< CONFIGURATION / DISPLAY`) and IS the back button — one big target | locked |
+| **StatusBar** | row n-1, own background; lettered indicators + lock + clock; a live Toast takes the indicator span over | locked |
+| **Toast** | lives on the StatusBar while alive; one impl, all screens | free |
+| **Menu** | hub + section panels; own section below | locked |
 | **TileGrid** | slot rects + hit + arrow-nav | free |
-| **ListView** | **new**; scrolls, never drops overflow | new design |
+| **ListView** | scrolls, never drops overflow — pickers and other variable-length lists, NOT menus | shipped (item 4 pt 1) |
+| **Value well** | right span of a value tile, dimmed accent, tap = step; replaces the Slider/Stepper concept | locked |
 | **Field** | edit + caret + focus contract | free |
-| **Modal/Confirm** | one helper, title/body/actions | new design (kills 3 clones) |
+| **Modal/Confirm** | one helper, title/body/actions; `ui_button_bar` is its action row | action row shipped |
 | **Scrim** | dims terminal behind modals | free |
 | **ScrollIndicator** | right edge, offset/total | free |
 | **StepRow / QRPanel** | onboarding widgets | free |
-| **Slider / Stepper** | **new**; value parts for Menu | new design |
 | **SpriteWidget** | showcase; plugin later (phase 3) | free |
+
+Retired: the HintBar (no permanently displayed hints — guidance is
+transient toasts or self-evident layout) and the tab strip (the hub
+replaced it).
 
 Existing `draw_*` helpers are the *starting* implementations of these
 parts, nothing more; they migrate to `ui_<part>_*` names as the kit forms,
@@ -92,43 +95,59 @@ typedef struct {
 Kills `menu_activate()`'s positional switch; pages register via
 `menu_page_register()` / `menu_items_extend()` — the plugin seam for menus.
 
-### Rendition: touch-first
+### Rendition: LOCKED 2026-08-26 (five sim-screenshot mockup rounds)
 
-- **Two-line items** — label + live value/hint — giving every item a
-  ≥ 2-cell-row touch target (32/40/48 px by font).
-- **Sliders/steppers** for numeric and enum settings: a visible track with
-  a big hit zone, tap-side-to-step and drag-to-set; sprite glyphs make the
-  thumb pixel-smooth on shell screens.
-- **Pages over cramming**: 3–4 themed pages instead of one flat list;
-  page tabs or a page rail rendered as part of the Menu. **Baseline
-  navigation: arrow keys + tapping the tabs.** Swipe-between-pages is an
-  enhancement with a declared dependency: today's input pipeline reports
-  vertical edge-drag only (`INPUT_EVENT_SCROLL` carries `dy` alone) —
-  horizontal gestures need input-component work on the device (GT911
-  state machine) *and* the sim's hand-mirrored copy, which is exactly the
-  wiring debt extensibility item 6 pays down. Sequence swipe after that.
-- **Kinetic scrolling** on long pages via the shared drag math (touch
-  rules below); the ListView is the underlying widget.
-- **Visual pass is free**: item chrome, selection treatment, tab styling
-  are not fixed by this spec — mock in the simulator (`--drive` scripted
-  screenshots) and iterate. One iconography, one accent semantics (below).
+The two-column control panel — chosen over tab strips, scrolling lists
+and pagination widgets, all of which were mocked and rejected (tabs:
+not touch-tall; scrolling: too coarse on a cell grid with no smooth
+scroll; pagination: ugly, eats estate):
+
+- **Two-level tree**: a HUB of section tiles → section pages of value
+  tiles. Both are **two-column grids of 3-row solid tiles**. Hub tiles
+  carry a body line naming their contents (`fx - font`).
+- **Fit-one-screen contract**: a section holds at most what the
+  smallest grid shows — 2×4 = **8 items at 66×20** (10 at 80×24, 12 at
+  100×30). A larger section is split at design time (e.g. glow-build
+  EFFECTS → CRT + MOTION). Menus never scroll, never paginate, never
+  need a swipe.
+- **Tiles are 3 rows** — odd heights only, so text centers on a real
+  row; even-height tiles are banned (misaligned text).
+- **Value well**: the right span of a value tile in the *dimmed* accent
+  (requires a dimmed-accent addition to the overlay render path —
+  `DIM|INVERSE` today dims the glyph, not the background), value
+  right-aligned. Tap steps the preset; the fx preset API
+  (`count/index/set/label`, app_settings.h) is the data contract. No
+  slider widget.
+- **BreadcrumbBar** is the title AND the back path; there is no tab
+  row and no Back tile inside pages.
+- **Typing leaves** (profile editor, import) keep the vocabulary —
+  breadcrumb bar, status bar, touch Save/Cancel via `ui_button_bar` —
+  around a dense 1-row-field form (accepted as "a little crammed" at
+  66×20 for now; see touch tiers below).
 
 ---
 
-## StatusCluster — the indicators
+## StatusBar — the indicators
 
-Fixed-order, glanceable, right end of the HintBar row.
+A full-width bar on its **own background color** (row n-1), everywhere
+the shell owns the screen. Indicators are **lettered, 2–4 characters**,
+drawn as accent patches on the bar: lit = the state's accent as the
+patch background, off = the bar's base. Fixed order, left to right; the
+clock right-aligned; a live Toast takes the indicator span over until
+it expires.
 
-| Indicator | States | Source (polled) |
+| Indicator | Form | Source (polled) |
 |---|---|---|
-| WiFi | off / weak / ok / good | `wifi_manager_get_rssi()` (dBm, 0 = disconnected), bucketed, re-queried ≤ every 2 s — the wifi component API, never `esp_wifi_*` directly: the shell is platform-neutral and the sim stubs the component |
-| Keyboard | absent / connected | BLE (Bluetooth Low Energy) HID state |
-| Keystore | locked / unlocked / none | `keystore_state()` |
-| Session | idle / connected / dropped | `ssh_client_is_connected()` + EOF flag |
-| Clock | hidden until time known | SNTP (Simple Network Time Protocol) or host time |
+| WiFi | `NET` (green lit; RSSI buckets may modulate later) | `wifi_manager_get_rssi()` (dBm, 0 = disconnected), re-queried ≤ every 2 s — the wifi component API, never `esp_wifi_*` directly: the shell is platform-neutral and the sim stubs the component |
+| Keyboard | `KBD` (cyan lit) | BLE (Bluetooth Low Energy) HID state |
+| Caps lock | `CAP` | modifier-lock state from the input component |
+| Num lock | `NUM` | modifier-lock state from the input component |
+| Keystore | `●` amber while locked | `keystore_state()` |
+| Clock | `HH:MM`, hidden until time known | SNTP (Simple Network Time Protocol) or host time |
 
 Excluded: free-RAM (debug stat, dev screens only), scroll position
-(ScrollIndicator's job), battery (no fuel gauge).
+(ScrollIndicator's job), battery (no fuel gauge), session state (the
+session never shows the bar — see placement).
 
 Polled from the shell tick at the existing ~10 fps cadence; no event bus
 (consistent with the extensibility architecture decision).
@@ -147,8 +166,10 @@ only; shell screens may use sprite icons.
 
 ## One hint grammar, one accent meaning
 
-- **HintBar grammar:** `verb target` pairs, two spaces apart, ≤ 3 pairs,
-  lowercase, no punctuation: `tap or Esc cancel  F12 menu  hold reorder`.
+- **Hints are transient, never resident** (locked 2026-08-26: the
+  HintBar is retired). When guidance is needed it rides a Toast on the
+  StatusBar, in `verb target` pairs, two spaces apart, ≤ 3 pairs,
+  lowercase, no punctuation: `tap or Esc cancel  F12 menu`.
 - **Accent semantics** — two orthogonal roles, split by region:
   - *State meanings* (chrome rows + indicators): green = healthy/confirm ·
     amber = warning/pending · red = destructive/alert · blue =
@@ -165,7 +186,10 @@ only; shell screens may use sprite icons.
 
 ## Touch rules
 
-1. **Minimum target: 2 cell-rows tall, ≥ 4 cells wide** (32 px at 8×16).
+1. **Interactive tiles and buttons are 3 cell-rows tall** (48 px at
+   8×16) and ≥ 4 cells wide — odd heights only, so text centers on a
+   real row. 2 rows is the absolute floor for anything tappable;
+   1-row chips are never touch targets (locked 2026-08-26).
 2. **Hit-testing is widget-owned** — screens ask the part
    (`ui_<part>_hit`), never compare raw pixels.
 3. **Edge gestures are globally reserved:** right edge = scrollback drag;
@@ -174,10 +198,28 @@ only; shell screens may use sprite icons.
 4. **One shared drag converter** (accumulate-then-floor, from the
    `app_connect.c` remnant) in the kit; kinetic/momentum scrolling builds
    on it once, all scrolling parts inherit it.
-5. **One drag axis per part** (vertical = scroll, horizontal = page/tab)
-   — the contract is reserved now even though the input pipeline is
-   vertical-only today (see the Menu swipe dependency above).
+5. **One drag axis per part** (vertical = scroll) — applies to the
+   parts that still scroll (pickers, scrollback). Menus never scroll
+   by design (locked); horizontal gestures are no longer required by
+   anything in this spec.
 6. **No touch-as-mouse** (feat-ideas rejection stands).
+
+## Touch tiers (locked 2026-08-26)
+
+**Every navigation path is touch-operable; leaf screens whose purpose
+is typing may assume a keyboard.** The test: what must work when there
+is no keyboard (unpaired, bond lost, dead batteries)? Unlock, WiFi,
+reaching the pairing screen, and connecting a profile — by definition.
+
+- *Touch-first (tier 1):* HOME + connect, the unlock pad, pairing,
+  WiFi-provisioning confirms, the whole menu spine (hub, sections,
+  value toggles — you traverse it to reach pairing).
+- *Keyboard-assumed (tier 2):* the profile editor, SSH-import type-in
+  and similar typing forms. They keep the shared vocabulary and their
+  touch Save/Cancel bar; the typing itself owes touch nothing.
+
+Consistency holds at the vocabulary level (one look everywhere), not
+as a uniform interaction guarantee.
 
 ---
 
@@ -242,13 +284,15 @@ Contracts, not implementation:
 
 - [ ] Session summon gesture: top-edge tap vs. F-key only — top-row TUI
       hotzones may collide with the tap.
-- [ ] Clock placement at 66 cols: HintBar row budget — measure before
-      committing.
-- [ ] Menu pages: tabs on the Rule row vs. a left rail — mock both in sim.
-- [ ] Toast unification: verify HOME's bottom-toast reason (saver rain
-      timing) before moving it to row 0.
-- [ ] Visual direction for the redesign itself (DOS-solid-bar heritage vs.
-      something new) — separate mockup round, not blocked by this spec.
+- [ ] Editor density at 66×20: accepted "a little crammed" for now —
+      revisit if it grates in use.
+- [x] ~~Clock placement at 66 cols~~ — measured in the mocks; fits on
+      the StatusBar at every grid.
+- [x] ~~Menu pages: tabs vs. rail~~ — neither: hub + breadcrumb
+      (2026-08-26 mockup rounds; tabs and rail both mocked, rejected).
+- [x] ~~Toast row 0 vs HOME bottom~~ — Toasts live on the StatusBar.
+- [x] ~~Visual direction~~ — locked: two-column DOS-solid control
+      panel (see the Menu section).
 
 ## Status log
 
@@ -257,6 +301,18 @@ Contracts, not implementation:
   (contracts fixed, rendition free), promoted the menu redesign to its own
   section, added the generalized-API layer model + extensibility
   compliance checklist.
+- **2026-08-26 (design lock)** — five mockup rounds in the sim
+  (`--drive shot:` + throwaway env-gated painters, three font grids)
+  ended in a LOCKED rendition: two-column control panel (hub +
+  sections), fit-one-screen contract, breadcrumb bar as title+back,
+  dimmed-accent value wells, StatusBar with lettered indicators on its
+  own background, HintBar and tab strip retired, touch tiers. Rejected
+  on the way, with screenshots: chip tabs (not touch-tall), embedded
+  sliders ("looks off"), scrolled menus (coarse on a cell grid),
+  pagination widgets (ugly, eats estate), master-detail rail (breaks
+  past 4 sections), even-height tiles (misaligned text). New display
+  requirement: a dimmed-accent variant in the overlay render path
+  (`DIM|INVERSE` dims the glyph, not the background).
 - **2026-08-26** — kit part 1 landed (extensibility item 4): ListView +
   the shared drag converter (touch rule 4) as `ui_list_t`/`ui_drag_t`
   in app_widgets; the profile pickers converted to two-line scrolling

@@ -511,3 +511,18 @@ in-tree features. Tick items as they merge.
   mockup round (slider + two-line items + pages), unified Toast (open
   question on HOME's bottom toast first), StatusCluster, the public
   cyberdeck_ui.h.
+- **2026-08-26 (item 4, mockup round → design LOCK)** — five
+  screenshot rounds in the sim (new `--drive shot:` verb, throwaway
+  painters, all three font grids) converged and the user locked the
+  rendition — full record in [`ui-spec.md`](ui-spec.md): two-column
+  control panel (hub of section tiles → section pages of value tiles),
+  fit-one-screen sections (≤8 items at 66×20, curated splits — menus
+  never scroll or paginate), breadcrumb bar = title + back, 3-row
+  (odd-height) touch unit, dimmed-accent value wells (tap = step; the
+  fx preset API is the contract — no slider widget), StatusBar with
+  lettered indicators on its own background hosting toasts, HintBar
+  and tab strip retired, touch tiers (navigation touch-operable;
+  typing leaves keyboard-assumed). Implementation order: (1)
+  dimmed-accent overlay attr in the display render path, (2) menu
+  rendition on the item-table model, (3) hub/breadcrumb nav, (4)
+  StatusBar + Toast unification, then the public cyberdeck_ui.h.
