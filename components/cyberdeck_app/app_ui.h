@@ -45,6 +45,7 @@
 #define UI_DIAMOND 0x25C6u  /* ◆ */
 #define UI_PLAY    0x25B6u  /* ▶ */
 #define UI_ARROW   0x25BAu  /* ► */
+#define UI_POINT_L 0x25C4u  /* ◄ */
 #define UI_VBAR    0x25AEu  /* ▮ */
 #define UI_BULLET  0x2022u  /* • */
 #define UI_PL_R    0xE0B0u  /* powerline right-facing separator */

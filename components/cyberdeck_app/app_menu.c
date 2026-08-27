@@ -97,6 +97,9 @@ static void draw_crumb(int x0, int w, int sc)
     crumb_build(crumb, sizeof(crumb), sc);
     ui_pen(OVERLAY_COL_BLUE);
     ui_tile(x0, 0, w, 3, crumb, "", false);
+    /* ui_puts is Latin-1 only, so the ◄ back chevron overdraws the
+     * placeholder '<' the crumb string carries. */
+    ui_putch(x0 + 2, 1, UI_POINT_L, OVERLAY_ATTR_INVERSE);
     char clk[8];
     if (clock_str(clk, sizeof(clk)))
         ui_puts(x0 + w - 2 - (int)strlen(clk), 1, clk, OVERLAY_ATTR_INVERSE);
