@@ -1,106 +1,12 @@
 /*
- * app_widgets.h — shared shell chrome + tile-grid layout (internal).
- *
- * Everything here draws with the app_ui primitives and reads the shared
- * state only for the animation clock (app.anim_frame) and cfg.
+ * app_widgets.h — shell-only widgets. The reusable parts (tile grid,
+ * list, buttons, chrome helpers) are public in cyberdeck_ui.h; what
+ * stays here reads shell state or is composited by the shell itself.
  */
 
 #pragma once
 
 #include "app_internal.h"
-
-/* --------------------------------------------------------- drag → rows */
-
-/* Accumulate-then-floor drag converter (ui-spec touch rule 4): the touch
- * task polls at 50 ms, so converting each small dy alone floors to zero
- * and a slow drag never scrolls. Travel accumulates in pixel-percent
- * (scaled by CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT); whole rows are spent,
- * the remainder is kept. */
-typedef struct { int accum; } ui_drag_t;
-
-/** Feed @p dy pixels of travel; returns whole rows (@p row_px each). */
-int  ui_drag_rows(ui_drag_t *d, int dy, int row_px);
-void ui_drag_reset(ui_drag_t *d);
-
-/* ------------------------------------------------------------ ListView */
-
-/* Scrolling list of fixed-height rows — never drops overflow (the tile
- * grids' silent-clip debt, ui-spec). The part owns geometry, scroll,
- * hit and arrow-nav; the CALLER owns the struct and draws the rows
- * (ui_tile per row keeps the house look) at ui_list_row_y(). */
-typedef struct {
-    int x, y, w, h;        /* body rect, in cells                       */
-    int row_h;             /* cell-rows per row, incl. a 1-row gutter   */
-    int count;             /* model rows                                */
-    int sel;               /* selected row                              */
-    int top;               /* first visible row                         */
-    ui_drag_t drag;        /* vertical drag accumulator                 */
-} ui_list_t;
-
-/** Rows that fit the rect. */
-int  ui_list_visible(const ui_list_t *l);
-/** Clamp sel/top into range and scroll sel into view. */
-void ui_list_clamp(ui_list_t *l);
-/** Top cell row of @p idx, or -1 while it is scrolled out. */
-int  ui_list_row_y(const ui_list_t *l, int idx);
-/** Row index at a touch pixel, or -1 (widget-owned hit-testing). */
-int  ui_list_hit(const ui_list_t *l, int px, int py);
-/** Arrow/page navigation; true = selection moved. */
-bool ui_list_nav(ui_list_t *l, ui_key_t k);
-/** Drag travel in pixels; returns rows scrolled (sel follows the view). */
-int  ui_list_scroll(ui_list_t *l, int dy_px);
-/** Right-edge overflow cue inside the rect; no-op when all rows fit. */
-void ui_list_draw_scroll(const ui_list_t *l);
-
-/* ------------------------------------------------------ action buttons */
-
-/** Centered @p count-button action bar (Save/Cancel, Trust/Cancel...):
- *  one row of @p tw x @p th tiles with 4-cell gutters, top row @p y0.
- *  Hit-test and arrow-nav via the tile_* helpers as usual. */
-tilegrid_t ui_button_bar(int y0, int count, int tw, int th);
-
-/** One bar button, drawn in the current pen. */
-void ui_button(const tilegrid_t *g, int slot, const char *label,
-               const char *body, bool sel);
-
-/* ------------------------------------------------------------ tile grid */
-
-/** Cell coordinates of tile @p slot's top-left corner. */
-int tile_x(const tilegrid_t *g, int slot);
-int tile_y(const tilegrid_t *g, int slot);
-
-/** Map a touch pixel to a tile slot, or -1 for a gutter / margin / empty
- *  cell (two-axis hit-test). */
-int tile_hit(const tilegrid_t *g, int px, int py);
-
-/** Keyboard navigation within the grid (arrow keys). */
-int tile_nav(const tilegrid_t *g, int sel, ui_key_t k);
-
-/** Shared full-screen picker grid (HOME + PAIRING + menu pickers + EFFECTS). */
-tilegrid_t picker_grid(int count);
-
-/* ------------------------------------------------------------ chrome */
-
-/** Animated cyan ░▒▓█ comet sweeping an otherwise empty row. */
-void draw_rule(int row);
-
-/** 8-frame braille spinner glyph. */
-uint16_t spinner_glyph(uint32_t frame);
-
-/* app_pacman.c — the HOME marquee (dynamic-sprite showcase). draw_pacman
- * renders one tick at overlay @p row; pacman_reset marks its static pellet
- * sprite for reload after the slots were blanked (session entry). */
-void draw_pacman(int row);
-void pacman_reset(void);
-
-/** Braille "noise" glyph from a hash (never blank). */
-uint16_t braille_noise(uint32_t h);
-
-/** Wall-clock "HH:MM" once SNTP/host time exists; false until then. */
-bool clock_str(char *buf, size_t sz);
-
-/** Title chip framed by a shade gradient, drawn on row 0. */
-void draw_titlebar(int x0, const char *text);
 
 /** The StatusBar (ui-spec, locked): full-width bar on its own background
  *  at row n-1 — lettered indicator patches (NET/KBD), clock right; a
@@ -108,39 +14,16 @@ void draw_titlebar(int x0, const char *text);
  *  for NAV_CHROME_FULL screens. */
 void ui_statusbar(uint64_t now);
 
-/** Standard modal header: titlebar chip + right-aligned "// tag" + rule. */
-void draw_screen_header(const char *title, const char *tag);
+/* app_pacman.c — the HOME marquee (dynamic-sprite showcase). draw_pacman
+ * renders one tick at overlay @p row; pacman_reset marks its static pellet
+ * sprite for reload after the slots were blanked (session entry). */
+void draw_pacman(int row);
+void pacman_reset(void);
 
-/** Free-RAM summary for the header. */
+/** Free-RAM summary for the header (debug stat, dev screens only). */
 void ram_stats(char *buf, size_t sz);
-
-/** Stable per-profile accent color from a djb2 hash of the name. */
-uint8_t prof_accent(const char *name);
 
 /* ------------------------------------------------------- status strings */
 
 const char *wifi_status_str(void);
 const char *ble_status_str(void);
-
-/* ------------------------------------------------- QR / onboarding steps */
-
-/** QR module sampler: true = dark module at (x,y). */
-typedef bool (*qr_module_fn)(int x, int y);
-
-/** Draw a QR top-right as half-block cells; returns its first column (the
- *  caller's text limit), or ui_cols() when it did not fit. */
-int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption);
-
-/** Numbered onboarding step row; returns the next step row. */
-int draw_step(int y, char num, const char *label,
-              const char *value, uint8_t value_pen, int xlimit);
-
-/* ------------------------------------------------- scrollback indicator */
-
-/** Scrollback fill down the right edge, line count on gray above it.
- *  @p offset is rows back from live, @p total the history available.
- *
- *  A fill rather than a scrollbar: a proportional thumb would be under one
- *  cell tall for most of its travel at 30 rows against 1000 lines. The
- *  boundary lands to an eighth of a cell, so ~4 lines per step. */
-void draw_scrollbar(int offset, int total);

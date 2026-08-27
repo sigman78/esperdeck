@@ -13,14 +13,8 @@
 #pragma once
 
 #include "cyberdeck_app.h"
+#include "cyberdeck_ui.h"   /* ui_key_t — decoded UI keys */
 #include <stdint.h>
-
-/* Decoded UI keys — decoded once by the core, screens get the result. */
-typedef enum {
-    K_NONE = 0, K_UP, K_DOWN, K_LEFT, K_RIGHT,
-    K_ENTER, K_ESC, K_F12, K_CHAR, K_BACKSPACE, K_TAB,
-    K_SCROLL_UP, K_SCROLL_DOWN,
-} ui_key_t;
 
 /* Shared chrome policy (composited by the shell once item 4's kit lands;
  * recorded per screen now so the descriptor is stable). */

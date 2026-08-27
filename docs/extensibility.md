@@ -275,7 +275,7 @@ in-tree features. Tick items as they merge.
       [`ui-spec.md`](ui-spec.md) — model and rendition can land in either
       order.
       *Kills: the 240-line switch, positional contracts, the 1000-line file.*
-- [ ] **4. Widget gaps + public UI kit.** Deliverables per
+- [x] **4. Widget gaps + public UI kit.** Deliverables per
       [`ui-spec.md`](ui-spec.md): ListView (hard prerequisite — grids
       silently drop overflow), Slider/Stepper, one Modal/Confirm helper
       (cloned 3× today), the shared drag converter, unified Toast (one
@@ -553,6 +553,23 @@ in-tree features. Tick items as they merge.
   the indicator span. CAP/NUM wait on lock-state tracking in the input
   component (item 6); a keystore-lock indicator is deliberately absent
   (a locked deck shows the PIN pad — the state is self-evident).
+- **2026-08-27 (item 4 COMPLETE: public `cyberdeck_ui.h`)** — the kit
+  header caps the item: glyph palette, `ui_key_t`, primitives,
+  `tilegrid_t` + hit/nav, `ui_drag_t`, `ui_list_t`, the button bar and
+  the chrome helpers move to `include/cyberdeck_ui.h`; `app_ui.h`
+  shrinks to frame composition (init/clear/present/colors — the
+  shell's alone) and `app_widgets.h` to shell-state widgets
+  (StatusBar, pacman, ram_stats, status strings). The header honors
+  the kit rule (no SDL; ESP-IDF only from the idfsim-stubbed set).
+  ui-spec checklist: hit-testing (#3) and three-contexts (#4) hold
+  now; #1/#2 (out-of-component screen + menu contribution) land with
+  item 5's plugin table, which is next. Delivered across item 4,
+  summarized: ListView + drag converter, button bar (Modal's action
+  row), the locked menu rendition (mockup rounds), dimmed-accent
+  wells, BreadcrumbBar, StatusBar + one toast, `ui_puts_u8`, the
+  `shot:` verb, and this header. Slider became the value well + the
+  fx preset API by design; the Modal panel and CAP/NUM wait for
+  their first consumer and item 6 respectively.
   **One toast, all screens**: HOME's bottom chip and the menu's note
   row both retired — `menu_note` now rides the shared toast (sticky =
   UINT64_MAX until, dropped by `menu_exit` so an arm prompt can't
