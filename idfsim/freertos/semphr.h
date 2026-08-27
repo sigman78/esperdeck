@@ -1,7 +1,7 @@
 #pragma once
 /*
  * FreeRTOS semaphore stub for the host simulator.
- * Only plain mutexes are provided — enough for ssh_client's session lock.
+ * This stub provides only plain mutexes — enough for ssh_client's session lock.
  */
 #include "FreeRTOS.h"
 #include <stdlib.h>
@@ -19,7 +19,7 @@ static inline SemaphoreHandle_t xSemaphoreCreateMutex(void)
 
 static inline BaseType_t xSemaphoreTake(SemaphoreHandle_t m, TickType_t timeout)
 {
-    (void)timeout;                      /* host lock is uncontended-fast */
+    (void)timeout;                      /* the host lock runs uncontended and fast */
     EnterCriticalSection(&m->cs);
     return pdPASS;
 }

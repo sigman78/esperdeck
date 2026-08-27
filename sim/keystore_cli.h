@@ -1,6 +1,7 @@
 /*
  * keystore_cli.h — sim-only keystore provisioning CLI (docs/storage_auth.md,
- * provisioning door 1: PC-side wrapping before the littlefs image is built).
+ * provisioning door 1: PC-side wrapping before the build creates the
+ * littlefs image).
  */
 
 #ifndef KEYSTORE_CLI_H

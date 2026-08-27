@@ -23,8 +23,8 @@ esp_err_t vterm_init(int cols, int rows);
 
 /**
  * Feed raw bytes from the remote (SSH/PTY) into the VT parser.
- * The display cell buffer is refreshed on return (unless a ?2026
- * synchronized-output update is in progress).
+ * vterm_write() refreshes the display cell buffer on return, unless a
+ * ?2026 synchronized-output update is in progress.
  *
  * @param data  Byte stream (may contain VT escape sequences).
  * @param len   Number of bytes.
@@ -40,8 +40,8 @@ void vterm_feed(const char *data, size_t len);
 
 /**
  * Copy dirty rows to the display cell buffer and update the cursor.
- * No-op while a ?2026 synchronized-output update is in progress
- * (the frame is presented when the remote sends ESU).
+ * This is a no-op while a ?2026 synchronized-output update is in progress;
+ * vterm_flush() presents the frame once the remote sends ESU.
  */
 void vterm_flush(void);
 
@@ -54,9 +54,8 @@ void vterm_flush(void);
 void vterm_cursor_refresh(void);
 
 /**
- * Register a callback for bytes the terminal state machine needs to
- * send back to the remote (cursor-position reports, DA1 responses, ...).
- * Pass NULL to disable.
+ * Register a callback for bytes the terminal needs to send to the remote.
+ * Examples: cursor-position reports, DA1 responses. Pass NULL to disable.
  *
  * @param cb    Callback function pointer.
  * @param user  Opaque pointer forwarded to the callback.
@@ -72,13 +71,13 @@ void vterm_reset(void);
 /*
  * Scrollback — history that has scrolled off the top of the screen.
  *
- * Fed only by the primary screen; alt-screen apps (vim, htop) never
- * contribute and cannot be scrolled. Capacity is
- * CONFIG_VTERM_SCROLLBACK_LINES, 0 disables the whole feature and these
- * calls become no-ops reporting 0.
+ * Only the primary screen feeds scrollback; alt-screen apps (vim, htop)
+ * never contribute, and the user cannot scroll them. Capacity is
+ * CONFIG_VTERM_SCROLLBACK_LINES; 0 disables the feature, and these calls
+ * become no-ops reporting 0.
  *
- * The screen is repainted as needed by these calls, so a caller does not
- * follow them with vterm_flush().
+ * These calls repaint the screen as needed, so a caller does not follow
+ * them with vterm_flush().
  */
 
 /** Move the view @p delta rows (positive = back in time). Returns the new
@@ -105,20 +104,20 @@ int vterm_scroll_capacity(void);
 
 /**
  * Returns true when the remote has enabled application cursor key mode
- * (DECCKM, ESC [ ? 1 h).  Use this to decide whether arrow keys should
- * be sent as ESC O A/B/C/D (application) or ESC [ A/B/C/D (normal).
+ * (DECCKM, ESC [ ? 1 h). Use this to decide whether the caller sends arrow
+ * keys as ESC O A/B/C/D (application) or ESC [ A/B/C/D (normal).
  */
 bool vterm_app_cursor_keys(void);
 
 /**
  * Log a performance summary (flushes, bytes, tsm cycles, draw cycles).
- * No-op when CONFIG_VTERM_BENCH is disabled.
+ * No-op when the build disables CONFIG_VTERM_BENCH.
  */
 void vterm_bench_report(void);
 
 /**
  * Clear all performance accumulators.
- * No-op when CONFIG_VTERM_BENCH is disabled.
+ * No-op when the build disables CONFIG_VTERM_BENCH.
  */
 void vterm_bench_reset(void);
 

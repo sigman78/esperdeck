@@ -2,8 +2,8 @@
  * vterm -- VT/ANSI terminal emulator backed by tsm.
  *
  * tsm_feed() parses the byte stream into tsm's own cell grid.
- * On flush, dirty rows are copied from tsm's cell grid into s_buffer
- * (terminal_cell_t[]) which is registered with display_set_text_buffer().
+ * On flush, vterm_flush() copies dirty rows from tsm's cell grid into
+ * s_buffer (terminal_cell_t[]), registered with display_set_text_buffer().
  * The display ISR reads s_buffer on every frame.
  *
  * Two feeding modes:
@@ -49,8 +49,6 @@ static const char *TAG = "vterm";
 #define CONFIG_VTERM_SCROLLBACK_LINES 0
 #endif
 
-/* State */
-
 static int                 s_cols;
 static int                 s_rows;
 static vterm_response_cb_t s_response_cb;
@@ -92,9 +90,9 @@ static void cursor_refresh(void)
     display_set_cursor(cx, cy, vis ? CURSOR_BLOCK : CURSOR_NONE);
 }
 
-/* Used when the VIEW moves rather than the content: dirty spans describe
- * the live grid and say nothing about history sliding into frame, so there
- * is no incremental repaint to be had. */
+/* repaint_all() runs when the view moves, not the content. Dirty spans
+ * describe the live grid; they say nothing about history sliding into
+ * frame. There is no incremental repaint in that case. */
 static void repaint_all(void)
 {
     for (int row = 0; row < s_rows; row++)
@@ -278,8 +276,8 @@ int vterm_scroll(int delta)
     vt_lock();
     int before = tsm_sb_offset(s_tsm);
     int after  = tsm_sb_scroll(s_tsm, delta);
-    /* Only on an actual move: holding PageUp at the top of the history
-     * would otherwise redraw the same frame on every repeat. */
+    /* This runs only after an actual move. Holding PageUp at the top of
+     * the history would otherwise redraw the same frame on every repeat. */
     if (after != before) repaint_all();
     vt_unlock();
     return after;
@@ -304,7 +302,7 @@ bool vterm_scroll_reset(void)
     return moved;
 }
 
-/* Getters stay lock-free: single aligned reads, and vterm_app_cursor_keys()
+/* Getters stay lock-free with single aligned reads. vterm_app_cursor_keys()
  * runs on the BLE host task, which must not block behind a feed. */
 
 int vterm_scroll_offset(void)
@@ -331,8 +329,9 @@ bool vterm_app_cursor_keys(void)
 void vterm_bench_report(void)
 {
 #ifdef CONFIG_VTERM_BENCH
-    /* Silent when nothing was fed: the stat block runs every 30 s and each
-     * log line blocks the read task on the UART (~9 ms/100 chars). */
+    /* vterm_bench_report() stays silent when nothing arrived. The stat
+     * block runs every 30 s. Each log line blocks the read task on the
+     * UART (~9 ms per 100 chars). */
     if (s_bench.bytes_fed == 0) return;
 
     /* Parse-vs-state split: tsm_cycles minus the vtable shims left over is

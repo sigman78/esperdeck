@@ -1,12 +1,12 @@
 /*
  * ISR render bench stress mode (CONFIG_CYBERDECK_BENCH_STRESS, default n).
  *
- * A development tool, not a user feature: instead of the app shell, boot
- * into a task that repaints the whole grid through vterm and logs the
- * CONFIG_DISPLAY_ISR_BENCH per-chunk cycle counters, sweeping phases along
- * three axes (overlay / terminal content / effect config). What each phase
- * isolates, and what invalidates a measurement, is docs/bench-methodology.md;
- * results live in docs/performance.md.
+ * A development tool, not a user feature. Instead of the app shell, it
+ * boots into a task that repaints the whole grid through vterm. That task
+ * logs the CONFIG_DISPLAY_ISR_BENCH per-chunk cycle counters. It sweeps
+ * phases along three axes: overlay, terminal content, and effect config.
+ * What each phase isolates, and what invalidates a measurement, is
+ * docs/bench-methodology.md; results live in docs/performance.md.
  *
  * Compiled out entirely when the option is off; the hooks below reduce to
  * no-ops.
@@ -17,7 +17,7 @@
 
 #ifdef CONFIG_CYBERDECK_BENCH_STRESS
 
-/** The size the bench was configured for (overrides the stored setting). */
+/** The size the build sets for the bench (overrides the stored setting). */
 font_size_t bench_stress_font_override(font_size_t normal);
 
 /** Spawn the repaint task. Returns true: the bench owns the screen and the

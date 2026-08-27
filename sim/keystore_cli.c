@@ -1,9 +1,10 @@
 /*
  * keystore_cli.c — headless keystore provisioning commands for the sim.
  *
- * The sim doubles as the PC-side provisioning tool: PEMs are wrapped into
- * sim_storage/keys/*.kw1 before the littlefs image is built, so flashing
- * ships ciphertext and a freshly flashed deck comes up locked.
+ * The sim doubles as the PC-side provisioning tool. It wraps PEMs into
+ * sim_storage/keys/*.kw1 before the build creates the littlefs image.
+ * Flashing then ships ciphertext, and a freshly flashed deck comes up
+ * locked.
  *
  *   cyberdeck_sim --keystore-status
  *   cyberdeck_sim --keystore-init            --pin 1234
@@ -30,8 +31,6 @@
 #endif
 
 #define CLI_PEM_MAX 16384
-
-/* ------------------------------------------------------------------ */
 
 static const char *opt_value(int argc, char **argv, const char *flag)
 {
@@ -88,8 +87,6 @@ static int unlock_timed(const char *pin)
         fprintf(stderr, "wrong PIN (%.0f ms burned)\n", ms);
     return 1;
 }
-
-/* ------------------------------------------------------------------ */
 
 static int cmd_status(void)
 {
@@ -172,7 +169,7 @@ static int cmd_import(int argc, char **argv, const char *pem_file)
         return 1;
     }
 
-    /* storage_set_key wraps when the store is unlocked */
+    /* storage_set_key wraps the key while the store remains unlocked */
     if (storage_set_key(key_id, pem, len) != ESP_OK) {
         fprintf(stderr, "import failed\n");
         return 1;
@@ -280,8 +277,6 @@ static int cmd_change_pin(int argc, char **argv)
     printf("PIN changed (key files untouched)\n");
     return 0;
 }
-
-/* ------------------------------------------------------------------ */
 
 int keystore_cli_main(int argc, char **argv)
 {

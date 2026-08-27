@@ -3,7 +3,7 @@
  * POSIX sys/socket.h shim for Windows simulator builds.
  *
  * ssh_client.c uses socket/connect/close with POSIX int-socket semantics.
- * We wrap the Winsock2 calls so that:
+ * This shim wraps the Winsock2 calls as follows.
  *   - socket()  returns int  (-1 on failure, handle otherwise)
  *   - connect() matches the POSIX signature
  *   - close(s)  maps to closesocket()
