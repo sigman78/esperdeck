@@ -23,7 +23,6 @@ static void feed(tsm_t *t, const char *s)
     tsm_feed(t, (const uint8_t *)s, strlen(s));
 }
 
-/* Get cell at (col, row). */
 static tsm_cell_t cell(tsm_t *t, int col, int row)
 {
     return tsm_row(t, row)[col];
@@ -552,7 +551,7 @@ void test_csi_sd_scroll_down(void)
 }
 
 /* ── Row-ring: full-screen scrolls rotate a base index instead of moving
- * cells, so everything below runs with a non-zero base to prove the ring
+ * cells. Everything below runs with a non-zero base, to prove the ring
  * mapping composes with the rest of the model. ── */
 
 /* Rotate the full-screen ring by n: n LFs issued from the bottom row. */
@@ -598,7 +597,7 @@ void test_ring_alt_screen_roundtrip(void)
 void test_ring_then_decstbm_partial_scroll(void)
 {
     tsm_t *t = tsm_new(10, 5, 0);
-    rotate_ring(t, 2);                       /* base = 2 */
+    rotate_ring(t, 2);
     feed(t, "\x1b[2;4r");                    /* region rows 2-4 (1-based) */
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC\x1b[4;1HD\x1b[5;1HE");
     feed(t, "\x1b[4;1H\n");                  /* LF at region bottom */
@@ -613,7 +612,7 @@ void test_ring_then_decstbm_partial_scroll(void)
 void test_ring_then_insert_delete_lines(void)
 {
     tsm_t *t = tsm_new(10, 4, 0);
-    rotate_ring(t, 1);                       /* base = 1 */
+    rotate_ring(t, 1);
     feed(t, "\x1b[1;1HA\x1b[2;1HB\x1b[3;1HC\x1b[4;1HD");
     feed(t, "\x1b[2;1H\x1b[2L");             /* insert 2 lines at row 2 */
     TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 0));
@@ -841,7 +840,8 @@ void test_esc_ri_reverse_index(void)
     feed(t, "\x1bM");       /* RI — reverse index */
     int col, row; bool vis;
     tsm_cursor(t, &col, &row, &vis);
-    TEST_ASSERT_EQUAL_UINT8(1, row);  /* row 3 (1-based) - 1 = row 2 (1-based) = row 1 (0-based) */
+    /* Row 3 (1-based) moves up one to row 2, i.e. row 1 in 0-based terms. */
+    TEST_ASSERT_EQUAL_UINT8(1, row);
     tsm_free(t);
 }
 
@@ -1030,7 +1030,6 @@ void test_alt_screen_exit_marks_dirty(void)
     tsm_free(t);
 }
 
-/* ?47l exits alt screen */
 void test_alt_screen_47_exit(void)
 {
     tsm_t *t = tsm_new(10, 3, 0);
@@ -1042,7 +1041,6 @@ void test_alt_screen_47_exit(void)
     tsm_free(t);
 }
 
-/* ?1047l exits alt screen */
 void test_alt_screen_1047_exit(void)
 {
     tsm_t *t = tsm_new(10, 3, 0);
@@ -1053,7 +1051,8 @@ void test_alt_screen_1047_exit(void)
     tsm_free(t);
 }
 
-/* Hard reset from alt screen: t->cells is primary, display is blank */
+/* After a hard reset from the alt screen, the active grid is primary
+ * again and it renders blank. */
 void test_reset_from_alt_screen(void)
 {
     tsm_t *t = tsm_new(10, 3, 0);
@@ -1069,9 +1068,9 @@ void test_reset_from_alt_screen(void)
     tsm_free(t);
 }
 
-/* Reset erases with DEFAULT colors, not the SGR state it is resetting —
- * regression: the erase ran before the color reset, so the whole grid
- * kept the old session's colors on every untouched cell. */
+/* Reset erases with DEFAULT colors, not the SGR state it is resetting.
+ * Regression: the erase used to run before the color reset. Then the
+ * whole grid kept the old session's colors on every untouched cell. */
 void test_reset_erases_with_default_colors(void)
 {
     tsm_t *t = tsm_new(10, 3, 0);
@@ -1172,8 +1171,8 @@ void test_sync_reset_clears_mode(void)
  * ════════════════════════════════════════════════════════════════════════════ */
 
 /* Fill a 3-row terminal with numbered lines so history is identifiable.
- * The newline goes BEFORE each line rather than after: a trailing newline
- * would scroll once more and leave a blank row on screen, making every
+ * The newline goes BEFORE each line, not after. A trailing newline would
+ * scroll once more and leave a blank row on screen. That would make every
  * expectation below one off from what you would naively write. So n lines
  * leaves exactly n-3..n-1 on screen and 0..n-4 in history. */
 static tsm_t *sb_term(int sb_lines, int nlines)
@@ -1214,8 +1213,8 @@ void test_sb_disabled_stores_nothing(void)
     tsm_free(t);
 }
 
-/* Capacity is what was allocated; length is what has accumulated. The app
- * keys off capacity, so the two must not be conflated. */
+/* Capacity is what tsm_new() allocated; length is what has accumulated.
+ * The app keys off capacity, so it must not conflate the two. */
 void test_sb_capacity_distinct_from_length(void)
 {
     tsm_t *t = tsm_new(10, 3, 50);
@@ -1314,8 +1313,8 @@ void test_sb_scroll_refused_on_alt_screen(void)
     tsm_free(t);
 }
 
-/* Entering the alt screen while scrolled back must snap to live, or the
- * app would draw into a viewport partly showing history. */
+/* Entering the alt screen while scrolled back must snap to live.
+ * Otherwise the app would draw into a viewport partly showing history. */
 void test_sb_alt_screen_entry_snaps_to_live(void)
 {
     tsm_t *t = sb_term(100, 6);
@@ -1372,7 +1371,9 @@ void test_sb_hard_reset_clears_history(void)
 {
     tsm_t *t = sb_term(100, 6);
     tsm_sb_scroll(t, 2);
-    feed(t, "\x1b" "c");                          /* RIS ('c' would extend the hex escape) */
+    /* RIS: two adjacent literals stop the \x1b hex escape from reading c
+     * as another hex digit. */
+    feed(t, "\x1b" "c");
     TEST_ASSERT_EQUAL_INT(0, tsm_sb_len(t));
     TEST_ASSERT_EQUAL_INT(0, tsm_sb_offset(t));
     tsm_free(t);
@@ -1510,7 +1511,6 @@ int main(void)
     /* save/restore */
     RUN_TEST(test_decsc_decrc);
 
-    /* alt screen */
     RUN_TEST(test_alt_screen_switch);
     RUN_TEST(test_alt_screen_exit_marks_dirty);
     RUN_TEST(test_alt_screen_47_exit);

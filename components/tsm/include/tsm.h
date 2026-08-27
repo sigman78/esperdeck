@@ -16,11 +16,11 @@
  * direct cast (or memcpy-free pointer pass) to display_set_text_buffer() is safe.
  *
  * Layout matches terminal_cell_t exactly:
- *   offset 0  cp       uint16_t  Unicode codepoint (BMP, U+0000-U+FFFF)
- *   offset 2  fg       uint16_t  foreground RGB565
- *   offset 4  bg       uint16_t  background RGB565
- *   offset 6  attrs    uint8_t   primary attribute flags (BOLD/UNDERLINE/...)
- *   offset 7  attrs2   uint8_t   extended attribute flags + cell flags
+ *   offset 0  cp       uint16_t  Unicode codepoint (BMP, U+0000-U+FFFF).
+ *   offset 2  fg       uint16_t  foreground RGB565.
+ *   offset 4  bg       uint16_t  background RGB565.
+ *   offset 6  attrs    uint8_t   primary attribute flags (BOLD/UNDERLINE/...).
+ *   offset 7  attrs2   uint8_t   extended attribute flags + cell flags.
  */
 typedef struct {
     uint16_t cp;      /* Unicode codepoint (BMP)                              */
@@ -92,8 +92,8 @@ void tsm_feed(tsm_t *tsm, const uint8_t *data, size_t len);
  *
  * While scrolled back the top rows come from the scrollback ring instead of
  * the live grid; callers render the same way either way. Cursor and dirty
- * tracking always describe the LIVE grid, so a scrolled-back view must be
- * repainted in full — see tsm_sb_scroll. */
+ * tracking always describe the LIVE grid. So the caller must repaint a
+ * scrolled-back view in full — see tsm_sb_scroll. */
 const tsm_cell_t *tsm_row(const tsm_t *tsm, int row);
 
 /* Current cursor position and visibility. */
@@ -113,8 +113,9 @@ int tsm_rows(const tsm_t *tsm);
 /* ── Scrollback ──────────────────────────────────────────────────────────── */
 
 /* Ring capacity in rows: what tsm_new() actually got, which may be less than
- * asked for, and 0 when scrollback is disabled or its allocation failed.
- * Distinct from tsm_sb_len() — that is 0 on a fresh terminal too. */
+ * asked for. It is 0 when the caller disables scrollback (sb_lines == 0) or
+ * the allocation fails. Distinct from tsm_sb_len() — that is 0 on a fresh
+ * terminal too. */
 int tsm_sb_capacity(const tsm_t *tsm);
 
 /* Rows of history currently stored (0 .. capacity). */
@@ -124,11 +125,11 @@ int tsm_sb_len(const tsm_t *tsm);
  * live grid. */
 int tsm_sb_offset(const tsm_t *tsm);
 
-/* Move the view by @p delta rows (positive = back into history) and return
+/* Move the view by @p delta rows (positive = back into history). Returns
  * the resulting offset, clamped to [0, tsm_sb_len()]. Returns the offset
- * unchanged when scrollback is disabled or the alt screen is active.
+ * unchanged when the caller disables scrollback or the alt screen is active.
  *
- * The caller must repaint every row after a change: dirty tracking only
+ * The caller must repaint every row after a change. Dirty tracking only
  * describes the live grid and says nothing about the view moving. */
 int tsm_sb_scroll(tsm_t *tsm, int delta);
 
@@ -148,7 +149,7 @@ bool tsm_sync_update(const tsm_t *tsm);
 
 /* Response callback */
 
-/* Called by tsm when a terminal response must be sent to the host
+/* tsm calls this when it must send a terminal response to the host
  * (DA1 reply, DSR reply, CPR).  data/len are NOT NUL-terminated. */
 typedef void (*tsm_response_fn_t)(const char *data, size_t len, void *user);
 
@@ -158,7 +159,7 @@ void tsm_set_response_cb(tsm_t *tsm, tsm_response_fn_t cb, void *user);
 /* Performance instrumentation (CONFIG_VTERM_BENCH) */
 
 /* Parse-vs-state cycle split: cycles spent inside each vtable shim
- * (other = esc+osc+dcs combined), plus scroll call/row-move counts to size
+ * (other = esc+osc+dcs combined). Scroll call and row-move counts help size
  * the memmove volume. tsm_cycles (vterm_bench_t) minus the sum of the four
  * cycle fields is the pure-vtparse share. */
 typedef struct {
@@ -172,8 +173,9 @@ typedef struct {
 } tsm_bench_t;
 
 /* Drain (read, does not reset) the shim/scroll counters.
- * All zero when CONFIG_VTERM_BENCH is disabled. */
+ * The build must define CONFIG_VTERM_BENCH; otherwise these read as all zero. */
 void tsm_bench_get(tsm_bench_t *out);
 
-/* Clear the shim/scroll counters. No-op when CONFIG_VTERM_BENCH is disabled. */
+/* Clear the shim/scroll counters. This is a no-op unless the build defines
+ * CONFIG_VTERM_BENCH. */
 void tsm_bench_reset(void);

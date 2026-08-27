@@ -8,7 +8,7 @@
 /* ── DEC Special Graphics (VT100 "Line Drawing") ──────────────────────────
  *
  * ESC ( 0  (or ESC ) 0) selects this charset for G0 (or G1).
- * Only bytes 0x60–0x7E are remapped; everything else passes through.
+ * The table remaps only bytes 0x60–0x7E; everything else passes through.
  * Table indexed by (byte - 0x60), 31 entries.
  */
 static const uint16_t s_dec_gfx[31] = {
