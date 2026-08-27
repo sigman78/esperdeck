@@ -1,14 +1,16 @@
 /*
- * render_internal.h — shared internals of the render core, split across:
+ * render_internal.h — shared internals of the render core.
  *
- *   display_render.c   public API + geometry, per-chunk skeleton, bench
- *   render_cache.c     cell/overlay buffers + the per-row column cache
- *   render_scan.c      the HOT per-size band scan + scan-output passes
- *   render_fx_pass.c   effect application (clip, wobble, static, bell)
+ * The core splits across four files:
+ *   display_render.c   public API + geometry, per-chunk skeleton, bench.
+ *   render_cache.c     cell/overlay buffers + the per-row column cache.
+ *   render_scan.c      the HOT per-size band scan + scan-output passes.
+ *   render_fx_pass.c   effect application (clip, wobble, static, bell).
  *
- * NOT part of the public display API. Everything here is reachable from
- * the bounce-buffer ISR: definitions live in DRAM, functions in IRAM
- * (enforced post-build by tools/check_iram.py).
+ * This header is not part of the public display API. The bounce-buffer
+ * ISR can reach everything declared here. Definitions live in DRAM and
+ * functions live in IRAM; tools/check_iram.py enforces that after each
+ * build.
  */
 
 #ifndef RENDER_INTERNAL_H
@@ -60,13 +62,13 @@ typedef struct {
 #if OVERLAY_DIM_DITHER
     const uint8_t  *dim;         /* per-column scrim flags               */
 #endif
-    const int8_t   *xoff;        /* per-scanline wobble word offset, or
-                                  * NULL when no line in this band is
-                                  * displaced (the untouched fast path) */
+    /* Per-scanline wobble word offset. NULL means nothing in this band
+     * moves (the untouched fast path). */
+    const int8_t   *xoff;
     int  ncols;
     int  num_scans;              /* scanlines in this band               */
     int  glyph_row0;             /* first glyph row of the band          */
-    int  scan_on;                /* 1 = scanline-dim variant in use      */
+    int  scan_on;                /* nonzero selects the scanline-dim variant */
     bool any_ul;                 /* any column underlined this row?      */
 #if OVERLAY_DIM_DITHER
     bool any_dim;
@@ -99,9 +101,9 @@ typedef struct {
     color_t ecol;                /* edge color                           */
 } fx_clip_t;
 
-/* Per-frame snapshot of g_fx_cfg, refreshed at the frame tick: per-row and
- * per-band paths read THIS, never the live config, so an fx change lands
- * on a frame boundary. */
+/* Per-frame snapshot of g_fx_cfg, refreshed at the frame tick. Per-row and
+ * per-band paths read THIS snapshot, never the live config, so an fx
+ * change lands on a frame boundary. */
 extern DRAM_ATTR display_fx_cfg_t g_fx_snap;
 void render_fx_snapshot(void);
 
@@ -114,7 +116,7 @@ void render_fx_clip_apply(color_t *dst, int band_y0, int num_scans,
                           const fx_clip_t *c);
 /* Per-scanline wobble displacement, in destination WORDS, for one band.
  * @p out must hold at least num_scans entries (FONT_MAX_BAND bounds it).
- * Returns false when nothing in the band is displaced. */
+ * Returns false when nothing in the band moves. */
 bool render_fx_wobble_offsets(int start_scan, int num_scans, int8_t *out);
 void render_fx_static(color_t *dst, int start_scan, int num_scans);
 void render_fx_bell_tag(color_t *dst, int char_row, int glyph_row0,

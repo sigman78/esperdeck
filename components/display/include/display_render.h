@@ -13,8 +13,8 @@
 /**
  * Render one horizontal band of the terminal into a pixel buffer.
  *
- * This is the single implementation of glyph→pixel conversion that is
- * shared between the ESP32 bounce-buffer ISR and the SDL2 frame loop.
+ * The ESP32 bounce-buffer ISR and the SDL2 frame loop share this one
+ * glyph→pixel implementation.
  *
  * @param dst      Destination RGB565 pixel buffer (32-bit aligned).
  * @param pos_px   Index of the first pixel in the full framebuffer

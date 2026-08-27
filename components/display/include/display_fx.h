@@ -6,8 +6,8 @@
  * work only — nothing per-pixel over the full band except transient,
  * frame-bounded event effects.
  *
- * Config writes are plain byte stores read by the ISR; a torn update is at
- * worst a single-frame visual glitch, so no locking is needed.
+ * Config writes are plain byte stores; the ISR reads them without locking.
+ * A torn update costs at most one glitched frame.
  */
 
 #ifndef DISPLAY_FX_H
@@ -37,7 +37,7 @@ typedef struct {
      * tint that cools off over glow_frames. */
     uint8_t glow;             /* 0 off / 1 on                              */
     uint8_t glow_frames;      /* duration in frames (~39/s), 1..120        */
-    uint8_t glow_strength;    /* 0 = subtle (12.5%), 1 = strong (25%)      */
+    uint8_t glow_strength;    /* 0 selects subtle (12.5%), nonzero strong (25%) */
 
     /* Connect raster reveal — screen wipes in top-to-bottom behind a
      * cyan leading edge. Armed via display_fx_wipe(). */
@@ -47,7 +47,7 @@ typedef struct {
     /* Disconnect CRT collapse — picture collapses to a bright center
      * line, then black. Armed via display_fx_collapse(). */
     uint8_t collapse;         /* 0 off / 1 on                              */
-    uint8_t collapse_frames;  /* collapse duration in frames, 4..120       */
+    uint8_t collapse_frames;  /* range 4-120                               */
 
     /* Signal-loss static burst — noise snow on a few scanlines per band.
      * Armed via display_fx_static(). */
@@ -56,8 +56,9 @@ typedef struct {
     uint8_t static_lines;     /* noisy scanlines per 16-line band, 1..4    */
 
     /* CRT line wobble — an S-wiggle sweeping down the screen (~5 s pass);
-     * the analog tracking-line instability look. */
-    uint8_t wobble;           /* 0 off / 1 ±2 px / 2 ±4 px / 3 ±6 px       */
+     * the analog tracking-line instability look.
+     * 0 off, 1 = ±2 px, 2 = ±4 px, 3 = ±6 px. */
+    uint8_t wobble;
 } display_fx_cfg_t;
 
 /** Fill @p out with the default effect configuration. */
@@ -69,8 +70,8 @@ void display_fx_get(display_fx_cfg_t *out);
 /** Apply (and range-clamp) a new configuration. Safe from any task. */
 void display_fx_set(const display_fx_cfg_t *cfg);
 
-/* Event triggers. Each is a no-op when the effect is disabled in the
- * active config. Safe to call from any task. */
+/* Event triggers. Each does nothing when the active config has the effect
+ * off. Safe to call from any task. */
 void display_fx_wipe(void);       /* raster reveal (connect / boot done)   */
 void display_fx_collapse(void);   /* CRT power-off collapse (disconnect)   */
 void display_fx_static(void);     /* signal-loss static burst              */
