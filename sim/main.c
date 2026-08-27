@@ -378,7 +378,7 @@ int main(int argc, char *argv[])
         .fallback_password  = pass,
         .fallback_wifi_ssid     = "SIM",
         .fallback_wifi_password = "",
-        .ble = NULL,
+        /* no .services: the sim has no BLE keyboard or phone presence */
 #if CONFIG_INPUT_TOUCH_SCROLL
         .set_scroll_edge = sim_set_scroll_edge,
         .scroll_edge_px  = CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX,

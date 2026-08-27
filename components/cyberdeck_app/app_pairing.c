@@ -109,7 +109,7 @@ static void render_pairing(uint64_t now)
 static void pairing_enter(intptr_t arg, uint64_t now)
 {
     (void)arg;
-    app.cfg.ble->enter_pairing();
+    app.ble->enter_pairing();
     s_pair.ndevs = 0;
     s_pair.sel = 0;
     s_pair.last_poll = 0;
@@ -120,13 +120,13 @@ static void pairing_enter(intptr_t arg, uint64_t now)
 static void pairing_exit(uint64_t now)
 {
     (void)now;
-    if (app.cfg.ble && app.cfg.ble->exit_pairing)
-        app.cfg.ble->exit_pairing();
+    if (app.ble && app.ble->exit_pairing)
+        app.ble->exit_pairing();
 }
 
 void enter_pairing(uint64_t now)
 {
-    if (!app.cfg.ble || !app.cfg.ble->enter_pairing) return;
+    if (!app.ble || !app.ble->enter_pairing) return;
     nav_push(SCR_PAIRING, 0, now);
 }
 
@@ -134,8 +134,8 @@ void enter_pairing(uint64_t now)
 static void pairing_select(int slot, uint64_t now)
 {
     int nd = pairing_ndev(&app.grid);
-    if (slot < nd && app.cfg.ble) {                /* a discovered device */
-        app.cfg.ble->select_device(s_pair.devs[slot].addr, s_pair.devs[slot].addr_type);
+    if (slot < nd && app.ble) {                /* a discovered device */
+        app.ble->select_device(s_pair.devs[slot].addr, s_pair.devs[slot].addr_type);
         toast(now, "pairing %.32s...", s_pair.devs[slot].name);
         nav_pop(now);
     } else if (slot == nd) {                       /* Forget bonds */
@@ -143,8 +143,8 @@ static void pairing_select(int slot, uint64_t now)
         if (!s_pair.forget_armed) {
             s_pair.forget_armed = true;
             nav_invalidate();
-        } else if (app.cfg.ble && app.cfg.ble->forget) {
-            app.cfg.ble->forget();
+        } else if (app.ble && app.ble->forget) {
+            app.ble->forget();
             toast(now, "bonds cleared - re-scanning");
             nav_replace(SCR_PAIRING, 0, now);      /* restart the scan fresh */
         }
@@ -164,10 +164,10 @@ static void pairing_tick(uint64_t now)
         app.next_anim = now + ANIM_PERIOD_MS;
         nav_invalidate();
     }
-    if (now - s_pair.last_poll >= PAIR_POLL_MS && app.cfg.ble) {
+    if (now - s_pair.last_poll >= PAIR_POLL_MS && app.ble) {
         s_pair.last_poll = now;
         ble_device_info_t fresh[PAIR_MAX];
-        int n = app.cfg.ble->get_scan_results(fresh, PAIR_MAX);
+        int n = app.ble->get_scan_results(fresh, PAIR_MAX);
         if (n != s_pair.ndevs ||
             memcmp(fresh, s_pair.devs, (size_t)n * sizeof(fresh[0])) != 0) {
             memcpy(s_pair.devs, fresh, sizeof(fresh));

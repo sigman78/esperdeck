@@ -201,13 +201,13 @@ const char *wifi_status_str(void)
 
 const char *ble_status_str(void)
 {
-    if (!app.cfg.ble || !app.cfg.ble->get_state) return "n/a";
-    switch (app.cfg.ble->get_state()) {
-    case 4:  return "connected";        /* BLE_CONNECTED       */
-    case 3:  return "connecting...";    /* BLE_CONNECTING      */
-    case 2:  return "pairing scan";     /* BLE_PAIRING_SCAN    */
-    case 1:  return "searching...";     /* BLE_RECONNECT       */
-    default: return "idle";
+    if (!app.ble || !app.ble->get_state) return "n/a";
+    switch (app.ble->get_state()) {
+    case CYBERDECK_BLE_CONNECTED:    return "connected";
+    case CYBERDECK_BLE_CONNECTING:   return "connecting...";
+    case CYBERDECK_BLE_PAIRING_SCAN: return "pairing scan";
+    case CYBERDECK_BLE_RECONNECT:    return "searching...";
+    default:                         return "idle";
     }
 }
 
@@ -325,8 +325,8 @@ void ui_statusbar(uint64_t now)
          * state is self-evident (user call, 2026-08-27). */
         int x = sb_patch(1, sr, " NET ", OVERLAY_COL_GREEN,
                          wifi_manager_is_connected());
-        const bool kbd = app.cfg.ble && app.cfg.ble->get_state &&
-                         app.cfg.ble->get_state() == 4;
+        const bool kbd = app.ble && app.ble->get_state &&
+                         app.ble->get_state() == CYBERDECK_BLE_CONNECTED;
         sb_patch(x, sr, " KBD ", OVERLAY_COL_CYAN, kbd);
     }
 

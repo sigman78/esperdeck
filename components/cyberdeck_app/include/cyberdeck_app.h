@@ -40,10 +40,41 @@ typedef struct {
     int16_t  dy;        /* SCROLL: pixels since the last event, down positive */
 } cyberdeck_input_t;
 
-/* ---- BLE keyboard seam (NULL ops on platforms without BLE) ------------- */
+/* ---- capability services (extensibility item 5b) ------------------------
+ * A service is a named ops struct the composition root registers for a
+ * capability that may be absent on a platform (BLE on the simulator).
+ * The shell and plugins resolve optional dependencies by name instead of
+ * this config growing a typed field per capability. The array and every
+ * ops struct it points at must outlive the app — pass statics. */
+
+#define CYBERDECK_SVC_BLE_KEYBOARD "ble-keyboard"  /* cyberdeck_ble_ops_t      */
+#define CYBERDECK_SVC_PRESENCE     "presence"      /* cyberdeck_presence_ops_t */
 
 typedef struct {
-    int  (*get_state)(void);   /* ble_state_t as int; see ble_keyboard.h */
+    const char *name;   /* CYBERDECK_SVC_* */
+    const void *ops;    /* the capability's ops struct (type per name) */
+} cyberdeck_service_t;
+
+/** The ops registered under @p name, or NULL where the platform has none.
+ *  Valid after cyberdeck_app_init(); the caller casts to the ops type the
+ *  name documents. */
+const void *cyberdeck_service(const char *name);
+
+/* ---- BLE keyboard service (CYBERDECK_SVC_BLE_KEYBOARD) ------------------
+ * States mirror the input component's ble_state_t — the shell is
+ * platform-neutral and cannot see that header, so main.c (the one file
+ * that sees both) static-asserts the two enums stay in step. */
+
+typedef enum {
+    CYBERDECK_BLE_IDLE = 0,      /* stack up, not scanning               */
+    CYBERDECK_BLE_RECONNECT,     /* scanning for a known (bonded) device */
+    CYBERDECK_BLE_PAIRING_SCAN,  /* scanning for any HID device          */
+    CYBERDECK_BLE_CONNECTING,    /* connection in progress               */
+    CYBERDECK_BLE_CONNECTED,     /* keyboard active, input flowing       */
+} cyberdeck_ble_state_t;
+
+typedef struct {
+    cyberdeck_ble_state_t (*get_state)(void);
     void (*enter_pairing)(void);
     void (*exit_pairing)(void);
     int  (*get_scan_results)(ble_device_info_t *out, int max);
@@ -52,9 +83,17 @@ typedef struct {
     void (*forget)(void);            /* wipe all bonds (recover a bad store) */
 } cyberdeck_ble_ops_t;
 
-/* ---- phone-presence seam (BLE proximity; NULL where unsupported) -------
+/* ---- phone-presence service (CYBERDECK_SVC_PRESENCE) -------------------
  * Prototype policy input (docs/feat-ideas.md §8b tier A): presence gates
- * behavior — it is never key material. */
+ * behavior — it is never key material. Enroll states mirror the input
+ * component's ble_presence_enroll_t (same static-assert pin in main.c). */
+
+typedef enum {
+    CYBERDECK_ENROLL_IDLE = 0,     /* not advertising                    */
+    CYBERDECK_ENROLL_ADVERTISING,  /* waiting for the phone to pair      */
+    CYBERDECK_ENROLL_DONE_NOW,     /* pairing just completed (transient) */
+} cyberdeck_enroll_state_t;
+
 typedef struct {
     bool     (*enrolled)(void);
     bool     (*present)(void);        /* resolved sighting < ~45 s ago     */
@@ -65,7 +104,7 @@ typedef struct {
     int      (*rssi)(void);           /* smoothed, 0 = none yet            */
     void     (*enroll_start)(void);   /* advertise for phone pairing       */
     void     (*enroll_stop)(void);
-    int      (*enroll_state)(void);   /* ble_presence_enroll_t as int      */
+    cyberdeck_enroll_state_t (*enroll_state)(void);
     void     (*forget)(void);
 } cyberdeck_presence_ops_t;
 
@@ -87,12 +126,14 @@ typedef struct {
     const char *fallback_wifi_ssid;
     const char *fallback_wifi_password;
 
-    const cyberdeck_ble_ops_t *ble;   /* NULL = keyboard handled elsewhere */
-    const cyberdeck_presence_ops_t *presence;   /* NULL = no phone sensing */
+    /* Capability services present on this platform (see cyberdeck_service
+     * above). NULL/0 = none — every capability degrades to absent. */
+    const cyberdeck_service_t *services;
+    int n_services;
 
     /* Arm/disarm the right-edge scroll strip, in pixels (0 = off). Same
-     * seam as `ble` above: the shell states what it wants and the platform
-     * owns the touch driver, so cyberdeck_app never depends on `input`.
+     * seam as the services above: the shell states what it wants and the
+     * platform owns the touch driver, so cyberdeck_app never depends on `input`.
      * NULL where there is no touch panel — the simulator drives the gesture
      * from its own mouse handling. */
     void (*set_scroll_edge)(int width_px);

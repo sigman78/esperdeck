@@ -67,7 +67,7 @@ static const menu_item_t main_items[] = {
 static bool dim_no_ble(intptr_t a)
 {
     (void)a;
-    return !app.cfg.ble;
+    return !app.ble;
 }
 
 static bool dim_no_keystore(intptr_t a)
@@ -192,13 +192,13 @@ static void act_pair(intptr_t a, uint64_t now)
 static bool dim_no_forget(intptr_t a)
 {
     (void)a;
-    return !app.cfg.ble || !app.cfg.ble->forget;
+    return !app.ble || !app.ble->forget;
 }
 
 static void act_forget_bonds(intptr_t a, uint64_t now)
 {
     (void)a;
-    app.cfg.ble->forget();   /* dim gate guarantees the op exists */
+    app.ble->forget();   /* dim gate guarantees the op exists */
     menu_note(now, MENU_MSG_MS, false, "keyboard bonds cleared");
 }
 
@@ -252,7 +252,7 @@ static void act_factory(intptr_t a, uint64_t now)
     (void)a;
     storage_factory_reset();
     app_settings_dirty_discard();   /* pending writes must not resurrect it */
-    if (app.cfg.ble && app.cfg.ble->forget) app.cfg.ble->forget();
+    if (app.ble && app.ble->forget) app.ble->forget();
     load_profiles();
     menu_note(now, MENU_MSG_MS, false, "wiped - reboot advised");
 }

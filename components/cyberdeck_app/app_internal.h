@@ -39,6 +39,11 @@ void app_touch_scroll_apply(void);
 struct app_state {
     cyberdeck_app_config_t cfg;
 
+    /* Optional capabilities, resolved once from cfg.services at init
+     * (cyberdeck_service). NULL where the platform registered none. */
+    const cyberdeck_ble_ops_t      *ble;
+    const cyberdeck_presence_ops_t *presence;
+
     conn_profile_t profiles[MAX_PROFILES];
     int  profile_count;
     int  stored_count;              /* profiles actually on flash (excl. synth) */
@@ -58,7 +63,7 @@ struct app_state {
 
     /* link watcher: last states seen, for connect/disconnect toasts */
     uint8_t  prev_wifi;    /* wifi_mgr_state_t */
-    uint8_t  prev_ble;     /* ble_state_t as int (see cyberdeck_ble_ops_t) */
+    uint8_t  prev_ble;     /* cyberdeck_ble_state_t */
 
     uint32_t anim_frame;   /* advances ~10 fps for subtle animation */
     uint64_t next_anim;    /* next animated re-render */
