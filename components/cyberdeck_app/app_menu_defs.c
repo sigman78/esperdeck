@@ -80,43 +80,28 @@ static bool dim_no_keystore(intptr_t a)
 #endif
 }
 
-/* Section body hints on the hub tiles, keyed by the act_goto target so
- * one value callback serves every section entry. */
-static const char *const HUB_BODY[] = {
-    [MS_PROFILES]  = "add - edit - order",
-    [MS_WIFI]      = "reconnect - add",
-    [MS_KEYBOARD]  = "pair - bonds",
-    [MS_FX_CRT]    = "beam - phosphor",
-    [MS_FX_MOTION] = "wobble - wipe",
-    [MS_FONT]      = "terminal size",
-    [MS_SYSTEM]    = "saver - reset",
-    [MS_KEYSTORE]  = "lock - code",
-};
-
-static const char *val_hub(intptr_t sc, char *buf, size_t sz)
-{
-    (void)buf; (void)sz;
-    return HUB_BODY[sc];
-}
-
+/* Hub tiles carry the section name alone, centered — content hints
+ * move to the StatusBar/toast once that lands (user call, 2026-08-27:
+ * a 3-row tile with a two-line top-anchored body is the even-line
+ * asymmetry the odd-height rule exists to prevent). */
 static const menu_item_t config_items[] = {
     { .label = "PROFILES",  .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_PROFILES,  .value = val_hub },
+      .arg = MS_PROFILES },
     { .label = "WIFI",      .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_WIFI,      .value = val_hub },
+      .arg = MS_WIFI },
     { .label = "KEYBOARD",  .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_KEYBOARD,  .value = val_hub,
+      .arg = MS_KEYBOARD,
       .dim = dim_no_ble, .dim_note = "no BLE keyboard support" },
     { .label = "CRT FX",    .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_FX_CRT,    .value = val_hub },
+      .arg = MS_FX_CRT },
     { .label = "MOTION FX", .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_FX_MOTION, .value = val_hub },
+      .arg = MS_FX_MOTION },
     { .label = "FONT",      .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_FONT,      .value = val_hub },
+      .arg = MS_FONT },
     { .label = "SYSTEM",    .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_SYSTEM,    .value = val_hub },
+      .arg = MS_SYSTEM },
     { .label = "KEYSTORE",  .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_KEYSTORE,  .value = val_hub,
+      .arg = MS_KEYSTORE,
       .dim = dim_no_keystore, .dim_note = "not in this build" },
 };
 
@@ -519,8 +504,7 @@ static const menu_page_t PAGES[] = {
     [MS_MAIN]      = { .title = "MENU", .items = main_items,
                        .count = NELEM(main_items), .back_to = MENU_BACK_LEAVE },
     [MS_CONFIG]    = { .title = "CONFIGURATION", .items = config_items,
-                       .count = NELEM(config_items), .back_to = MS_MAIN,
-                       .flags = MENU_PAGE_HUB },
+                       .count = NELEM(config_items), .back_to = MS_MAIN },
     [MS_PROFILES]  = { .title = "PROFILES", .items = profiles_items,
                        .count = NELEM(profiles_items), .back_to = MS_CONFIG },
     [MS_IMPORT]    = { .title = "IMPORT", .items = import_items,

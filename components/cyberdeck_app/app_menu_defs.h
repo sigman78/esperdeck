@@ -51,11 +51,6 @@ typedef struct {
     const char *(*value)(intptr_t arg, char *buf, size_t sz);  /* body   */
 } menu_item_t;
 
-enum {
-    MENU_PAGE_HUB = 1 << 0,    /* items are sections: value() renders as
-                                  the tile BODY line, not a value well   */
-};
-
 #define MENU_BACK_LEAVE (-1)   /* back_to: leave the menu screen (pop)   */
 
 /* Fit-one-screen contract (ui-spec, locked): a page holds at most what
@@ -68,7 +63,6 @@ typedef struct {
     const menu_item_t *items;
     uint8_t count;
     int8_t  back_to;           /* menu_screen_t target, or MENU_BACK_LEAVE */
-    uint8_t flags;             /* MENU_PAGE_*                            */
     uint8_t hold;              /* APP_SETTINGS_HOLD_* while page is open */
     void  (*on_open)(void);    /* snapshot volatile state at page open   */
 } menu_page_t;

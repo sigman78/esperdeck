@@ -190,27 +190,43 @@ static void render_menu(uint64_t now)
         app.grid = g;
         if (s_menu.sel >= count) s_menu.sel = count ? count - 1 : 0;
 
-        const bool hub = p->flags & MENU_PAGE_HUB;
         for (int i = 0; i < count; i++) {
             const menu_item_t *it = s_slot[i];
             const bool dim = it->dim && it->dim(it->arg);
             const bool armed = i == s_menu.sel && s_menu.armed && it->confirm;
-            ui_pen(armed         ? OVERLAY_COL_RED
-                 : it->color_fn  ? it->color_fn(it->arg)
-                                 : it->color);
+            const bool sel = i == s_menu.sel;
+            const int tx = tile_x(&g, i), ty = tile_y(&g, i);
             const char *label = armed ? it->confirm
                        : it->label_fn ? it->label_fn(it->arg)
                                       : it->label;
+            ui_pen(armed         ? OVERLAY_COL_RED
+                 : it->color_fn  ? it->color_fn(it->arg)
+                                 : it->color);
+            if (dim && !armed) {
+                /* Unavailable: the whole bar in the dimmed accent, label
+                 * centered — the muted look IS the message (dim_note
+                 * explains on activation). */
+                for (int r = 0; r < 3; r++)
+                    for (int c = 0; c < g.tw; c++)
+                        ui_putch(tx + c, ty + r, ' ',
+                                 OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_DIM);
+                ui_puts(tx + 2, ty + 1, label,
+                        OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_DIM |
+                        OVERLAY_ATTR_BOLD);
+                if (sel) {          /* focus rail, as ui_tile draws it */
+                    ui_pen(OVERLAY_COL_WHITE);
+                    for (int r = 0; r < 3; r++)
+                        ui_putch(tx, ty + r, UI_RHALF, OVERLAY_ATTR_INVERSE);
+                }
+                continue;
+            }
             vbuf[i][0] = '\0';
             const char *body =
-                  it->value ? it->value(it->arg, vbuf[i], sizeof(vbuf[i]))
-                : dim       ? "(unavailable)"
-                            : "";
-            /* Hub sections carry their body under the label; value items
-             * put it on the dimmed well. Armed confirms drop both. */
-            draw_value_tile(tile_x(&g, i), tile_y(&g, i), g.tw, label, body,
-                            !hub && !armed && !dim && it->value,
-                            i == s_menu.sel);
+                it->value ? it->value(it->arg, vbuf[i], sizeof(vbuf[i])) : "";
+            /* Value items put the body on the dimmed well; armed confirms
+             * drop it. Plain items (hub sections, actions) center alone. */
+            draw_value_tile(tx, ty, g.tw, label, body,
+                            !armed && it->value, sel);
         }
         ui_pen(OVERLAY_COL_DEFAULT);
 
