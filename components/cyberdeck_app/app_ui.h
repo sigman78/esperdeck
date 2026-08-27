@@ -83,8 +83,14 @@ void ui_dim(void);
 /** Put one codepoint; attrs = 0 or OVERLAY_ATTR_INVERSE. */
 void ui_putch(int col, int row, uint16_t cp, uint8_t attrs);
 
-/** Put an ASCII/Latin-1 string. */
+/** Put an ASCII/Latin-1 string (byte = codepoint, no UTF-8 decode). */
 void ui_puts(int col, int row, const char *s, uint8_t attrs);
+
+/** UTF-8 variant: decodes multi-byte sequences to BMP codepoints
+ *  (beyond-BMP and malformed input render '?'). Chrome glyphs should
+ *  still prefer the verified UI_* palette — a codepoint outside the
+ *  font's ranges renders '?' on the deck. */
+void ui_puts_u8(int col, int row, const char *s, uint8_t attrs);
 
 /** printf into a row (ASCII), truncated to the overlay width. */
 void ui_printf(int col, int row, uint8_t attrs, const char *fmt, ...);
