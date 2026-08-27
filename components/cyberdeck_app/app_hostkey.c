@@ -97,9 +97,6 @@ static void render_hostkey(uint64_t now)
     ui_button(&g, 1, "Cancel", "", s_hostkey.sel == 1);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer(s_hostkey.mismatch
-                ? "arrows+Enter \xB7 Y replace \xB7 Esc cancel"
-                : "arrows+Enter trust \xB7 Esc cancel");
 }
 
 /* Pin the server's current fingerprint and (re)connect. */
@@ -217,5 +214,5 @@ static void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t hostkey_screen = {
     .name = "hostkey", .enter = hostkey_enter, .tick = hostkey_tick,
     .input = hostkey_input, .render = render_hostkey,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
 };

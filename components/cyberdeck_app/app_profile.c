@@ -212,7 +212,6 @@ static void render_profile(uint64_t now)
     ui_button(&bg, 1, "Cancel", "", s_pf.field == PF_CANCEL);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer("type to edit \xB7 Tab/arrows move \xB7 Enter next \xB7 Esc cancel");
 }
 
 /* @p arg = stored profile to edit, or -1 for a new one. */
@@ -467,5 +466,5 @@ static void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t profile_screen = {
     .name = "profile", .enter = profile_enter, .tick = profile_tick,
     .input = profile_input, .render = render_profile,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
 };

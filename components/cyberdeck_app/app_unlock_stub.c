@@ -22,5 +22,5 @@ void unlock_open_gate(uint64_t now)   { (void)now; }
 
 const nav_screen_t unlock_screen = {
     .name = "unlock-disabled",
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
 };

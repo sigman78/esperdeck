@@ -98,8 +98,12 @@ static void render_wifiprov(uint64_t now)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    draw_footer(recv ? "testing - long-press or Esc to abort"
-                     : "tap or Esc to cancel");
+    if (recv) {                 /* state, not a hint: credentials landed */
+        const char *st = "testing the network...";
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_puts((ui_cols() - (int)strlen(st)) / 2, ui_rows() - 2, st, 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
 }
 
 static void wifiprov_enter(intptr_t arg, uint64_t now)
@@ -175,5 +179,5 @@ static void wifiprov_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t wifiprov_screen = {
     .name = "wifiprov", .enter = wifiprov_enter, .tick = wifiprov_tick,
     .input = wifiprov_input, .render = render_wifiprov,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
 };

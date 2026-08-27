@@ -99,7 +99,11 @@ static void render_pairing(uint64_t now)
             "Cancel", "", (ndev + 1) == s_pair.sel);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer("keyboard in pairing mode, then tap it \xB7 Esc cancel");
+    /* Instructional state, not a hint — body line above the StatusBar. */
+    const char *st = "put the keyboard in pairing mode, then tap it";
+    ui_pen(OVERLAY_COL_BLUE);
+    ui_puts((ui_cols() - (int)strlen(st)) / 2, ui_rows() - 2, st, 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
 }
 
 static void pairing_enter(intptr_t arg, uint64_t now)
@@ -209,5 +213,5 @@ static void pairing_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t pairing_screen = {
     .name = "pairing", .enter = pairing_enter, .exit = pairing_exit,
     .tick = pairing_tick, .input = pairing_input, .render = render_pairing,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
 };

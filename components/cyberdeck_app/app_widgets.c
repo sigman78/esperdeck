@@ -7,6 +7,7 @@
 
 #include "app_widgets.h"
 #include "font.h"   /* font_width/height() — touch pixel→cell mapping */
+#include "keystore.h"
 #include "wifi_manager.h"
 
 #include <stdio.h>
@@ -291,29 +292,56 @@ void draw_titlebar(int x0, const char *text)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
-/* Footer hint riding a cyan powerline chip. @p limit: first column the chip
- * must stay clear of (a right-aligned toast lives there), or -1 for full
- * width; clipping is internal so callers never depend on chip geometry. */
-void draw_footer_lim(const char *hint, int limit)
+/* The StatusBar. One lettered patch per indicator: lit = its accent as
+ * the patch background, off = the bar's base blue. A live toast owns
+ * the indicator span; the clock keeps the right edge either way. */
+void ui_statusbar(uint64_t now)
 {
-    int r = ui_rows() - 1;
-    if (limit < 0) limit = ui_cols();
-    int avail = limit - 6;    /* lead-in(3) + trail space + taper + 1 gap */
-    if (avail <= 0) return;   /* no room: rule only, no orphaned chip stub */
-    char clip[96];
-    snprintf(clip, sizeof(clip), "%.*s", avail, hint);
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_putch(0, r, ' ', OVERLAY_ATTR_INVERSE);
-    ui_putch(1, r, UI_PLAY, OVERLAY_ATTR_INVERSE);
-    ui_putch(2, r, ' ', OVERLAY_ATTR_INVERSE);
-    ui_puts(3, r, clip, OVERLAY_ATTR_INVERSE);
-    int end = 3 + (int)strlen(clip);
-    ui_putch(end,     r, ' ', OVERLAY_ATTR_INVERSE);
-    ui_putch(end + 1, r, UI_PL_R, 0);
+    const int sr = ui_rows() - 1;
+    ui_pen(OVERLAY_COL_BLUE);
+    for (int c = 0; c < ui_cols(); c++)
+        ui_putch(c, sr, ' ', OVERLAY_ATTR_INVERSE);
+
+    if (app.toast[0] && now < app.toast_until) {
+        char clip[96];
+        snprintf(clip, sizeof(clip), "%.*s", ui_cols() - 10, app.toast);
+        ui_puts(2, sr, clip, OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD);
+    } else {
+        ui_pen(wifi_manager_is_connected() ? OVERLAY_COL_GREEN
+                                           : OVERLAY_COL_BLUE);
+        ui_puts(2, sr, " NET ",
+                OVERLAY_ATTR_INVERSE |
+                (wifi_manager_is_connected() ? 0 : OVERLAY_ATTR_DIM));
+        const bool kbd = app.cfg.ble && app.cfg.ble->get_state &&
+                         app.cfg.ble->get_state() == 4;
+        ui_pen(kbd ? OVERLAY_COL_CYAN : OVERLAY_COL_BLUE);
+        ui_puts(8, sr, " KBD ",
+                OVERLAY_ATTR_INVERSE | (kbd ? 0 : OVERLAY_ATTR_DIM));
+        /* CAP/NUM wait on lock-state tracking in the input component
+         * (extensibility item 6). Keystore lock, cached ~2 s — the
+         * ABSENT state stats the filesystem. */
+        static uint64_t ks_at;
+        static keystore_state_t ks;
+        if (!ks_at || now - ks_at >= 2000) {
+            ks_at = now;
+            ks = keystore_state();
+        }
+        if (ks != KEYSTORE_ABSENT) {
+            ui_pen(ks == KEYSTORE_LOCKED ? OVERLAY_COL_AMBER
+                                         : OVERLAY_COL_BLUE);
+            ui_putch(15, sr, ks == KEYSTORE_LOCKED ? UI_LED_ON : UI_LED_OFF,
+                     OVERLAY_ATTR_INVERSE);
+        }
+    }
+
+    char clk[8];
+    if (clock_str(clk, sizeof(clk))) {
+        ui_pen(OVERLAY_COL_BLUE);
+        ui_puts(ui_cols() - (int)strlen(clk) - 2, sr, clk,
+                OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD);
+    }
     ui_pen(OVERLAY_COL_DEFAULT);
 }
-
-void draw_footer(const char *hint) { draw_footer_lim(hint, -1); }
 
 /* Standard modal header: titlebar chip, a right-aligned "// tag" in blue,
  * and a rule on row 3. Shared by CONNECTING / NEW PROFILE. */

@@ -232,14 +232,16 @@ static void render_unlock(uint64_t now)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer(s_unlock.deriving ? "working..."
-              : s_unlock.gate
-                  ? "deck locked \xB7 digits \xB7 Enter OK"
-              : s_unlock.mode == UM_NEW
-                  ? "4+ chars \xB7 Enter OK \xB7 Esc cancel"
-              : s_unlock.mode == UM_REMOVE
-                  ? "keys revert to plain \xB7 Esc cancel"
-                  : "digits \xB7 Enter OK \xB7 Esc cancel");
+    /* Mode state above the StatusBar (the hint tails died with the
+     * HintBar — the pad's labels carry the interaction). */
+    const char *st = s_unlock.deriving ? "working..."
+                   : s_unlock.gate     ? "deck locked"
+                   : s_unlock.mode == UM_NEW    ? "choose a code (4+)"
+                   : s_unlock.mode == UM_REMOVE ? "keys revert to plain"
+                                                : "enter code";
+    ui_pen(s_unlock.deriving ? OVERLAY_COL_AMBER : OVERLAY_COL_BLUE);
+    ui_puts((ui_cols() - (int)strlen(st)) / 2, ui_rows() - 2, st, 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
 }
 
 static void flash_note(uint64_t now, const char *msg)
@@ -592,5 +594,5 @@ static void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t unlock_screen = {
     .name = "unlock", .enter = unlock_enter, .exit = unlock_exit,
     .tick = unlock_tick, .input = unlock_input, .render = render_unlock,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
 };

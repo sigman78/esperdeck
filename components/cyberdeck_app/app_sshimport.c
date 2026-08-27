@@ -119,8 +119,12 @@ static void render_sshimport(uint64_t now)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    draw_footer(cnt > 0 || del > 0 ? "tap or Esc when done - changes are saved"
-                                   : "tap or Esc to cancel");
+    if (cnt > 0 || del > 0) {   /* state, not a hint: changes landed */
+        const char *st = "changes are saved";
+        ui_pen(OVERLAY_COL_GREEN);
+        ui_puts((ui_cols() - (int)strlen(st)) / 2, ui_rows() - 2, st, 0);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
 }
 
 static void sshimport_enter(intptr_t arg, uint64_t now)
@@ -193,5 +197,5 @@ static void sshimport_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t sshimport_screen = {
     .name = "sshimport", .enter = sshimport_enter, .tick = sshimport_tick,
     .input = sshimport_input, .render = render_sshimport,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
 };

@@ -544,3 +544,21 @@ in-tree features. Tick items as they merge.
   of `dense`; checkpoint table in
   [`performance.md`](performance.md)); normal firmware restored to
   the deck after the run.
+- **2026-08-27 (item 4, step 4: StatusBar + Toast)** — `ui_statusbar()`
+  in app_widgets, composited by the shell for `NAV_CHROME_FULL`
+  screens (the descriptor chrome flag finally does its job): full-width
+  bar on its own background, NET/KBD lettered patches (lit accent /
+  dim base), keystore lock LED (state cached ~2 s — ABSENT stats the
+  filesystem), clock right; a live toast takes the indicator span.
+  CAP/NUM wait on lock-state tracking in the input component (item 6).
+  **One toast, all screens**: HOME's bottom chip and the menu's note
+  row both retired — `menu_note` now rides the shared toast (sticky =
+  UINT64_MAX until, dropped by `menu_exit` so an arm prompt can't
+  follow the user out; the wifi live-track re-posts from menu_tick).
+  The HintBar is gone for real: `draw_footer/_lim` deleted, ten
+  screens flipped to FULL chrome; state-bearing footer texts moved to
+  body lines above the bar (pairing instruction, sshimport "changes
+  are saved", wifiprov "testing...", unlock mode line), pure hints
+  dropped. Session/boot/poweroff stay chromeless (terminal owns every
+  cell; the session's transient chrome pass is untouched). 6/6 both
+  keystore configs; device build + check_iram OK.
