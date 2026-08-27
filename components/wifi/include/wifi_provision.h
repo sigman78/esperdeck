@@ -2,12 +2,13 @@
  * wifi_provision — SoftAP WiFi onboarding via the ESP provisioning manager.
  *
  * Starts a temporary SoftAP + HTTP provisioning service. A phone running the
- * "ESP SoftAP Provisioning" app (or the QR flow) sends WiFi credentials, which
- * are tested and, on success, saved into wifi.ini as the preferred network.
+ * "ESP SoftAP Provisioning" app (or the QR flow) sends WiFi credentials. The
+ * manager tests them and, on success, saves them into wifi.ini as the
+ * preferred network.
  *
- * SoftAP is used deliberately: it needs no BLE, so the HID keyboard's NimBLE
- * stack is untouched. The manager is deinited as soon as the flow ends to
- * reclaim internal RAM.
+ * The design chooses SoftAP deliberately: it needs no BLE, so the HID
+ * keyboard's NimBLE stack stays untouched. wifi_provision_stop() deinits the
+ * manager as soon as the flow ends, to reclaim internal RAM.
  */
 
 #pragma once
@@ -48,5 +49,5 @@ int wifi_provision_qr_size(void);
 /** True if the QR module at (x,y) is dark. Out-of-range returns false. */
 bool wifi_provision_qr_module(int x, int y);
 
-/** SSID that was received/provisioned ("" until CRED_RECV). */
+/** SSID the manager received/provisioned ("" until CRED_RECV). */
 const char *wifi_provision_ssid(void);

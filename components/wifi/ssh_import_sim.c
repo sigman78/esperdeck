@@ -1,6 +1,6 @@
 /*
- * ssh_import — host/sim stub. No SoftAP/httpd; just enough state so the
- * shell's import screen can be exercised in the simulator.
+ * ssh_import — host/sim stub. No SoftAP/httpd; it holds just enough state
+ * so developers can exercise the shell's import screen in the simulator.
  */
 
 #include "ssh_import.h"

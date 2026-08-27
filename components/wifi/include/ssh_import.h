@@ -7,17 +7,18 @@
  *
  *   SOFTAP — brings up a temporary WPA2 SoftAP with a RANDOM per-session
  *     passphrase shown on the device. That passphrase IS the proof-of-
- *     possession: you must read the code on the device screen to join, so the air link is
- *     WPA2-encrypted and the pasted private key is not sniffable. For a phone.
+ *     possession: you must read the code on the device screen to join. That
+ *     keeps the air link WPA2-encrypted, so the pasted private key is not
+ *     sniffable. For a phone.
  *
  *   WEB — no SoftAP; the deck must already be on WiFi (STA). The same server
  *     runs on the deck's LAN IP so you open it from a PC browser. There is no
  *     WPA2 wrapping OUR link here, so the key crosses the local network in
- *     cleartext HTTP — acceptable on a trusted LAN. The on-screen proof code,
- *     which must be typed into the form, gates WHO may POST.
+ *     cleartext HTTP — acceptable on a trusted LAN. You must type the
+ *     on-screen proof code into the form; it gates WHO may POST.
  *
- * The server is torn down the moment the modal closes, reclaiming the internal
- * RAM the httpd (and, in SOFTAP mode, the AP) consume.
+ * Closing the modal tears down the server. That reclaims the internal RAM
+ * the httpd (and, in SOFTAP mode, the AP) consume.
  */
 
 #pragma once
@@ -38,8 +39,8 @@ enum {
 };
 
 /** Begin the import server in @p mode. SOFTAP parks wifi_manager; WEB requires
- *  an existing STA link and leaves it untouched. On any failure the state is
- *  left IDLE so a later attempt can retry. */
+ *  an existing STA link and leaves it untouched. On any failure the code
+ *  leaves the state IDLE, so it can try again later. */
 esp_err_t ssh_import_start(ssh_import_mode_t mode);
 
 /** Which SSH_IMPORT_* transport the current session uses (valid while ACTIVE). */

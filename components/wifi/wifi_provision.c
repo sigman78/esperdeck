@@ -95,7 +95,7 @@ static void save_creds(void)
         ESP_LOGE(TAG, "Failed to save wifi.ini");
 
     /* Both arrays hold every stored PSK in the clear on the event task's
-     * stack, and s_got_pass would otherwise sit in .bss for the rest of the
+     * stack. s_got_pass would otherwise sit in .bss for the rest of the
      * boot. storage_wifi_save() has taken its copy — scrub all three. */
     keystore_wipe(old,    sizeof(old));
     keystore_wipe(merged, sizeof(merged));
@@ -138,8 +138,8 @@ esp_err_t wifi_provision_start(void)
 {
     if (s_state != WIFI_PROV_ST_IDLE) return ESP_ERR_INVALID_STATE;
 
-    /* Ensure the driver is up and park wifi_manager so its retry loop won't
-     * fight the provisioning manager over the STA interface. */
+    /* Ensure the driver is up. Then park wifi_manager, so its retry loop
+     * won't fight the provisioning manager over the STA interface. */
     if (wifi_manager_init() != ESP_OK) return ESP_FAIL;
     wifi_manager_disconnect();
 
