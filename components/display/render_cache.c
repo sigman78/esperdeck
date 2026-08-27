@@ -45,6 +45,18 @@ static DRAM_ATTR const color_t s_overlay_bar[OVERLAY_PAL_SIZE] = {
     RGB565(104, 112, 192),    /* 6 periwinkle                   */
     RGB565(255, 255, 255),    /* 7 white (kept pure — QR)       */
 };
+/* DIM|INVERSE companions at ~60% — the value wells (ui-spec): same hue,
+ * clearly darker than the bar beside them. */
+static DRAM_ATTR const color_t s_overlay_bar_dim[OVERLAY_PAL_SIZE] = {
+    RGB565( 89,  89,  89),    /* 0 gray                         */
+    RGB565( 58, 101,  58),    /* 1 sage                         */
+    RGB565( 48,  96, 101),    /* 2 teal                         */
+    RGB565(101,  58,  96),    /* 3 mauve                        */
+    RGB565(120,  91,  43),    /* 4 ochre                        */
+    RGB565(110,  53,  48),    /* 5 terracotta                   */
+    RGB565( 62,  67, 115),    /* 6 periwinkle                   */
+    RGB565(153, 153, 153),    /* 7 white → mid gray             */
+};
 
 void display_set_text_buffer(const terminal_cell_t *buf, int cols, int rows)
 {
@@ -161,15 +173,20 @@ static IRAM_ATTR void resolve_overlay_cell(uint8_t ov_attrs, uint8_t ov_color,
 {
     color_t fg, bg;
     if (ov_attrs & OVERLAY_ATTR_INVERSE) {
-        /* Solid bar. Colored bars (1-6) get a pale tint of their hue as
-         * text; gray/white keep dark text (QR modules stay dark-on-white). */
-        bg = s_overlay_bar[ov_color];
+        /* Solid bar; DIM picks the darker companion (value wells). Colored
+         * bars (1-6) get a pale tint of their hue as text — derived from
+         * bg, so a dim bar keeps readable text; gray/white keep dark text
+         * (QR modules stay dark-on-white). */
+        bg = (ov_attrs & OVERLAY_ATTR_DIM) ? s_overlay_bar_dim[ov_color]
+                                           : s_overlay_bar[ov_color];
         if (ov_color >= 1 && ov_color <= 6 && !(ov_attrs & OVERLAY_ATTR_BRIGHT))
             fg = (color_t)(((bg >> 2) & 0x39E7) + 0x7BEF + 0x39E7);
         else
             fg = s_overlay.bg;
     } else {
         fg = ov_color ? s_overlay_pal[ov_color] : s_overlay.fg;
+        if (ov_attrs & OVERLAY_ATTR_DIM)   /* muted accent text */
+            fg = (color_t)((fg >> 1) & 0x7BEFu);
         bg = s_overlay.bg;
     }
     /* Focus wash: bg 50% toward white (carry-safe half-sum). */

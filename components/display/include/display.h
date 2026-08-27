@@ -107,7 +107,10 @@ esp_lcd_panel_handle_t display_get_panel(void);
  * display_set_overlay_colors().
  *   INVERSE  swaps fg/bg per cell (solid bars, selection).
  *   DIM      on a transparent cell = scrim: the terminal shows through at
- *            ~50% brightness (modal backdrop).
+ *            ~50% brightness (modal backdrop). On an opaque cell = the
+ *            muted variant: an INVERSE bar drops to the darker bar
+ *            palette (value wells, ui-spec), text renders its accent at
+ *            half brightness (inactive indicators).
  *   BRIGHT   focus wash: bg 50% toward white — a focused bar turns pastel.
  *   BOLD     use the real bold face; falls back to the normal glyph when
  *            no bold form exists. Pure glyph swap, colors untouched.
