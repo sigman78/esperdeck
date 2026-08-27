@@ -9,6 +9,49 @@
 
 #include "app_internal.h"
 
+/* --------------------------------------------------------- drag → rows */
+
+/* Accumulate-then-floor drag converter (ui-spec touch rule 4): the touch
+ * task polls at 50 ms, so converting each small dy alone floors to zero
+ * and a slow drag never scrolls. Travel accumulates in pixel-percent
+ * (scaled by CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT); whole rows are spent,
+ * the remainder is kept. */
+typedef struct { int accum; } ui_drag_t;
+
+/** Feed @p dy pixels of travel; returns whole rows (@p row_px each). */
+int  ui_drag_rows(ui_drag_t *d, int dy, int row_px);
+void ui_drag_reset(ui_drag_t *d);
+
+/* ------------------------------------------------------------ ListView */
+
+/* Scrolling list of fixed-height rows — never drops overflow (the tile
+ * grids' silent-clip debt, ui-spec). The part owns geometry, scroll,
+ * hit and arrow-nav; the CALLER owns the struct and draws the rows
+ * (ui_tile per row keeps the house look) at ui_list_row_y(). */
+typedef struct {
+    int x, y, w, h;        /* body rect, in cells                       */
+    int row_h;             /* cell-rows per row, incl. a 1-row gutter   */
+    int count;             /* model rows                                */
+    int sel;               /* selected row                              */
+    int top;               /* first visible row                         */
+    ui_drag_t drag;        /* vertical drag accumulator                 */
+} ui_list_t;
+
+/** Rows that fit the rect. */
+int  ui_list_visible(const ui_list_t *l);
+/** Clamp sel/top into range and scroll sel into view. */
+void ui_list_clamp(ui_list_t *l);
+/** Top cell row of @p idx, or -1 while it is scrolled out. */
+int  ui_list_row_y(const ui_list_t *l, int idx);
+/** Row index at a touch pixel, or -1 (widget-owned hit-testing). */
+int  ui_list_hit(const ui_list_t *l, int px, int py);
+/** Arrow/page navigation; true = selection moved. */
+bool ui_list_nav(ui_list_t *l, ui_key_t k);
+/** Drag travel in pixels; returns rows scrolled (sel follows the view). */
+int  ui_list_scroll(ui_list_t *l, int dy_px);
+/** Right-edge overflow cue inside the rect; no-op when all rows fit. */
+void ui_list_draw_scroll(const ui_list_t *l);
+
 /* ------------------------------------------------------------ tile grid */
 
 /** Cell coordinates of tile @p slot's top-left corner. */

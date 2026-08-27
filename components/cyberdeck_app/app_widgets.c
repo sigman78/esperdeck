@@ -15,7 +15,117 @@
 
 #include "esp_heap_caps.h"   /* free-RAM stats (idfsim stubs it) */
 
-/* ---------------------------------------------------------- tile grid */
+/* --------------------------------------------------------- drag → rows */
+
+#ifndef CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT
+#define CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT 100
+#endif
+
+int ui_drag_rows(ui_drag_t *d, int dy, int row_px)
+{
+    if (row_px <= 0) return 0;
+    d->accum += dy * CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT;
+    const int per_row = row_px * 100;
+    int rows = d->accum / per_row;
+    d->accum -= rows * per_row;
+    return rows;
+}
+
+void ui_drag_reset(ui_drag_t *d)
+{
+    d->accum = 0;
+}
+
+/* ------------------------------------------------------------ ListView */
+
+int ui_list_visible(const ui_list_t *l)
+{
+    if (l->row_h <= 0) return 0;
+    /* The trailing gutter row is optional: N rows need N*row_h - 1 cells. */
+    int n = (l->h + 1) / l->row_h;
+    return n < 0 ? 0 : n;
+}
+
+void ui_list_clamp(ui_list_t *l)
+{
+    const int vis = ui_list_visible(l);
+    if (l->sel >= l->count) l->sel = l->count ? l->count - 1 : 0;
+    if (l->sel < 0)         l->sel = 0;
+    const int max_top = l->count > vis ? l->count - vis : 0;
+    if (l->top > max_top)   l->top = max_top;
+    if (l->top < 0)         l->top = 0;
+    if (l->sel < l->top)              l->top = l->sel;
+    if (vis && l->sel >= l->top + vis) l->top = l->sel - vis + 1;
+}
+
+int ui_list_row_y(const ui_list_t *l, int idx)
+{
+    const int vis = ui_list_visible(l);
+    if (idx < l->top || idx >= l->top + vis || idx >= l->count) return -1;
+    return l->y + (idx - l->top) * l->row_h;
+}
+
+int ui_list_hit(const ui_list_t *l, int px, int py)
+{
+    const int cc = px / font_width();
+    const int cr = py / font_height();
+    if (cc < l->x || cc >= l->x + l->w || cr < l->y || l->row_h <= 0)
+        return -1;
+    const int rel = cr - l->y;
+    if (l->row_h > 1 && rel % l->row_h == l->row_h - 1) return -1;  /* gutter */
+    const int idx = l->top + rel / l->row_h;
+    return (rel / l->row_h < ui_list_visible(l) && idx < l->count) ? idx : -1;
+}
+
+bool ui_list_nav(ui_list_t *l, ui_key_t k)
+{
+    if (l->count <= 0) return false;
+    const int vis = ui_list_visible(l);
+    int sel = l->sel;
+    switch (k) {
+    case K_UP:          sel -= 1;   break;
+    case K_DOWN:        sel += 1;   break;
+    case K_SCROLL_UP:   sel -= vis; break;   /* page */
+    case K_SCROLL_DOWN: sel += vis; break;
+    default: return false;
+    }
+    if (sel < 0)         sel = 0;
+    if (sel >= l->count) sel = l->count - 1;
+    if (sel == l->sel) return false;
+    l->sel = sel;
+    ui_list_clamp(l);
+    return true;
+}
+
+int ui_list_scroll(ui_list_t *l, int dy_px)
+{
+    const int rows = ui_drag_rows(&l->drag, dy_px, font_height() * l->row_h);
+    if (!rows) return 0;
+    const int vis = ui_list_visible(l);
+    const int max_top = l->count > vis ? l->count - vis : 0;
+    int top = l->top + rows;
+    if (top > max_top) top = max_top;
+    if (top < 0)       top = 0;
+    const int moved = top - l->top;
+    if (!moved) return 0;
+    l->top = top;
+    /* Selection follows the view so keyboard focus is never off-screen. */
+    if (l->sel < l->top)        l->sel = l->top;
+    if (l->sel >= l->top + vis) l->sel = l->top + vis - 1;
+    return moved;
+}
+
+void ui_list_draw_scroll(const ui_list_t *l)
+{
+    const int vis = ui_list_visible(l);
+    if (l->count <= vis || l->h <= 0) return;
+    /* Shade column on the rect's right edge: lit span = visible window. */
+    const int x = l->x + l->w - 1;
+    const int y0 = l->y + l->top * l->h / l->count;
+    const int y1 = l->y + (l->top + vis) * l->h / l->count;
+    for (int y = l->y; y < l->y + l->h; y++)
+        ui_putch(x, y, (y >= y0 && y <= y1) ? UI_SHADE3 : UI_SHADE1, 0);
+}
 
 /* Cell coordinates of tile @p slot's top-left corner. */
 int tile_x(const tilegrid_t *g, int slot)

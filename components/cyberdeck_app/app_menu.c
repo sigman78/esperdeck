@@ -34,6 +34,9 @@ static struct {
 static const menu_item_t *s_slot[MENU_MAX_TILES];
 static int s_slot_count;
 
+/* The profile pickers' scrolling list (geometry refreshed per render). */
+static ui_list_t s_pick;
+
 static int build_slots(const menu_page_t *p)
 {
     int n = 0;
@@ -90,16 +93,29 @@ static void render_menu(uint64_t now)
         count = build_slots(p);
     }
 
-    /* Pickers can outgrow one centered column, so they use the multi-column
-     * HOME grid; everything below is grid-agnostic. */
-    tilegrid_t g;
+    tilegrid_t g = { 0 };
     int title_row, ly, chrome_x;
-    if (picker || (pflags & MENU_PAGE_WIDE)) {
+    if (picker) {
+        /* Two-line rows in a centered scrolling list — a long profile
+         * set scrolls instead of dropping off the grid (ui-spec ListView). */
+        title_row = 2;
+        ly        = ui_rows() - 3;
+        chrome_x  = (ui_cols() - 40) / 2;
+        s_pick.x     = chrome_x;
+        s_pick.y     = 4;
+        s_pick.w     = 40;
+        s_pick.h     = ly - 1 - s_pick.y;
+        s_pick.row_h = 3;              /* 2-row tile + 1 gutter */
+        s_pick.count = count;
+        s_pick.sel   = s_menu.sel;
+        ui_list_clamp(&s_pick);
+        s_menu.sel = s_pick.sel;
+        app.grid = g;                  /* taps route through the list */
+    } else if (pflags & MENU_PAGE_WIDE) {
         g = picker_grid(count);
-        /* A table page must never clip its trailing Back tile — an
-         * off-grid tile is untappable. Squeeze tile height until it fits
-         * (a picker may legitimately overflow; ListView is item 4). */
-        while (!picker && g.count < count && g.th > 2) {
+        /* Never clip the trailing Back tile — an off-grid tile is
+         * untappable. Squeeze tile height until the page fits. */
+        while (g.count < count && g.th > 2) {
             g.th--;
             int avail = ui_rows() - 2 - g.y0;
             g.nrows   = (avail + g.gy) / (g.th + g.gy);
@@ -128,8 +144,10 @@ static void render_menu(uint64_t now)
         if (ly > ui_rows() - 1) ly = ui_rows() - 1;
         chrome_x  = g.x0;
     }
-    app.grid = g;
-    if (s_menu.sel >= g.count) s_menu.sel = g.count ? g.count - 1 : 0;
+    if (!picker) {
+        app.grid = g;
+        if (s_menu.sel >= g.count) s_menu.sel = g.count ? g.count - 1 : 0;
+    }
 
     /* Title as a magenta lozenge, centered over the chrome column. */
     int tl = (int)strlen(title);
@@ -145,51 +163,58 @@ static void render_menu(uint64_t now)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    for (int i = 0; i < g.count; i++) {
-        const char *label, *body;
-        uint8_t col;
-        bool armed = false, grabbed = false;
-        if (picker) {
+    if (picker) {
+        const int vis = ui_list_visible(&s_pick);
+        for (int i = s_pick.top; i < s_pick.top + vis && i < count; i++) {
             const char *confirm = (sc == MS_DELPROFILE && i < app.stored_count)
                                 ? "CONFIRM delete?" : NULL;
-            armed   = i == s_menu.sel && s_menu.armed && confirm;
-            grabbed = (sc == MS_REORDER) && (i == s_menu.reorder_grab);
-            col = armed                 ? OVERLAY_COL_RED
-                : i >= app.stored_count ? OVERLAY_COL_BLUE
-                : sc == MS_DELPROFILE   ? OVERLAY_COL_AMBER
-                : grabbed               ? OVERLAY_COL_GREEN
-                                        : OVERLAY_COL_CYAN;
-            label = armed ? confirm : pick_titles[i];
-            body  = pick_bodies[i];
-        } else {
+            const bool armed   = i == s_menu.sel && s_menu.armed && confirm;
+            const bool grabbed = (sc == MS_REORDER) &&
+                                 (i == s_menu.reorder_grab);
+            ui_pen(armed                 ? OVERLAY_COL_RED
+                 : i >= app.stored_count ? OVERLAY_COL_BLUE
+                 : sc == MS_DELPROFILE   ? OVERLAY_COL_AMBER
+                 : grabbed               ? OVERLAY_COL_GREEN
+                                         : OVERLAY_COL_CYAN);
+            /* Two-line row tile; the list's right edge is the scroll cue. */
+            ui_tile(s_pick.x, ui_list_row_y(&s_pick, i), s_pick.w - 2, 2,
+                    armed ? confirm : pick_titles[i], pick_bodies[i],
+                    i == s_menu.sel || grabbed);
+        }
+        ui_pen(OVERLAY_COL_BLUE);
+        ui_list_draw_scroll(&s_pick);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    } else {
+        for (int i = 0; i < g.count; i++) {
             const menu_item_t *it = s_slot[i];
             const bool dim = it->dim && it->dim(it->arg);
-            armed = i == s_menu.sel && s_menu.armed && it->confirm;
-            col = armed        ? OVERLAY_COL_RED
-                : it->color_fn ? it->color_fn(it->arg)
-                               : it->color;
-            label = armed        ? it->confirm
-                  : it->label_fn ? it->label_fn(it->arg)
-                                 : it->label;
+            const bool armed = i == s_menu.sel && s_menu.armed && it->confirm;
+            uint8_t col = armed  ? OVERLAY_COL_RED
+                : it->color_fn   ? it->color_fn(it->arg)
+                                 : it->color;
+            const char *label = armed ? it->confirm
+                       : it->label_fn ? it->label_fn(it->arg)
+                                      : it->label;
             vbuf[i][0] = '\0';
-            body = it->value ? it->value(it->arg, vbuf[i], sizeof(vbuf[i]))
-                 : dim       ? "(unavailable)"
-                             : "";
-        }
-        ui_pen(col);
-        /* Focus is carried by the tile itself (washed bar + lit rail);
-         * a grabbed REORDER tile reads by its green bar. */
-        const bool sel = i == s_menu.sel || grabbed;
-        if ((pflags & MENU_PAGE_VALS) && body[0] && !armed) {
-            /* Value right-aligned on the title row in regular weight,
-             * settings-table style — the bold name carries the emphasis
-             * and the value reads as data. */
-            ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, label, "", sel);
-            ui_puts(tile_x(&g, i) + g.tw - 2 - (int)strlen(body),
-                    tile_y(&g, i) + (g.th - 1) / 2, body,
-                    OVERLAY_ATTR_INVERSE | (sel ? OVERLAY_ATTR_BRIGHT : 0));
-        } else {
-            ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, label, body, sel);
+            const char *body =
+                  it->value ? it->value(it->arg, vbuf[i], sizeof(vbuf[i]))
+                : dim       ? "(unavailable)"
+                            : "";
+            ui_pen(col);
+            /* Focus is carried by the tile itself (washed bar + lit rail). */
+            const bool sel = i == s_menu.sel;
+            if ((pflags & MENU_PAGE_VALS) && body[0] && !armed) {
+                /* Value right-aligned on the title row in regular weight,
+                 * settings-table style — the bold name carries the emphasis
+                 * and the value reads as data. */
+                ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, label, "", sel);
+                ui_puts(tile_x(&g, i) + g.tw - 2 - (int)strlen(body),
+                        tile_y(&g, i) + (g.th - 1) / 2, body,
+                        OVERLAY_ATTR_INVERSE | (sel ? OVERLAY_ATTR_BRIGHT : 0));
+            } else {
+                ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, label, body,
+                        sel);
+            }
         }
     }
 
@@ -276,6 +301,10 @@ void menu_goto(int sc)
     s_menu.sel    = 0;
     s_menu.armed  = false;
     if (sc == MS_REORDER) s_menu.reorder_grab = -1;
+    if (menu_is_picker(sc)) {
+        s_pick.top = 0;
+        ui_drag_reset(&s_pick.drag);
+    }
     const menu_page_t *p = menu_page(sc);
     if (p && p->on_open) p->on_open();
     if (p) build_slots(p);
@@ -496,13 +525,27 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                        uint64_t now)
 {
     (void)ch;
+    const bool picker = menu_is_picker(s_menu.screen);
     /* Esc / F12 / tap-outside all step back one level. */
     if (k == K_ESC || (ev->type == CYBERDECK_INPUT_KEY && k == K_F12)) {
         menu_back(now);
         return;
     }
+    /* Right-edge drag scrolls a picker's list; selection follows the view. */
+    if (ev->type == CYBERDECK_INPUT_SCROLL) {
+        if (picker && ui_list_scroll(&s_pick, ev->dy)) {
+            s_menu.sel = s_pick.sel;
+            if (s_menu.armed) {
+                s_menu.armed = false;
+                menu_clear_note();
+            }
+            nav_invalidate();
+        }
+        return;
+    }
     if (ev->type == CYBERDECK_INPUT_TAP) {
-        int slot = tile_hit(&app.grid, ev->x, ev->y);
+        int slot = picker ? ui_list_hit(&s_pick, ev->x, ev->y)
+                          : tile_hit(&app.grid, ev->x, ev->y);
         if (slot < 0) { menu_back(now); return; }   /* tap outside: back */
         /* Tapping a DIFFERENT tile than the armed one must disarm first, or
          * the stale arm fires this tile's destructive action unconfirmed. */
@@ -511,25 +554,37 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
             menu_clear_note();
         }
         s_menu.sel = slot;
+        if (picker) s_pick.sel = slot;
         menu_activate(now);                        /* == Enter */
         return;
     }
     switch (k) {
-    case K_UP: case K_DOWN: case K_LEFT: case K_RIGHT: {
-        int ns = tile_nav(&app.grid, s_menu.sel, k);
-        /* A grabbed reorder tile rides the arrows: each step swaps it
-         * with the neighbour (never with the trailing Back tile). */
+    case K_UP: case K_DOWN: case K_LEFT: case K_RIGHT:
+    case K_SCROLL_UP: case K_SCROLL_DOWN: {
+        /* A grabbed reorder row rides the arrows: each step swaps it
+         * with the neighbour (never with the trailing Back row). */
         if (s_menu.screen == MS_REORDER && s_menu.reorder_grab >= 0) {
-            if (ns != s_menu.sel && ns < app.stored_count &&
+            int ns = k == K_UP   ? s_menu.sel - 1
+                   : k == K_DOWN ? s_menu.sel + 1
+                                 : s_menu.sel;
+            if (ns != s_menu.sel && ns >= 0 && ns < app.stored_count &&
                 s_menu.sel < app.stored_count) {
                 conn_profile_t t         = app.profiles[ns];
                 app.profiles[ns]         = app.profiles[s_menu.sel];
                 app.profiles[s_menu.sel] = t;
                 s_menu.reorder_grab = ns;
-                s_menu.sel          = ns;
+                s_menu.sel = s_pick.sel = ns;
+                ui_list_clamp(&s_pick);
                 nav_invalidate();
             }
             break;
+        }
+        int ns = s_menu.sel;
+        if (picker) {
+            s_pick.sel = s_menu.sel;
+            if (ui_list_nav(&s_pick, k)) ns = s_pick.sel;
+        } else {
+            ns = tile_nav(&app.grid, s_menu.sel, k);
         }
         if (ns != s_menu.sel) {
             s_menu.sel = ns;

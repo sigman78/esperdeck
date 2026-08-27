@@ -106,13 +106,8 @@ static void render_connecting(uint64_t now)
 
 static uint64_t s_scrollbar_until;   /* 0 = not showing */
 
-/* Drag travel not yet spent, in pixel-percent (px * SCROLL_SPEED_PCT). */
-static int s_scroll_accum;
-
-#ifndef CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT
-#define CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT 100
-#endif
-#define SCROLL_SPEED_PCT  CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT
+/* Drag travel not yet spent (shared accumulate-then-floor converter). */
+static ui_drag_t s_scroll_drag;
 
 void session_scroll_seen(uint64_t now)
 {
@@ -494,16 +489,10 @@ static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
         menu_open(now);
         return;
     }
-    /* Right-edge drag, content-follows-finger: down pulls older lines in.
-     * Pixels accumulate because the touch task polls at 50 ms — converting
-     * each small dy on its own would floor to zero and a slow drag would
-     * never scroll. */
+    /* Right-edge drag, content-follows-finger: down pulls older lines in. */
     if (ev->type == CYBERDECK_INPUT_SCROLL) {
-        s_scroll_accum += (int)ev->dy * SCROLL_SPEED_PCT;
-        const int per_row = font_height() * 100;
-        int rows = s_scroll_accum / per_row;
+        int rows = ui_drag_rows(&s_scroll_drag, ev->dy, font_height());
         if (rows) {
-            s_scroll_accum -= rows * per_row;
             vterm_scroll(rows);
             session_scroll_seen(now);
         }
