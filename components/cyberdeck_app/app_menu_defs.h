@@ -31,7 +31,10 @@ typedef enum {
 
 /* One tile. Static parts inline; dynamic parts are callbacks taking the
  * item's @p arg, so one function serves a family of items (font sizes,
- * fx tunables). Only label and one of color/color_fn are required. */
+ * fx tunables). One of label/label_fn and one of color/color_fn are
+ * required. String-returning callbacks run every render (~10 fps): keep
+ * them cheap (snapshot expensive reads in the page's on_open) and return
+ * @p buf or a static-storage string — never NULL. @p sz is >= 16. */
 typedef struct {
     const char *label;
     const char *(*label_fn)(intptr_t arg);       /* overrides label      */
@@ -60,6 +63,7 @@ typedef struct {
     uint8_t count;
     int8_t  back_to;           /* menu_screen_t target, or MENU_BACK_LEAVE */
     uint8_t flags;             /* MENU_PAGE_*                            */
+    uint8_t hold;              /* APP_SETTINGS_HOLD_* while page is open */
     void  (*on_open)(void);    /* snapshot volatile state at page open   */
 } menu_page_t;
 

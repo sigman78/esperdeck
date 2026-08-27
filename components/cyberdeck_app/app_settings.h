@@ -51,11 +51,16 @@ typedef enum {
     APP_FX_WIPE, APP_FX_COLLAPSE, APP_FX_STATIC,
 } app_fx_tunable_t;
 
-/* Step tunable @p t to its next preset (quantized; settings.ini keeps
- * byte-granular control), apply live, arm a one-shot preview for the
- * event effects. */
-void app_settings_fx_cycle(int t);
-void app_settings_fx_format(int t, char *buf, size_t sz);
+/* Each tunable is an ordered table of quantized presets (settings.ini
+ * keeps byte-granular control; index() snaps hand-edited values to the
+ * nearest preset). set() applies live and previews the event effects;
+ * the flash write stays deferred. count/index/set is the Slider/Stepper
+ * contract (ui-spec); cycle is the tap-to-step sugar over it. */
+int         app_settings_fx_count(app_fx_tunable_t t);
+int         app_settings_fx_index(app_fx_tunable_t t);
+const char *app_settings_fx_label(app_fx_tunable_t t, int idx);
+void        app_settings_fx_set(app_fx_tunable_t t, int idx);
+void        app_settings_fx_cycle(app_fx_tunable_t t);
 
 void app_settings_saver_cycle(void);        /* 1/3/5/10/30 min steps */
 void app_settings_saver_format(char *buf, size_t sz);
@@ -66,8 +71,10 @@ const char *app_settings_touch_str(void);
 #endif
 
 enum { APP_SETTINGS_HOLD_FX = 1 << 0, APP_SETTINGS_HOLD_SYS = 1 << 1 };
-/** Defer dirty writes for the given groups (the menu sets this while the
- *  EFFECTS/SYSTEM page is open; 0 releases everything). */
+/* Defer dirty writes for the given groups (the menu sets this while the
+ * EFFECTS/SYSTEM page is open; 0 releases everything). */
 void app_settings_hold(uint8_t mask);
-/** Write whatever is dirty and not held. Call from the app tick. */
+/* Write whatever is dirty and not held. Call from the app tick. */
 void app_settings_idle_flush(void);
+/* Forget pending writes (factory reset must not resurrect the file). */
+void app_settings_dirty_discard(void);

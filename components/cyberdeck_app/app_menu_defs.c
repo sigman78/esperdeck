@@ -248,6 +248,7 @@ static void act_factory(intptr_t a, uint64_t now)
 {
     (void)a;
     storage_factory_reset();
+    app_settings_dirty_discard();   /* pending writes must not resurrect it */
     if (app.cfg.ble && app.cfg.ble->forget) app.cfg.ble->forget();
     load_profiles();
     menu_note(now, MENU_MSG_MS, false, "wiped - reboot advised");
@@ -276,13 +277,14 @@ static const menu_item_t system_items[] = {
 static void act_fx(intptr_t t, uint64_t now)
 {
     (void)now;
-    app_settings_fx_cycle((int)t);
+    app_settings_fx_cycle((app_fx_tunable_t)t);
 }
 
 static const char *val_fx(intptr_t t, char *buf, size_t sz)
 {
-    app_settings_fx_format((int)t, buf, sz);
-    return buf;
+    (void)buf; (void)sz;
+    const app_fx_tunable_t fx = (app_fx_tunable_t)t;
+    return app_settings_fx_label(fx, app_settings_fx_index(fx));
 }
 
 static const menu_item_t fx_items[] = {
@@ -336,12 +338,12 @@ static void font_refresh_pending(void)
     }
 }
 
-static const char *font_label(intptr_t s)
+static const char *label_font(intptr_t s)
 {
     return font_size_name((font_size_t)s);
 }
 
-static uint8_t font_color(intptr_t s)
+static uint8_t color_font(intptr_t s)
 {
     return (font_size_t)s == font_active_size() ? OVERLAY_COL_GREEN
                                                 : OVERLAY_COL_CYAN;
@@ -400,11 +402,11 @@ static void act_font(intptr_t s, uint64_t now)
 }
 
 static const menu_item_t font_items[] = {
-    { .label_fn = font_label, .color_fn = font_color, .action = act_font,
+    { .label_fn = label_font, .color_fn = color_font, .action = act_font,
       .arg = FONT_SIZE_8X16,  .value = val_font },
-    { .label_fn = font_label, .color_fn = font_color, .action = act_font,
+    { .label_fn = label_font, .color_fn = color_font, .action = act_font,
       .arg = FONT_SIZE_10X20, .value = val_font },
-    { .label_fn = font_label, .color_fn = font_color, .action = act_font,
+    { .label_fn = label_font, .color_fn = color_font, .action = act_font,
       .arg = FONT_SIZE_12X24, .value = val_font },
     { .label = "Back", .color = OVERLAY_COL_BLUE, .action = act_back },
 };
@@ -423,13 +425,13 @@ static void ks_on_open(void)
     s_ks_snap = keystore_state();
 }
 
-static bool ks_hidden_absent(intptr_t a)
+static bool hidden_ks_absent(intptr_t a)
 {
     (void)a;
     return s_ks_snap == KEYSTORE_ABSENT;
 }
 
-static const char *ks_setpin_label(intptr_t a)
+static const char *label_ks_setpin(intptr_t a)
 {
     (void)a;
     return s_ks_snap == KEYSTORE_ABSENT ? "Create keystore" : "Change code";
@@ -475,40 +477,50 @@ static void act_ks_remove(intptr_t a, uint64_t now)
 
 static const menu_item_t ks_items[] = {
     { .label = "Lock deck",   .color = OVERLAY_COL_CYAN, .action = act_ks_lock,
-      .hidden = ks_hidden_absent, .value = val_ks_lock },
-    { .label_fn = ks_setpin_label, .color = OVERLAY_COL_CYAN,
+      .hidden = hidden_ks_absent, .value = val_ks_lock },
+    { .label_fn = label_ks_setpin, .color = OVERLAY_COL_CYAN,
       .action = act_ks_setpin, .value = val_ks_setpin },
     { .label = "Remove code", .color = OVERLAY_COL_CYAN, .action = act_ks_remove,
-      .hidden = ks_hidden_absent, .value = val_ks_remove },
+      .hidden = hidden_ks_absent, .value = val_ks_remove },
     { .label = "Back",        .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* ------------------------------------------------------------ the pages */
 
-_Static_assert(NELEM(config_items) <= MENU_MAX_TILES, "grow MENU_MAX_TILES");
-_Static_assert(NELEM(fx_items)     <= MENU_MAX_TILES, "grow MENU_MAX_TILES");
+#define ASSERT_FITS(t) \
+    _Static_assert(NELEM(t) <= MENU_MAX_TILES, "grow MENU_MAX_TILES")
+ASSERT_FITS(main_items);   ASSERT_FITS(config_items);
+ASSERT_FITS(profiles_items); ASSERT_FITS(import_items);
+ASSERT_FITS(wifi_items);   ASSERT_FITS(kbd_items);
+ASSERT_FITS(system_items); ASSERT_FITS(fx_items);
+ASSERT_FITS(font_items);   ASSERT_FITS(ks_items);
 
 static const menu_page_t PAGES[] = {
-    [MS_MAIN]     = { "MENU",          main_items,     NELEM(main_items),
-                      MENU_BACK_LEAVE, 0, NULL },
-    [MS_CONFIG]   = { "CONFIGURATION", config_items,   NELEM(config_items),
-                      MS_MAIN,         0, NULL },
-    [MS_PROFILES] = { "PROFILES",      profiles_items, NELEM(profiles_items),
-                      MS_CONFIG,       0, NULL },
-    [MS_IMPORT]   = { "IMPORT",        import_items,   NELEM(import_items),
-                      MS_PROFILES,     0, NULL },
-    [MS_WIFI]     = { "WIFI",          wifi_items,     NELEM(wifi_items),
-                      MS_CONFIG,       0, NULL },
-    [MS_KEYBOARD] = { "KEYBOARD",      kbd_items,      NELEM(kbd_items),
-                      MS_CONFIG,       0, NULL },
-    [MS_SYSTEM]   = { "SYSTEM",        system_items,   NELEM(system_items),
-                      MS_CONFIG,       0, NULL },
-    [MS_EFFECTS]  = { "EFFECTS",       fx_items,       NELEM(fx_items),
-                      MS_CONFIG,       MENU_PAGE_WIDE | MENU_PAGE_VALS, NULL },
-    [MS_FONT]     = { "FONT",          font_items,     NELEM(font_items),
-                      MS_CONFIG,       0, font_on_open },
-    [MS_KEYSTORE] = { "KEYSTORE",      ks_items,       NELEM(ks_items),
-                      MS_CONFIG,       0, ks_on_open },
+    [MS_MAIN]     = { .title = "MENU", .items = main_items,
+                      .count = NELEM(main_items), .back_to = MENU_BACK_LEAVE },
+    [MS_CONFIG]   = { .title = "CONFIGURATION", .items = config_items,
+                      .count = NELEM(config_items), .back_to = MS_MAIN },
+    [MS_PROFILES] = { .title = "PROFILES", .items = profiles_items,
+                      .count = NELEM(profiles_items), .back_to = MS_CONFIG },
+    [MS_IMPORT]   = { .title = "IMPORT", .items = import_items,
+                      .count = NELEM(import_items), .back_to = MS_PROFILES },
+    [MS_WIFI]     = { .title = "WIFI", .items = wifi_items,
+                      .count = NELEM(wifi_items), .back_to = MS_CONFIG },
+    [MS_KEYBOARD] = { .title = "KEYBOARD", .items = kbd_items,
+                      .count = NELEM(kbd_items), .back_to = MS_CONFIG },
+    [MS_SYSTEM]   = { .title = "SYSTEM", .items = system_items,
+                      .count = NELEM(system_items), .back_to = MS_CONFIG,
+                      .hold = APP_SETTINGS_HOLD_SYS },
+    [MS_EFFECTS]  = { .title = "EFFECTS", .items = fx_items,
+                      .count = NELEM(fx_items), .back_to = MS_CONFIG,
+                      .flags = MENU_PAGE_WIDE | MENU_PAGE_VALS,
+                      .hold = APP_SETTINGS_HOLD_FX },
+    [MS_FONT]     = { .title = "FONT", .items = font_items,
+                      .count = NELEM(font_items), .back_to = MS_CONFIG,
+                      .on_open = font_on_open },
+    [MS_KEYSTORE] = { .title = "KEYSTORE", .items = ks_items,
+                      .count = NELEM(ks_items), .back_to = MS_CONFIG,
+                      .on_open = ks_on_open },
     /* MS_DELPROFILE / MS_EDITPROFILE / MS_REORDER: dynamic pickers. */
 };
 

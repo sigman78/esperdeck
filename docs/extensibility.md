@@ -464,3 +464,26 @@ in-tree features. Tick items as they merge.
   FONT, SYSTEM, the back_to chain) and a step-scaled timeout — a
   ~50-step script exceeded the old flat 25 s budget. Both keystore
   configs build and pass 5/5; device build + check_iram OK.
+- **2026-08-26 (item 3, review round)** — three-angle review (quality /
+  edges / API) applied on the branch. Structural: fx tunables became
+  ordered **preset tables** (`count/index/set/label` — the Slider
+  contract item 4 needs; `cycle` is sugar, the old cycle/format switches
+  are gone; `index()` snaps hand-edited ini values to the nearest
+  preset, so the menu now shows preset labels rather than exact
+  hand-edited seconds); the page→hold mapping moved into
+  `menu_page_t.hold` (the last page-identity special case in the
+  engine); `from_home` generalized to `s_menu.root` (entry page — fixes
+  the latent deep-link back-walk before item 5's home tiles need it).
+  Inherited fixes: factory reset now discards pending settings writes
+  (they used to resurrect settings.ini), and a WIDE table page squeezes
+  tile height instead of clipping its Back tile (glow builds at
+  10x20/12x24 had an untappable Back — pre-existing). Polish: all ten
+  item tables static-asserted against MENU_MAX_TILES, PAGES[] went
+  designated, callback naming unified (label_/color_/hidden_ role
+  prefixes), settings params typed as `app_fx_tunable_t`, the
+  value/label_fn string contract documented (return buf or static,
+  never NULL, ~10 fps budget), and sim_regress timeouts scale per
+  scenario. Review verdict kept for the record: no new bugs found —
+  the slot map, hold/flush and arm/confirm mechanics all verified
+  end-to-end; the new `sel < s_slot_count` guard closes a stale-tap
+  window the old positional switch had.

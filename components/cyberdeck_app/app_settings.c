@@ -60,106 +60,147 @@ void app_settings_register_reset(void)
 enum { DIRTY_FX = 1 << 0, DIRTY_SAVER = 1 << 1, DIRTY_TOUCH = 1 << 2 };
 static uint8_t s_dirty, s_hold;
 
-/* Frames (~39/s) to a compact "0.5s" string. */
-static void fx_secs(char *buf, size_t sz, unsigned frames)
-{
-    unsigned ms = frames * 26u;
-    snprintf(buf, sz, "%u.%us", ms / 1000u, (ms % 1000u) / 100u);
-}
+/* fx presets — one ordered table per tunable: labels for the UI, index()
+ * snapping the live cfg to a preset, apply() writing the (possibly
+ * composite) fields. Times are label'd from the fixed preset frames. */
 
-void app_settings_fx_format(int t, char *buf, size_t sz)
-{
-    display_fx_cfg_t c;
-    display_fx_get(&c);
-    switch (t) {
-    case APP_FX_SCAN:
-        snprintf(buf, sz, "%s", c.scanlines ? "on" : "off");
-        break;
-    case APP_FX_MONO:
-        snprintf(buf, sz, "%s",
-                 c.mono == 0 ? "color" : c.mono == 1 ? "green" : "amber");
-        break;
-    case APP_FX_BOLD:
-        snprintf(buf, sz, "%s", c.bold_pop ? "on" : "off");
-        break;
-    case APP_FX_WOBBLE:
-        snprintf(buf, sz, "%s",
-                 c.wobble == 0 ? "off"    : c.wobble == 1 ? "subtle"
-               : c.wobble == 2 ? "medium" : "deep");
-        break;
+typedef struct {
+    const char *const *labels;
+    uint8_t count;
+    int  (*index)(const display_fx_cfg_t *c);
+    void (*apply)(display_fx_cfg_t *c, int idx);
+} fx_preset_ops_t;
+
+static const char *const ONOFF_L[] = { "off", "on" };
+static const char *const MONO_L[]  = { "color", "green", "amber" };
+static const char *const WOB_L[]   = { "off", "subtle", "medium", "deep" };
 #if DISPLAY_FX_ROW_GLOW
-    case APP_FX_GLOW:
-        snprintf(buf, sz, "%s",
-                 !c.glow ? "off" : c.glow_strength ? "strong" : "subtle");
-        break;
-    case APP_FX_DECAY:
-        fx_secs(buf, sz, c.glow_frames);
-        break;
+static const char *const GLOW_L[]  = { "off", "subtle", "strong" };
+static const char *const DECAY_L[] = { "0.3s", "0.5s", "1.0s", "2.0s" };
+static const uint8_t     DECAY_F[] = { 12, 20, 39, 78 };
 #endif
-    case APP_FX_WIPE:
-        if (!c.wipe) snprintf(buf, sz, "off");
-        else         fx_secs(buf, sz, c.wipe_frames);
-        break;
-    case APP_FX_COLLAPSE:
-        if (!c.collapse) snprintf(buf, sz, "off");
-        else             fx_secs(buf, sz, c.collapse_frames);
-        break;
-    case APP_FX_STATIC:
-        snprintf(buf, sz, "%s",
-                 !c.static_burst       ? "off"
-                 : c.static_lines <= 1 ? "light"
-                 : c.static_lines == 2 ? "medium"
-                                       : "heavy");
-        break;
-    default: buf[0] = '\0'; break;
+static const char *const WIPE_L[]  = { "off", "0.3s", "0.6s" };
+static const char *const COLL_L[]  = { "off", "0.2s", "0.5s" };
+static const char *const STAT_L[]  = { "off", "light", "heavy" };
+
+static int  ix_scan(const display_fx_cfg_t *c) { return c->scanlines ? 1 : 0; }
+static void ap_scan(display_fx_cfg_t *c, int i) { c->scanlines = (uint8_t)i; }
+static int  ix_mono(const display_fx_cfg_t *c) { return c->mono < 3 ? c->mono : 0; }
+static void ap_mono(display_fx_cfg_t *c, int i) { c->mono = (uint8_t)i; }
+static int  ix_bold(const display_fx_cfg_t *c) { return c->bold_pop ? 1 : 0; }
+static void ap_bold(display_fx_cfg_t *c, int i) { c->bold_pop = (uint8_t)i; }
+static int  ix_wob(const display_fx_cfg_t *c) { return c->wobble < 4 ? c->wobble : 0; }
+static void ap_wob(display_fx_cfg_t *c, int i) { c->wobble = (uint8_t)i; }
+
+#if DISPLAY_FX_ROW_GLOW
+static int ix_glow(const display_fx_cfg_t *c)
+{
+    return !c->glow ? 0 : c->glow_strength ? 2 : 1;
+}
+static void ap_glow(display_fx_cfg_t *c, int i)
+{
+    c->glow = (uint8_t)(i > 0);
+    if (i) c->glow_strength = (uint8_t)(i == 2);
+}
+static int ix_decay(const display_fx_cfg_t *c)
+{
+    return c->glow_frames < 16 ? 0 : c->glow_frames < 30 ? 1
+         : c->glow_frames < 60 ? 2 : 3;
+}
+static void ap_decay(display_fx_cfg_t *c, int i)
+{
+    c->glow_frames = DECAY_F[i];
+}
+#endif
+
+static int ix_wipe(const display_fx_cfg_t *c)
+{
+    return !c->wipe ? 0 : c->wipe_frames <= 12 ? 1 : 2;
+}
+static void ap_wipe(display_fx_cfg_t *c, int i)
+{
+    c->wipe = (uint8_t)(i > 0);
+    if (i) c->wipe_frames = (uint8_t)(i == 2 ? 24 : 12);
+}
+static int ix_coll(const display_fx_cfg_t *c)
+{
+    return !c->collapse ? 0 : c->collapse_frames <= 8 ? 1 : 2;
+}
+static void ap_coll(display_fx_cfg_t *c, int i)
+{
+    c->collapse = (uint8_t)(i > 0);
+    if (i) c->collapse_frames = (uint8_t)(i == 2 ? 20 : 8);
+}
+static int ix_stat(const display_fx_cfg_t *c)
+{
+    return !c->static_burst ? 0 : c->static_lines <= 1 ? 1 : 2;
+}
+static void ap_stat(display_fx_cfg_t *c, int i)
+{
+    c->static_burst = (uint8_t)(i > 0);
+    if (i) {
+        c->static_frames = (uint8_t)(i == 2 ? 14 : 8);
+        c->static_lines  = (uint8_t)(i == 2 ? 3 : 1);
     }
 }
 
-/* Step the tunable, apply live, and (for the event effects) arm a one-shot
- * preview so the change is seen immediately. The [fx] write is deferred. */
-void app_settings_fx_cycle(int t)
+static const fx_preset_ops_t FX_PRESETS[] = {
+    [APP_FX_SCAN]     = { ONOFF_L, NELEM(ONOFF_L), ix_scan, ap_scan },
+    [APP_FX_MONO]     = { MONO_L,  NELEM(MONO_L),  ix_mono, ap_mono },
+    [APP_FX_BOLD]     = { ONOFF_L, NELEM(ONOFF_L), ix_bold, ap_bold },
+    [APP_FX_WOBBLE]   = { WOB_L,   NELEM(WOB_L),   ix_wob,  ap_wob  },
+#if DISPLAY_FX_ROW_GLOW
+    [APP_FX_GLOW]     = { GLOW_L,  NELEM(GLOW_L),  ix_glow, ap_glow },
+    [APP_FX_DECAY]    = { DECAY_L, NELEM(DECAY_L), ix_decay, ap_decay },
+#endif
+    [APP_FX_WIPE]     = { WIPE_L,  NELEM(WIPE_L),  ix_wipe, ap_wipe },
+    [APP_FX_COLLAPSE] = { COLL_L,  NELEM(COLL_L),  ix_coll, ap_coll },
+    [APP_FX_STATIC]   = { STAT_L,  NELEM(STAT_L),  ix_stat, ap_stat },
+};
+
+int app_settings_fx_count(app_fx_tunable_t t)
 {
+    return (unsigned)t < (unsigned)NELEM(FX_PRESETS) ? FX_PRESETS[t].count : 0;
+}
+
+int app_settings_fx_index(app_fx_tunable_t t)
+{
+    if ((unsigned)t >= (unsigned)NELEM(FX_PRESETS)) return 0;
     display_fx_cfg_t c;
     display_fx_get(&c);
-    switch (t) {
-    case APP_FX_SCAN:   c.scanlines = !c.scanlines;               break;
-    case APP_FX_MONO:   c.mono = (uint8_t)((c.mono + 1) % 3);     break;
-    case APP_FX_BOLD:   c.bold_pop = !c.bold_pop;                 break;
-    case APP_FX_WOBBLE: c.wobble = (uint8_t)((c.wobble + 1) % 4); break;
-#if DISPLAY_FX_ROW_GLOW
-    case APP_FX_GLOW:   /* off -> subtle -> strong -> off */
-        if (!c.glow)               { c.glow = 1; c.glow_strength = 0; }
-        else if (!c.glow_strength)   c.glow_strength = 1;
-        else                         c.glow = 0;
-        break;
-    case APP_FX_DECAY:  /* 0.3s -> 0.5s -> 1s -> 2s -> 0.3s */
-        c.glow_frames = c.glow_frames < 16 ? 20
-                      : c.glow_frames < 30 ? 39
-                      : c.glow_frames < 60 ? 78 : 12;
-        break;
-#endif
-    case APP_FX_WIPE:   /* off -> fast -> slow -> off */
-        if (!c.wipe)                { c.wipe = 1; c.wipe_frames = 12; }
-        else if (c.wipe_frames <= 12) c.wipe_frames = 24;
-        else                          c.wipe = 0;
-        break;
-    case APP_FX_COLLAPSE:
-        if (!c.collapse)                { c.collapse = 1; c.collapse_frames = 8; }
-        else if (c.collapse_frames <= 8)  c.collapse_frames = 20;
-        else                              c.collapse = 0;
-        break;
-    case APP_FX_STATIC: /* off -> light -> heavy -> off */
-        if (!c.static_burst) { c.static_burst = 1; c.static_frames = 8;  c.static_lines = 1; }
-        else if (c.static_lines <= 1) { c.static_frames = 14; c.static_lines = 3; }
-        else c.static_burst = 0;
-        break;
-    default: return;
-    }
+    return FX_PRESETS[t].index(&c);
+}
+
+const char *app_settings_fx_label(app_fx_tunable_t t, int idx)
+{
+    if ((unsigned)t >= (unsigned)NELEM(FX_PRESETS)) return "";
+    const fx_preset_ops_t *p = &FX_PRESETS[t];
+    return (idx >= 0 && idx < p->count) ? p->labels[idx] : "";
+}
+
+/* Apply preset @p idx live; the [fx] write stays deferred. An enabled
+ * event effect gets a one-shot preview so the change is seen at once. */
+void app_settings_fx_set(app_fx_tunable_t t, int idx)
+{
+    if ((unsigned)t >= (unsigned)NELEM(FX_PRESETS)) return;
+    const fx_preset_ops_t *p = &FX_PRESETS[t];
+    if (idx < 0 || idx >= p->count) return;
+    display_fx_cfg_t c;
+    display_fx_get(&c);
+    p->apply(&c, idx);
     display_fx_set(&c);
     s_dirty |= DIRTY_FX;
-    if (t == APP_FX_WIPE && c.wipe)           display_fx_wipe();
-    if (t == APP_FX_COLLAPSE && c.collapse)   display_fx_collapse();
-    if (t == APP_FX_STATIC && c.static_burst) display_fx_static();
+    if (idx > 0) {
+        if (t == APP_FX_WIPE)     display_fx_wipe();
+        if (t == APP_FX_COLLAPSE) display_fx_collapse();
+        if (t == APP_FX_STATIC)   display_fx_static();
+    }
+}
+
+void app_settings_fx_cycle(app_fx_tunable_t t)
+{
+    const int n = app_settings_fx_count(t);
+    if (n) app_settings_fx_set(t, (app_settings_fx_index(t) + 1) % n);
 }
 
 /* Saver timeout steps (minutes) — the saver engage also wipes the MK
@@ -201,6 +242,11 @@ const char *app_settings_touch_str(void)
 void app_settings_hold(uint8_t mask)
 {
     s_hold = mask;
+}
+
+void app_settings_dirty_discard(void)
+{
+    s_dirty = 0;
 }
 
 void app_settings_idle_flush(void)

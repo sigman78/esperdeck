@@ -10,7 +10,9 @@
 static struct {
     int      sel;
     int      screen;                /* menu_screen_t: page of the menu tree */
-    bool     from_home;             /* config opened from HOME (no session) */
+    int      root;                  /* entry page: back from here pops the
+                                       screen (MS_MAIN in-session, MS_CONFIG
+                                       from HOME, deep links later)         */
     bool     armed;                 /* a destructive item needs a 2nd hit   */
     char     msg[48];               /* action result, shown under the tiles */
     uint64_t msg_until;             /* auto-clear time; 0 = sticky          */
@@ -40,7 +42,7 @@ static int build_slots(const menu_page_t *p)
         if (it->hidden && it->hidden(it->arg)) continue;
         s_slot[n++] = it;
     }
-    return n;
+    return s_slot_count = n;
 }
 
 /* Build a stored-profile picker's tiles plus a trailing "Back". Bodies
@@ -65,7 +67,7 @@ static void render_menu(uint64_t now)
     ui_dim();   /* dim the live session behind the menu so it pops */
 
     const int sc = s_menu.screen;
-    const bool root = (sc == MS_MAIN);
+    const bool on_main = (sc == MS_MAIN);
     const bool picker = menu_is_picker(sc);
     const menu_page_t *p = picker ? NULL : menu_page(sc);
     const uint8_t pflags = p ? p->flags : 0;
@@ -85,7 +87,7 @@ static void render_menu(uint64_t now)
                              NELEM(pick_titles));
     } else {
         title = p->title;
-        count = s_slot_count = build_slots(p);
+        count = build_slots(p);
     }
 
     /* Pickers can outgrow one centered column, so they use the multi-column
@@ -94,6 +96,16 @@ static void render_menu(uint64_t now)
     int title_row, ly, chrome_x;
     if (picker || (pflags & MENU_PAGE_WIDE)) {
         g = picker_grid(count);
+        /* A table page must never clip its trailing Back tile — an
+         * off-grid tile is untappable. Squeeze tile height until it fits
+         * (a picker may legitimately overflow; ListView is item 4). */
+        while (!picker && g.count < count && g.th > 2) {
+            g.th--;
+            int avail = ui_rows() - 2 - g.y0;
+            g.nrows   = (avail + g.gy) / (g.th + g.gy);
+            int cap   = g.ncols * g.nrows;
+            g.count   = count < cap ? count : cap;
+        }
         title_row = 2;
         ly        = ui_rows() - 3;
         chrome_x  = (ui_cols() - 40) / 2;   /* center chrome over the screen */
@@ -184,9 +196,10 @@ static void render_menu(uint64_t now)
     /* Esc legend under the tile area; suppressed while a note is up (the
      * two share this row). */
     if (!s_menu.msg[0]) {
-        const char *legend = root ? "Esc/F12 resume \xB7 tap outside closes"
+        const char *legend = on_main ? "Esc/F12 resume \xB7 tap outside closes"
                            : sc == MS_CONFIG
-                               ? (s_menu.from_home ? "Esc \xB7 home" : "Esc \xB7 menu")
+                               ? (s_menu.root == MS_CONFIG ? "Esc \xB7 home"
+                                                           : "Esc \xB7 menu")
                                : "Esc \xB7 back";
         ui_pen(OVERLAY_COL_BLUE);
         ui_puts(chrome_x + (40 - (int)strlen(legend)) / 2, ly, legend, 0);
@@ -210,7 +223,7 @@ static void render_menu(uint64_t now)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    if (root) {
+    if (on_main) {
         /* Mainframe flex: deck uptime + link time behind the menu. */
         uint64_t up = (uint64_t)app.anim_frame * ANIM_PERIOD_MS / 1000;
         char flex[48];
@@ -265,9 +278,8 @@ void menu_goto(int sc)
     if (sc == MS_REORDER) s_menu.reorder_grab = -1;
     const menu_page_t *p = menu_page(sc);
     if (p && p->on_open) p->on_open();
-    if (p) s_slot_count = build_slots(p);
-    app_settings_hold(sc == MS_EFFECTS ? APP_SETTINGS_HOLD_FX
-                    : sc == MS_SYSTEM  ? APP_SETTINGS_HOLD_SYS : 0);
+    if (p) build_slots(p);
+    app_settings_hold(p ? p->hold : 0);
     menu_clear_note();
     nav_invalidate();
 }
@@ -284,7 +296,8 @@ void menu_abort_reorder(void)
 }
 
 /* Back one level. Every back path (Esc, tap-outside, Back tile) funnels here
- * so an armed confirm can never leak across pages. */
+ * so an armed confirm can never leak across pages. Back at the entry root
+ * leaves the menu screen; anywhere else follows the page's back_to. */
 void menu_back(uint64_t now)
 {
     if (s_menu.screen == MS_REORDER && s_menu.reorder_grab >= 0) {
@@ -293,14 +306,10 @@ void menu_back(uint64_t now)
         nav_invalidate();
         return;
     }
-    if (s_menu.screen == MS_CONFIG && s_menu.from_home) {
-        nav_pop(now);                          /* opened from HOME */
-        return;
-    }
     const int to = menu_is_picker(s_menu.screen)
                  ? MS_PROFILES
                  : menu_page(s_menu.screen)->back_to;
-    if (to == MENU_BACK_LEAVE) {               /* MAIN: resume the session */
+    if (s_menu.screen == s_menu.root || to == MENU_BACK_LEAVE) {
         s_menu.armed = false;
         nav_pop(now);
     } else {
@@ -428,7 +437,7 @@ static void menu_activate(uint64_t now)
 static void menu_enter(intptr_t arg, uint64_t now)
 {
     (void)now;
-    s_menu.from_home = (arg == MS_CONFIG);
+    s_menu.root = (int)arg;
     menu_goto((int)arg);
 }
 
@@ -460,8 +469,8 @@ void menu_open_config(uint64_t now)
 
 static void menu_tick(uint64_t now)
 {
-    /* A menu opened from HOME has no session to monitor. */
-    if (!s_menu.from_home && !ssh_client_is_connected()) {
+    /* Only the in-session menu has a session to monitor. */
+    if (s_menu.root == MS_MAIN && !ssh_client_is_connected()) {
         session_dropped(now);
         return;
     }
