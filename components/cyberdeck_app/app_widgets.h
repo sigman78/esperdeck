@@ -103,10 +103,9 @@ bool clock_str(char *buf, size_t sz);
 void draw_titlebar(int x0, const char *text);
 
 /** The StatusBar (ui-spec, locked): full-width bar on its own background
- *  at row n-1 — lettered indicator patches (NET/KBD, keystore lock),
- *  clock right; a live toast takes the indicator span over. Composited
- *  by the shell for NAV_CHROME_FULL screens; polls its sources (the
- *  keystore state is cached ~2 s — ABSENT stats the filesystem). */
+ *  at row n-1 — lettered indicator patches (NET/KBD), clock right; a
+ *  live toast takes the indicator span over. Composited by the shell
+ *  for NAV_CHROME_FULL screens. */
 void ui_statusbar(uint64_t now);
 
 /** Standard modal header: titlebar chip + right-aligned "// tag" + rule. */

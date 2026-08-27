@@ -547,10 +547,12 @@ in-tree features. Tick items as they merge.
 - **2026-08-27 (item 4, step 4: StatusBar + Toast)** — `ui_statusbar()`
   in app_widgets, composited by the shell for `NAV_CHROME_FULL`
   screens (the descriptor chrome flag finally does its job): full-width
-  bar on its own background, NET/KBD lettered patches (lit accent /
-  dim base), keystore lock LED (state cached ~2 s — ABSENT stats the
-  filesystem), clock right; a live toast takes the indicator span.
-  CAP/NUM wait on lock-state tracking in the input component (item 6).
+  bar on its own background, NET/KBD lettered patches (lit = BRIGHT
+  accent + black bold text, off = dimmed companion; adjacent, no
+  gaps — contrast round 2026-08-27), clock right; a live toast takes
+  the indicator span. CAP/NUM wait on lock-state tracking in the input
+  component (item 6); a keystore-lock indicator is deliberately absent
+  (a locked deck shows the PIN pad — the state is self-evident).
   **One toast, all screens**: HOME's bottom chip and the menu's note
   row both retired — `menu_note` now rides the shared toast (sticky =
   UINT64_MAX until, dropped by `menu_exit` so an arm prompt can't

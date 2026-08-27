@@ -7,7 +7,6 @@
 
 #include "app_widgets.h"
 #include "font.h"   /* font_width/height() — touch pixel→cell mapping */
-#include "keystore.h"
 #include "wifi_manager.h"
 
 #include <stdio.h>
@@ -320,23 +319,15 @@ void ui_statusbar(uint64_t now)
                 OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BRIGHT |
                 OVERLAY_ATTR_BOLD);
     } else {
+        /* NET + KBD only. CAP/NUM wait on lock-state tracking in the
+         * input component (item 6); a keystore-lock indicator is
+         * deliberately absent — a locked deck shows the PIN pad, the
+         * state is self-evident (user call, 2026-08-27). */
         int x = sb_patch(1, sr, " NET ", OVERLAY_COL_GREEN,
                          wifi_manager_is_connected());
         const bool kbd = app.cfg.ble && app.cfg.ble->get_state &&
                          app.cfg.ble->get_state() == 4;
-        x = sb_patch(x, sr, " KBD ", OVERLAY_COL_CYAN, kbd);
-        /* CAP/NUM wait on lock-state tracking in the input component
-         * (extensibility item 6). Keystore lock, cached ~2 s — the
-         * ABSENT state stats the filesystem. */
-        static uint64_t ks_at;
-        static keystore_state_t ks;
-        if (!ks_at || now - ks_at >= 2000) {
-            ks_at = now;
-            ks = keystore_state();
-        }
-        if (ks != KEYSTORE_ABSENT)
-            sb_patch(x, sr, " LCK ", OVERLAY_COL_AMBER,
-                     ks == KEYSTORE_LOCKED);
+        sb_patch(x, sr, " KBD ", OVERLAY_COL_CYAN, kbd);
     }
 
     char clk[10];
