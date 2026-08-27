@@ -8,9 +8,9 @@
  *   ssh_client_disconnect() — clean shutdown
  *
  * A dedicated FreeRTOS task (ssh_read_task, core 0) blocks on
- * libssh2_channel_read() and feeds output into vterm.  The session is
- * switched to non-blocking mode after the shell is opened so that the
- * read task can detect EOF/errors promptly.
+ * libssh2_channel_read() and feeds output into vterm. ssh_client_connect()
+ * switches the session to non-blocking mode after it opens the shell. This
+ * lets the read task detect EOF and errors promptly.
  */
 
 #include "ssh_client.h"
@@ -47,15 +47,13 @@
 
 static const char *TAG = "ssh_client";
 
-/* -------------------------------------------------------------------------
- * Custom libssh2 allocators — prefer SPIRAM for session/channel/packet
- * buffers so that fragmented internal DRAM is not exhausted by large SSH
- * receive bursts.  Falls back to internal DRAM when SPIRAM is unavailable.
+/* These allocators prefer SPIRAM for session, channel, and packet buffers.
+ * This avoids exhausting fragmented internal DRAM during large SSH receive
+ * bursts. They fall back to internal DRAM when SPIRAM is unavailable.
  *
- * s_alloc_bytes tracks live bytes held by libssh2 at any moment.
- * heap_caps_get_allocated_size() returns the actual block size so the
- * counter reflects real heap consumption including allocator overhead.
- * ---------------------------------------------------------------------- */
+ * s_alloc_bytes tracks the live bytes libssh2 holds at any moment.
+ * heap_caps_get_allocated_size() returns the actual block size, so the
+ * counter reflects real heap use, including allocator overhead. */
 static volatile size_t s_alloc_bytes = 0;
 
 static void *ssh_malloc(size_t size, void **abstract)
@@ -93,9 +91,6 @@ static void ssh_free(void *ptr, void **abstract)
 /* Password stashed during connection for the kbd-interactive callback. */
 static const char *s_kb_password = NULL;
 
-/* -------------------------------------------------------------------------
- * Module state
- * ---------------------------------------------------------------------- */
 static LIBSSH2_SESSION  *s_session    = NULL;
 static LIBSSH2_CHANNEL  *s_channel    = NULL;
 static int               s_sock       = -1;
@@ -105,12 +100,12 @@ static volatile bool     s_clean_eof  = false;      /* remote closed channel (ex
 static volatile bool     s_read_task_done = true;   /* read task has exited */
 static bool              s_libssh2_initialized = false;
 
-/* ssh_read_task runs in PSRAM: internal DRAM is scarce once WiFi + NimBLE +
- * the display overlay are up, and a dynamic 8 KB internal stack alloc fails
- * (that is the "Failed to create ssh_read_task" error). The task only does
- * sockets + crypto + vterm writes — no flash/ISR work — so an external-RAM
- * stack is safe. TCB stays in internal DRAM; the stack buffer is reused
- * across sessions. */
+/* ssh_read_task runs in PSRAM. Internal DRAM grows scarce once WiFi,
+ * NimBLE, and the display overlay start. A dynamic 8 KB internal stack
+ * alloc then fails with "Failed to create ssh_read_task". The task only
+ * touches sockets, crypto, and vterm writes, with no flash or ISR work.
+ * An external-RAM stack is therefore safe. The TCB stays in internal
+ * DRAM. The task reuses the stack buffer across sessions. */
 #define SSH_READ_STACK_BYTES 8192
 static StaticTask_t      s_read_task_tcb;
 static StackType_t      *s_read_task_stack = NULL;
@@ -118,9 +113,10 @@ static StackType_t      *s_read_task_stack = NULL;
 /* Drain-loop tuning (docs/performance.md pass 1, #1). Chunks land in a PSRAM
  * buffer — only this task touches it (sockets + crypto, no flash I/O), and
  * 2 KB of internal DRAM is too precious. Reused across sessions. The budget
- * bounds core-0 CPU per wake so IDLE0 (task WDT) and the same-core input
- * tasks (touch prio 4, uart prio 5 — which this task, prio 6, preempts
- * outright) always get to run. 8 KB per 10 ms tick ≈ 800 KB/s ceiling. */
+ * bounds core-0 CPU per wake, so IDLE0 (task WDT) always gets to run. Touch
+ * (priority 4) and UART (priority 5) also get to run. This task, at
+ * priority 6, preempts both outright. 8 KB per 10 ms tick ≈ 800 KB/s
+ * ceiling. */
 #define SSH_READ_CHUNK       2048
 #define SSH_DRAIN_BUDGET     8192      /* bytes per wake */
 #define SSH_DRAIN_BUDGET_US  5000      /* time bound per wake */
@@ -145,20 +141,23 @@ static volatile esp_err_t s_connect_result = ESP_FAIL;
  */
 static SemaphoreHandle_t s_session_lock = NULL;
 
-/* Pending terminal-response bytes (DA1 / cursor-position replies that tsm
- * emits while parsing during vterm_write). These MUST NOT be written to
- * libssh2 from the response callback: it runs inside the read task with
- * s_session_lock held, and a blocking write there could park the read task
- * holding the lock — which, if disconnect() then force-deletes the task,
- * orphans the mutex and wedges all future SSH I/O. Instead we buffer them and
- * drain non-blocking from the read loop (still under the lock). Responses are
- * a handful of bytes; 256 is plenty. Only ever touched under s_session_lock. */
+/* Pending terminal-response bytes: DA1 and cursor-position replies that tsm
+ * emits while it parses during vterm_write. The response callback must
+ * never write these to libssh2. The callback runs inside the read task
+ * while the read task holds s_session_lock. A blocking write there could
+ * park the read task while it still holds the lock. If disconnect() then
+ * force-deletes the task, the deletion orphans the mutex and wedges all
+ * future SSH I/O. Instead, the callback buffers the bytes, and the read
+ * loop drains them non-blocking, still under the lock. Responses are a
+ * handful of bytes, so 256 is plenty. Only code holding s_session_lock may
+ * touch this buffer. */
 #define SSH_RESP_BUF 256
 static uint8_t s_resp_buf[SSH_RESP_BUF];
 static size_t  s_resp_len = 0;
 
-/* Bound on any blocking libssh2 call (handshake/auth). Non-blocking calls in
- * the read loop are unaffected — they return EAGAIN immediately. */
+/* This bounds any blocking libssh2 call (handshake or auth). It does not
+ * affect non-blocking calls in the read loop; they return EAGAIN
+ * immediately. */
 #define SSH_BLOCKING_TIMEOUT_MS 20000
 
 /* Fingerprint of the most recent connect attempt + last error message. */
@@ -170,9 +169,6 @@ static void set_last_error(const char *msg)
     snprintf(s_last_error, sizeof(s_last_error), "%s", msg ? msg : "");
 }
 
-/* -------------------------------------------------------------------------
- * ssh_cleanup — release all libssh2 and socket resources
- * ---------------------------------------------------------------------- */
 static void ssh_cleanup(void)
 {
     if (s_channel) {
@@ -194,18 +190,17 @@ static void ssh_cleanup(void)
     ESP_LOGI(TAG, "SSH cleanup done  — libssh2 heap: %zu B (expect 0)", s_alloc_bytes);
 }
 
-/* -------------------------------------------------------------------------
- * vterm response callback — sends terminal responses (e.g. DA1, cursor
- * position reports) from tsm back to the remote over SSH.
- * ---------------------------------------------------------------------- */
+/* This callback sends terminal responses (DA1, cursor-position replies)
+ * from tsm back to the remote. */
 static void ssh_vterm_response_cb(const char *data, size_t len, void *user)
 {
     (void)user;
     if (!s_connected || len == 0) return;
-    /* Runs inside the read loop with s_session_lock held. Only buffer here —
-     * never write to libssh2 (see s_resp_buf note). Drop the overflow tail:
-     * the buffer only fills if the uplink is wedged, in which case the
-     * session is about to drop anyway. */
+    /* This callback runs inside the read loop with s_session_lock held. It
+     * must only buffer data here; see the s_resp_buf note for why it must
+     * never write to libssh2. It drops the overflow tail. The buffer only
+     * fills when the uplink jams, and in that case the session is about to
+     * drop anyway. */
     size_t room = sizeof(s_resp_buf) - s_resp_len;
     if (len > room) len = room;
     if (len) {
@@ -230,9 +225,6 @@ static void drain_responses(void)
     }
 }
 
-/* -------------------------------------------------------------------------
- * Log the last libssh2 error string for the current session.
- * ---------------------------------------------------------------------- */
 static void log_last_error(const char *context)
 {
     char *errmsg = NULL;
@@ -244,30 +236,32 @@ static void log_last_error(const char *context)
     set_last_error(buf);
 }
 
-/* -------------------------------------------------------------------------
- * ssh_read_task — pinned to core 0, feeds remote output into vterm.
+/* ssh_client_connect() pins ssh_read_task to core 0. The task feeds
+ * remote output into vterm.
  *
- * Each wake drains the channel until EAGAIN or the per-wake budget is spent
- * (SSH_DRAIN_BUDGET bytes / SSH_DRAIN_BUDGET_US), presents the batch once,
- * then ALWAYS yields at least one tick — libssh2_channel_read() can return
- * data continuously and never block; without the yield IDLE0 is starved and
- * the task watchdog fires (drain-loop history: docs/performance.md, pass 1).
+ * Each wake drains the channel until EAGAIN, or until it spends the
+ * per-wake budget (SSH_DRAIN_BUDGET bytes / SSH_DRAIN_BUDGET_US). It then
+ * presents the batch once and ALWAYS yields at least one tick.
+ * libssh2_channel_read() can return data continuously and never block.
+ * Without the yield, IDLE0 starves and the task watchdog fires. See the
+ * drain-loop history in docs/performance.md, pass 1.
  *
- * The session lock is given back between chunks so ssh_client_send (shell
- * task, core 1) interleaves mid-batch — key echo waits one chunk, not a
- * whole drain.
+ * The task gives the session lock back between chunks, so ssh_client_send
+ * (shell task, core 1) can interleave mid-batch. Key echo then waits one
+ * chunk, not a whole drain.
  *
- * Keepalive packets are sent via libssh2_keepalive_send() which internally
- * tracks timing; we call it on every EAGAIN idle cycle. Do not move that
- * call: keepalive.c sends from a stack-local buffer and a blocked send is
- * only reissued correctly from the same call path.
- * ---------------------------------------------------------------------- */
-/* net_bench: arrival-gap diagnostics for stutter hunting. A "data wake" is
- * a drain-loop pass that yielded bytes; the gap between consecutive data
- * wakes is how long the screen had nothing new. During a steady stream
- * (btop at 100 ms) gaps above ~250 ms are stalls — the counters say whether
- * they exist and how bad, the burst size says whether data was queued up
- * behind the stall (network hiccup) or trickled in late (sender paused). */
+ * libssh2_keepalive_send() sends keepalive packets and tracks their timing
+ * internally; this task calls it on every EAGAIN idle cycle. Do not move
+ * that call. keepalive.c sends from a stack-local buffer. Only the same
+ * call path can reissue a blocked send correctly.
+ */
+/* net_bench provides arrival-gap diagnostics for stutter hunting. A "data
+ * wake" is a drain-loop pass that yields bytes. The gap between
+ * consecutive data wakes shows how long the screen had nothing new.
+ * During a steady stream (btop at 100 ms), gaps above ~250 ms count as
+ * stalls. The counters report whether stalls happen and how bad they are.
+ * The burst size shows whether data queued up behind the stall (network
+ * hiccup) or trickled in late (sender paused). */
 static int64_t  s_nb_last_data_us;
 static uint32_t s_nb_gap_max_ms;
 static uint32_t s_nb_gaps_250;      /* gaps in (250, 500] ms */
@@ -425,13 +419,13 @@ static void ssh_read_task(void *arg)
     vTaskDelete(NULL);
 }
 
-/* -------------------------------------------------------------------------
- * Keyboard-interactive response callback.
- * Responds to every prompt with s_kb_password (set before auth attempt).
- * libssh2 frees responses[i].text (via ssh_free) after the callback returns,
- * so allocate through ssh_malloc — otherwise the free decrements s_alloc_bytes
- * for a block that was never counted, corrupting the leak gauge.
- * ---------------------------------------------------------------------- */
+/* Keyboard-interactive response callback.
+ * It answers every prompt with s_kb_password (set before the auth attempt).
+ * libssh2 frees responses[i].text (via ssh_free) after the callback
+ * returns, so this callback must allocate through ssh_malloc. Otherwise
+ * the free decrements s_alloc_bytes for a block the code never counted,
+ * corrupting the leak gauge.
+ */
 static LIBSSH2_USERAUTH_KBDINT_RESPONSE_FUNC(kbd_callback)
 {
     (void)name; (void)name_len;
@@ -448,13 +442,10 @@ static LIBSSH2_USERAUTH_KBDINT_RESPONSE_FUNC(kbd_callback)
     }
 }
 
-/* =========================================================================
- * Public API
- * ====================================================================== */
-
 esp_err_t ssh_client_init(void)
 {
-    /* libssh2_init() is deferred to first connect; nothing to do here. */
+    /* ssh_client_connect() calls libssh2_init() on the first connect. This
+     * function has nothing to do here. */
     return ESP_OK;
 }
 
@@ -473,10 +464,10 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
     s_fingerprint[0] = '\0';
     s_last_error[0]  = '\0';
 
-    /* ── 0. Release any leftover state from a previous session ──────── *
-     * ssh_read_task sets s_connected=false on disconnect but does not    *
-     * call ssh_cleanup() — that must happen here before we allocate new  *
-     * libssh2 objects, otherwise session_init() fails with OOM.         */
+    /* ── 0. Release any leftover state from a previous session ──
+     * ssh_read_task sets s_connected=false on disconnect. It does not
+     * call ssh_cleanup(). That must happen here before the code
+     * allocates new libssh2 objects, or session_init() fails with OOM. */
     ssh_client_disconnect();
     s_clean_eof = false;
 
@@ -535,15 +526,15 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
     }
     libssh2_session_set_blocking(s_session, 1);
     /* Inner errors (userauth masks them with "Callback returned error")
-     * land on stderr → UART console. No-op stub unless the libssh2_esp
-     * component was built with CONFIG_LIBSSH2_DEBUG_ENABLE. */
+     * land on stderr, which goes to the UART console. This call is a
+     * no-op stub unless the libssh2_esp component enables
+     * CONFIG_LIBSSH2_DEBUG_ENABLE at build time. */
     libssh2_trace(s_session, LIBSSH2_TRACE_ERROR | LIBSSH2_TRACE_AUTH |
                              LIBSSH2_TRACE_PUBLICKEY);
     /* Never let the blocking handshake/auth hang forever on a dead link
      * (do_connect runs synchronously on the shell task). */
     libssh2_session_set_timeout(s_session, SSH_BLOCKING_TIMEOUT_MS);
 
-    /* ── 4. SSH handshake ───────────────────────────────────────────── */
     ESP_LOGI(TAG, "SSH handshake...");
     int rc = libssh2_session_handshake(s_session, s_sock);
     if (rc != 0) {
@@ -619,11 +610,12 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
                  config->passphrase);
         if (rc == 0) goto auth_done;
         log_last_error("publickey");
-        /* Key auth fails far more often from a mis-stored key or a profile
-         * missing its passphrase than from anything libssh2 can name, so dump
-         * what we fed it — on the failure path only, to keep a good connect
-         * quiet. The BEGIN line is public; the key body never goes to the
-         * console, and the passphrase is reported by length alone. */
+        /* Key auth fails far more often from a mis-stored key or a missing
+         * passphrase than from anything libssh2 can name. This code dumps
+         * what it fed the auth call only on the failure path, so a good
+         * connect stays quiet. The BEGIN line is public. The key body
+         * never reaches the console. This code reports the passphrase by
+         * length alone. */
         {
             const char *pem = config->private_key_pem;
             size_t hdr = strcspn(pem, "\r\n");
@@ -638,7 +630,6 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
         return SSH_ERR_AUTH;
     }
 
-    /* Password profile: password, then keyboard-interactive. */
     s_kb_password = config->password;  /* stash for kbd-interactive callback */
 
     if (strstr(authlist, "password")) {
@@ -667,27 +658,28 @@ auth_done:
 
     /* ── 6b. Keepalive configuration ───────────────────────────────── */
 #if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
-    /* Configured only AFTER userauth completes. A keepalive is an
-     * SSH_MSG_GLOBAL_REQUEST (80), a connection-protocol message that is only
-     * legal once the user is authenticated — and libssh2 leaves
-     * keepalive_last_sent at 0, so the first blocking wait after this call
-     * sends one immediately rather than waiting out the interval. Configured
-     * any earlier, that stray request lands mid-auth: OpenSSH answers it with
-     * REQUEST_FAILURE and carries on, but a Go x/crypto/ssh server parses
-     * every packet during auth as a userauth request and drops the
-     * connection (seen as LIBSSH2_ERROR_SOCKET_RECV from the publickey probe).
+    /* Configure keepalive only after userauth completes. A keepalive is an
+     * SSH_MSG_GLOBAL_REQUEST (type 80), a connection-protocol message. The
+     * protocol allows it only after the user authenticates. libssh2 leaves
+     * keepalive_last_sent at 0. So the first blocking wait after this call
+     * sends one keepalive immediately, instead of waiting out the
+     * interval. If the code configures it earlier, that sends a stray
+     * request mid-auth. OpenSSH answers that stray request with
+     * REQUEST_FAILURE and continues. A Go x/crypto/ssh server instead
+     * parses every packet during auth as a userauth request, and drops
+     * the connection. That failure shows up as LIBSSH2_ERROR_SOCKET_RECV
+     * from the publickey probe.
      *
-     * want_reply=0: we send traffic to keep NAT alive but don't ask the
-     * server to respond.  want_reply=1 causes the server to send back
-     * SSH_MSG_REQUEST_SUCCESS which libssh2 must allocate a buffer for;
-     * under heap pressure that allocation fails with LIBSSH2_ERROR_ALLOC
-     * and drops the channel.                                              */
+     * want_reply=0 sends traffic to keep NAT alive, without asking the
+     * server to respond. want_reply=1 makes the server send back
+     * SSH_MSG_REQUEST_SUCCESS. libssh2 must allocate a buffer for that
+     * reply. Under heap pressure, that allocation fails with
+     * LIBSSH2_ERROR_ALLOC and drops the channel. */
     libssh2_keepalive_config(s_session, 0 /* want_reply */,
                              CONFIG_SSH_KEEPALIVE_INTERVAL);
     ESP_LOGI(TAG, "Keepalive every %d s", CONFIG_SSH_KEEPALIVE_INTERVAL);
 #endif
 
-    /* ── 7. Open shell channel ──────────────────────────────────────── */
     s_channel = libssh2_channel_open_ex(s_session,
                                         "session", sizeof("session") - 1,
                                         CONFIG_SSH_RECV_WINDOW,
@@ -733,17 +725,19 @@ auth_done:
     vterm_set_response_cb(ssh_vterm_response_cb, NULL);
 
     /* ── 11. Reset the terminal, then spawn the read task on core 0 ───── */
-    /* Reset from THIS task before the read task exists: vterm has no lock, so
-     * letting main_task race the read task's feed inside tsm_feed on two
-     * cores could corrupt the grid. Doing it here makes the read task the
-     * session's sole vterm writer.
+    /* This task resets the terminal before the read task exists. vterm has
+     * no lock, so main_task racing the read task's feed inside tsm_feed on
+     * two cores could corrupt the grid. Doing the reset here makes the
+     * read task the session's sole vterm writer.
      *
-     * A full reset, not a \e[2J clear: everything the previous session left
-     * in the emulator leaks into this one otherwise — SGR colors (an ED
-     * erase fills with the CURRENT fg/bg, so a session that died inside a
-     * white-on-blue dialog(1) UI paints the next greeting white-on-blue),
-     * the alt screen, application cursor keys, charsets, scroll region, a
-     * half-received escape sequence, and the old host's scrollback. */
+     * This uses a full reset, not a \e[2J clear. Otherwise everything the
+     * previous session left in the emulator leaks into this one. That
+     * includes SGR colors, the alt screen, and application cursor keys. It
+     * also includes charsets, scroll region, a half-received escape
+     * sequence, and the old host's scrollback. SGR colors are the worst
+     * case. An ED erase fills with the CURRENT fg/bg. So a session that
+     * died inside a white-on-blue dialog(1) UI paints the next greeting
+     * white-on-blue. */
     vterm_reset();
 
     s_connected = true;
@@ -774,11 +768,12 @@ auth_done:
     }
 
 #if CONFIG_SSH_WIFI_PS_NONE
-    /* Full radio wakefulness for the session: the default modem-sleep gates
-     * receive on the AP's DTIM beacon (tens of ms RTT), which caps the
-     * window-bound throughput and every key echo. Restored on disconnect.
-     * (With the BLE keyboard connected, coexistence still time-slices the
-     * radio, so this removes only the DTIM-gated part of the latency.) */
+    /* This forces full radio wakefulness for the session. By default,
+     * modem-sleep gates receive on the AP's DTIM beacon (tens of ms RTT).
+     * That caps window-bound throughput and every key echo. Disconnect
+     * restores the previous power-save mode. With the BLE keyboard
+     * connected, coexistence still time-slices the radio, so this removes
+     * only the DTIM-gated part of the latency. */
     esp_wifi_set_ps(WIFI_PS_NONE);
 #endif
 
@@ -786,9 +781,6 @@ auth_done:
     return ESP_OK;
 }
 
-/* =========================================================================
- * Async connect — run the blocking connect on a worker task
- * ====================================================================== */
 static void ssh_connect_worker(void *arg)
 {
     (void)arg;
@@ -847,12 +839,13 @@ esp_err_t ssh_client_disconnect(void)
         vTaskDelay(pdMS_TO_TICKS(20));
 
     if (!s_read_task_done && s_read_task) {
-        /* Should never happen now that the read task holds the lock only
-         * across non-blocking calls. If it ever does, the killed task may
-         * still own s_session_lock (FreeRTOS never releases a deleted task's
-         * mutex), so recreate the lock or every later take() deadlocks.
-         * Safe here: disconnect runs on the shell task, which is the only
-         * other taker — so nobody is parked on the lock at this instant. */
+        /* This should never happen now that the read task holds the lock
+         * only across non-blocking calls. If it does happen, the killed
+         * task may still own s_session_lock; FreeRTOS never releases a
+         * deleted task's mutex. So this code recreates the lock, or every
+         * later take() would deadlock. This is safe here. Disconnect runs
+         * on the shell task, the only other taker. So nobody holds the
+         * lock at this instant. */
         ESP_LOGE(TAG, "ssh_read_task did not exit — force-deleting");
         vTaskDelete(s_read_task);
         s_read_task = NULL;
