@@ -23,6 +23,7 @@ static struct {
 #include "app_settings.h"
 #include "app_widgets.h"
 #include "app_menu_defs.h"
+#include "font.h"        /* font_height() — breadcrumb tap zone */
 #include "ssh_client.h"
 #include "wifi_manager.h"
 
@@ -48,20 +49,76 @@ static int build_slots(const menu_page_t *p)
     return s_slot_count = n;
 }
 
-/* Build a stored-profile picker's tiles plus a trailing "Back". Bodies
- * "user@host" keep same-named entries tellable. */
+/* Build a stored-profile picker's rows. Bodies "user@host" keep
+ * same-named entries tellable. (No Back row — the breadcrumb is back.) */
 static int picker_items(const char *out[], const char *bodies[],
                         char (*bodybuf)[28], int cap)
 {
     int n = 0;
-    for (int i = 0; i < app.stored_count && n < cap - 1; i++) {
+    for (int i = 0; i < app.stored_count && n < cap; i++) {
         snprintf(bodybuf[i], sizeof(bodybuf[i]), "%s@%s",
                  app.profiles[i].user, app.profiles[i].host);
         bodies[n] = bodybuf[i];
         out[n++]  = app.profiles[i].name;
     }
-    if (n < cap) { bodies[n] = ""; out[n++] = "Back"; }
     return n;
+}
+
+/* Breadcrumb text: root-to-leaf page titles, at most three segments
+ * (the in-session MENU root drops off a depth-3 chain). */
+static void crumb_build(char *out, size_t sz, int sc)
+{
+    const char *seg[3];
+    int n = 0, cur = sc;
+    while (n < 3) {
+        if (menu_is_picker(cur)) {
+            seg[n++] = cur == MS_DELPROFILE  ? "DELETE"
+                     : cur == MS_EDITPROFILE ? "EDIT"
+                                             : "REORDER";
+            cur = MS_PROFILES;
+            continue;
+        }
+        const menu_page_t *p = menu_page(cur);
+        seg[n++] = p->title;
+        if (cur == s_menu.root || p->back_to < 0) break;
+        cur = p->back_to;
+    }
+    int len = snprintf(out, sz, "<");
+    for (int i = n - 1; i >= 0 && len < (int)sz; i--)
+        len += snprintf(out + len, sz - len, "%s %s",
+                        i == n - 1 ? " " : " /", seg[i]);
+}
+
+/* The BreadcrumbBar: rows 0-2 full width — names the place and IS the
+ * back target (menu_input routes any tap on it to menu_back). */
+static void draw_crumb(int x0, int w, int sc)
+{
+    char crumb[64];
+    crumb_build(crumb, sizeof(crumb), sc);
+    ui_pen(OVERLAY_COL_BLUE);
+    ui_tile(x0, 0, w, 3, crumb, "", false);
+    char clk[8];
+    if (clock_str(clk, sizeof(clk)))
+        ui_puts(x0 + w - 2 - (int)strlen(clk), 1, clk, OVERLAY_ATTR_INVERSE);
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
+/* One value tile: 3-row solid bar, the value on a dimmed-accent well
+ * (ui-spec, locked). Armed confirms replace the label and drop the well. */
+static void draw_value_tile(int x, int y, int tw, const char *label,
+                            const char *body, bool well, bool sel)
+{
+    ui_tile(x, y, tw, 3, label, well ? "" : body, sel);
+    if (!well || !body[0]) return;
+    int ww = tw / 3 + 4;
+    if (ww > 14) ww = 14;
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < ww; c++)
+            ui_putch(x + tw - ww + c, y + r, ' ',
+                     OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_DIM);
+    ui_puts(x + tw - 2 - (int)strlen(body), y + 1, body,
+            OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_DIM |
+            (sel ? OVERLAY_ATTR_BOLD : 0));
 }
 
 static void render_menu(uint64_t now)
@@ -70,113 +127,46 @@ static void render_menu(uint64_t now)
     ui_dim();   /* dim the live session behind the menu so it pops */
 
     const int sc = s_menu.screen;
-    const bool on_main = (sc == MS_MAIN);
     const bool picker = menu_is_picker(sc);
     const menu_page_t *p = picker ? NULL : menu_page(sc);
-    const uint8_t pflags = p ? p->flags : 0;
 
-    const char *pick_titles[MAX_PROFILES + 1];
-    const char *pick_bodies[MAX_PROFILES + 1];
+    const int w  = ui_cols() - 8;
+    const int x0 = 4;
+    draw_crumb(x0, w, sc);
+
+    const char *pick_titles[MAX_PROFILES];
+    const char *pick_bodies[MAX_PROFILES];
     char pick_buf[MAX_PROFILES][28];
     char vbuf[MENU_MAX_TILES][16];
-    const char *title;
-    int count;
+    const int note_row = ui_rows() - 1;
 
     if (picker) {
-        title = sc == MS_DELPROFILE  ? "DELETE PROFILE"
-              : sc == MS_EDITPROFILE ? "EDIT PROFILE"
-                                     : "REORDER PROFILES";
-        count = picker_items(pick_titles, pick_bodies, pick_buf,
-                             NELEM(pick_titles));
-    } else {
-        title = p->title;
-        count = build_slots(p);
-    }
-
-    tilegrid_t g = { 0 };
-    int title_row, ly, chrome_x;
-    if (picker) {
-        /* Two-line rows in a centered scrolling list — a long profile
-         * set scrolls instead of dropping off the grid (ui-spec ListView). */
-        title_row = 2;
-        ly        = ui_rows() - 3;
-        chrome_x  = (ui_cols() - 40) / 2;
-        s_pick.x     = chrome_x;
+        /* Scrolling two-line list under the breadcrumb (variable length —
+         * the one menu surface that scrolls, per ui-spec ListView). */
+        const int count = picker_items(pick_titles, pick_bodies, pick_buf,
+                                       NELEM(pick_titles));
+        s_pick.x     = (ui_cols() - 40) / 2;
         s_pick.y     = 4;
         s_pick.w     = 40;
-        s_pick.h     = ly - 1 - s_pick.y;
+        s_pick.h     = note_row - 1 - s_pick.y;
         s_pick.row_h = 3;              /* 2-row tile + 1 gutter */
         s_pick.count = count;
         s_pick.sel   = s_menu.sel;
         ui_list_clamp(&s_pick);
         s_menu.sel = s_pick.sel;
-        app.grid = g;                  /* taps route through the list */
-    } else if (pflags & MENU_PAGE_WIDE) {
-        g = picker_grid(count);
-        /* Never clip the trailing Back tile — an off-grid tile is
-         * untappable. Squeeze tile height until the page fits. */
-        while (g.count < count && g.th > 2) {
-            g.th--;
-            int avail = ui_rows() - 2 - g.y0;
-            g.nrows   = (avail + g.gy) / (g.th + g.gy);
-            int cap   = g.ncols * g.nrows;
-            g.count   = count < cap ? count : cap;
-        }
-        title_row = 2;
-        ly        = ui_rows() - 3;
-        chrome_x  = (ui_cols() - 40) / 2;   /* center chrome over the screen */
-    } else {
-        /* Shrink tile height until the column actually FITS: an off-grid
-         * tile is not merely invisible — ui_putch clips it AND no touch y
-         * maps to it, so the item (usually Back) becomes untappable.
-         * Derived from count so a new menu item can't silently break it. */
-        int th = ui_rows() >= 28 ? (count >= 6 ? 3 : 4) : 2;
-        const int budget = ui_rows() - 3;   /* title chip above, legend below */
-        while (th > 1 && count * (th + 1) - 1 > budget) th--;
-        g = (tilegrid_t){ .tw = 40, .th = th, .gx = 0, .gy = 1,
-                          .ncols = 1, .nrows = count, .count = count };
-        int total = count * (g.th + 1) - 1;
-        g.x0 = (ui_cols() - g.tw) / 2;
-        g.y0 = (ui_rows() - total) / 2;
-        if (g.y0 < 2) g.y0 = 2;             /* title chip needs row y0-2 */
-        title_row = g.y0 - 2;
-        ly        = g.y0 + total + 1;
-        if (ly > ui_rows() - 1) ly = ui_rows() - 1;
-        chrome_x  = g.x0;
-    }
-    if (!picker) {
-        app.grid = g;
-        if (s_menu.sel >= g.count) s_menu.sel = g.count ? g.count - 1 : 0;
-    }
+        app.grid = (tilegrid_t){ 0 };  /* taps route through the list */
 
-    /* Title as a magenta lozenge, centered over the chrome column. */
-    int tl = (int)strlen(title);
-    ui_pen(OVERLAY_COL_MAGENTA);
-    ui_chip(chrome_x + (40 - tl - 4) / 2, title_row, UI_RHALF, title, UI_LHALF,
-            OVERLAY_ATTR_BOLD);
-
-    /* Wall clock, top-right, ticking live (menu re-renders every frame). */
-    char clk[8];
-    if (clock_str(clk, sizeof(clk))) {
-        ui_pen(OVERLAY_COL_BLUE);
-        ui_puts(ui_cols() - (int)strlen(clk) - 1, 0, clk, 0);
-    }
-    ui_pen(OVERLAY_COL_DEFAULT);
-
-    if (picker) {
         const int vis = ui_list_visible(&s_pick);
         for (int i = s_pick.top; i < s_pick.top + vis && i < count; i++) {
-            const char *confirm = (sc == MS_DELPROFILE && i < app.stored_count)
+            const char *confirm = (sc == MS_DELPROFILE)
                                 ? "CONFIRM delete?" : NULL;
             const bool armed   = i == s_menu.sel && s_menu.armed && confirm;
             const bool grabbed = (sc == MS_REORDER) &&
                                  (i == s_menu.reorder_grab);
-            ui_pen(armed                 ? OVERLAY_COL_RED
-                 : i >= app.stored_count ? OVERLAY_COL_BLUE
-                 : sc == MS_DELPROFILE   ? OVERLAY_COL_AMBER
-                 : grabbed               ? OVERLAY_COL_GREEN
-                                         : OVERLAY_COL_CYAN);
-            /* Two-line row tile; the list's right edge is the scroll cue. */
+            ui_pen(armed               ? OVERLAY_COL_RED
+                 : sc == MS_DELPROFILE ? OVERLAY_COL_AMBER
+                 : grabbed             ? OVERLAY_COL_GREEN
+                                       : OVERLAY_COL_CYAN);
             ui_tile(s_pick.x, ui_list_row_y(&s_pick, i), s_pick.w - 2, 2,
                     armed ? confirm : pick_titles[i], pick_bodies[i],
                     i == s_menu.sel || grabbed);
@@ -184,14 +174,30 @@ static void render_menu(uint64_t now)
         ui_pen(OVERLAY_COL_BLUE);
         ui_list_draw_scroll(&s_pick);
         ui_pen(OVERLAY_COL_DEFAULT);
+
+        if (app.stored_count == 0) {
+            const char *m = "no stored profiles";
+            ui_puts((ui_cols() - (int)strlen(m)) / 2, 5, m, 0);
+        }
     } else {
-        for (int i = 0; i < g.count; i++) {
+        /* Two-column grid of 3-row tiles — the whole section fits one
+         * screen at every grid (fit-one-screen contract, asserted in
+         * app_menu_defs.c). */
+        const int count = build_slots(p);
+        tilegrid_t g = { .tw = (w - 2) / 2, .th = 3, .gx = 2, .gy = 1,
+                         .ncols = 2, .x0 = x0, .y0 = 4, .count = count };
+        g.nrows = (count + 1) / 2;
+        app.grid = g;
+        if (s_menu.sel >= count) s_menu.sel = count ? count - 1 : 0;
+
+        const bool hub = p->flags & MENU_PAGE_HUB;
+        for (int i = 0; i < count; i++) {
             const menu_item_t *it = s_slot[i];
             const bool dim = it->dim && it->dim(it->arg);
             const bool armed = i == s_menu.sel && s_menu.armed && it->confirm;
-            uint8_t col = armed  ? OVERLAY_COL_RED
-                : it->color_fn   ? it->color_fn(it->arg)
-                                 : it->color;
+            ui_pen(armed         ? OVERLAY_COL_RED
+                 : it->color_fn  ? it->color_fn(it->arg)
+                                 : it->color);
             const char *label = armed ? it->confirm
                        : it->label_fn ? it->label_fn(it->arg)
                                       : it->label;
@@ -200,66 +206,36 @@ static void render_menu(uint64_t now)
                   it->value ? it->value(it->arg, vbuf[i], sizeof(vbuf[i]))
                 : dim       ? "(unavailable)"
                             : "";
-            ui_pen(col);
-            /* Focus is carried by the tile itself (washed bar + lit rail). */
-            const bool sel = i == s_menu.sel;
-            if ((pflags & MENU_PAGE_VALS) && body[0] && !armed) {
-                /* Value right-aligned on the title row in regular weight,
-                 * settings-table style — the bold name carries the emphasis
-                 * and the value reads as data. */
-                ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, label, "", sel);
-                ui_puts(tile_x(&g, i) + g.tw - 2 - (int)strlen(body),
-                        tile_y(&g, i) + (g.th - 1) / 2, body,
-                        OVERLAY_ATTR_INVERSE | (sel ? OVERLAY_ATTR_BRIGHT : 0));
-            } else {
-                ui_tile(tile_x(&g, i), tile_y(&g, i), g.tw, g.th, label, body,
-                        sel);
-            }
+            /* Hub sections carry their body under the label; value items
+             * put it on the dimmed well. Armed confirms drop both. */
+            draw_value_tile(tile_x(&g, i), tile_y(&g, i), g.tw, label, body,
+                            !hub && !armed && !dim && it->value,
+                            i == s_menu.sel);
+        }
+        ui_pen(OVERLAY_COL_DEFAULT);
+
+        if (sc == MS_MAIN) {
+            /* Mainframe flex: deck uptime + link time. */
+            uint64_t up = (uint64_t)app.anim_frame * ANIM_PERIOD_MS / 1000;
+            char flex[48];
+            uint64_t now_ms = (uint64_t)app.anim_frame * ANIM_PERIOD_MS;
+            uint64_t ss = conn_session_start();
+            uint64_t lk = now_ms > ss ? (now_ms - ss) / 1000 : 0;
+            snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u   LINK %02u:%02u",
+                     (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
+                     (unsigned)(up % 60), (unsigned)(lk / 60),
+                     (unsigned)(lk % 60));
+            ui_pen(OVERLAY_COL_BLUE);
+            ui_puts((ui_cols() - (int)strlen(flex)) / 2, note_row - 1, flex, 0);
+            ui_pen(OVERLAY_COL_DEFAULT);
         }
     }
 
-    /* Esc legend under the tile area; suppressed while a note is up (the
-     * two share this row). */
-    if (!s_menu.msg[0]) {
-        const char *legend = on_main ? "Esc/F12 resume \xB7 tap outside closes"
-                           : sc == MS_CONFIG
-                               ? (s_menu.root == MS_CONFIG ? "Esc \xB7 home"
-                                                           : "Esc \xB7 menu")
-                               : "Esc \xB7 back";
-        ui_pen(OVERLAY_COL_BLUE);
-        ui_puts(chrome_x + (40 - (int)strlen(legend)) / 2, ly, legend, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    }
-
-    /* Empty-picker hint, just above the (Back-only) grid. */
-    if (picker && app.stored_count == 0) {
-        const char *m = "no stored profiles";
-        ui_pen(OVERLAY_COL_DEFAULT);
-        ui_puts(chrome_x + (40 - (int)strlen(m)) / 2, title_row + 1, m, 0);
-    }
-
-    if (s_menu.msg[0]) {               /* action feedback */
-        /* On the legend row, not below it: ly is clamped to the last grid
-         * row, so ly+1 could be off-panel and the note would vanish. */
-        int mx = chrome_x + (40 - ((int)strlen(s_menu.msg) + 2)) / 2;
+    if (s_menu.msg[0]) {               /* action feedback, bottom row */
+        int mx = (ui_cols() - ((int)strlen(s_menu.msg) + 2)) / 2;
         ui_pen(OVERLAY_COL_AMBER);
-        ui_putch(mx, ly, UI_DIAMOND, 0);
-        ui_puts(mx + 2, ly, s_menu.msg, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    }
-
-    if (on_main) {
-        /* Mainframe flex: deck uptime + link time behind the menu. */
-        uint64_t up = (uint64_t)app.anim_frame * ANIM_PERIOD_MS / 1000;
-        char flex[48];
-        uint64_t now_ms = (uint64_t)app.anim_frame * ANIM_PERIOD_MS;
-        uint64_t ss = conn_session_start();
-        uint64_t lk = now_ms > ss ? (now_ms - ss) / 1000 : 0;
-        snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u   LINK %02u:%02u",
-                 (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
-                 (unsigned)(up % 60), (unsigned)(lk / 60), (unsigned)(lk % 60));
-        ui_pen(OVERLAY_COL_BLUE);
-        ui_puts(g.x0 + (g.tw - (int)strlen(flex)) / 2, ly + 2, flex, 0);
+        ui_putch(mx, note_row, UI_DIAMOND, 0);
+        ui_puts(mx + 2, note_row, s_menu.msg, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 }
@@ -390,11 +366,11 @@ static void commit_reorder(uint64_t now)
     load_profiles();
 }
 
-/* The three pickers share the "profile tile or trailing Back" shape but
- * differ in what a profile hit means. */
+/* The three pickers share the profile-row shape but differ in what a
+ * hit means. Back is the breadcrumb (no Back row). */
 static void picker_activate(int sc, int sel, bool was_armed, uint64_t now)
 {
-    if (sel >= app.stored_count) { menu_back(now); return; }   /* Back tile */
+    if (sel < 0 || sel >= app.stored_count) return;   /* empty picker */
 
     switch (sc) {
     case MS_DELPROFILE:
@@ -544,6 +520,8 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
         return;
     }
     if (ev->type == CYBERDECK_INPUT_TAP) {
+        /* The BreadcrumbBar (rows 0-2) is the back target. */
+        if (ev->y / font_height() < 3) { menu_back(now); return; }
         int slot = picker ? ui_list_hit(&s_pick, ev->x, ev->y)
                           : tile_hit(&app.grid, ev->x, ev->y);
         if (slot < 0) { menu_back(now); return; }   /* tap outside: back */

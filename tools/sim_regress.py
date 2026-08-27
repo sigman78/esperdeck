@@ -44,31 +44,34 @@ SCENARIOS = {
         "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
         "|key:right|key:right|key:enter|wait:500|expect:menu"
         "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
-    # Walk the table-driven pages: EFFECTS (cycle a value tile - toggles
-    # [fx] scanlines, flushed on page exit), FONT, SYSTEM; back_to lands
-    # on CONFIGURATION each time. Exercises item tables + value rendering.
+    # Walk the two-column hub: CRT FX (cycle a value tile - toggles [fx]
+    # scanlines, flushed on page exit), FONT, SYSTEM; the breadcrumb
+    # lands back on CONFIGURATION each time. Hub is 2-col row-major:
+    # 0 PROFILES 1 WIFI / 2 KEYBOARD 3 CRT FX / 4 MOTION FX 5 FONT /
+    # 6 SYSTEM 7 KEYSTORE.
     "config-pages":
         "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
         "|key:right|key:right|key:enter|wait:500|expect:menu"
         "|expect-text:CONFIGURATION"
-        "|key:down|key:down|key:down|key:enter|wait:400|expect-text:EFFECTS"
+        "|key:down|key:right|key:enter|wait:400|expect-text:CRT FX"
         "|key:enter|wait:300|key:esc|wait:400|expect-text:CONFIGURATION"
-        "|key:down|key:down|key:down|key:down|key:enter|wait:400"
+        "|key:down|key:down|key:right|key:enter|wait:400"
         "|expect-text:FONT|key:esc|wait:400|expect-text:CONFIGURATION"
-        "|key:down|key:down|key:down|key:down|key:down|key:down|key:enter"
+        "|key:down|key:down|key:down|key:enter"
         "|wait:400|expect-text:SYSTEM|key:esc|wait:400"
         "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
     # Profiles -> Edit picker: the scrolling ListView renders, arrow nav
-    # moves the selection, Esc unwinds picker -> PROFILES -> CONFIG -> HOME.
-    # Navigation only - Enter on a profile row would open the editor.
+    # moves the selection, the breadcrumb chain unwinds picker ->
+    # PROFILES -> CONFIG -> HOME. Navigation only - Enter on a profile
+    # row would open the editor.
     "profile-picker":
         "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
         "|key:right|key:right|key:enter|wait:500|expect:menu"
         "|expect-text:CONFIGURATION"
-        "|key:enter|wait:400|expect-text:PROFILES"
-        "|key:down|key:enter|wait:400|expect-text:EDIT PROFILE"
-        "|key:down|key:down|key:up|wait:300|expect-text:EDIT PROFILE"
-        "|key:esc|wait:400|expect-text:PROFILES"
+        "|key:enter|wait:400|expect-text:CONFIGURATION / PROFILES"
+        "|key:right|key:enter|wait:400|expect-text:PROFILES / EDIT"
+        "|key:down|key:down|key:up|wait:300|expect-text:PROFILES / EDIT"
+        "|key:esc|wait:400|expect-text:CONFIGURATION / PROFILES"
         "|key:esc|wait:400|expect-text:CONFIGURATION"
         "|key:esc|wait:500|expect:home|quit",
 }
