@@ -620,3 +620,32 @@ in-tree features. Tick items as they merge.
   the statusbar `KBD` patch, `ble_status_str`, the connect/disconnect
   toast watcher. 6/6 both keystore configs; device build + check_iram
   OK (25 IRAM / 21 DRAM, unchanged).
+- **2026-08-27 (item 6, part 1: the boundary guard + build
+  convergence)** — `tools/check_boundaries.py` in the check_iram mold:
+  scans the in-tree include graph (components only; the composition
+  roots assemble everything by definition), maps quoted includes to
+  owning components, and diffs the edges against an ALLOWED list kept
+  in step with ARCHITECTURE.md's boundary table. Three failure modes:
+  an edge outside the table, a cross-component include of a private
+  header (a component without an include/ dir exports everything —
+  the flat vendored layout), and a stale ALLOWED entry. Runs post-link
+  on BOTH builds; first run confirmed the 2026-08-25 audit exactly
+  (17 edges, the three DEBT edges annotated in the script with their
+  repair items). Out of scan scope, noted in the script: the two edges
+  that cross through fetched sources (ssh→libssh2_esp,
+  libssh2_esp→monocypher). `cmake/cyberdeck_features.cmake`: the sim's
+  CONFIG_* mirror blocks and the FONT_SIZE variant moved out of
+  sim/CMakeLists.txt into one commented list, and the keystore gate —
+  previously declared in three places — became
+  `cyberdeck_keystore_gate()`, shared by storage, cyberdeck_app, and
+  the sim root (whose CONFIG_ define stays coupled to keystore_cli.c's
+  presence, the excludable-vault perimeter). Deviation from the item's
+  wording, proportionality: the mirror is *consolidated*, not
+  *generated* — generating from Kconfig would mean parsing Kconfig for
+  five constants. The sim's add_subdirectory ordering is documented as
+  a readability contract (CMake tolerates forward refs; the list reads
+  as the layer diagram). **Descoped: horizontal gestures** — the named
+  consumer (menu swipe-between-pages) was retired by the 2026-08-26
+  design lock (menus never scroll/paginate/swipe); INPUT_EVENT_SCROLL
+  stays dy-only until a real consumer exists. Verified: 6/6 both
+  keystore configs, device build with both guards green.

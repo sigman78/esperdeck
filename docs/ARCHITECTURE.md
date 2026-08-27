@@ -437,9 +437,13 @@ Design choices inside the shell:
 
 The CMake `REQUIRES` lists declare who depends on whom. This section
 records what actually crosses each edge, so widening a contract is a
-decision, not an accident. Audited against the full include graph on
-2026-08-25; the debt edges carry their repair plan in
-[`extensibility.md`](extensibility.md).
+decision, not an accident. First audited against the full include graph
+on 2026-08-25; since 2026-08-27 the table is *enforced* —
+`tools/check_boundaries.py` diffs the in-tree include graph against it
+after every link (device and simulator) and fails the build on an edge
+the table does not sanction, a cross-component include of a private
+header, or a stale table entry. The debt edges carry their repair plan
+in [`extensibility.md`](extensibility.md).
 
 | Edge | What crosses it | Verdict |
 |------|-----------------|---------|
