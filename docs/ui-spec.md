@@ -257,6 +257,11 @@ Contracts, not implementation:
   (contracts fixed, rendition free), promoted the menu redesign to its own
   section, added the generalized-API layer model + extensibility
   compliance checklist.
+- **2026-08-26** — kit part 1 landed (extensibility item 4): ListView +
+  the shared drag converter (touch rule 4) as `ui_list_t`/`ui_drag_t`
+  in app_widgets; the profile pickers converted to two-line scrolling
+  rows. Parts model honored: caller-owned state, widget-owned
+  hit-testing, no hidden globals.
 - **2026-08-25 (compliance audit)** — round 3, checked against the code:
   RSSI source corrected to the wifi component API (shell stays
   platform-neutral); accent semantics split into state vs. identity roles

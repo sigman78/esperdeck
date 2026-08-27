@@ -487,3 +487,27 @@ in-tree features. Tick items as they merge.
   the slot map, hold/flush and arm/confirm mechanics all verified
   end-to-end; the new `sel < s_slot_count` guard closes a stale-tap
   window the old positional switch had.
+- **2026-08-26 (item 4, part 1)** — **ListView + shared drag converter**
+  (branch `feat/ui-listview`): `ui_list_t` per the ui-spec parts model —
+  caller-owned struct, visible/clamp/row_y/hit/nav/scroll free
+  functions, widget-owned hit-testing, right-edge overflow cue — and
+  `ui_drag_t` (accumulate-then-floor, extracted from the app_connect
+  scrollback remnant, which now consumes it). First consumer: the three
+  profile pickers render as two-line-row scrolling lists — a profile
+  set can no longer drop off the grid (the silent-clip debt);
+  REORDER's arrow-swap adapts to the vertical list; Shift-PgUp/PgDn
+  page it. sim_regress gained `profile-picker`; 6/6 on both keystore
+  configs, device build + check_iram OK.
+- **2026-08-26 (item 4, part 2)** — **action-button bar**: the two-up
+  Save/Cancel and Trust/Cancel bars (app_profile, app_hostkey) were
+  hand-built tilegrids with identical shape; now `ui_button_bar()` +
+  `ui_button()` in app_widgets — the action-row half of the ui-spec
+  Modal. The full Modal panel (dim + title/body) waits for a simple
+  yes/no consumer; today's two are full screens with rich bodies, and
+  a panel with no consumer would be speculation. Slider/Stepper is
+  deliberately re-sequenced into the menu-rendition mockup round — its
+  data contract (the fx preset API) is ready, but a track/thumb without
+  the visual direction would be churn. Remaining for item 4: that
+  mockup round (slider + two-line items + pages), unified Toast (open
+  question on HOME's bottom toast first), StatusCluster, the public
+  cyberdeck_ui.h.

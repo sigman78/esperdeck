@@ -21,13 +21,11 @@ static struct {
 /* Two side-by-side button tiles: slot 0 = trust/replace, slot 1 = cancel. */
 static tilegrid_t hostkey_grid(void)
 {
-    tilegrid_t g = { .gx = 4, .gy = 0, .ncols = 2, .nrows = 1, .count = 2 };
-    g.th = ui_rows() >= 28 ? 4 : 3;
-    g.tw = (ui_cols() - 6) / 2;
-    if (g.tw > 36) g.tw = 36;
-    g.y0 = ui_rows() - 3 - g.th;               /* one blank row above the rule */
-    g.x0 = (ui_cols() - (g.tw * 2 + g.gx)) / 2;
-    return g;
+    const int th = ui_rows() >= 28 ? 4 : 3;
+    int tw = (ui_cols() - 6) / 2;
+    if (tw > 36) tw = 36;
+    /* one blank row above the rule */
+    return ui_button_bar(ui_rows() - 3 - th, 2, tw, th);
 }
 
 static void render_hostkey(uint64_t now)
@@ -92,13 +90,11 @@ static void render_hostkey(uint64_t now)
         ? (s_hostkey.armed ? "TAP AGAIN to REPLACE" : "Replace key")
         : "Trust & Connect";
     ui_pen(s_hostkey.mismatch ? OVERLAY_COL_AMBER : OVERLAY_COL_GREEN);
-    ui_tile(tile_x(&g, 0), tile_y(&g, 0), g.tw, g.th, trust,
-            s_hostkey.mismatch ? "danger" : "",
-            s_hostkey.sel == 0 || s_hostkey.armed);
+    ui_button(&g, 0, trust, s_hostkey.mismatch ? "danger" : "",
+              s_hostkey.sel == 0 || s_hostkey.armed);
     /* Cancel is safe navigation — BLUE, matching Back on the menu pages. */
     ui_pen(OVERLAY_COL_BLUE);
-    ui_tile(tile_x(&g, 1), tile_y(&g, 1), g.tw, g.th, "Cancel", "",
-            s_hostkey.sel == 1);
+    ui_button(&g, 1, "Cancel", "", s_hostkey.sel == 1);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_footer(s_hostkey.mismatch

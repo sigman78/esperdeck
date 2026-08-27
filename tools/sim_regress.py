@@ -58,6 +58,19 @@ SCENARIOS = {
         "|key:down|key:down|key:down|key:down|key:down|key:down|key:enter"
         "|wait:400|expect-text:SYSTEM|key:esc|wait:400"
         "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
+    # Profiles -> Edit picker: the scrolling ListView renders, arrow nav
+    # moves the selection, Esc unwinds picker -> PROFILES -> CONFIG -> HOME.
+    # Navigation only - Enter on a profile row would open the editor.
+    "profile-picker":
+        "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
+        "|key:right|key:right|key:enter|wait:500|expect:menu"
+        "|expect-text:CONFIGURATION"
+        "|key:enter|wait:400|expect-text:PROFILES"
+        "|key:down|key:enter|wait:400|expect-text:EDIT PROFILE"
+        "|key:down|key:down|key:up|wait:300|expect-text:EDIT PROFILE"
+        "|key:esc|wait:400|expect-text:PROFILES"
+        "|key:esc|wait:400|expect-text:CONFIGURATION"
+        "|key:esc|wait:500|expect:home|quit",
 }
 
 
