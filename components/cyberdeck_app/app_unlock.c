@@ -105,7 +105,7 @@ static const char *phase_title(void)
 {
     switch (s_unlock.mode) {
     case UM_OLD:     return "CURRENT ACCESS CODE";
-    case UM_NEW:     return "NEW ACCESS CODE";
+    case UM_NEW:     return "NEW ACCESS CODE (4+)";
     case UM_CONFIRM: return "CONFIRM NEW CODE";
     case UM_REMOVE:  return "REMOVE KEYSTORE";
     default:         return "ENTER ACCESS CODE";
@@ -232,14 +232,8 @@ static void render_unlock(uint64_t now)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    draw_footer(s_unlock.deriving ? "working..."
-              : s_unlock.gate
-                  ? "deck locked \xB7 digits \xB7 Enter OK"
-              : s_unlock.mode == UM_NEW
-                  ? "4+ chars \xB7 Enter OK \xB7 Esc cancel"
-              : s_unlock.mode == UM_REMOVE
-                  ? "keys revert to plain \xB7 Esc cancel"
-                  : "digits \xB7 Enter OK \xB7 Esc cancel");
+    /* No mode line: the title, the corner tag, the pad and the live
+     * entry row already say everything (redundancy call, 2026-08-27). */
 }
 
 static void flash_note(uint64_t now, const char *msg)
@@ -592,5 +586,5 @@ static void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t unlock_screen = {
     .name = "unlock", .enter = unlock_enter, .exit = unlock_exit,
     .tick = unlock_tick, .input = unlock_input, .render = render_unlock,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
 };

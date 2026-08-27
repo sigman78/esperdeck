@@ -14,9 +14,7 @@ static struct {
                                        screen (MS_MAIN in-session, MS_CONFIG
                                        from HOME, deep links later)         */
     bool     armed;                 /* a destructive item needs a 2nd hit   */
-    char     msg[48];               /* action result, shown under the tiles */
-    uint64_t msg_until;             /* auto-clear time; 0 = sticky          */
-    bool     msg_wifi;              /* live-track wifi_status_str()         */
+    bool     note_wifi;             /* live-track wifi_status_str()         */
     int      reorder_grab;          /* grabbed stored index, -1 = none      */
 } s_menu = { .reorder_grab = -1 };
 #include "app_screens.h"
@@ -250,13 +248,8 @@ static void render_menu(uint64_t now)
         }
     }
 
-    if (s_menu.msg[0]) {               /* action feedback, bottom row */
-        int mx = (ui_cols() - ((int)strlen(s_menu.msg) + 2)) / 2;
-        ui_pen(OVERLAY_COL_AMBER);
-        ui_putch(mx, note_row, UI_DIAMOND, 0);
-        ui_puts(mx + 2, note_row, s_menu.msg, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    }
+    /* Feedback renders on the StatusBar (the shared toast) — the shell
+     * composites it after this render. */
 }
 
 /* Paint + present out of turn — for an action that blocks and reboots
@@ -270,20 +263,21 @@ void menu_present_now(uint64_t now)
     ui_present();
 }
 
-/* Post an action-feedback line under the menu tiles.
- * @p ms: lifetime; 0 = sticky. @p live_wifi: track wifi_status_str(). */
+/* Menu feedback rides the shared toast on the StatusBar (ui-spec).
+ * @p ms: lifetime; 0 = sticky (an armed confirm holds its prompt until
+ * acted on or disarmed — menu_exit clears a leftover sticky so it can
+ * never follow the user onto another screen). */
 void menu_note(uint64_t now, uint32_t ms, bool live_wifi, const char *text)
 {
-    snprintf(s_menu.msg, sizeof(s_menu.msg), "%s", text);
-    s_menu.msg_until = ms ? now + ms : 0;
-    s_menu.msg_wifi  = live_wifi;
+    toast_for(now, 1, "%s", text);
+    app.toast_until = ms ? now + ms : UINT64_MAX;   /* MAX = sticky */
+    s_menu.note_wifi = live_wifi;
 }
 
 static void menu_clear_note(void)
 {
-    s_menu.msg[0]    = '\0';
-    s_menu.msg_until = 0;
-    s_menu.msg_wifi  = false;
+    app.toast[0]     = '\0';
+    s_menu.note_wifi = false;
 }
 
 /* Switch to menu screen @p sc, resetting selection/arm/note. Table pages
@@ -474,11 +468,13 @@ static void menu_resume(intptr_t arg, uint64_t now)
 }
 
 /* Any departure — pop, or another screen pushed on top — releases the
- * settings hold so deferred writes flush on the next tick. */
+ * settings hold so deferred writes flush on the next tick, and drops a
+ * leftover STICKY note (an arm prompt must not follow the user out). */
 static void menu_exit(uint64_t now)
 {
     (void)now;
     app_settings_hold(0);
+    if (app.toast_until == UINT64_MAX) menu_clear_note();
 }
 
 void menu_open(uint64_t now)
@@ -502,16 +498,17 @@ static void menu_tick(uint64_t now)
      * the real state, expired notes clear, the UP/LINK clocks tick. */
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
-        if (s_menu.msg[0] && s_menu.msg_wifi) {
-            snprintf(s_menu.msg, sizeof(s_menu.msg), "wifi: %s", wifi_status_str());
+        if (s_menu.note_wifi && app.toast[0]) {
+            snprintf(app.toast, sizeof(app.toast), "wifi: %s",
+                     wifi_status_str());
             /* Still in flight? Keep the note alive — expiring mid-
              * reconnect reads as the action silently dying. */
             wifi_mgr_state_t ws = wifi_manager_get_state();
             if (ws == WIFI_MGR_CONNECTING || ws == WIFI_MGR_LOST)
-                s_menu.msg_until = now + MENU_MSG_MS;
+                app.toast_until = now + MENU_MSG_MS;
+            else if (now >= app.toast_until)
+                menu_clear_note();
         }
-        if (s_menu.msg[0] && s_menu.msg_until && now >= s_menu.msg_until)
-            menu_clear_note();
         nav_invalidate();
     }
 }
@@ -604,5 +601,5 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t menu_screen = {
     .name = "menu", .enter = menu_enter, .resume = menu_resume,
     .exit = menu_exit, .tick = menu_tick, .input = menu_input,
-    .render = render_menu, .chrome = NAV_CHROME_NONE,
+    .render = render_menu, .chrome = NAV_CHROME_FULL,
 };

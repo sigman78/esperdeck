@@ -227,25 +227,9 @@ static void render_home(uint64_t now)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    /* Pac-Man marquee just above the footer — the sprite-glyph showcase. */
+    /* Pac-Man marquee just above the StatusBar — the sprite showcase.
+     * (Hints and the toast both retired to the bar, ui-spec.) */
     draw_pacman(ui_rows() - 2);
-
-    /* Footer legend; pairing hints only when the build has BLE, the lock
-     * hotkey only with a keystore. An active toast owns the right edge —
-     * draw_footer_lim clips clear of it. */
-    char hint[96];
-    snprintf(hint, sizeof(hint), "tap\xB7tap connect \xB7 %sR reload \xB7 W wifi%s",
-             app.cfg.ble ? "hold pair \xB7 B pair \xB7 " : "",
-             s_ks_present ? " \xB7 L lock" : "");
-    if (app.toast[0]) {
-        int tx = ui_cols() - ((int)strlen(app.toast) + 2) - 1;
-        draw_footer_lim(hint, tx - 1);           /* -1: the taper cell */
-        ui_pen(OVERLAY_COL_AMBER);
-        ui_chip(tx - 1, ui_rows() - 1, UI_PL_L, app.toast, 0, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    } else {
-        draw_footer(hint);
-    }
 }
 
 static void home_enter(intptr_t arg, uint64_t now)
@@ -474,7 +458,7 @@ static void poweroff_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 
 const nav_screen_t home_screen = {
     .name = "home", .enter = home_enter, .tick = home_tick,
-    .input = home_input, .render = render_home, .chrome = NAV_CHROME_NONE,
+    .input = home_input, .render = render_home, .chrome = NAV_CHROME_FULL,
 };
 
 /* No render: the collapse fx plays over the dead terminal frame. */

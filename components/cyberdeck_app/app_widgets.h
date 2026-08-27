@@ -102,10 +102,11 @@ bool clock_str(char *buf, size_t sz);
 /** Title chip framed by a shade gradient, drawn on row 0. */
 void draw_titlebar(int x0, const char *text);
 
-/** Footer hint riding a cyan powerline chip; @p limit = first column to
- *  stay clear of (right-aligned toast), or -1 for full width. */
-void draw_footer_lim(const char *hint, int limit);
-void draw_footer(const char *hint);
+/** The StatusBar (ui-spec, locked): full-width bar on its own background
+ *  at row n-1 — lettered indicator patches (NET/KBD), clock right; a
+ *  live toast takes the indicator span over. Composited by the shell
+ *  for NAV_CHROME_FULL screens. */
+void ui_statusbar(uint64_t now);
 
 /** Standard modal header: titlebar chip + right-aligned "// tag" + rule. */
 void draw_screen_header(const char *title, const char *tag);

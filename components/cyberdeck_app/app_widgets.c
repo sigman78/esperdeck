@@ -291,29 +291,58 @@ void draw_titlebar(int x0, const char *text)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
-/* Footer hint riding a cyan powerline chip. @p limit: first column the chip
- * must stay clear of (a right-aligned toast lives there), or -1 for full
- * width; clipping is internal so callers never depend on chip geometry. */
-void draw_footer_lim(const char *hint, int limit)
+/* One StatusBar patch. Lit = BRIGHT wash of its accent — the overlay
+ * resolve gives BRIGHT bars BLACK text — plus the bold face; off = the
+ * dimmed companion, receding. Patches sit adjacent, no gaps. */
+static int sb_patch(int x, int row, const char *txt, uint8_t accent, bool lit)
 {
-    int r = ui_rows() - 1;
-    if (limit < 0) limit = ui_cols();
-    int avail = limit - 6;    /* lead-in(3) + trail space + taper + 1 gap */
-    if (avail <= 0) return;   /* no room: rule only, no orphaned chip stub */
-    char clip[96];
-    snprintf(clip, sizeof(clip), "%.*s", avail, hint);
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_putch(0, r, ' ', OVERLAY_ATTR_INVERSE);
-    ui_putch(1, r, UI_PLAY, OVERLAY_ATTR_INVERSE);
-    ui_putch(2, r, ' ', OVERLAY_ATTR_INVERSE);
-    ui_puts(3, r, clip, OVERLAY_ATTR_INVERSE);
-    int end = 3 + (int)strlen(clip);
-    ui_putch(end,     r, ' ', OVERLAY_ATTR_INVERSE);
-    ui_putch(end + 1, r, UI_PL_R, 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_pen(lit ? accent : OVERLAY_COL_BLUE);
+    ui_puts(x, row, txt,
+            OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD |
+            (lit ? OVERLAY_ATTR_BRIGHT : OVERLAY_ATTR_DIM));
+    return x + (int)strlen(txt);
 }
 
-void draw_footer(const char *hint) { draw_footer_lim(hint, -1); }
+/* The StatusBar: lettered indicator patches left, clock right; a live
+ * toast owns the indicator span. */
+void ui_statusbar(uint64_t now)
+{
+    const int sr = ui_rows() - 1;
+    ui_pen(OVERLAY_COL_BLUE);
+    for (int c = 0; c < ui_cols(); c++)
+        ui_putch(c, sr, ' ', OVERLAY_ATTR_INVERSE);
+
+    if (app.toast[0] && now < app.toast_until) {
+        char clip[96];
+        snprintf(clip, sizeof(clip), " %.*s ", ui_cols() - 12, app.toast);
+        ui_puts(1, sr, clip,
+                OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BRIGHT |
+                OVERLAY_ATTR_BOLD);
+    } else {
+        /* NET + KBD only. CAP/NUM wait on lock-state tracking in the
+         * input component (item 6); a keystore-lock indicator is
+         * deliberately absent — a locked deck shows the PIN pad, the
+         * state is self-evident (user call, 2026-08-27). */
+        int x = sb_patch(1, sr, " NET ", OVERLAY_COL_GREEN,
+                         wifi_manager_is_connected());
+        const bool kbd = app.cfg.ble && app.cfg.ble->get_state &&
+                         app.cfg.ble->get_state() == 4;
+        sb_patch(x, sr, " KBD ", OVERLAY_COL_CYAN, kbd);
+    }
+
+    char clk[10];
+    if (clock_str(clk + 1, sizeof(clk) - 2)) {
+        clk[0] = ' ';
+        size_t n = strlen(clk);
+        clk[n] = ' ';
+        clk[n + 1] = '\0';
+        ui_pen(OVERLAY_COL_BLUE);
+        ui_puts(ui_cols() - (int)strlen(clk) - 1, sr, clk,
+                OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BRIGHT |
+                OVERLAY_ATTR_BOLD);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
 
 /* Standard modal header: titlebar chip, a right-aligned "// tag" in blue,
  * and a rule on row 3. Shared by CONNECTING / NEW PROFILE. */

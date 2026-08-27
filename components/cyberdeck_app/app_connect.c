@@ -98,8 +98,6 @@ static void render_connecting(uint64_t now)
         }
     }
     ui_pen(OVERLAY_COL_DEFAULT);
-
-    draw_footer("tap or Esc to cancel");
 }
 
 #define SCROLLBAR_LINGER_MS  1400
@@ -519,7 +517,7 @@ static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 const nav_screen_t connecting_screen = {
     .name = "connecting", .tick = connecting_tick,
     .input = connecting_input, .render = render_connecting,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_FULL,
     /* No enter hook: arm_connect() sets the state before navigating. */
 };
 

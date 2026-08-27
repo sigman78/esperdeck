@@ -5,6 +5,7 @@
 
 #include "app_nav.h"
 #include "app_internal.h"
+#include "app_widgets.h"   /* ui_statusbar — the composited chrome */
 
 #include "esp_log.h"
 #include <string.h>
@@ -156,7 +157,8 @@ void nav_frame(uint64_t now)
     ui_colors(UI_FG, UI_BG);
     ui_clear();
     d->render(now);
-    /* Shared chrome composites here once item 4's kit lands (d->chrome). */
+    if (d->chrome == NAV_CHROME_FULL)
+        ui_statusbar(now);
     ui_no_cursor();
     ui_present();
 }
