@@ -103,7 +103,6 @@ void menu_open(uint64_t now);
 void menu_open_config(uint64_t now);
 /** Switch to menu screen @p sc (menu_screen_t), resetting selection/arm. */
 void menu_goto(int sc);
-void menu_fx_flush(void);   /* deferred [fx] save — call from the app tick */
 /** Discard a grabbed-but-not-dropped reorder (session drop safety). */
 void menu_abort_reorder(void);
 /** Post an action-feedback line under the menu tiles (0 ms = sticky). */

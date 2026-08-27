@@ -363,7 +363,7 @@ void cyberdeck_app_tick(uint64_t now)
     ui_frame(app.anim_frame);   /* marquee clock for ui_tile */
 
     status_toasts(now);
-    menu_fx_flush();   /* deferred [fx] save, once the EFFECTS page is left */
+    app_settings_idle_flush();   /* deferred settings saves, once held pages close */
 
     nav_frame(now);
 }

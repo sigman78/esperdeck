@@ -14,7 +14,12 @@ import sys
 from pathlib import Path
 
 SIM_DEFAULT = Path("build-sim/sim/cyberdeck_sim.exe")
-TIMEOUT_S = 25
+
+
+def timeout_s(script):
+    """Per-scenario budget: steps fire ~450 ms apart after a 2.5 s boot
+    delay, so the timeout scales with script length (plus slack)."""
+    return 8 + 0.6 * (script.count("|") + 1)
 
 # Esc first: skips the boot splash, harmless if HOME is already up.
 # Never send a bare Enter on HOME - it would start a real SSH connect.
@@ -39,6 +44,20 @@ SCENARIOS = {
         "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
         "|key:right|key:right|key:enter|wait:500|expect:menu"
         "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
+    # Walk the table-driven pages: EFFECTS (cycle a value tile - toggles
+    # [fx] scanlines, flushed on page exit), FONT, SYSTEM; back_to lands
+    # on CONFIGURATION each time. Exercises item tables + value rendering.
+    "config-pages":
+        "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
+        "|key:right|key:right|key:enter|wait:500|expect:menu"
+        "|expect-text:CONFIGURATION"
+        "|key:down|key:down|key:down|key:enter|wait:400|expect-text:EFFECTS"
+        "|key:enter|wait:300|key:esc|wait:400|expect-text:CONFIGURATION"
+        "|key:down|key:down|key:down|key:down|key:enter|wait:400"
+        "|expect-text:FONT|key:esc|wait:400|expect-text:CONFIGURATION"
+        "|key:down|key:down|key:down|key:down|key:down|key:down|key:enter"
+        "|wait:400|expect-text:SYSTEM|key:esc|wait:400"
+        "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
 }
 
 
@@ -52,7 +71,7 @@ def main():
     for name, script in SCENARIOS.items():
         try:
             r = subprocess.run([str(sim), "--drive", script],
-                               timeout=TIMEOUT_S, cwd=Path.cwd())
+                               timeout=timeout_s(script), cwd=Path.cwd())
             ok = r.returncode == 0
         except subprocess.TimeoutExpired:
             ok = False
