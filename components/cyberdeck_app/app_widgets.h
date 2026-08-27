@@ -52,6 +52,17 @@ int  ui_list_scroll(ui_list_t *l, int dy_px);
 /** Right-edge overflow cue inside the rect; no-op when all rows fit. */
 void ui_list_draw_scroll(const ui_list_t *l);
 
+/* ------------------------------------------------------ action buttons */
+
+/** Centered @p count-button action bar (Save/Cancel, Trust/Cancel...):
+ *  one row of @p tw x @p th tiles with 4-cell gutters, top row @p y0.
+ *  Hit-test and arrow-nav via the tile_* helpers as usual. */
+tilegrid_t ui_button_bar(int y0, int count, int tw, int th);
+
+/** One bar button, drawn in the current pen. */
+void ui_button(const tilegrid_t *g, int slot, const char *label,
+               const char *body, bool sel);
+
 /* ------------------------------------------------------------ tile grid */
 
 /** Cell coordinates of tile @p slot's top-left corner. */

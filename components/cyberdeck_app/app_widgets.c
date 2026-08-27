@@ -127,6 +127,23 @@ void ui_list_draw_scroll(const ui_list_t *l)
         ui_putch(x, y, (y >= y0 && y <= y1) ? UI_SHADE3 : UI_SHADE1, 0);
 }
 
+/* ------------------------------------------------------ action buttons */
+
+tilegrid_t ui_button_bar(int y0, int count, int tw, int th)
+{
+    tilegrid_t g = { .tw = tw, .th = th, .gx = 4, .gy = 0,
+                     .ncols = count, .nrows = 1, .count = count };
+    g.x0 = (ui_cols() - (count * tw + (count - 1) * g.gx)) / 2;
+    g.y0 = y0;
+    return g;
+}
+
+void ui_button(const tilegrid_t *g, int slot, const char *label,
+               const char *body, bool sel)
+{
+    ui_tile(tile_x(g, slot), tile_y(g, slot), g->tw, g->th, label, body, sel);
+}
+
 /* Cell coordinates of tile @p slot's top-left corner. */
 int tile_x(const tilegrid_t *g, int slot)
 {

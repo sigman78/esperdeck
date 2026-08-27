@@ -202,18 +202,14 @@ static void render_profile(uint64_t now)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    /* Save / Cancel buttons — a 2-wide tile grid stashed for touch. */
-    tilegrid_t bg = { .y0 = pf_y0() + PF_ROWS * pf_step() + 1, .tw = 20,
-                      .th = ui_rows() >= 28 ? 3 : 2,
-                      .gx = 4, .gy = 0, .ncols = 2, .nrows = 1, .count = 2 };
-    bg.x0 = (ui_cols() - (bg.tw * 2 + bg.gx)) / 2;
+    /* Save / Cancel buttons — the bar grid stashed for touch. */
+    tilegrid_t bg = ui_button_bar(pf_y0() + PF_ROWS * pf_step() + 1, 2, 20,
+                                  ui_rows() >= 28 ? 3 : 2);
     app.grid = bg;
     ui_pen(OVERLAY_COL_GREEN);
-    ui_tile(tile_x(&bg, 0), tile_y(&bg, 0), bg.tw, bg.th, "Save", "",
-            s_pf.field == PF_SAVE);
+    ui_button(&bg, 0, "Save", "", s_pf.field == PF_SAVE);
     ui_pen(OVERLAY_COL_BLUE);   /* safe navigation — matches menu Back */
-    ui_tile(tile_x(&bg, 1), tile_y(&bg, 1), bg.tw, bg.th, "Cancel", "",
-            s_pf.field == PF_CANCEL);
+    ui_button(&bg, 1, "Cancel", "", s_pf.field == PF_CANCEL);
     ui_pen(OVERLAY_COL_DEFAULT);
 
     draw_footer("type to edit \xB7 Tab/arrows move \xB7 Enter next \xB7 Esc cancel");
