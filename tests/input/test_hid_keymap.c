@@ -73,13 +73,14 @@ void test_alt_prefixes_escape(void)
     expect(0x04, M_LALT | M_LCTRL, false, "\x1b\x01");
 }
 
+/* HID usage IDs: 0x28 Enter, 0x29 Escape, 0x2A Backspace, 0x2B Tab, 0x58 Numpad Enter. */
 void test_control_characters(void)
 {
-    expect(0x28, 0, false, "\r");     /* Enter     */
-    expect(0x29, 0, false, "\x1b");   /* Escape    */
-    expect(0x2A, 0, false, "\x7f");   /* Backspace */
-    expect(0x2B, 0, false, "\t");     /* Tab       */
-    expect(0x58, 0, false, "\r");     /* Numpad Enter */
+    expect(0x28, 0, false, "\r");
+    expect(0x29, 0, false, "\x1b");
+    expect(0x2A, 0, false, "\x7f");
+    expect(0x2B, 0, false, "\t");
+    expect(0x58, 0, false, "\r");
 }
 
 /* ── Special keys via vtkeys ─────────────────────────────────────────────── */
@@ -87,28 +88,30 @@ void test_control_characters(void)
 /* Usage IDs are adjacent and easy to transpose; pin each one. */
 void test_arrow_usage_ids(void)
 {
-    expect(0x4F, 0, false, "\x1b[C");   /* Right */
-    expect(0x50, 0, false, "\x1b[D");   /* Left  */
-    expect(0x51, 0, false, "\x1b[B");   /* Down  */
-    expect(0x52, 0, false, "\x1b[A");   /* Up    */
+    expect(0x4F, 0, false, "\x1b[C");
+    expect(0x50, 0, false, "\x1b[D");
+    expect(0x51, 0, false, "\x1b[B");
+    expect(0x52, 0, false, "\x1b[A");
 }
 
+/* Usage IDs 0x49-0x4E are consecutive and easy to transpose; pin each one. */
 void test_nav_cluster_usage_ids(void)
 {
-    expect(0x49, 0, false, "\x1b[2~");  /* Insert  */
-    expect(0x4A, 0, false, "\x1b[H");   /* Home    */
-    expect(0x4B, 0, false, "\x1b[5~");  /* PageUp  */
-    expect(0x4C, 0, false, "\x1b[3~");  /* Delete  */
-    expect(0x4D, 0, false, "\x1b[F");   /* End     */
-    expect(0x4E, 0, false, "\x1b[6~");  /* PageDn  */
+    expect(0x49, 0, false, "\x1b[2~");
+    expect(0x4A, 0, false, "\x1b[H");
+    expect(0x4B, 0, false, "\x1b[5~");
+    expect(0x4C, 0, false, "\x1b[3~");
+    expect(0x4D, 0, false, "\x1b[F");
+    expect(0x4E, 0, false, "\x1b[6~");
 }
 
+/* F1-F4 use SS3; F5 and up use CSI ~. This checks both sides of that split. */
 void test_function_key_usage_ids(void)
 {
-    expect(0x3A, 0, false, "\x1bOP");    /* F1  */
-    expect(0x3D, 0, false, "\x1bOS");    /* F4  */
-    expect(0x3E, 0, false, "\x1b[15~");  /* F5  */
-    expect(0x45, 0, false, "\x1b[24~");  /* F12 */
+    expect(0x3A, 0, false, "\x1bOP");
+    expect(0x3D, 0, false, "\x1bOS");
+    expect(0x3E, 0, false, "\x1b[15~");
+    expect(0x45, 0, false, "\x1b[24~");
 }
 
 void test_arrows_follow_application_cursor_mode(void)

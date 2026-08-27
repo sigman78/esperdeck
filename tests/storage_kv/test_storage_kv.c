@@ -19,9 +19,7 @@
 #define MKDIR(p) mkdir((p), 0755)
 #endif
 
-/* ------------------------------------------------------------------
- * storage platform seam — throwaway directory
- * ---------------------------------------------------------------- */
+/* Test storage platform seam: a throwaway directory. */
 
 #define TEST_MOUNT "kv_test_storage"
 
@@ -33,8 +31,6 @@ esp_err_t storage_platform_init(void)
     MKDIR(TEST_MOUNT "/keys");     /* factory reset walks it */
     return ESP_OK;
 }
-
-/* ------------------------------------------------------------------ */
 
 typedef struct {
     uint8_t  n8;
@@ -69,8 +65,6 @@ static void write_text(const char *path, const char *text)
 
 void setUp(void)    { remove(KV_PATH); }
 void tearDown(void) {}
-
-/* ------------------------------------------------------------------ */
 
 static void test_roundtrip_all_types(void)
 {
@@ -175,10 +169,7 @@ static void test_factory_reset_covers_registered_only(void)
     remove(TEST_MOUNT "/keepme.ini");
 }
 
-/* ------------------------------------------------------------------
- * Sections — several features share one file (settings.ini model)
- * ---------------------------------------------------------------- */
-
+/* Sections: several features share one file, the settings.ini model. */
 static void test_sections_roundtrip(void)
 {
     /* Two owners, two tables, one file: the second save must append its
@@ -246,9 +237,10 @@ static void test_section_absent_not_found(void)
 
 static void test_overlong_line_skipped_whole(void)
 {
-    /* One physical line of 191 junk chars whose TAIL aligns to "n8=1":
-     * fgets splits it at the buffer edge, and the engine must skip every
-     * chunk — the tail must not be adopted as a real key=value. */
+    /* A 191-byte junk line has a tail that reads "n8=1".
+     * fgets splits the line at the buffer edge.
+     * The engine must skip every chunk of that line.
+     * It must not adopt the tail as a real key=value pair. */
     char long_line[256];
     memset(long_line, 'x', 191);
     long_line[191] = '\0';
@@ -296,8 +288,6 @@ static void test_reset_register_overflow(void)
     TEST_ASSERT_TRUE(ok > 0);          /* some fit...            */
     TEST_ASSERT_TRUE(full > 0);        /* ...and the cap holds   */
 }
-
-/* ------------------------------------------------------------------ */
 
 int main(void)
 {
