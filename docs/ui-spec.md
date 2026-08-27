@@ -256,10 +256,14 @@ Contracts, not implementation:
 
 - [ ] An out-of-component plugin can register a screen and draw it using
       `cyberdeck_ui.h` alone — no `app_internal.h`, no shell statics.
+      *(The drawing half holds as of 2026-08-27; registration lands
+      with extensibility item 5's plugin table.)*
 - [ ] A plugin can contribute menu items/pages purely as `menu_item_t`
       data + callbacks — no positional contracts anywhere.
-- [ ] Every touchable part exposes `_hit`; no screen does pixel math.
-- [ ] The three build contexts stay green: device, simulator, and the
+      *(The item model holds since item 3; the contribution point is
+      item 5's shared page table.)*
+- [x] Every touchable part exposes `_hit`; no screen does pixel math.
+- [x] The three build contexts stay green: device, simulator, and the
       standalone Unity tests. Kit headers include **no SDL ever**, and
       ESP-IDF headers only from the idfsim-stubbed set — the standalone
       tests already build against `idfsim/` (see `tests/tsm/CMakeLists.txt`),

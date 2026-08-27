@@ -28,16 +28,7 @@
 
 #define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
-/* A page of finger-sized tiles laid out in a grid, with two-axis touch
- * hit-testing. Recomputed by each render_*() and saved for the tap handler.
- * All dimensions are in character cells. */
-typedef struct {
-    int x0, y0;        /* top-left cell of the grid            */
-    int tw, th;        /* tile size in cells                   */
-    int gx, gy;        /* gutter between tiles, in cells       */
-    int ncols, nrows;  /* tiles per page                       */
-    int count;         /* live tiles on this page (<= ncols*nrows) */
-} tilegrid_t;
+/* tilegrid_t moved to the public kit (cyberdeck_ui.h, via app_ui.h). */
 
 /** Push app.touch_scroll down to the touch driver (no-op without the
  *  gesture compiled in). Call after boot load and after every toggle. */
