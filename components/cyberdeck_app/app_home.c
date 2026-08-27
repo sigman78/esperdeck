@@ -6,6 +6,7 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_widgets.h"
+#include "cyberdeck_plugin.h"
 #include "display_fx.h"
 #include "keystore.h"
 #include "wifi_manager.h"
@@ -25,27 +26,60 @@ static struct {
 
 static const char *TAG = "app_home";
 
-/* Trailing HOME tiles after the profiles: "New profile" only as a first-run
- * shortcut, "Pair keyboard" only while nothing is bonded, "Lock deck" (the
- * panic button belongs on HOME, not three taps deep) while a keystore
- * exists, Configuration always last. Order resolved by home_extras(). */
-typedef enum { HX_NEW, HX_PAIR, HX_LOCK, HX_CONFIG } home_extra_t;
-#define HOME_EXTRA_MAX 4
-
 /* Keystore presence snapshot, refreshed on enter_home(): render_home runs
  * ~10 Hz and an ABSENT store would stat the filesystem every frame. Store
  * create/remove always route through other screens, so this stays true. */
 static bool s_ks_present;
 
-/* Resolve the trailing HOME tiles for the current state, in display order.
- * Returns the count; @p out must hold at least HOME_EXTRA_MAX entries. */
-static int home_extras(home_extra_t *out)
+/* Trailing HOME tiles after the profiles, as home_tile_t rows (the
+ * plugin seam's shape, dogfooded — extensibility item 5): "New profile"
+ * only as a first-run shortcut, "Pair keyboard" only while nothing is
+ * bonded, "Lock deck" (the panic button belongs on HOME, not three taps
+ * deep) while a keystore exists, plugin tiles next, Configuration
+ * always last. */
+static bool tile_new_visible(void)  { return app.stored_count == 0; }
+static bool tile_pair_visible(void) { return app.cfg.ble && !s_home.kbd_bonded; }
+static bool tile_lock_visible(void) { return s_ks_present; }
+static void tile_new_act(uint64_t now)  { enter_profile(now, -1); }
+static void tile_pair_act(uint64_t now) { enter_pairing(now); }
+static void tile_lock_act(uint64_t now)
+{
+    keystore_lock();                /* panic: wipe MK, raise the gate */
+    app_creds_wipe();               /* ...and the hydrated copies */
+    unlock_open_gate(now);
+}
+static void tile_config_act(uint64_t now) { menu_open_config(now); }
+
+static const home_tile_t CORE_TILES[] = {
+    { "+ New profile",   "add SSH host",      OVERLAY_COL_GREEN,
+      tile_new_visible,  tile_new_act },
+    { "+ Pair keyboard", "tap or long-press", OVERLAY_COL_CYAN,
+      tile_pair_visible, tile_pair_act },
+    { "Lock deck",       "PIN to wake",       OVERLAY_COL_AMBER,
+      tile_lock_visible, tile_lock_act },
+};
+static const home_tile_t CONFIG_TILE = {
+    "Configuration", "wifi / profiles / more", OVERLAY_COL_CYAN,
+    NULL, tile_config_act,
+};
+
+#define HOME_TILES_MAX 8
+
+/* Visible trailing tiles in display order: core, plugins, Configuration.
+ * Returns the count; @p out must hold HOME_TILES_MAX entries. */
+static int home_tiles(const home_tile_t *out[])
 {
     int n = 0;
-    if (app.stored_count == 0)          out[n++] = HX_NEW;   /* first-run help */
-    if (app.cfg.ble && !s_home.kbd_bonded)   out[n++] = HX_PAIR;  /* not yet bonded */
-    if (s_ks_present)                   out[n++] = HX_LOCK;  /* panic button   */
-    out[n++] = HX_CONFIG;                                    /* always, last   */
+    for (int i = 0; i < NELEM(CORE_TILES) && n < HOME_TILES_MAX - 1; i++)
+        if (!CORE_TILES[i].visible || CORE_TILES[i].visible())
+            out[n++] = &CORE_TILES[i];
+    for (int p = 0; p < cyberdeck_plugin_count; p++) {
+        const cyberdeck_plugin_t *pl = cyberdeck_plugins[p];
+        for (int i = 0; i < pl->n_home_tiles && n < HOME_TILES_MAX - 1; i++)
+            if (!pl->home_tiles[i].visible || pl->home_tiles[i].visible())
+                out[n++] = &pl->home_tiles[i];
+    }
+    out[n++] = &CONFIG_TILE;
     return n;
 }
 
@@ -160,9 +194,9 @@ static void render_home(uint64_t now)
         ui_puts(ui_cols() - (int)strlen(clk) - 1, 2, clk, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    /* Tiles: one per profile, then the trailing extras (see home_extras). */
-    home_extra_t xt[HOME_EXTRA_MAX];
-    int nx = home_extras(xt);
+    /* Tiles: one per profile, then the trailing rows (see home_tiles). */
+    const home_tile_t *xt[HOME_TILES_MAX];
+    int nx = home_tiles(xt);
     tilegrid_t g = picker_grid(app.profile_count + nx);
     app.grid = g;
     if (s_home.sel >= g.count) s_home.sel = g.count ? g.count - 1 : 0;
@@ -182,26 +216,9 @@ static void render_home(uint64_t now)
             ui_pen(prof_accent(p->name));   /* stable per-name identity */
             ui_tile(cx, cy, g.tw, g.th, p->name, body, sel);
         } else {
-            switch (xt[i - app.profile_count]) {
-            case HX_NEW:
-                ui_pen(OVERLAY_COL_GREEN);
-                ui_tile(cx, cy, g.tw, g.th, "+ New profile", "add SSH host", sel);
-                break;
-            case HX_PAIR:
-                ui_pen(OVERLAY_COL_CYAN);
-                ui_tile(cx, cy, g.tw, g.th, "+ Pair keyboard",
-                        "tap or long-press", sel);
-                break;
-            case HX_LOCK:
-                ui_pen(OVERLAY_COL_AMBER);
-                ui_tile(cx, cy, g.tw, g.th, "Lock deck", "PIN to wake", sel);
-                break;
-            case HX_CONFIG:
-                ui_pen(OVERLAY_COL_CYAN);
-                ui_tile(cx, cy, g.tw, g.th, "Configuration",
-                        "wifi / profiles / more", sel);
-                break;
-            }
+            const home_tile_t *t = xt[i - app.profile_count];
+            ui_pen(t->accent);
+            ui_tile(cx, cy, g.tw, g.th, t->label, t->body, sel);
         }
     }
 
@@ -249,30 +266,16 @@ void enter_home(uint64_t now)
     nav_reset(SCR_HOME, 0, now);
 }
 
-/* If HOME tile @p slot is a trailing extra, return its home_extra_t, else -1. */
-static int home_extra_kind(int slot)
-{
-    if (slot < app.profile_count) return -1;
-    home_extra_t xt[HOME_EXTRA_MAX];
-    int nx = home_extras(xt);
-    int xi = slot - app.profile_count;
-    return (xi >= 0 && xi < nx) ? (int)xt[xi] : -1;
-}
-
-/* Act on a trailing HOME extra tile; returns true if @p slot was one. */
+/* Act on a trailing HOME tile; returns true if @p slot was one. */
 static bool home_activate_extra(int slot, uint64_t now)
 {
-    switch (home_extra_kind(slot)) {
-    case HX_NEW:    enter_profile(now, -1);              return true;
-    case HX_PAIR:   if (app.cfg.ble) enter_pairing(now); return true;
-    case HX_LOCK:                       /* panic: wipe MK, raise the gate */
-        keystore_lock();
-        app_creds_wipe();               /* ...and the hydrated copies */
-        unlock_open_gate(now);
-        return true;
-    case HX_CONFIG: menu_open_config(now);               return true;
-    default:        return false;
-    }
+    if (slot < app.profile_count) return false;
+    const home_tile_t *xt[HOME_TILES_MAX];
+    int nx = home_tiles(xt);
+    int xi = slot - app.profile_count;
+    if (xi < 0 || xi >= nx || !xt[xi]->activate) return false;
+    xt[xi]->activate(now);
+    return true;
 }
 
 /* Session teardown: hide the overlay so the CRT collapse plays over the last

@@ -11,6 +11,7 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_settings.h"
+#include "cyberdeck_plugin.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -336,7 +337,19 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     storage_kv_load(cyberdeck_settings_ini, app_fx_section, app_fx_fields, &fxc);
     display_fx_set(&fxc);
 
-    ESP_LOGI(TAG, "shell up: %d profile(s)", app.profile_count);
+    /* Plugins (plugin_table.c): settings load, then init. A failing
+     * plugin is logged and skipped — the deck boots without it. */
+    for (int i = 0; i < cyberdeck_plugin_count; i++) {
+        const cyberdeck_plugin_t *p = cyberdeck_plugins[i];
+        if (p->settings && p->settings_obj)
+            storage_kv_load(cyberdeck_settings_ini, p->name,
+                            p->settings, p->settings_obj);
+        if (p->init && p->init() != ESP_OK)
+            ESP_LOGE(TAG, "plugin %s failed to init", p->name);
+    }
+
+    ESP_LOGI(TAG, "shell up: %d profile(s), %d plugin(s)",
+             app.profile_count, cyberdeck_plugin_count);
     return ESP_OK;
 }
 
@@ -364,6 +377,12 @@ void cyberdeck_app_tick(uint64_t now)
 
     status_toasts(now);
     app_settings_idle_flush();   /* deferred settings saves, once held pages close */
+
+    for (int i = 0; i < cyberdeck_plugin_count; i++) {
+        const cyberdeck_plugin_t *p = cyberdeck_plugins[i];
+        if (p->tick)       p->tick(now);
+        if (p->idle_flush) p->idle_flush();
+    }
 
     nav_frame(now);
 }

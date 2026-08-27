@@ -570,6 +570,24 @@ in-tree features. Tick items as they merge.
   `shot:` verb, and this header. Slider became the value well + the
   fx preset API by design; the Modal panel and CAP/NUM wait for
   their first consumer and item 6 respectively.
+- **2026-08-27 (item 5, part a: the plugin seam)** — public
+  `cyberdeck_plugin.h` (the descriptor: name / init / tick /
+  idle_flush / a kv settings table auto-loaded from the plugin's own
+  settings.ini section before init / `home_tile_t` rows) +
+  `plugin_table.c`, the one edit point per plugin. Deviation from the
+  original wording: the table lives IN the component (one copy beats
+  two identical copies in the roots; a plugin in its own component
+  joins via REQUIRES). The shell iterates it at init (settings load →
+  init, failure logged not fatal) and per tick (tick + idle_flush).
+  Dogfood: HOME's trailing extras converted — the HX_* enum and its
+  three switches became `home_tile_t` rows (core tiles + plugin tiles
+  + Configuration last); blocker 3's tiles-as-data half is done, the
+  ListView/overflow half stays open pending a HOME design pass
+  (HOME keeps its grid; overflow still logs a warning). Remaining for
+  item 5 (part b): the capability registry — BLE/presence ops as
+  named services with enum states, killing the `b == 4` magic
+  numbers. plugin_env_t stays deferred until the first
+  out-of-component plugin measures what it needs (proportionality).
   **One toast, all screens**: HOME's bottom chip and the menu's note
   row both retired — `menu_note` now rides the shared toast (sticky =
   UINT64_MAX until, dropped by `menu_exit` so an arm prompt can't
