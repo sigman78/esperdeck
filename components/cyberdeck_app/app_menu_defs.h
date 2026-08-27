@@ -15,13 +15,14 @@
 
 typedef enum {
     MS_MAIN = 0,   /* in-session root: Resume / Disconnect / Configuration    */
-    MS_CONFIG,     /* hub: Profiles / WiFi / Keyboard / System / Back         */
-    MS_PROFILES,   /* Add / Edit / Reorder / Delete / Import > / Back         */
-    MS_IMPORT,     /* SoftAP (phone) / Web (PC) / Back                        */
-    MS_WIFI,       /* Reconnect / Add network / Back                          */
-    MS_KEYBOARD,   /* Pair / Forget bonds / Back                             */
-    MS_SYSTEM,     /* Saver / Clear host keys / Factory reset / Back          */
-    MS_EFFECTS,    /* value tiles: every runtime render-fx tunable           */
+    MS_CONFIG,     /* hub: two-column section tiles (ui-spec rendition)       */
+    MS_PROFILES,   /* Add / Edit / Reorder / Delete / Import >                */
+    MS_IMPORT,     /* SoftAP (phone) / Web (PC)                               */
+    MS_WIFI,       /* Reconnect / Add network                                 */
+    MS_KEYBOARD,   /* Pair / Forget bonds                                     */
+    MS_SYSTEM,     /* Saver / Clear host keys / Factory reset                 */
+    MS_FX_CRT,     /* value tiles: beam-look fx (scanlines/phosphor/bold...)  */
+    MS_FX_MOTION,  /* value tiles: motion fx (wobble/wipe/collapse/static)    */
     MS_FONT,       /* value tiles: terminal font size, applied on reboot     */
     MS_KEYSTORE,   /* contextual: lock now / set code / remove code          */
     MS_DELPROFILE, /* dynamic: pick a stored profile to delete               */
@@ -50,19 +51,18 @@ typedef struct {
     const char *(*value)(intptr_t arg, char *buf, size_t sz);  /* body   */
 } menu_item_t;
 
-enum {
-    MENU_PAGE_WIDE = 1 << 0,   /* multi-column picker_grid layout        */
-    MENU_PAGE_VALS = 1 << 1,   /* value right-aligned on the title row   */
-};
-
 #define MENU_BACK_LEAVE (-1)   /* back_to: leave the menu screen (pop)   */
+
+/* Fit-one-screen contract (ui-spec, locked): a page holds at most what
+ * the smallest grid shows — 2 columns x 4 rows at 66x20. A larger
+ * section is split at design time; menus never scroll or paginate. */
+#define MENU_PAGE_MAX 8
 
 typedef struct {
     const char *title;
     const menu_item_t *items;
     uint8_t count;
     int8_t  back_to;           /* menu_screen_t target, or MENU_BACK_LEAVE */
-    uint8_t flags;             /* MENU_PAGE_*                            */
     uint8_t hold;              /* APP_SETTINGS_HOLD_* while page is open */
     void  (*on_open)(void);    /* snapshot volatile state at page open   */
 } menu_page_t;

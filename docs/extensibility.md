@@ -526,3 +526,21 @@ in-tree features. Tick items as they merge.
   dimmed-accent overlay attr in the display render path, (2) menu
   rendition on the item-table model, (3) hub/breadcrumb nav, (4)
   StatusBar + Toast unification, then the public cyberdeck_ui.h.
+- **2026-08-26 (item 4, rendition steps 1-3)** — dimmed-accent attr
+  (PR #12) and the **menu rendition + hub/breadcrumb** (branch
+  `feat/menu-rendition`) implemented per the locked spec: EFFECTS split
+  into CRT FX + MOTION FX (fit-one-screen, stable across glow builds);
+  Back items deleted everywhere (the BreadcrumbBar — full-width 3-row,
+  title chain via the back_to walk, tap = back, clock inside — is the
+  one back target); CONFIG hub = two-column section tiles with body
+  hints (`MENU_PAGE_HUB`: value() renders as the body line);
+  WIDE/VALS flags retired; two-column 3-row value tiles with real
+  DIM|INVERSE wells; pickers keep the ListView under the breadcrumb,
+  Back rows dropped; notes stay on the bottom row until the StatusBar
+  lands. `MENU_PAGE_MAX 8` asserted per table. sim_regress reworked
+  for 2-col nav + breadcrumb expectations; 6/6 both keystore configs;
+  device build + check_iram OK. Bench gate PASSED (2026-08-26,
+  10x20, three phase cycles — controls unchanged, `bars` within 2 us
+  of `dense`; checkpoint table in
+  [`performance.md`](performance.md)); normal firmware restored to
+  the deck after the run.

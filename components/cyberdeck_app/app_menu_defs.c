@@ -56,9 +56,9 @@ static void act_disconnect(intptr_t a, uint64_t now)
 }
 
 static const menu_item_t main_items[] = {
-    { .label = "Resume session",  .color = OVERLAY_COL_GREEN, .action = act_back },
-    { .label = "Disconnect",      .color = OVERLAY_COL_AMBER, .action = act_disconnect },
-    { .label = "Configuration >", .color = OVERLAY_COL_CYAN,  .action = act_goto,
+    { .label = "Resume session", .color = OVERLAY_COL_GREEN, .action = act_back },
+    { .label = "Disconnect",     .color = OVERLAY_COL_AMBER, .action = act_disconnect },
+    { .label = "Configuration",  .color = OVERLAY_COL_CYAN,  .action = act_goto,
       .arg = MS_CONFIG },
 };
 
@@ -80,22 +80,29 @@ static bool dim_no_keystore(intptr_t a)
 #endif
 }
 
+/* Hub tiles carry the section name alone, centered — content hints
+ * move to the StatusBar/toast once that lands (user call, 2026-08-27:
+ * a 3-row tile with a two-line top-anchored body is the even-line
+ * asymmetry the odd-height rule exists to prevent). */
 static const menu_item_t config_items[] = {
-    { .label = "Profiles >", .color = OVERLAY_COL_CYAN, .action = act_goto,
+    { .label = "PROFILES",  .color = OVERLAY_COL_CYAN, .action = act_goto,
       .arg = MS_PROFILES },
-    { .label = "WiFi >",     .color = OVERLAY_COL_CYAN, .action = act_goto,
+    { .label = "WIFI",      .color = OVERLAY_COL_CYAN, .action = act_goto,
       .arg = MS_WIFI },
-    { .label = "Keyboard >", .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_KEYBOARD, .dim = dim_no_ble, .dim_note = "no BLE keyboard support" },
-    { .label = "Effects >",  .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_EFFECTS },
-    { .label = "Font >",     .color = OVERLAY_COL_CYAN, .action = act_goto,
+    { .label = "KEYBOARD",  .color = OVERLAY_COL_CYAN, .action = act_goto,
+      .arg = MS_KEYBOARD,
+      .dim = dim_no_ble, .dim_note = "no BLE keyboard support" },
+    { .label = "CRT FX",    .color = OVERLAY_COL_CYAN, .action = act_goto,
+      .arg = MS_FX_CRT },
+    { .label = "MOTION FX", .color = OVERLAY_COL_CYAN, .action = act_goto,
+      .arg = MS_FX_MOTION },
+    { .label = "FONT",      .color = OVERLAY_COL_CYAN, .action = act_goto,
       .arg = MS_FONT },
-    { .label = "Keystore >", .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_KEYSTORE, .dim = dim_no_keystore, .dim_note = "not in this build" },
-    { .label = "System >",   .color = OVERLAY_COL_CYAN, .action = act_goto,
+    { .label = "SYSTEM",    .color = OVERLAY_COL_CYAN, .action = act_goto,
       .arg = MS_SYSTEM },
-    { .label = "Back",       .color = OVERLAY_COL_BLUE, .action = act_back },
+    { .label = "KEYSTORE",  .color = OVERLAY_COL_CYAN, .action = act_goto,
+      .arg = MS_KEYSTORE,
+      .dim = dim_no_keystore, .dim_note = "not in this build" },
 };
 
 /* ------------------------------------------------------------- PROFILES */
@@ -136,9 +143,8 @@ static const menu_item_t profiles_items[] = {
     { .label = "Reorder",         .color = OVERLAY_COL_CYAN, .action = act_prof_reorder },
     { .label = "Delete",          .color = OVERLAY_COL_RED,  .action = act_goto,
       .arg = MS_DELPROFILE },
-    { .label = "Import >",        .color = OVERLAY_COL_CYAN, .action = act_goto,
+    { .label = "Import",          .color = OVERLAY_COL_CYAN, .action = act_goto,
       .arg = MS_IMPORT },
-    { .label = "Back",            .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* --------------------------------------------------------------- IMPORT */
@@ -153,7 +159,6 @@ static const menu_item_t import_items[] = {
       .arg = SSH_IMPORT_SOFTAP },
     { .label = "Web (PC)",       .color = OVERLAY_COL_CYAN, .action = act_import,
       .arg = SSH_IMPORT_WEB },
-    { .label = "Back",           .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* ----------------------------------------------------------------- WIFI */
@@ -174,7 +179,6 @@ static void act_wifiprov(intptr_t a, uint64_t now)
 static const menu_item_t wifi_items[] = {
     { .label = "Reconnect",           .color = OVERLAY_COL_CYAN, .action = act_wifi_kick },
     { .label = "Add network (phone)", .color = OVERLAY_COL_CYAN, .action = act_wifiprov },
-    { .label = "Back",                .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* ------------------------------------------------------------- KEYBOARD */
@@ -204,7 +208,6 @@ static const menu_item_t kbd_items[] = {
     { .label = "Forget bonds",  .color = OVERLAY_COL_RED,  .action = act_forget_bonds,
       .confirm = "CONFIRM forget bonds?", .arm_note = "activate again to forget",
       .dim = dim_no_forget, .dim_note = "forget unavailable" },
-    { .label = "Back",          .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* --------------------------------------------------------------- SYSTEM */
@@ -267,7 +270,6 @@ static const menu_item_t system_items[] = {
     { .label = "Factory reset",       .color = OVERLAY_COL_RED,
       .action = act_factory, .confirm = "CONFIRM FACTORY RESET?",
       .arm_note = "activate again to WIPE ALL" },
-    { .label = "Back",                .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* -------------------------------------------------------------- EFFECTS
@@ -287,28 +289,32 @@ static const char *val_fx(intptr_t t, char *buf, size_t sz)
     return app_settings_fx_label(fx, app_settings_fx_index(fx));
 }
 
-static const menu_item_t fx_items[] = {
+/* EFFECTS split into two fit-one-screen sections — stable across glow
+ * builds (the 9-tunable glow build would overflow a single page). */
+static const menu_item_t fx_crt_items[] = {
     { .label = "Scanlines",  .color = OVERLAY_COL_CYAN, .action = act_fx,
       .arg = APP_FX_SCAN,     .value = val_fx },
     { .label = "Phosphor",   .color = OVERLAY_COL_CYAN, .action = act_fx,
       .arg = APP_FX_MONO,     .value = val_fx },
     { .label = "Bold pop",   .color = OVERLAY_COL_CYAN, .action = act_fx,
       .arg = APP_FX_BOLD,     .value = val_fx },
-    { .label = "Wobble",     .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_WOBBLE,   .value = val_fx },
 #if DISPLAY_FX_ROW_GLOW
     { .label = "Row glow",   .color = OVERLAY_COL_CYAN, .action = act_fx,
       .arg = APP_FX_GLOW,     .value = val_fx },
     { .label = "Glow decay", .color = OVERLAY_COL_CYAN, .action = act_fx,
       .arg = APP_FX_DECAY,    .value = val_fx },
 #endif
+};
+
+static const menu_item_t fx_motion_items[] = {
+    { .label = "Wobble",     .color = OVERLAY_COL_CYAN, .action = act_fx,
+      .arg = APP_FX_WOBBLE,   .value = val_fx },
     { .label = "Wipe in",    .color = OVERLAY_COL_CYAN, .action = act_fx,
       .arg = APP_FX_WIPE,     .value = val_fx },
     { .label = "Collapse",   .color = OVERLAY_COL_CYAN, .action = act_fx,
       .arg = APP_FX_COLLAPSE, .value = val_fx },
     { .label = "Static",     .color = OVERLAY_COL_CYAN, .action = act_fx,
       .arg = APP_FX_STATIC,   .value = val_fx },
-    { .label = "Back",       .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* ----------------------------------------------------------------- FONT */
@@ -408,7 +414,6 @@ static const menu_item_t font_items[] = {
       .arg = FONT_SIZE_10X20, .value = val_font },
     { .label_fn = label_font, .color_fn = color_font, .action = act_font,
       .arg = FONT_SIZE_12X24, .value = val_font },
-    { .label = "Back", .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* ------------------------------------------------------------- KEYSTORE
@@ -482,45 +487,47 @@ static const menu_item_t ks_items[] = {
       .action = act_ks_setpin, .value = val_ks_setpin },
     { .label = "Remove code", .color = OVERLAY_COL_CYAN, .action = act_ks_remove,
       .hidden = hidden_ks_absent, .value = val_ks_remove },
-    { .label = "Back",        .color = OVERLAY_COL_BLUE, .action = act_back },
 };
 
 /* ------------------------------------------------------------ the pages */
 
 #define ASSERT_FITS(t) \
-    _Static_assert(NELEM(t) <= MENU_MAX_TILES, "grow MENU_MAX_TILES")
-ASSERT_FITS(main_items);   ASSERT_FITS(config_items);
+    _Static_assert(NELEM(t) <= MENU_PAGE_MAX, "section exceeds one screen")
+ASSERT_FITS(main_items);     ASSERT_FITS(config_items);
 ASSERT_FITS(profiles_items); ASSERT_FITS(import_items);
-ASSERT_FITS(wifi_items);   ASSERT_FITS(kbd_items);
-ASSERT_FITS(system_items); ASSERT_FITS(fx_items);
-ASSERT_FITS(font_items);   ASSERT_FITS(ks_items);
+ASSERT_FITS(wifi_items);     ASSERT_FITS(kbd_items);
+ASSERT_FITS(system_items);   ASSERT_FITS(fx_crt_items);
+ASSERT_FITS(fx_motion_items); ASSERT_FITS(font_items);
+ASSERT_FITS(ks_items);
 
 static const menu_page_t PAGES[] = {
-    [MS_MAIN]     = { .title = "MENU", .items = main_items,
-                      .count = NELEM(main_items), .back_to = MENU_BACK_LEAVE },
-    [MS_CONFIG]   = { .title = "CONFIGURATION", .items = config_items,
-                      .count = NELEM(config_items), .back_to = MS_MAIN },
-    [MS_PROFILES] = { .title = "PROFILES", .items = profiles_items,
-                      .count = NELEM(profiles_items), .back_to = MS_CONFIG },
-    [MS_IMPORT]   = { .title = "IMPORT", .items = import_items,
-                      .count = NELEM(import_items), .back_to = MS_PROFILES },
-    [MS_WIFI]     = { .title = "WIFI", .items = wifi_items,
-                      .count = NELEM(wifi_items), .back_to = MS_CONFIG },
-    [MS_KEYBOARD] = { .title = "KEYBOARD", .items = kbd_items,
-                      .count = NELEM(kbd_items), .back_to = MS_CONFIG },
-    [MS_SYSTEM]   = { .title = "SYSTEM", .items = system_items,
-                      .count = NELEM(system_items), .back_to = MS_CONFIG,
-                      .hold = APP_SETTINGS_HOLD_SYS },
-    [MS_EFFECTS]  = { .title = "EFFECTS", .items = fx_items,
-                      .count = NELEM(fx_items), .back_to = MS_CONFIG,
-                      .flags = MENU_PAGE_WIDE | MENU_PAGE_VALS,
-                      .hold = APP_SETTINGS_HOLD_FX },
-    [MS_FONT]     = { .title = "FONT", .items = font_items,
-                      .count = NELEM(font_items), .back_to = MS_CONFIG,
-                      .on_open = font_on_open },
-    [MS_KEYSTORE] = { .title = "KEYSTORE", .items = ks_items,
-                      .count = NELEM(ks_items), .back_to = MS_CONFIG,
-                      .on_open = ks_on_open },
+    [MS_MAIN]      = { .title = "MENU", .items = main_items,
+                       .count = NELEM(main_items), .back_to = MENU_BACK_LEAVE },
+    [MS_CONFIG]    = { .title = "CONFIGURATION", .items = config_items,
+                       .count = NELEM(config_items), .back_to = MS_MAIN },
+    [MS_PROFILES]  = { .title = "PROFILES", .items = profiles_items,
+                       .count = NELEM(profiles_items), .back_to = MS_CONFIG },
+    [MS_IMPORT]    = { .title = "IMPORT", .items = import_items,
+                       .count = NELEM(import_items), .back_to = MS_PROFILES },
+    [MS_WIFI]      = { .title = "WIFI", .items = wifi_items,
+                       .count = NELEM(wifi_items), .back_to = MS_CONFIG },
+    [MS_KEYBOARD]  = { .title = "KEYBOARD", .items = kbd_items,
+                       .count = NELEM(kbd_items), .back_to = MS_CONFIG },
+    [MS_SYSTEM]    = { .title = "SYSTEM", .items = system_items,
+                       .count = NELEM(system_items), .back_to = MS_CONFIG,
+                       .hold = APP_SETTINGS_HOLD_SYS },
+    [MS_FX_CRT]    = { .title = "CRT FX", .items = fx_crt_items,
+                       .count = NELEM(fx_crt_items), .back_to = MS_CONFIG,
+                       .hold = APP_SETTINGS_HOLD_FX },
+    [MS_FX_MOTION] = { .title = "MOTION FX", .items = fx_motion_items,
+                       .count = NELEM(fx_motion_items), .back_to = MS_CONFIG,
+                       .hold = APP_SETTINGS_HOLD_FX },
+    [MS_FONT]      = { .title = "FONT", .items = font_items,
+                       .count = NELEM(font_items), .back_to = MS_CONFIG,
+                       .on_open = font_on_open },
+    [MS_KEYSTORE]  = { .title = "KEYSTORE", .items = ks_items,
+                       .count = NELEM(ks_items), .back_to = MS_CONFIG,
+                       .on_open = ks_on_open },
     /* MS_DELPROFILE / MS_EDITPROFILE / MS_REORDER: dynamic pickers. */
 };
 

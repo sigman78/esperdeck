@@ -178,6 +178,33 @@ void ui_puts(int col, int row, const char *s, uint8_t attrs)
         ui_putch(col++, row, (uint8_t)*s++, attrs);
 }
 
+void ui_puts_u8(int col, int row, const char *s, uint8_t attrs)
+{
+    const uint8_t *p = (const uint8_t *)s;
+    while (*p && col < s_cols) {
+        uint16_t cp;
+        if (p[0] < 0x80) {
+            cp = p[0];
+            p += 1;
+        } else if ((p[0] & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) {
+            cp = (uint16_t)(((p[0] & 0x1F) << 6) | (p[1] & 0x3F));
+            p += 2;
+        } else if ((p[0] & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 &&
+                   (p[2] & 0xC0) == 0x80) {
+            cp = (uint16_t)(((p[0] & 0x0F) << 12) |
+                            ((p[1] & 0x3F) << 6) | (p[2] & 0x3F));
+            p += 3;
+        } else {
+            /* Beyond-BMP (4-byte) or malformed: one '?', resync past any
+             * continuation bytes. */
+            cp = '?';
+            p += 1;
+            while ((*p & 0xC0) == 0x80) p++;
+        }
+        ui_putch(col++, row, cp, attrs);
+    }
+}
+
 void ui_printf(int col, int row, uint8_t attrs, const char *fmt, ...)
 {
     char buf[160];
