@@ -6,13 +6,13 @@
  * Posts INPUT_EVENT_TAP / INPUT_EVENT_LONG_PRESS with x,y coordinates.
  *
  * The Waveshare Touch-LCD-7 routes GT911 RST and INT through I2C IO expanders
- * (0x24 and 0x38) rather than direct GPIOs.  The custom reset sequence runs
- * before esp_lcd_touch_new_i2c_gt911(); rst_gpio_num/int_gpio_num are set to
- * GPIO_NUM_NC so the component skips its own reset path.
+ * (0x24 and 0x38) rather than direct GPIOs. The custom reset sequence runs
+ * before esp_lcd_touch_new_i2c_gt911(). It sets rst_gpio_num/int_gpio_num
+ * to GPIO_NUM_NC so the component skips its own reset path.
  */
 
 #include "input_hal_internal.h"
-#include "display.h"     /* DISPLAY_WIDTH — the edge strip is measured from it */
+#include "display.h"     /* DISPLAY_WIDTH anchors the right-edge scroll strip */
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "driver/i2c_master.h"
@@ -33,7 +33,6 @@ static const char *TAG = "touch_input";
 #define TAP_MAX_MS          300
 #define LONG_PRESS_MS       500
 
-/* Poll interval (ms) */
 #define POLL_INTERVAL_MS    50
 
 /* Waveshare Touch-LCD-7 IO expander addresses and reset values */
@@ -46,9 +45,9 @@ static const char *TAG = "touch_input";
 #define RESET_GPIO_LOW_US   (100 * 1000)
 #define RESET_HOLD_US       (200 * 1000)
 
-/* Vertical travel that turns an edge press into a scroll drag. Below this a
- * press is still a tap: fingers wobble, and a 2 px twitch must not eat the
- * tap that was meant. */
+/* Vertical travel that turns an edge press into a scroll drag. Below this,
+ * a press still counts as a tap. Fingers wobble, so a 2 px twitch must not
+ * swallow the intended tap. */
 #define SCROLL_START_PX     12
 
 /* Touch state machine states */
@@ -77,10 +76,6 @@ static inline bool in_scroll_edge(uint16_t x)
     int w = s_scroll_edge_px;
     return w > 0 && (int)x >= DISPLAY_WIDTH - w;
 }
-
-/* ------------------------------------------------------------------ */
-/* Poll task                                                            */
-/* ------------------------------------------------------------------ */
 
 static void touch_poll_task(void *arg)
 {
@@ -162,8 +157,8 @@ static void touch_poll_task(void *arg)
                 state = STATE_IDLE;
                 break;
             }
-            /* One event per poll that actually moved. The consumer converts
-             * pixels to rows, so no font knowledge is needed here. */
+            /* One event per poll that moved. The consumer converts pixels
+             * to rows and needs no font knowledge here. */
             if (pt.y != last_y) {
                 input_event_t ev = {
                     .type = INPUT_EVENT_SCROLL,
@@ -190,10 +185,6 @@ static void touch_poll_task(void *arg)
         }
     }
 }
-
-/* ------------------------------------------------------------------ */
-/* Waveshare hardware reset sequence                                    */
-/* ------------------------------------------------------------------ */
 
 #ifdef CONFIG_INPUT_TOUCH_WAVESHARE_RESET
 static esp_err_t gt911_waveshare_reset(i2c_master_bus_handle_t bus)
@@ -274,10 +265,6 @@ static esp_err_t gt911_waveshare_reset(i2c_master_bus_handle_t bus)
     return ESP_OK;
 }
 #endif /* CONFIG_INPUT_TOUCH_WAVESHARE_RESET */
-
-/* ------------------------------------------------------------------ */
-/* Init                                                                 */
-/* ------------------------------------------------------------------ */
 
 esp_err_t touch_input_backend_init(void)
 {

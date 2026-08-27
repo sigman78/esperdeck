@@ -4,7 +4,7 @@
  * Installs the USB-Serial-JTAG driver (no-op if IDF startup already did it)
  * and reads bytes with usb_serial_jtag_read_bytes() in a dedicated task.
  *
- * input_uart_backend_init() is always defined so the linker is satisfied
+ * input_uart_backend_init() is always defined, so linking succeeds
  * regardless of which CONFIG_INPUT_* value is active.
  */
 

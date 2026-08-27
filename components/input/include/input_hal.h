@@ -36,33 +36,33 @@ typedef struct {
     uint8_t  mods;                  /* HIDKEY: HID modifier byte            */
     uint16_t x;                     /* touch X coordinate (touch events)    */
     uint16_t y;                     /* touch Y coordinate (touch events)    */
-    int16_t  dy;                    /* SCROLL: pixels moved since the last
-                                     * event, signed (down is positive)     */
+    /* SCROLL: pixels moved since the last event; down is positive. */
+    int16_t  dy;
 } input_event_t;
 
 /**
  * Create the shared queue and initialise enabled backends.
- * Must be called after esp_event_loop_create_default() (WiFi init does this).
+ * Call this after esp_event_loop_create_default() (WiFi init does this).
  */
 esp_err_t input_hal_init(void);
 
 /**
  * Block until an input event arrives or timeout_ms elapses.
  *
- * @param ev         Output event (valid only when true is returned)
- * @param timeout_ms Milliseconds to wait; portMAX_DELAY if 0
- * @return true if an event was received, false on timeout
+ * @param ev         Output event; valid only if this call returns true.
+ * @param timeout_ms Milliseconds to wait; portMAX_DELAY if 0.
+ * @return true if an event arrived, false on timeout.
  */
 bool input_hal_read(input_event_t *ev, uint32_t timeout_ms);
 
 /**
  * Arm the right-edge scroll-drag strip.
  *
- * A press that STARTS within @p width_px of the right edge, and then moves
- * vertically past a small threshold, becomes a stream of INPUT_EVENT_SCROLL
- * instead of the tap/long-press it would otherwise have produced. Anchoring
- * on the press origin rather than the current position means a drag that
- * wanders out of the strip keeps scrolling, which is what a finger actually
+ * A press that starts within @p width_px of the right edge becomes a
+ * scroll stream. This happens once it moves vertically past a small
+ * threshold; otherwise it produces the usual tap or long-press. This
+ * strip anchors on the press origin, not the current position. A drag
+ * that wanders out of the strip keeps scrolling, matching what a finger
  * does.
  *
  * @param width_px  Strip width in pixels; 0 disables the gesture entirely.

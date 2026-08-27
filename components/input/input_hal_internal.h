@@ -15,8 +15,8 @@
 void input_hal_post_event(const input_event_t *ev);
 
 /*
- * Backend initialisers — always defined (real implementation or no-op),
- * so the linker is satisfied regardless of which CONFIG values are active.
+ * Backend initialisers -- always defined (real implementation or no-op),
+ * so linking succeeds regardless of which CONFIG values are active.
  */
 esp_err_t ble_keyboard_backend_init(void);
 esp_err_t input_uart_backend_init(void);

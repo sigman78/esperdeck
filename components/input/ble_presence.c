@@ -1,30 +1,32 @@
 /*
- * ble_presence.c — phone-proximity sensing over BLE. See ble_presence.h.
+ * ble_presence.c -- phone-proximity sensing over BLE. See ble_presence.h.
  *
  * Two data paths feed the same sighting logic:
  *
  *  - PIGGYBACK: ble_keyboard's GAP handler forwards every discovery event
- *    here (ble_presence_on_disc). Costs nothing extra while the keyboard's
- *    scan runs (keyboard disconnected — its "not connected => scan running"
- *    invariant).
- *  - OWN SCAN: while the keyboard is CONNECTED its scan is stopped, so a
- *    1 Hz keeper timer starts a low-duty PASSIVE scan of our own. When the
- *    keyboard disconnects we cancel ours so its scan can restart; its
- *    keeper retries on the EALREADY it may briefly see (~1 s window).
+ *    here (ble_presence_on_disc). It costs nothing extra while the
+ *    keyboard's scan runs (keyboard disconnected -- its "not connected =>
+ *    scan running" invariant).
+ *  - OWN SCAN: connecting to the keyboard stops its own scan. This
+ *    module's 1 Hz keeper timer then starts a low-duty PASSIVE scan
+ *    instead. When the keyboard disconnects, this timer cancels its scan
+ *    so the keyboard's scan can restart. The keyboard's keeper retries on
+ *    the EALREADY it may briefly see (~1 s window).
  *
- * RPA resolution is done in SOFTWARE (the Bluetooth `ah` function: one
- * AES-128 over the advertisement's 24-bit prand, compared against its
- * 24-bit hash) instead of the controller resolving list — full control,
- * no interaction with the keyboard's privacy settings, and hardware AES
- * makes it ~microseconds. The last matched RPA is cached, so the steady
- * state costs one memcmp per advertisement until the phone rotates its
- * address (~15 min).
+ * RPA resolution runs in SOFTWARE: the Bluetooth `ah` function computes
+ * one AES-128 over the advertisement's 24-bit prand. It compares the
+ * result against the advertisement's 24-bit hash. This replaces the
+ * controller resolving list. It gives full control, avoids any
+ * interaction with the keyboard's privacy settings, and hardware AES
+ * makes it take only microseconds. The module caches the last matched
+ * RPA. The steady state then costs one memcmp per advertisement until
+ * the phone rotates its address (~15 min).
  *
- * BYTE-ORDER NOTE (the classic trap): NimBLE addresses and the SMP-
- * distributed IRK are little-endian; the spec's ah() is written MSB-first.
- * The IRK is reversed into the AES key and prand/hash are assembled from
- * addr bytes [5..3]/[2..0]. If enrollment succeeds but sightings never
- * resolve, this mapping is the first suspect.
+ * BYTE-ORDER NOTE (the classic trap): NimBLE addresses and the
+ * SMP-distributed IRK use little-endian order, but the spec writes
+ * ah() MSB-first. The reversal maps the IRK into the AES key; prand and
+ * hash come from addr bytes [5..3] and [2..0]. If enrollment succeeds
+ * but sightings never resolve, suspect this mapping first.
  */
 
 #include "ble_presence.h"
@@ -36,10 +38,10 @@
 
 #if defined(CONFIG_INPUT_BLE) || defined(CONFIG_INPUT_AUTO)
 
-/* sdkconfig is developer-local (gitignored), so enforce the one setting
- * this module depends on here: enrolling while the keyboard is CONNECTED
- * needs a second concurrent connection. With only one, enroll still works
- * whenever the keyboard link is down. */
+/* sdkconfig is developer-local (gitignored). This block enforces the one
+ * setting this module depends on. Enrolling a phone while the keyboard
+ * stays connected needs a second concurrent connection. With only one
+ * connection, enrollment still works whenever the keyboard link is down. */
 #if defined(CONFIG_BT_NIMBLE_MAX_CONNECTIONS) && CONFIG_BT_NIMBLE_MAX_CONNECTIONS < 2
 #warning "ble_presence: set BT_NIMBLE_MAX_CONNECTIONS >= 2 to enroll a phone while the keyboard is connected"
 #endif
@@ -74,8 +76,6 @@ static const char *TAG = "ble_presence";
 #define SCAN_ITVL       0x0140     /* 200 ms  */
 #define SCAN_WINDOW     0x0030     /* 30 ms => ~15% duty */
 
-/* ---- enrolled phone (persisted) ---------------------------------------- */
-
 #define PHONE_MAGIC 0x314E4850u    /* "PHN1" */
 typedef struct {
     uint32_t magic;
@@ -87,8 +87,6 @@ typedef struct {
 static phone_rec_t s_phone;
 static bool        s_have_phone;
 
-/* ---- runtime state ------------------------------------------------------ */
-
 static volatile int64_t s_last_seen_us = -1;
 static volatile int     s_rssi_ema;          /* x1, coarse */
 static uint8_t          s_last_rpa[6];       /* fast path: current rotation */
@@ -97,10 +95,8 @@ static bool             s_last_rpa_valid;
 static ble_presence_enroll_t s_enroll = BLE_PRESENCE_IDLE;
 static uint16_t              s_enroll_conn = BLE_HS_CONN_HANDLE_NONE;
 
-static bool                s_own_scan;       /* we started the current scan */
+static bool                s_own_scan;       /* true while our own scan runs */
 static esp_timer_handle_t  s_keeper;
-
-/* ---- persistence -------------------------------------------------------- */
 
 static void phone_path(char *buf, size_t n)
 {
@@ -137,23 +133,22 @@ static void phone_load(void)
     fclose(f);
 }
 
-/* ---- RPA resolution ----------------------------------------------------- */
-
 /* ah(IRK, prand): AES-128(k, 0..0 || prand) & 0xFFFFFF, spec byte order —
  * the SMP-little-endian stored IRK reversed into the MSB-first AES key.
  *
- * On this stack this path is a FALLBACK: bonding places the peer IRK in
- * the controller's resolving list, so the enrolled phone's advertisements
- * arrive already resolved (see on_disc below) and its raw RPAs never reach
- * us. The software resolver covers configurations where that is not true
- * (resolving list full or cleared while phone.bin survives). */
+ * On this stack, this path is a FALLBACK. Bonding places the peer IRK in
+ * the controller's resolving list. The enrolled phone's advertisements
+ * then arrive already resolved (see on_disc below), and its raw RPAs
+ * never reach this function. The software resolver covers configurations
+ * where that does not hold: the resolving list is full, or cleared,
+ * while phone.bin survives. */
 static bool rpa_matches(const uint8_t val[6])
 {
     uint8_t key[16], pt[16] = { 0 }, ct[16];
     for (int i = 0; i < 16; i++)
         key[i] = s_phone.irk[15 - i];
-    pt[13] = val[5];                           /* prand (top bits 01, checked
-                                                * by the caller) */
+    /* prand: top bits 01 (already checked by the caller) */
+    pt[13] = val[5];
     pt[14] = val[4];
     pt[15] = val[3];
 
@@ -172,12 +167,12 @@ void ble_presence_on_disc(const uint8_t val[6], uint8_t addr_type, int rssi)
         return;
 
     bool hit = false;
-    /* Identity address in the report — CONFIRMED ON HARDWARE (2026-08-21):
-     * the bonded phone's advertisements arrive controller-resolved as the
-     * identity with a BLE_ADDR_*_ID type (observed type=2 at ~2 s cadence).
-     * Match on the ADDRESS alone: the stored identity type (0/1) never
-     * equals the resolved delivery type (2/3), and that mismatch was
-     * exactly the first bring-up bug. */
+    /* Identity address in the report -- CONFIRMED ON HARDWARE (2026-08-21).
+     * The bonded phone's advertisements arrive controller-resolved as the
+     * identity, with a BLE_ADDR_*_ID type (observed type=2 at ~2 s
+     * cadence). Match on the ADDRESS alone. The stored identity type
+     * (0/1) never equals the resolved delivery type (2/3); that mismatch
+     * was exactly the first bring-up bug. */
     if (memcmp(val, s_phone.ident, 6) == 0) {
         hit = true;
     } else if ((addr_type == BLE_ADDR_RANDOM ||
@@ -197,8 +192,6 @@ void ble_presence_on_disc(const uint8_t val[6], uint8_t addr_type, int rssi)
     s_last_seen_us = esp_timer_get_time();
     s_rssi_ema = s_rssi_ema ? (s_rssi_ema * 3 + rssi) / 4 : rssi;
 }
-
-/* ---- public state ------------------------------------------------------- */
 
 bool ble_presence_enrolled(void) { return s_have_phone; }
 int  ble_presence_rssi(void)     { return s_rssi_ema;   }
@@ -234,9 +227,10 @@ ble_presence_enroll_t ble_presence_enroll_state(void) { return s_enroll; }
 
 void ble_presence_forget(void)
 {
-    /* Delete the NimBLE bond too — a stale deck-side bond makes the next
-     * pairing attempt fail confusingly once the phone has forgotten us
-     * (and it keeps the dead IRK in the controller resolving list). */
+    /* Delete the NimBLE bond too. A stale deck-side bond makes the next
+     * pairing try fail confusingly once the phone has forgotten this
+     * device. It also keeps the dead IRK in the controller resolving
+     * list. */
     if (s_have_phone) {
         ble_addr_t id = { .type = s_phone.ident_type };
         memcpy(id.val, s_phone.ident, 6);
@@ -401,8 +395,6 @@ void ble_presence_enroll_stop(void)
     if (s_enroll_conn != BLE_HS_CONN_HANDLE_NONE)
         ble_gap_terminate(s_enroll_conn, BLE_ERR_REM_USER_CONN_TERM);
 }
-
-/* ---- init --------------------------------------------------------------- */
 
 void ble_presence_init(void)
 {

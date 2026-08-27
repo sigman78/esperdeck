@@ -1,12 +1,13 @@
 /*
- * ble_presence.h — phone-proximity sensing over BLE (prototype).
+ * ble_presence.h -- phone-proximity sensing over BLE (prototype).
  *
- * Tier A of docs/feat-ideas.md §8b: bond the phone once (enroll mode), keep
- * its IRK (Identity Resolving Key), and passively resolve the rotating
- * Resolvable Private Addresses in its background advertisements — presence
- * without any phone-side app. This is POLICY input only (shorten the PIN,
- * walk-away auto-lock): the IRK lives on the deck, so it contributes no key
- * material against a flash dump (see storage_auth.md roadmap 8).
+ * Tier A of docs/feat-ideas.md §8b: bond the phone once (enroll mode) and
+ * keep its IRK (Identity Resolving Key). It then passively resolves the
+ * rotating Resolvable Private Addresses in its background advertisements.
+ * This gives presence without any phone-side app. This module is POLICY
+ * input only: it can shorten the PIN or trigger walk-away auto-lock. The
+ * IRK lives on the deck, so it contributes no key material against a
+ * flash dump (see storage_auth.md roadmap 8).
  *
  * Device-only: the shell reaches it through cyberdeck_app's presence ops
  * seam, NULL on the simulator.
@@ -22,7 +23,7 @@
  *  Call once after BLE host init (ble_keyboard_init). */
 void ble_presence_init(void);
 
-/** A phone identity + IRK is stored. */
+/** True once the module has stored a phone identity + IRK. */
 bool ble_presence_enrolled(void);
 
 /** Seen recently enough to count as "here" (see PRESENT window in the .c). */
@@ -38,9 +39,10 @@ uint32_t ble_presence_age_ms(void);
 /** Smoothed RSSI of recent sightings, 0 when none yet. */
 int ble_presence_rssi(void);
 
-/* Enrollment: advertise as a connectable peripheral ("CYBERDECK"); pairing
- * from the phone (iOS Settings > Bluetooth, or any BLE app such as nRF
- * Connect) bonds and hands over its IRK, which is persisted. */
+/* Enrollment: this module advertises as a connectable peripheral
+ * ("CYBERDECK"). Pairing from the phone (iOS Settings > Bluetooth, or any
+ * BLE app like nRF Connect) bonds the phone. It also hands over the
+ * phone's IRK, which the module then persists. */
 void ble_presence_enroll_start(void);
 void ble_presence_enroll_stop(void);
 
