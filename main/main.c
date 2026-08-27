@@ -81,7 +81,24 @@ static void init_network(void)
 /* -------------------------------------------------------------------------
  * BLE keyboard ops for the shell (device backend = ble_keyboard/NimBLE)
  * ---------------------------------------------------------------------- */
-static int ble_ops_get_state(void) { return (int)ble_keyboard_get_state(); }
+/* The shell mirrors input's state enums (it is platform-neutral and never
+ * includes input's headers); this is the one file that sees both, so pin
+ * the pairs together here. */
+_Static_assert((int)CYBERDECK_BLE_IDLE         == (int)BLE_IDLE &&
+               (int)CYBERDECK_BLE_RECONNECT    == (int)BLE_RECONNECT &&
+               (int)CYBERDECK_BLE_PAIRING_SCAN == (int)BLE_PAIRING_SCAN &&
+               (int)CYBERDECK_BLE_CONNECTING   == (int)BLE_CONNECTING &&
+               (int)CYBERDECK_BLE_CONNECTED    == (int)BLE_CONNECTED,
+               "cyberdeck_ble_state_t drifted from ble_state_t");
+_Static_assert((int)CYBERDECK_ENROLL_IDLE        == (int)BLE_PRESENCE_IDLE &&
+               (int)CYBERDECK_ENROLL_ADVERTISING == (int)BLE_PRESENCE_ADVERTISING &&
+               (int)CYBERDECK_ENROLL_DONE_NOW    == (int)BLE_PRESENCE_ENROLLED_NOW,
+               "cyberdeck_enroll_state_t drifted from ble_presence_enroll_t");
+
+static cyberdeck_ble_state_t ble_ops_get_state(void)
+{
+    return (cyberdeck_ble_state_t)ble_keyboard_get_state();
+}
 
 static const cyberdeck_ble_ops_t s_ble_ops = {
     .get_state        = ble_ops_get_state,
@@ -93,9 +110,9 @@ static const cyberdeck_ble_ops_t s_ble_ops = {
     .forget           = ble_keyboard_forget_all,
 };
 
-static int presence_ops_enroll_state(void)
+static cyberdeck_enroll_state_t presence_ops_enroll_state(void)
 {
-    return (int)ble_presence_enroll_state();
+    return (cyberdeck_enroll_state_t)ble_presence_enroll_state();
 }
 
 static const cyberdeck_presence_ops_t s_presence_ops = {
@@ -108,6 +125,11 @@ static const cyberdeck_presence_ops_t s_presence_ops = {
     .enroll_stop  = ble_presence_enroll_stop,
     .enroll_state = presence_ops_enroll_state,
     .forget       = ble_presence_forget,
+};
+
+static const cyberdeck_service_t s_services[] = {
+    { CYBERDECK_SVC_BLE_KEYBOARD, &s_ble_ops },
+    { CYBERDECK_SVC_PRESENCE,     &s_presence_ops },
 };
 
 /* -------------------------------------------------------------------------
@@ -234,8 +256,8 @@ void app_main(void)
         .fallback_password  = CONFIG_SSH_DEFAULT_PASSWORD,
         .fallback_wifi_ssid     = CONFIG_WIFI_SSID,
         .fallback_wifi_password = CONFIG_WIFI_PASSWORD,
-        .ble = &s_ble_ops,
-        .presence = &s_presence_ops,
+        .services   = s_services,
+        .n_services = sizeof(s_services) / sizeof(s_services[0]),
 #if CONFIG_INPUT_TOUCH_SCROLL
         .set_scroll_edge = input_hal_set_scroll_edge,
         .scroll_edge_px  = CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX,

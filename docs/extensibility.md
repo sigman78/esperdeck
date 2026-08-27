@@ -27,7 +27,8 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
   clear→render→chrome→present frame.
 - **Ops-struct injection.** `cyberdeck_ble_ops_t` / `cyberdeck_presence_ops_t`
   (`cyberdeck_app.h`) — NULL-able capability structs filled by the
-  composition root. This is the plugin shape in miniature.
+  composition root. This is the plugin shape in miniature. (Since item
+  5b they ride the named service list — `cyberdeck_service()`.)
 - **`menu_def_t` page descriptors** (`app_menu_defs.h`) — menus are half
   data-driven already; only the *actions* live in a switch.
 - **The stub-swap build pattern** (`app_unlock.c` / `app_unlock_stub.c`,
@@ -70,8 +71,11 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
   `fopen`, keystore secret resolution, retry machine) inside a screen.
 - Security policy lives in eye-candy: the saver calls `keystore_lock()` +
   `app_creds_wipe()`; the walk-away auto-lock check sits in HOME's tick.
-- Capability states are magic numbers at call sites (`b == 4`,
-  `enroll_state() == 1`) because ops return bare `int`.
+- ~~Capability states are magic numbers at call sites (`b == 4`,
+  `enroll_state() == 1`) because ops return bare `int`.~~ — fixed by
+  item 5b (2026-08-27): ops return `cyberdeck_ble_state_t` /
+  `cyberdeck_enroll_state_t`, static-asserted against input's enums in
+  main.c.
 
 *Wiring debt:*
 
@@ -286,7 +290,7 @@ in-tree features. Tick items as they merge.
 
 ### Phase 2 — the plugin seam
 
-- [ ] **5. `cyberdeck_plugin_t` + capability registry + shared
+- [x] **5. `cyberdeck_plugin_t` + capability registry + shared
       `plugin_table.c`** compiled by both roots. Plugin screens join the
       shared `SCREENS[]` table (no runtime registration — 2026-08-26 scope
       decision); add per-screen context only if a
@@ -599,3 +603,20 @@ in-tree features. Tick items as they merge.
   dropped. Session/boot/poweroff stay chromeless (terminal owns every
   cell; the session's transient chrome pass is untouched). 6/6 both
   keystore configs; device build + check_iram OK.
+- **2026-08-27 (item 5, part b: the capability registry — item 5
+  complete)** — `cyberdeck_app_config_t` no longer grows a typed field
+  per capability: the roots pass a `cyberdeck_service_t` list (name +
+  ops) and anyone — shell or plugin — resolves optional deps with
+  `cyberdeck_service(CYBERDECK_SVC_*)`, NULL where the platform
+  registered none. The shell resolves its two (`app.ble`,
+  `app.presence`) once at init, so call sites kept their shape; the sim
+  registers no services and everything degrades to absent, as before.
+  States are named enums now: `get_state()` returns
+  `cyberdeck_ble_state_t`, `enroll_state()` returns
+  `cyberdeck_enroll_state_t` — mirrors of input's `ble_state_t` /
+  `ble_presence_enroll_t`, pinned by `_Static_assert`s in main.c, the
+  one file that sees both headers (the shell stays platform-neutral).
+  Every magic number swept: home's KBD/PHN chips and enroll gesture,
+  the statusbar `KBD` patch, `ble_status_str`, the connect/disconnect
+  toast watcher. 6/6 both keystore configs; device build + check_iram
+  OK (25 IRAM / 21 DRAM, unchanged).

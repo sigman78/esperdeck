@@ -419,13 +419,17 @@ Design choices inside the shell:
   (two-tap to connect).
 - **Asynchronous SSH connect** (`ssh_client_connect_start`). The UI stays
   live and cancellable during DNS, TCP, handshake, and auth.
-- **BLE seam.** The shell reaches the BLE keyboard through
-  `cyberdeck_ble_ops_t`, so it has no NimBLE dependency. The sim passes
-  `ble = NULL`.
-- **Presence seam.** Phone presence — the walk-away auto-lock, where the
-  deck watches for an enrolled phone's BLE advertisements — goes through
-  the same kind of seam, `cyberdeck_presence_ops_t`. Again `NULL` in the
-  sim.
+- **Capability services.** The shell reaches optional platform
+  capabilities through named ops structs the composition root registers
+  in the config's service list — `cyberdeck_ble_ops_t` under
+  `CYBERDECK_SVC_BLE_KEYBOARD`, `cyberdeck_presence_ops_t`
+  (walk-away auto-lock: the deck watches for an enrolled phone's BLE
+  advertisements) under `CYBERDECK_SVC_PRESENCE` — so it has no NimBLE
+  dependency; `cyberdeck_service(name)` returns NULL where a platform
+  registered nothing, and the sim registers none. States cross the seam
+  as shell-side enums (`cyberdeck_ble_state_t`,
+  `cyberdeck_enroll_state_t`), static-asserted against input's enums in
+  `main/main.c`.
 
 ---
 

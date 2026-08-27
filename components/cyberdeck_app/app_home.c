@@ -38,7 +38,7 @@ static bool s_ks_present;
  * deep) while a keystore exists, plugin tiles next, Configuration
  * always last. */
 static bool tile_new_visible(void)  { return app.stored_count == 0; }
-static bool tile_pair_visible(void) { return app.cfg.ble && !s_home.kbd_bonded; }
+static bool tile_pair_visible(void) { return app.ble && !s_home.kbd_bonded; }
 static bool tile_lock_visible(void) { return s_ks_present; }
 static void tile_new_act(uint64_t now)  { enter_profile(now, -1); }
 static void tile_pair_act(uint64_t now) { enter_pairing(now); }
@@ -139,8 +139,9 @@ static void render_home(uint64_t now)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    bool kbd = app.cfg.ble && app.cfg.ble->get_state && app.cfg.ble->get_state() == 4;
-    const char *kn = (kbd && app.cfg.ble->get_name) ? app.cfg.ble->get_name() : "";
+    bool kbd = app.ble && app.ble->get_state &&
+               app.ble->get_state() == CYBERDECK_BLE_CONNECTED;
+    const char *kn = (kbd && app.ble->get_name) ? app.ble->get_name() : "";
     char kbdinfo[64];
     snprintf(kbdinfo, sizeof(kbdinfo), "%-11s %s", ble_status_str(), kn);
     int ke = draw_status_led(1, kbd, "KBD", kbdinfo);
@@ -150,11 +151,12 @@ static void render_home(uint64_t now)
      * (RSSI over the ~1-2 m gate), blue = in range but far, red =
      * enrolled but gone, amber = enroll mode (advertising, waiting for
      * the phone to pair). */
-    if (app.cfg.presence &&
-        (app.cfg.presence->enrolled() || app.cfg.presence->enroll_state() == 1)) {
-        const bool adv  = app.cfg.presence->enroll_state() == 1;
-        const bool ph   = !adv && app.cfg.presence->present();
-        const bool nearby = ph && app.cfg.presence->is_near();
+    if (app.presence &&
+        (app.presence->enrolled() ||
+         app.presence->enroll_state() == CYBERDECK_ENROLL_ADVERTISING)) {
+        const bool adv  = app.presence->enroll_state() == CYBERDECK_ENROLL_ADVERTISING;
+        const bool ph   = !adv && app.presence->present();
+        const bool nearby = ph && app.presence->is_near();
         ui_pen(adv    ? OVERLAY_COL_AMBER        /* enrolling            */
              : nearby ? OVERLAY_COL_GREEN        /* within arm's reach   */
              : ph     ? OVERLAY_COL_BLUE         /* in range, but far    */
@@ -311,10 +313,10 @@ static void home_tick(uint64_t now)
      * as the L panic key. Armed on a sighting so a deck booted with the
      * phone already absent never self-locks out of nowhere; runs on HOME
      * only (v1 semantics: a live session holds the deck open). */
-    if (app.cfg.presence && s_ks_present &&
+    if (app.presence && s_ks_present &&
         keystore_state() == KEYSTORE_UNLOCKED) {
         static bool armed;
-        const cyberdeck_presence_ops_t *pr = app.cfg.presence;
+        const cyberdeck_presence_ops_t *pr = app.presence;
         if (pr->present()) {
             armed = true;
         } else if (armed && pr->enrolled() && pr->age_ms() > 60000) {
@@ -344,7 +346,7 @@ static void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 {
     /* Long-press anywhere = open pairing (works without a keyboard). */
     if (ev->type == CYBERDECK_INPUT_LONG_PRESS) {
-        if (app.cfg.ble) enter_pairing(now);
+        if (app.ble) enter_pairing(now);
         return;
     }
     if (ev->type == CYBERDECK_INPUT_TAP) {
@@ -413,15 +415,15 @@ static void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
             app_creds_wipe();
             unlock_open_gate(now);
         }
-        else if ((ch == 'p' || ch == 'P') && app.cfg.presence) {
+        else if ((ch == 'p' || ch == 'P') && app.presence) {
             /* Phone presence (prototype): P starts/cancels enroll mode when
              * no phone is stored; with one enrolled, P shows status and a
              * SECOND P within 2 s forgets (identity + bond) and drops
              * straight back into enroll — the clean re-pair gesture. The
              * phone side still needs its own "Forget This Device". */
             static uint64_t s_p_last;
-            const cyberdeck_presence_ops_t *pr = app.cfg.presence;
-            if (pr->enroll_state() == 1) {
+            const cyberdeck_presence_ops_t *pr = app.presence;
+            if (pr->enroll_state() == CYBERDECK_ENROLL_ADVERTISING) {
                 pr->enroll_stop();
                 toast(now, "phone enroll cancelled");
             } else if (!pr->enrolled()) {

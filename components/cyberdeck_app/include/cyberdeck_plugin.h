@@ -8,6 +8,10 @@
  * the single edit point per plugin, identical on device and simulator.
  * Every field is optional: a plugin can be just a tick, just a HOME
  * tile, or a full feature with settings.
+ *
+ * Optional platform capabilities (BLE keyboard, phone presence) are
+ * resolved by name with cyberdeck_service() — absent on platforms that
+ * did not register them, so always handle NULL.
  */
 
 #pragma once

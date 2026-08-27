@@ -118,9 +118,17 @@ void app_creds_wipe(void)
     profile_creds_wipe();   /* the editor draft            */
 }
 
+const void *cyberdeck_service(const char *name)
+{
+    for (int i = 0; i < app.cfg.n_services; i++)
+        if (strcmp(app.cfg.services[i].name, name) == 0)
+            return app.cfg.services[i].ops;
+    return NULL;
+}
+
 bool ble_has_bond(void)
 {
-    if (!app.cfg.ble) return false;
+    if (!app.ble) return false;
     ble_device_info_t d[STORAGE_BLE_MAX];
     int n = 0;
     storage_ble_list(d, STORAGE_BLE_MAX, &n);
@@ -268,19 +276,20 @@ static void status_toasts(uint64_t now)
         app.prev_wifi = w;
     }
 
-    if (app.cfg.ble && app.cfg.ble->get_state) {
-        uint8_t b = (uint8_t)app.cfg.ble->get_state();
-        if (b != app.prev_ble) {
-            if (b == 4) {                          /* BLE_CONNECTED  */
-                const char *n = app.cfg.ble->get_name
-                              ? app.cfg.ble->get_name() : "";
+    if (app.ble && app.ble->get_state) {
+        cyberdeck_ble_state_t b = app.ble->get_state();
+        if ((uint8_t)b != app.prev_ble) {
+            if (b == CYBERDECK_BLE_CONNECTED) {
+                const char *n = app.ble->get_name
+                              ? app.ble->get_name() : "";
                 toast(now, "keyboard connected %s", n);
-            } else if (b == 3) {                   /* BLE_CONNECTING */
+            } else if (b == CYBERDECK_BLE_CONNECTING) {
                 toast(now, "keyboard connecting...");
-            } else if (app.prev_ble == 4 && b != 2) {  /* not pairing scan */
+            } else if (app.prev_ble == CYBERDECK_BLE_CONNECTED &&
+                       b != CYBERDECK_BLE_PAIRING_SCAN) {
                 toast(now, "keyboard disconnected");
             }
-            app.prev_ble = b;
+            app.prev_ble = (uint8_t)b;
         }
     }
 }
@@ -314,6 +323,8 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 
     memset(&app, 0, sizeof(app));
     app.cfg = *cfg;
+    app.ble      = cyberdeck_service(CYBERDECK_SVC_BLE_KEYBOARD);
+    app.presence = cyberdeck_service(CYBERDECK_SVC_PRESENCE);
     app_touch_cfg_t tc = { .scroll = true };
     storage_kv_load(cyberdeck_settings_ini, app_touch_section, app_touch_fields, &tc);
     app.touch_scroll = tc.scroll;
