@@ -105,7 +105,7 @@ static const char *phase_title(void)
 {
     switch (s_unlock.mode) {
     case UM_OLD:     return "CURRENT ACCESS CODE";
-    case UM_NEW:     return "NEW ACCESS CODE";
+    case UM_NEW:     return "NEW ACCESS CODE (4+)";
     case UM_CONFIRM: return "CONFIRM NEW CODE";
     case UM_REMOVE:  return "REMOVE KEYSTORE";
     default:         return "ENTER ACCESS CODE";
@@ -232,16 +232,8 @@ static void render_unlock(uint64_t now)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    /* Mode state above the StatusBar (the hint tails died with the
-     * HintBar — the pad's labels carry the interaction). */
-    const char *st = s_unlock.deriving ? "working..."
-                   : s_unlock.gate     ? "deck locked"
-                   : s_unlock.mode == UM_NEW    ? "choose a code (4+)"
-                   : s_unlock.mode == UM_REMOVE ? "keys revert to plain"
-                                                : "enter code";
-    ui_pen(s_unlock.deriving ? OVERLAY_COL_AMBER : OVERLAY_COL_BLUE);
-    ui_puts((ui_cols() - (int)strlen(st)) / 2, ui_rows() - 2, st, 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
+    /* No mode line: the title, the corner tag, the pad and the live
+     * entry row already say everything (redundancy call, 2026-08-27). */
 }
 
 static void flash_note(uint64_t now, const char *msg)
