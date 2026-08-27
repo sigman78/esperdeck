@@ -1054,3 +1054,24 @@ and `mc` startup.
   memcpy PSRAM→internal, ~21 MB/s PSRAM→PSRAM memmove; 32 B cache
   lines, 32 KB 8-way data cache shared by grid traffic and parser
   state.
+
+## Dim-attr + menu-rendition checkpoint (2026-08-26)
+
+Regression bench for the dimmed-accent overlay attribute
+(`s_overlay_bar_dim` + the DIM branch in `resolve_overlay_cell`) and
+the ui-spec menu rendition. 10x20, three full phase cycles, worst
+`max` per phase; band period 512.5 us at 16 MHz.
+
+| phase | max | vs recorded |
+|---|---|---|
+| `off` (control) | 170 us | 171 us — unchanged |
+| `t:blank` (control) | 170 us | 171 us — unchanged |
+| `t:mix160` | 171 us | 172 us — unchanged |
+| `bars` (the DIM-touched resolve) | 176 us | +1–2 us over `dense` (174), the pre-existing bar-palette premium |
+| `fx:app` (worst regular) | 191 us | 37% of band |
+| `t:mix510` (cache-thrash outlier) | 274 us | 53% of band, matches its known profile |
+
+Verdict: no regression — the added DIM ternary is one predicted branch
+per cell per row build and is invisible at chunk granularity. The menu
+rendition changes only what is on screen, not the render path, and the
+`bars`/`spaces`/`dense` phases bound its chrome cost.

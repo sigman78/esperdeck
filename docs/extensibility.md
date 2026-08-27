@@ -539,5 +539,8 @@ in-tree features. Tick items as they merge.
   Back rows dropped; notes stay on the bottom row until the StatusBar
   lands. `MENU_PAGE_MAX 8` asserted per table. sim_regress reworked
   for 2-col nav + breadcrumb expectations; 6/6 both keystore configs;
-  device build + check_iram OK. Remaining gate: the
-  CYBERDECK_BENCH_STRESS pass (covers the dim-attr render change too).
+  device build + check_iram OK. Bench gate PASSED (2026-08-26,
+  10x20, three phase cycles — controls unchanged, `bars` within 2 us
+  of `dense`; checkpoint table in
+  [`performance.md`](performance.md)); normal firmware restored to
+  the deck after the run.
