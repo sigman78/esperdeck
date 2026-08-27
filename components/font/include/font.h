@@ -15,9 +15,9 @@
  *
  * IDF builds link EVERY size enabled in Kconfig (CYBERDECK_FONT_RT_*) and
  * choose one at boot from the stored setting. Changing the size needs a
- * reboot: the character grid, the DMA bounce-band height and the DRAM glyph
- * copy are all fixed during init, and esp_lcd captures the bounce geometry
- * once when the panel comes up.
+ * reboot. The character grid, the DMA bounce-band height, and the DRAM
+ * glyph copy are all fixed during init. esp_lcd captures the bounce
+ * geometry once, when the panel comes up.
  *
  * The simulator and the unit tests stay SINGLE-size and compile-time
  * (cmake -DFONT_SIZE={8x16,10x20,12x24}) — neither has a settings store or a
@@ -33,8 +33,8 @@ typedef enum {
     FONT_SIZE_COUNT,
 } font_size_t;
 
-/* Which sizes are linked into this build. An undefined FONT_RT_* evaluates
- * to 0 in #if, so only the enabled ones need defining. */
+/* Which sizes this build links in. An undefined FONT_RT_* evaluates to 0
+ * in #if, so only the enabled ones need defining. */
 #ifdef BUILD_SIMULATOR
   #if defined(CYBERDECK_FONT_12X24)
     #define FONT_RT_12X24 1
@@ -61,7 +61,7 @@ typedef enum {
 
 /*
  * Compile-time bounds over every size this build can select. They size the
- * ISR's static column caches and bound the DMA bounce band, so they must
+ * ISR's static column caches and bound the DMA bounce band. They must
  * cover the widest grid (8x16 -> 100 cols) and the tallest band (16).
  */
 #define FONT_MAX_COLS   100   /* 800 / 8  */
@@ -110,17 +110,19 @@ typedef enum {
 /**
  * Initialize the font system and select the active size.
  *
- * Copies the chosen size's glyph tables from flash into internal DRAM so the
- * bounce ISR can read them while the flash cache is disabled. Only the
- * SELECTED size is copied — linking three tables costs flash, not DRAM.
+ * Copies the chosen size's glyph tables from flash into internal DRAM.
+ * This lets the bounce ISR read them while NVS writes disable the flash
+ * cache. This copies only the SELECTED size — linking three tables costs
+ * flash, not DRAM.
  *
- * @param size  Requested size. Falls back to the first linked size when the
- *              request is out of range or was compiled out (a stored setting
- *              can outlive a Kconfig change). The simulator ignores it.
+ * @param size  Requested size. Falls back to the first linked size when
+ *              the request is out of range or the build excludes it. A
+ *              stored setting can outlive a Kconfig change. The simulator
+ *              ignores it.
  */
 void font_init(font_size_t size);
 
-/** Active size, and whether a given size is linked into this build. */
+/** Active size, and whether this build links a given size. */
 font_size_t font_active_size(void);
 bool        font_size_available(font_size_t size);
 
@@ -137,19 +139,19 @@ size_t font_glyph_bytes(void);
 
 /**
  * Decode a glyph's bitmap into @p out — IRAM_ATTR, safe to call from the
- * ISR. The tables are compressed (crop + PackBits row-RLE, see
- * terminus_font.h); this is the only way to obtain glyph rows.
+ * ISR. terminus_font.h documents the compressed format (crop + PackBits
+ * row-RLE); this function is the only way to obtain glyph rows.
  *
  * Writes font_glyph_bytes() bytes: font_height() rows of
  * FONT_ROW_BYTES(font_width()) bytes each (u16 rows assume @p out is
  * 2-aligned). Unknown codepoints decode the '?' fallback; if even that is
  * missing, all-zero rows.
  *
- * @param cp   Unicode codepoint (BMP, U+0000..U+FFFF)
+ * @param cp   Unicode codepoint (BMP, U+0000..U+FFFF).
  * @param bold Decode the bold form: a stored bold exception glyph, or the
- *             regular glyph smeared one pixel (pixel-identical to the real
- *             Terminus bold). Outside the bold subset — or with bold
- *             compiled out — decodes the regular glyph unchanged.
+ *             regular glyph smeared one pixel. The smear is pixel-identical
+ *             to the real Terminus bold. Outside the bold subset, or with
+ *             bold compiled out, this decodes the regular glyph unchanged.
  * @param out  Destination for the decoded rows.
  */
 void font_decode_glyph(uint16_t cp, bool bold, void *out);
@@ -158,17 +160,18 @@ void font_decode_glyph(uint16_t cp, bool bold, void *out);
  * Dynamic sprite glyphs — RAM-backed codepoints for pixel-level UI.
  *
  * FONT_SPRITE_COUNT Private Use Area codepoints (U+E000..) decode from a
- * writable DRAM table instead of the Terminus pool. Because the renderer's
- * row cache rebuilds every character row every frame, a sprite updated from
+ * writable DRAM table instead of the Terminus pool. The renderer's row
+ * cache rebuilds every character row every frame. A sprite updated from
  * any task is on screen within one frame — sub-cell animation, pixel-smooth
  * progress/slider edges and custom icons at zero per-frame app cost.
  *
- * Slots are shared by ALL cells showing that codepoint: N visually distinct
- * simultaneous appearances need N slots. Content is authored for the ACTIVE
- * size (a size change reboots, so slots have boot lifetime); an unset slot
- * decodes all-zero (blank). Bold renders the same bitmap — pixel art is not
- * smeared. ONE writer per slot at a time: concurrent font_sprite_set on the
- * same slot interleaves buffer fills and publishes garbage.
+ * ALL cells showing a codepoint share its slot: N visually distinct
+ * simultaneous appearances need N slots. Screens author content for the
+ * ACTIVE size (a size change reboots, so slots have boot lifetime); an
+ * unset slot decodes all-zero (blank). Bold renders the same bitmap — pixel
+ * art is not smeared. ONE writer per slot at a time: concurrent
+ * font_sprite_set on the same slot interleaves buffer fills and publishes
+ * garbage.
  *
  * The range is a LOCAL UI namespace: every render layer resolves these
  * codepoints, so remote/terminal text containing U+E000.. shows the current
@@ -177,15 +180,16 @@ void font_decode_glyph(uint16_t cp, bool bold, void *out);
  * content; sanitizing the range at vterm ingest is the eventual fix.
  *
  * Perf contract: the check lives in the decoded-glyph cache's MISS path, so
- * normal glyph decodes pay nothing; a displayed sprite costs a normal cache
- * hit, and font_sprite_set() invalidates the slot's cache keys so the next
- * frame refills (a per-slot generation counter closes the cross-core race
- * where a cache fill spans the whole update). Set/clear are task-context
+ * normal glyph decodes pay nothing. A displayed sprite costs a normal cache
+ * hit. font_sprite_set() invalidates the slot's cache keys, so the next
+ * frame refills. A per-slot generation counter closes the cross-core race
+ * where a cache fill spans the whole update. Set/clear are task-context
  * calls (double-buffered against the concurrently reading ISR).
  */
 #define FONT_SPRITE_BASE   0xE000u
-#define FONT_SPRITE_COUNT  8u      /* grow as takers appear — cost is linear
-                                    * (2 x FONT_MAX_GLYPH_BYTES DRAM each) */
+/* Grow as takers appear. Cost is linear: 2 x FONT_MAX_GLYPH_BYTES DRAM
+ * each. */
+#define FONT_SPRITE_COUNT  8u
 
 /** Codepoint of sprite slot @p slot (valid for slot < FONT_SPRITE_COUNT). */
 static inline uint16_t font_sprite_cp(unsigned slot)
@@ -196,8 +200,8 @@ static inline uint16_t font_sprite_cp(unsigned slot)
 /**
  * Set sprite @p slot's bitmap: font_glyph_bytes() bytes in decoded-glyph
  * layout — font_height() rows of FONT_ROW_BYTES(font_width()) bytes, u16
- * rows little-endian, bit (width-1) = leftmost pixel. Out-of-range slots
- * are ignored. Visible next frame.
+ * rows little-endian, bit (width-1) = leftmost pixel. This call ignores
+ * out-of-range slots. The sprite becomes visible next frame.
  */
 void font_sprite_set(unsigned slot, const void *rows);
 
