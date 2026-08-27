@@ -675,4 +675,10 @@ in-tree features. Tick items as they merge.
   Skipped, optional in the item: the global hotkey registry (no
   pressure — two shortcut sites). Verified: 6/6 both keystore configs
   (drive arrows exercise the HIDKEY path end-to-end), device build,
-  both guards green, check_iram 25/21 unchanged.
+  both guards green, check_iram 25/21 unchanged. Play-test appearance
+  round (user, 2026-08-27): equal CAP/NUM patches read as peers of
+  NET/KBD when they are keyboard sub-states — caps became an amber
+  ` C ` chip fused to the KBD patch, present only while ON; NUM
+  unrendered entirely (the keymap ignores num lock — an indicator
+  with no referent; get_locks keeps reporting the bit). ui-spec
+  indicator table updated.

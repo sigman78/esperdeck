@@ -140,8 +140,8 @@ it expires.
 |---|---|---|
 | WiFi | `NET` (green lit; RSSI buckets may modulate later) | `wifi_manager_get_rssi()` (dBm, 0 = disconnected), re-queried ≤ every 2 s — the wifi component API, never `esp_wifi_*` directly: the shell is platform-neutral and the sim stubs the component |
 | Keyboard | `KBD` (cyan lit) | BLE (Bluetooth Low Energy) HID state |
-| Caps lock | `CAP` (amber lit; shown only while a keyboard is connected) | `get_locks` on the BLE service ops — the deck is the host, so it owns the toggles (item 6) |
-| Num lock | `NUM` (amber lit; shown only while a keyboard is connected) | same `get_locks` bitmask |
+| Caps lock | ` C ` amber chip **fused to the KBD patch**, present only while ON (design round 2026-08-27: caps is a keyboard sub-state, not a peer indicator; an off-state chip is ink spent on nothing) | `get_locks` on the BLE service ops — the deck is the host, so it owns the toggles (item 6) |
+| Num lock | ~~`NUM`~~ unrendered 2026-08-27: the keymap ignores num lock, so an indicator would have no referent; `get_locks` still reports the bit for a future numpad-aware keymap | — |
 | Keystore | ~~`●` amber while locked~~ dropped 2026-08-27: a locked deck shows the PIN pad — the state is self-evident | — |
 | Clock | `HH:MM`, hidden until time known | SNTP (Simple Network Time Protocol) or host time |
 
