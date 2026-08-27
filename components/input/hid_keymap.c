@@ -1,11 +1,11 @@
 /*
  * HID Usage ID → keyboard byte translation table
  *
- * Printable keys via direct table lookup, with Ctrl/Shift/Alt/CapsLock —
- * the keyboard layout lives here, with the backend that owns the
- * keyboard. Special keys (arrows, F1–F12, nav cluster) have no bytes of
- * their own: they cross the queue as HID usages and get encoded at the
- * point of send (vtkeys), against live terminal state this driver must
+ * Printable keys go through direct table lookup, with
+ * Ctrl/Shift/Alt/CapsLock handling. The keyboard layout lives here,
+ * with the backend that owns the keyboard. Special keys (arrows, F1–F12, nav cluster) have no bytes
+ * of their own. They cross the queue as HID usages. vtkeys encodes them
+ * at the point of send, against live terminal state this driver must
  * not know.
  */
 
@@ -114,5 +114,6 @@ uint8_t hid_keymap_translate(uint8_t keycode, uint8_t modifiers,
         return 1;
     }
 
-    return 0;   /* not byte-owned — the caller posts it as a HID usage */
+    /* Not byte-owned — the caller posts it as a HID usage. */
+    return 0;
 }

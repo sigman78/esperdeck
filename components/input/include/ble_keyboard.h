@@ -25,8 +25,8 @@ typedef enum {
 /** Current connection state (thread-safe read). */
 ble_state_t ble_keyboard_get_state(void);
 
-/* Keyboard lock toggles, tracked deck-side (boot-protocol keyboards
- * carry no lock state — the host owns it, and the deck is the host). */
+/* Keyboard lock toggles, tracked deck-side. Boot-protocol keyboards
+ * carry no lock state — the host owns it, and the deck is the host. */
 #define BLE_KBD_LOCK_CAPS 0x01u
 #define BLE_KBD_LOCK_NUM  0x02u
 uint8_t ble_keyboard_get_locks(void);

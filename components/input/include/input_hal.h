@@ -22,11 +22,12 @@
 #define INPUT_EVENT_MAX_LEN  8
 
 /* Two key currencies. Printables (and the layout-free single bytes:
- * Enter, Esc, Tab, Backspace, Ctrl combos) travel as KEY bytes — the
+ * Enter, Esc, Tab, Backspace, Ctrl combos) travel as KEY bytes. The
  * backend owns the keyboard layout. Keys with no byte of their own
- * (arrows, nav cluster, function keys) travel as HIDKEY: the USB HID
- * usage ID plus the HID modifier byte, encoded to wire bytes by the
- * consumer that knows the terminal mode — never by the driver. */
+ * (arrows, nav cluster, function keys) travel as HIDKEY. HIDKEY carries
+ * the USB HID usage ID plus the HID modifier byte. The consumer that
+ * knows the terminal mode encodes them to wire bytes — never the
+ * driver. */
 typedef struct {
     uint8_t  type;                  /* INPUT_EVENT_* */
     uint8_t  len;                   /* byte count in buf (KEY events only)  */

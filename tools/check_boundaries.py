@@ -4,7 +4,7 @@ edges (docs/ARCHITECTURE.md "Component boundaries" table).
 
 Runs on sources only -- no toolchain needed, same result on device and
 simulator builds. Fails the build when a component grows an include edge
-the table does not sanction, so a fixed edge stays fixed and a widened
+the table does not sanction. A fixed edge stays fixed; a widened
 contract is a decision, not an accident.
 
 Usage: check_boundaries.py [repo_root]

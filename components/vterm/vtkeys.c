@@ -63,7 +63,7 @@ static const vtkey_def_t s_keys[] = {
 #define NKEYS  (sizeof(s_keys) / sizeof(s_keys[0]))
 
 /* USB HID usage -> logical key. The devices' shared currency: the BLE
- * backend posts HID usages verbatim, and SDL scancodes are defined FROM
+ * backend posts HID usages verbatim. SDL defines its scancodes FROM
  * the HID usage tables, so the simulator posts the same values. */
 typedef struct {
     uint8_t hid;

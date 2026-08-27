@@ -514,7 +514,8 @@ static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 
     if (ev->type == CYBERDECK_INPUT_HIDKEY) {
         /* The point of send — the one place a special key becomes wire
-         * bytes, against the DECCKM state the remote set on THIS vterm. */
+         * bytes. It encodes against the DECCKM state the remote set on
+         * THIS vterm. */
         uint8_t seq[VTKEYS_MAX_LEN];
         size_t n = vtkeys_encode(vtkeys_from_hid(ev->key),
                                  vtkeys_mods_from_hid(ev->mods),

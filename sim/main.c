@@ -32,8 +32,8 @@
 #include "wifi_manager.h"
 
 
-/* SDL modifier state → the HID modifier byte the input event carries
- * (bit0 LCtrl, bit1 LShift, bit2 LAlt, bits 4-6 the right-hand copies). */
+/* SDL modifier state → the HID modifier byte the input event carries.
+ * Bit0 LCtrl, bit1 LShift, bit2 LAlt; bits 4-6 the right-hand copies. */
 static uint8_t sdl_to_hidmods(SDL_Keymod mod)
 {
     return (uint8_t)(((mod & KMOD_LCTRL)  ? 0x01u : 0u) |
@@ -47,11 +47,10 @@ static uint8_t sdl_to_hidmods(SDL_Keymod mod)
 /*
  * Translate an SDL keydown event to its bytes — the layout-free singles
  * and Ctrl-letter combos only. Returns NULL for printable characters
- * (handled by SDL_TEXTINPUT) and for special keys, which travel as HID
- * usages instead: SDL scancodes are defined FROM the USB HID usage
- * tables, so the keydown's scancode IS the value the device's BLE
- * backend would post — the two backends share one currency by
- * construction.
+ * (SDL_TEXTINPUT handles those) and for special keys, which travel as
+ * HID usages instead. SDL defines its scancodes FROM the USB HID usage
+ * tables. The keydown's scancode IS the value the device's BLE backend
+ * would post. The two backends share one currency by construction.
  */
 static const char *translate_key(SDL_Keycode sym, SDL_Keymod mod)
 {

@@ -1,15 +1,11 @@
 /*
  * vtkeys -- logical key + modifiers -> terminal byte sequence.
  *
- * Special keys cross the input queue as USB HID usage + HID modifier
- * byte (the device reads them off the wire; SDL scancodes are defined
- * from the same usage tables, so the simulator posts identical values).
- * The session screen — the point of send, where the DECCKM state lives —
- * maps usage to vtkey_t and encodes. Encoding rules live here once;
- * adding a key or fixing a sequence is a single edit.
- *
- * Printable characters are NOT handled here — those stay with the backend
- * that owns the keyboard layout.
+ * Special keys cross the input queue as USB HID usage + modifier byte.
+ * SDL scancodes share the usage tables, so the sim posts the same
+ * values. The session screen encodes at the point of send, where the
+ * DECCKM state lives — docs/ARCHITECTURE.md has the why. Printables
+ * stay with the backend that owns the keyboard layout, never here.
  */
 
 #ifndef VTKEYS_H

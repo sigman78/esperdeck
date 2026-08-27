@@ -394,10 +394,9 @@ static IRAM_ATTR void decode_record(const uint8_t *pool, uint16_t offset, void *
     }
 }
 
-/* Regular-face decode: bsearch miss falls back to '?' (U+003F); if '?' is
- * itself unavailable, `out` is left all-zero (same guard against runaway
- * fallback as the old code's cp != 0x3F check — done here without actual
- * recursion since `out` is already zeroed either way). */
+/* Regular-face decode: bsearch miss falls back to '?' (U+003F). If '?' is
+ * itself missing from the ranges, `out` stays zeroed. The up-front
+ * zero_fill makes a recursive fallback unnecessary. */
 static IRAM_ATTR void decode_regular(uint16_t cp, void *out)
 {
     zero_fill(out, s_glyph_bytes);

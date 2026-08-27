@@ -735,9 +735,9 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
                 ev.type = INPUT_EVENT_KEY;
                 ev.len  = len;
             } else {
-                /* No bytes of its own (arrows, F-keys, nav cluster):
-                 * cross the queue as a HID usage for the consumer to
-                 * encode against live terminal state. */
+                /* No bytes of its own (arrows, F-keys, nav cluster).
+                 * The key crosses the queue as a HID usage. The consumer
+                 * encodes it against live terminal state. */
                 ev.type = INPUT_EVENT_HIDKEY;
                 ev.key  = kc;
                 ev.mods = modifiers;

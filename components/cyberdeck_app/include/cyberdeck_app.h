@@ -26,9 +26,9 @@ typedef struct { char size[16]; } cyberdeck_font_cfg_t;
 extern const storage_kv_field_t cyberdeck_font_fields[];
 
 /* ---- input events (mirrors input_hal layout; sim builds without it) ----
- * Two key currencies: KEY carries layout-owned bytes (printables, Enter,
- * Esc, Tab, Backspace, Ctrl combos); HIDKEY carries a USB HID usage +
- * HID modifier byte for keys with no byte of their own — the session
+ * Two key currencies. KEY carries layout-owned bytes: printables, Enter,
+ * Esc, Tab, Backspace, and Ctrl combos. HIDKEY carries a USB HID usage +
+ * HID modifier byte for keys with no byte of their own. The session
  * screen encodes those against live terminal state at the point of send. */
 
 #define CYBERDECK_INPUT_KEY        0
