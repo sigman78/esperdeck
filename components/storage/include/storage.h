@@ -21,10 +21,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* -------------------------------------------------------------------------
- * Types
- * ---------------------------------------------------------------------- */
-
 typedef enum {
     STORAGE_AUTH_PASSWORD = 0,
     STORAGE_AUTH_KEY,
@@ -40,16 +36,16 @@ typedef struct {
     uint16_t        port;           /* TCP port, typically 22         */
     char            user[32];       /* Username                       */
     storage_auth_t  auth;           /* Authentication method          */
-    char            password[64];   /* Password  (auth == PASSWORD)   */
+    char            password[64];
     char            key_id[32];     /* Key identifier (auth == KEY)   */
 } conn_profile_t;
 
 /* Marker written into an ini password= field whose real value diverted
  * into the secrets bundle — distinguishes "diverted, unlock to read" from
  * a genuinely empty password (open WiFi network / no passphrase). Loads
- * replace it with the bundle value when the store is open; consumers that
+ * replace it with the bundle value when the store is open. Consumers that
  * see it raw (locked-boot WiFi kick, connect resolve) must treat it as
- * "not usable yet", never as a literal credential. */
+ * "not usable yet". They must never read it as a literal credential. */
 #define STORAGE_PW_BUNDLED "@bundle"
 
 #define STORAGE_WIFI_MAX 8
@@ -61,34 +57,26 @@ typedef struct {
 
 /* The shared credential scratch lives in storage_cred.h (opt-in). */
 
-/* -------------------------------------------------------------------------
- * Lifecycle
- * ---------------------------------------------------------------------- */
-
 /**
  * Initialize the storage subsystem.
  *
  * On device: mounts LittleFS, ensures keys/ directory exists.
  * On sim:    ensures sim_storage/ and sim_storage/keys/ exist.
  *
- * Must be called before any other storage_* function.
+ * Call this before any other storage_* function.
  *
  * @return ESP_OK on success, ESP_FAIL on mount/mkdir failure.
  */
 esp_err_t storage_init(void);
 
-/* -------------------------------------------------------------------------
- * Connection profiles
- * ---------------------------------------------------------------------- */
-
 /**
  * Load all profiles from <mount_point>/profiles.ini.
  *
- * Parses the INI file into @p out. At most @p max profiles are written.
+ * Parses the INI file into @p out. This writes at most @p max profiles.
  * If the file does not exist, sets *count = 0 and returns ESP_OK.
  *
  * @param out   Output array of conn_profile_t, caller-allocated.
- * @param count Set to the number of profiles actually parsed.
+ * @param count Set to the number of profiles parsed.
  * @param max   Maximum number of profiles to write into @p out.
  * @return ESP_OK, ESP_ERR_INVALID_ARG, or ESP_FAIL.
  */
@@ -114,10 +102,6 @@ const conn_profile_t *storage_find_profile(const conn_profile_t *profiles,
                                            int count,
                                            const char *name);
 
-/* -------------------------------------------------------------------------
- * WiFi profiles
- * ---------------------------------------------------------------------- */
-
 /**
  * Load WiFi profiles from <mount_point>/wifi.ini, in file order.
  * Order is the connect-preference order. Missing file: *count = 0, ESP_OK.
@@ -131,9 +115,7 @@ esp_err_t storage_wifi_save(const wifi_profile_t *profiles, int count);
 
 /* Settings go through the generic kv API in storage_kv.h. */
 
-/* -------------------------------------------------------------------------
- * Known SSH host keys (TOFU pinning)
- * ---------------------------------------------------------------------- */
+/* Known SSH host keys (TOFU pinning). */
 
 /**
  * Look up the pinned host-key fingerprint for host:port.
@@ -155,10 +137,6 @@ esp_err_t storage_known_host_set(const char *host, uint16_t port,
  * @return ESP_OK if removed, ESP_ERR_NOT_FOUND if the host was not pinned.
  */
 esp_err_t storage_known_host_delete(const char *host, uint16_t port);
-
-/* -------------------------------------------------------------------------
- * SSH key blobs
- * ---------------------------------------------------------------------- */
 
 /**
  * Read a PEM key from <mount_point>/keys/<key_id>.pem.
@@ -194,7 +172,7 @@ esp_err_t storage_delete_key(const char *key_id);
 
 /**
  * List stored key ids (the <key_id> stems of keys/<key_id>.pem), sorted
- * alphabetically. Stems that don't fit STORAGE_KEY_ID_LEN are skipped.
+ * alphabetically. It skips stems that don't fit STORAGE_KEY_ID_LEN.
  *
  * @param out   Caller-allocated array of at least @p max entries.
  * @param max   Capacity of @p out.
@@ -206,18 +184,14 @@ esp_err_t storage_list_keys(char (*out)[STORAGE_KEY_ID_LEN], int max,
 
 /**
  * Best-effort key metadata from keys/<key_id>.pub, whose first line is
- * "<type> <base64> [comment]". Either output may be NULL; both are set to ""
- * before parsing.
+ * "<type> <base64> [comment]". Either output may be NULL; parsing sets
+ * both to "" first.
  *
- * @return ESP_OK if a .pub line was parsed, ESP_ERR_NOT_FOUND otherwise.
+ * @return ESP_OK if it parsed a .pub line, ESP_ERR_NOT_FOUND otherwise.
  */
 esp_err_t storage_key_info(const char *key_id,
                            char *type, size_t type_len,
                            char *comment, size_t comment_len);
-
-/* -------------------------------------------------------------------------
- * Bulk removal
- * ---------------------------------------------------------------------- */
 
 /**
  * Delete known_hosts.ini (drops all TOFU host-key pins).
@@ -228,13 +202,11 @@ esp_err_t storage_known_hosts_clear(void);
 /**
  * Factory reset: delete profiles.ini, wifi.ini, known_hosts.ini,
  * ble_devices.ini and every file under keys/. A reboot is advisable after,
- * since in-RAM caches (BLE registry, wifi_manager) are untouched here.
+ * since this leaves in-RAM caches (BLE registry, wifi_manager) untouched.
  */
 esp_err_t storage_factory_reset(void);
 
-/* -------------------------------------------------------------------------
- * Platform seam — implemented in storage_dev.c / storage_sim.c
- * ---------------------------------------------------------------------- */
+/* Platform seam — implemented in storage_dev.c / storage_sim.c. */
 
 /** Platform-specific initialisation. Called only by storage_init(). */
 esp_err_t   storage_platform_init(void);
@@ -242,15 +214,11 @@ esp_err_t   storage_platform_init(void);
 /** Mount-point string, e.g. "/littlefs" or "sim_storage". Valid forever. */
 const char *storage_platform_mount_point(void);
 
-/* -------------------------------------------------------------------------
- * BLE paired device registry
- * ---------------------------------------------------------------------- */
-
 #define STORAGE_BLE_MAX  8    /* maximum paired BLE devices stored */
 
 typedef struct {
     uint8_t  addr[6];         /* BLE device address (little-endian) */
-    uint8_t  addr_type;       /* 0 = public, 1 = random */
+    uint8_t  addr_type;       /* public address when 0, random when 1 */
     char     name[64];        /* advertised device name, or "Unknown" */
     uint32_t last_seen;       /* unix timestamp or 0 if unavailable */
 } ble_device_info_t;

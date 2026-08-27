@@ -39,10 +39,6 @@
 
 static const char *TAG = "keystore";
 
-/* -------------------------------------------------------------------------
- * On-disk formats (docs/storage_auth.md)
- * ---------------------------------------------------------------------- */
-
 #define KS_MAGIC        "CKS1"
 #define KW_MAGIC        "CKW1"
 #define KS_VERSION      1
@@ -51,7 +47,7 @@ static const char *TAG = "keystore";
 #define KS_HDR_SIZE     (24 + KS_SLOTS * KS_SLOT_SIZE)   /* 424 */
 #define KS_FILE         "keystore.kv1"
 
-#define KW_HDR_SIZE     36                /* fixed part before ciphertext  */
+#define KW_HDR_SIZE     36                /* size of the fixed part before the ciphertext */
 #define KW_TAG_SIZE     16
 #define KW_CT_MAX       16384             /* sanity cap on wrapped payload */
 
@@ -61,11 +57,11 @@ static const char *TAG = "keystore";
 
 #define KS_ALG_ARGON2ID     2
 
-/* Argon2id defaults: 4 MiB work area, 2 passes, 1 lane — measured 1.09 s on
- * the S3 @ 240 MHz (CYBERDECK_BENCH_ARGON2 sweep: 4 MiB x1 = 645 ms, x2 =
- * 1090 ms, x3 = 1566 ms; 8 MiB is not allocatable). 4 MiB is the hardware
- * ceiling, so memory stays maxed and passes tune the time. Per-store params
- * in the header allow retuning without a format change. */
+/* Argon2id defaults: 4 MiB work area, 2 passes, 1 lane. The S3 took 1.09 s
+ * at 240 MHz. CYBERDECK_BENCH_ARGON2 swept 4 MiB: x1 = 645 ms, x2 = 1090 ms,
+ * x3 = 1566 ms. 8 MiB does not allocate. 4 MiB is the hardware ceiling, so
+ * memory stays maxed and passes tune the time. Per-store params in the
+ * header allow retuning without a format change. */
 #define KS_ARGON2_BLOCKS_KIB  4096
 #define KS_ARGON2_PASSES      2
 #define KS_ARGON2_LANES       1
@@ -76,9 +72,9 @@ typedef struct {
     uint32_t blocks_kib;
     uint32_t passes;
     uint8_t  lanes;
-    uint8_t  pin_len;             /* auto-submit hint (byte 11, ex-reserved);
-                                   * 0 for passphrase slots. NOT in the AAD —
-                                   * tampering only breaks auto-submit UX  */
+    /* Byte 11, ex-reserved: auto-submit hint, 0 for passphrase slots.
+     * Not in the AAD. Tampering only breaks auto-submit UX. */
+    uint8_t  pin_len;
     uint8_t  salt[16];
     uint8_t  nonce[24];
     uint8_t  wrapped_mk[48];      /* 32 B MK ciphertext + 16 B tag */
@@ -91,20 +87,13 @@ typedef struct {
     ks_slot_t slot[KS_SLOTS];
 } ks_header_t;
 
-/* -------------------------------------------------------------------------
- * State — .bss lands in internal SRAM on the device, never PSRAM
- * ---------------------------------------------------------------------- */
-
+/* .bss lands in internal SRAM on the device, never PSRAM. */
 static struct {
     bool        hdr_loaded;
     bool        unlocked;
     ks_header_t hdr;
     uint8_t     mk[32];
 } s_ks;
-
-/* -------------------------------------------------------------------------
- * Small helpers
- * ---------------------------------------------------------------------- */
 
 static void ks_path(char *buf, size_t bufsz)
 {
@@ -179,10 +168,8 @@ static esp_err_t ks_write_atomic(const char *path,
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * Header (de)serialization — explicit offsets, no struct punning
- * ---------------------------------------------------------------------- */
-
+/* Explicit byte offsets, not struct punning: layout must match across
+ * platforms exactly. */
 static void hdr_serialize(const ks_header_t *h, uint8_t out[KS_HDR_SIZE])
 {
     memset(out, 0, KS_HDR_SIZE);
@@ -357,8 +344,7 @@ static esp_err_t slot_wrap_mk(int idx, const char *pin)
     return ESP_OK;
 }
 
-/* Try to unwrap the MK from slot @idx with @pin into @mk_out.
- * ESP_FAIL = tag mismatch (wrong PIN for this slot). */
+/* A tag mismatch returns ESP_FAIL: the wrong PIN for this slot. */
 static esp_err_t slot_unwrap_mk(int idx, const char *pin, uint8_t mk_out[32])
 {
     const ks_slot_t *sl = &s_ks.hdr.slot[idx];
@@ -374,16 +360,12 @@ static esp_err_t slot_unwrap_mk(int idx, const char *pin, uint8_t mk_out[32])
     return rc == 0 ? ESP_OK : ESP_FAIL;
 }
 
-/* -------------------------------------------------------------------------
- * Public API — store lifecycle
- * ---------------------------------------------------------------------- */
-
 keystore_state_t keystore_state(void)
 {
     if (s_ks.unlocked) return KEYSTORE_UNLOCKED;
     esp_err_t e = ks_load();
     if (e == ESP_ERR_NOT_FOUND) return KEYSTORE_ABSENT;
-    return KEYSTORE_LOCKED;      /* present (or present-but-corrupt) */
+    return KEYSTORE_LOCKED;      /* LOCKED covers a valid store and a corrupt one */
 }
 
 uint8_t keystore_pin_len(void)
@@ -398,17 +380,14 @@ uint8_t keystore_pin_len(void)
     return 0;
 }
 
-/* -------------------------------------------------------------------------
- * Failed-attempt backoff (docs/storage_auth.md roadmap step 4)
- *
- * The device gate made brute force a visible surface: without this, each
- * guess costs only the ~1 s Argon2 derivation. The failure counter is
- * persisted in <mount>/backoff.cnt; the first failures are free, then the
- * wait doubles from KS_BACKOFF_BASE_MS to a KS_BACKOFF_CAP_MS ceiling.
- * Time is MONOTONIC UPTIME — the deck has no battery-backed wall clock —
- * so a reboot re-arms the CURRENT delay in full (the counter survives,
- * uptime doesn't): power-cycling through the wait costs more than waiting.
- * ---------------------------------------------------------------------- */
+/* The on-device gate turns PIN brute force into a real threat: each guess
+ * costs only ~1 s of Argon2 derivation. The store keeps the failure counter
+ * in <mount>/backoff.cnt. The first few failures cost no wait. After that,
+ * each failure doubles the wait, from KS_BACKOFF_BASE_MS up to the
+ * KS_BACKOFF_CAP_MS ceiling. The deck has no battery-backed wall clock, so
+ * the backoff timer uses MONOTONIC UPTIME. A reboot re-arms the delay in
+ * full: counter survives, uptime doesn't, so power-cycling costs more than
+ * waiting. */
 
 #define KS_BACKOFF_FILE    "backoff.cnt"
 #define KS_BACKOFF_FREE    5         /* delay starts at the 5th failure */
@@ -542,10 +521,10 @@ esp_err_t keystore_create(const char *pin)
     bk_clear();                    /* stale counter from a removed store */
     ESP_LOGI(TAG, "Keystore created (slot 0: %s)",
              s_ks.hdr.slot[0].type == KS_SLOT_PIN ? "pin" : "passphrase");
-    /* Adopt existing bare keys NOW — a fresh store must protect what's
+    /* Adopt existing bare keys now: a fresh store must protect what's
      * already on disk. Waiting for the first keystore_unlock() left keys
-     * plaintext indefinitely: with the lazy trigger nothing prompts for
-     * an unwrapped key, so the unlock (and adoption) never happened. */
+     * plaintext indefinitely. The lazy trigger prompts for no unwrapped
+     * key, so adoption never fires. */
     ks_adopt_plaintext();
     ks_adopt_secrets();
     return ESP_OK;
@@ -675,10 +654,6 @@ esp_err_t keystore_change_pin(const char *old_pin, const char *new_pin)
     return e;
 }
 
-/* -------------------------------------------------------------------------
- * Public API — wrapped key files
- * ---------------------------------------------------------------------- */
-
 /* Path safety is storage_key_id_ok() (storage_priv.h) — one gate shared with
  * the plaintext storage_*_key entry points, which used to have none. */
 
@@ -804,22 +779,20 @@ bool keystore_is_wrapped(const char *key_id)
     return true;
 }
 
-/* -------------------------------------------------------------------------
- * Secrets bundle — keys/secrets.kw1 (content_type 2)
- *
- * Raw "ns:key=value\n" lines cached in .bss (internal SRAM) with exactly
- * the MK's lifetime: loaded lazily after unlock, crypto_wipe'd at lock.
- * ---------------------------------------------------------------------- */
+/* Secrets bundle: keys/secrets.kw1 (content_type 2). Raw "ns:key=value\n"
+ * lines cache in .bss (internal SRAM) with exactly the MK's lifetime.
+ * Unlock loads them lazily; lock wipes them with crypto_wipe(). */
 
 #define KS_SECRETS_MAX 2048
 
-/* The bundle must hold everything the diversion layer can ever put in it —
- * one line per profile and per WiFi net, each at its field's maximum. If it
- * cannot, keystore_secret_set() starts returning ESP_ERR_NO_MEM and
- * storage_save_profiles() falls back to leaving that password in the ini as
- * PLAINTEXT: a silent downgrade of exactly what the vault exists to protect.
- * Derived from the structs, so raising STORAGE_MAX_PROFILES / STORAGE_WIFI_MAX
- * (or a field width) breaks the build here instead of the guarantee. */
+/* The bundle must hold everything the diversion layer can ever put in it.
+ * That means one line per profile and one line per WiFi net, each at its
+ * field's maximum. If it cannot, keystore_secret_set() returns
+ * ESP_ERR_NO_MEM. storage_save_profiles() then falls back to leaving that
+ * password in the ini as PLAINTEXT. That is a silent downgrade of exactly
+ * what the vault exists to protect. This size derives from the structs.
+ * Raising STORAGE_MAX_PROFILES / STORAGE_WIFI_MAX (or a field width) breaks
+ * the build here instead of the guarantee. */
 _Static_assert(STORAGE_MAX_PROFILES *
                    (sizeof("profile:") - 1 +
                     sizeof(((conn_profile_t *)0)->name) - 1 + 1 +
@@ -932,17 +905,17 @@ esp_err_t keystore_secret_set(const char *skey, const char *value)
     size_t vlen  = 0;
     char  *v     = secrets_find(skey, &vlen);
     char  *line  = NULL, *next = NULL;
-    if (v) {                                   /* replace = cut + append */
+    if (v) {
         line = v - strlen(skey) - 1;
         next = v + vlen;
         if (*next == '\n') next++;
     }
 
-    /* Capacity is checked BEFORE the cut, and the cut's own bytes count
-     * toward the budget. Bailing out after cutting used to leave the cache
-     * one entry shorter than the file it came from, and the next successful
-     * set persisted that divergence — a credential silently gone from flash
-     * while the caller only ever saw ESP_ERR_NO_MEM on some other key. */
+    /* The capacity check runs BEFORE the cut, and the cut's own bytes count
+     * toward the budget. Bailing out after the cut used to leave the cache
+     * one entry short of the file's contents. The next successful set then
+     * wrote that divergence to flash. A credential silently disappeared,
+     * while the caller only saw ESP_ERR_NO_MEM on some unrelated key. */
     if (value && value[0]) {
         size_t need  = strlen(skey) + 1 + strlen(value) + 2;
         size_t freed = line ? (size_t)(next - line) : 0;
@@ -985,11 +958,12 @@ void keystore_secrets_prune(const char *prefix,
     if (changed) secrets_store();
 }
 
-/* Migrate plaintext credentials out of profiles.ini / wifi.ini: the
- * DIVERTING storage_save_* (storage.c) moves every password it sees into
- * this bundle when the store is unlocked, so a load+save round-trip IS the
- * migration. Only runs when a raw scan says plaintext actually exists —
- * an unconditional round-trip would rewrite flash on every unlock. */
+/* ks_adopt_secrets() migrates plaintext credentials out of profiles.ini
+ * and wifi.ini. storage_save_*() in storage.c diverts every password it
+ * sees into this bundle while the store stays unlocked. So a load-then-save
+ * round trip performs the migration. This runs only when a raw
+ * scan finds plaintext on disk. An unconditional round trip would rewrite
+ * flash on every unlock. */
 static void ks_adopt_secrets(void)
 {
     if (!storage_secrets_pending()) return;
