@@ -36,8 +36,8 @@ static void render_wifiprov(uint64_t now)
         ui_putch(4, 6, UI_LED_ON, 0);
         ui_printf(6, 6, 0, "Connected to '%s' - saved!", wifi_provision_ssid());
         ui_puts(6, 8, "returning home", 0);
-        /* Departure bar: ✓s fill toward the moment we head home, so the
-         * 2.5 s ack hold reads as a countdown instead of a freeze. */
+        /* Departure bar: checkmarks fill toward the moment we head home.
+         * The 2.5 s ack hold reads like a countdown instead of a freeze. */
         if (s_prov.done_at) {
             const int BW = 20;
             uint64_t left = s_prov.done_at > now ? s_prov.done_at - now : 0;
@@ -159,10 +159,10 @@ static void wifiprov_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                            uint64_t now)
 {
     (void)ch;
-    /* Esc or any tap cancels — except while the phone's credentials are
-     * being tested (RECEIVED): killing the AP then leaves the phone app
-     * hanging mid-handshake, so a stray screen touch must not do it.
-     * Esc / long-press remain as the deliberate abort. */
+    /* Esc or any tap cancels, except while the deck is testing the
+     * phone's credentials (RECEIVED). Killing the AP then leaves the
+     * phone app hanging mid-handshake. A stray screen touch must not
+     * do that. Esc / long-press remain as the deliberate abort. */
     int pst = wifi_provision_state();
     bool deliberate = (k == K_ESC ||
                        ev->type == CYBERDECK_INPUT_LONG_PRESS);

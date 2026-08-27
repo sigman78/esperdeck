@@ -13,7 +13,7 @@
 #include "ssh_client.h"
 
 #ifdef ESP_PLATFORM
-#include "sdkconfig.h"       /* CONFIG_CYBERDECK_KEYSTORE (sim: -D flag) */
+#include "sdkconfig.h"       /* provides CONFIG_CYBERDECK_KEYSTORE (sim: -D flag) */
 #endif
 
 #include <stdio.h>
@@ -25,14 +25,11 @@
 #include "esp_system.h"     /* esp_restart() — applying a new font size */
 #endif
 
-/* Menu color law — one color per KIND of item, not per item (a page of
- * many-colored bars reads as motley):
- *   CYAN  = normal action / navigation      GREEN = go / primary
- *   RED   = destructive                     AMBER = caution
- *   BLUE  = Back / Cancel (safe exit)
- * MAGENTA stays reserved for the title lozenge. */
-
-/* ------------------------------------------------------- shared actions */
+/* Color marks the KIND of item, not the item itself; a page of many
+ * colors reads as motley. CYAN marks a normal action or navigation.
+ * GREEN marks go or primary. RED marks destructive. AMBER marks caution.
+ * BLUE marks Back or Cancel, the safe exit. MAGENTA stays reserved for
+ * the title lozenge. */
 
 static void act_back(intptr_t a, uint64_t now)
 {
@@ -45,8 +42,6 @@ static void act_goto(intptr_t sc, uint64_t now)
     (void)now;
     menu_goto((int)sc);
 }
-
-/* ----------------------------------------------------------------- MAIN */
 
 static void act_disconnect(intptr_t a, uint64_t now)
 {
@@ -61,8 +56,6 @@ static const menu_item_t main_items[] = {
     { .label = "Configuration",  .color = OVERLAY_COL_CYAN,  .action = act_goto,
       .arg = MS_CONFIG },
 };
-
-/* --------------------------------------------------------------- CONFIG */
 
 static bool dim_no_ble(intptr_t a)
 {
@@ -80,10 +73,10 @@ static bool dim_no_keystore(intptr_t a)
 #endif
 }
 
-/* Hub tiles carry the section name alone, centered — content hints
- * move to the StatusBar/toast once that lands (user call, 2026-08-27:
- * a 3-row tile with a two-line top-anchored body is the even-line
- * asymmetry the odd-height rule exists to prevent). */
+/* Hub tiles carry the section name alone, centered. Content hints will
+ * move to the StatusBar/toast once that lands (user call, 2026-08-27).
+ * A 3-row tile with a two-line top-anchored body creates the even-line
+ * asymmetry the odd-height rule exists to prevent. */
 static const menu_item_t config_items[] = {
     { .label = "PROFILES",  .color = OVERLAY_COL_CYAN, .action = act_goto,
       .arg = MS_PROFILES },
@@ -104,8 +97,6 @@ static const menu_item_t config_items[] = {
       .arg = MS_KEYSTORE,
       .dim = dim_no_keystore, .dim_note = "not in this build" },
 };
-
-/* ------------------------------------------------------------- PROFILES */
 
 static void act_prof_add(intptr_t a, uint64_t now)
 {
@@ -147,8 +138,6 @@ static const menu_item_t profiles_items[] = {
       .arg = MS_IMPORT },
 };
 
-/* --------------------------------------------------------------- IMPORT */
-
 static void act_import(intptr_t mode, uint64_t now)
 {
     enter_sshimport(now, (ssh_import_mode_t)mode);
@@ -160,8 +149,6 @@ static const menu_item_t import_items[] = {
     { .label = "Web (PC)",       .color = OVERLAY_COL_CYAN, .action = act_import,
       .arg = SSH_IMPORT_WEB },
 };
-
-/* ----------------------------------------------------------------- WIFI */
 
 static void act_wifi_kick(intptr_t a, uint64_t now)
 {
@@ -180,8 +167,6 @@ static const menu_item_t wifi_items[] = {
     { .label = "Reconnect",           .color = OVERLAY_COL_CYAN, .action = act_wifi_kick },
     { .label = "Add network (phone)", .color = OVERLAY_COL_CYAN, .action = act_wifiprov },
 };
-
-/* ------------------------------------------------------------- KEYBOARD */
 
 static void act_pair(intptr_t a, uint64_t now)
 {
@@ -209,8 +194,6 @@ static const menu_item_t kbd_items[] = {
       .confirm = "CONFIRM forget bonds?", .arm_note = "activate again to forget",
       .dim = dim_no_forget, .dim_note = "forget unavailable" },
 };
-
-/* --------------------------------------------------------------- SYSTEM */
 
 static void act_saver(intptr_t a, uint64_t now)
 {
@@ -272,8 +255,7 @@ static const menu_item_t system_items[] = {
       .arm_note = "activate again to WIPE ALL" },
 };
 
-/* -------------------------------------------------------------- EFFECTS
- * Every runtime render-fx tunable as a value-cycling tile. Cycling +
+/* Every runtime render-fx tunable is a value-cycling tile. Cycling and
  * persistence live in the settings model (app_settings.c). */
 
 static void act_fx(intptr_t t, uint64_t now)
@@ -317,12 +299,10 @@ static const menu_item_t fx_motion_items[] = {
       .arg = APP_FX_STATIC,   .value = val_fx },
 };
 
-/* ----------------------------------------------------------------- FONT */
-
 /* What the next boot will use — the active size unless a tile tapped this
  * session already wrote [font]. Resolved when the page OPENS, not per
  * render: the menu renders ~10 Hz and settings.ini lives on littlefs. */
-static font_size_t s_font_pending = FONT_SIZE_COUNT;   /* COUNT = unresolved */
+static font_size_t s_font_pending = FONT_SIZE_COUNT;   /* flags unresolved */
 
 static void font_on_open(void)
 {
@@ -390,9 +370,9 @@ static void act_font(intptr_t s, uint64_t now)
         menu_note(now, MENU_MSG_MS, false, "could not save font");
         return;
     }
-    /* The grid, DMA bounce geometry and DRAM glyph copy are fixed at
-     * init, so a size change needs a restart. The setting is already
-     * on disk — paint the note, hold it readable, reboot. */
+    /* Init fixes the grid, DMA bounce geometry, and DRAM glyph copy. A
+     * size change therefore needs a restart. The setting is already on
+     * disk: paint the note, hold it readable, then reboot. */
 #ifndef BUILD_SIMULATOR
     snprintf(note, sizeof(note), "%s set - rebooting", font_size_name(want));
     menu_note(now, MENU_MSG_MS, false, note);
@@ -400,8 +380,8 @@ static void act_font(intptr_t s, uint64_t now)
     vTaskDelay(pdMS_TO_TICKS(1200));
     esp_restart();
 #else
-    /* The simulator is single-size and cannot restart into another one;
-     * the setting is saved so the device picks it up. */
+    /* The simulator is single-size and cannot restart into another one.
+     * It saves the setting anyway, so the device picks it up. */
     snprintf(note, sizeof(note), "%s saved (reboot)", font_size_name(want));
     menu_note(now, MENU_MSG_MS, false, note);
 #endif
@@ -416,13 +396,14 @@ static const menu_item_t font_items[] = {
       .arg = FONT_SIZE_12X24, .value = val_font },
 };
 
-/* ------------------------------------------------------------- KEYSTORE
- * The page is CONTEXTUAL — impossible actions are hidden, not no-op'd
- * (no "Lock deck" or "Remove code" without a store). Two-gates model: a
- * store on the deck means the deck locks at boot/wake. */
+/* The page is CONTEXTUAL: it hides impossible actions instead of making
+ * them no-ops. It shows no "Lock deck" or "Remove code" without a
+ * store. In the two-gates model, a store on the deck locks the deck at
+ * boot or wake. */
 
-/* Store state resolved when the page OPENS, not per render: the menu
- * renders ~10 Hz and an ABSENT store would stat the filesystem per frame. */
+/* ks_on_open resolves store state once, when the page OPENS, not on
+ * every render. The menu renders at ~10 Hz; an ABSENT store would
+ * otherwise stat the filesystem every frame. */
 static keystore_state_t s_ks_snap;
 
 static void ks_on_open(void)
@@ -488,8 +469,6 @@ static const menu_item_t ks_items[] = {
     { .label = "Remove code", .color = OVERLAY_COL_CYAN, .action = act_ks_remove,
       .hidden = hidden_ks_absent, .value = val_ks_remove },
 };
-
-/* ------------------------------------------------------------ the pages */
 
 #define ASSERT_FITS(t) \
     _Static_assert(NELEM(t) <= MENU_PAGE_MAX, "section exceeds one screen")

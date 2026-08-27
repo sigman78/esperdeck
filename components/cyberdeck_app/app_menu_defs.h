@@ -1,7 +1,7 @@
 /*
  * app_menu_defs.h — the data-driven menu tree (internal).
  *
- * A page is a table of menu_item_t: behavior (action / confirm / dim /
+ * A page is a table of menu_item_t. Behavior (action / confirm / dim /
  * value) rides the table, not a positional switch. Tables and their
  * action callbacks live in app_menu_defs.c; rendering, input and the
  * dynamic profile pickers in app_menu.c. (extensibility.md item 3)
@@ -14,15 +14,15 @@
 #include <stdint.h>
 
 typedef enum {
-    MS_MAIN = 0,   /* in-session root: Resume / Disconnect / Configuration    */
-    MS_CONFIG,     /* hub: two-column section tiles (ui-spec rendition)       */
-    MS_PROFILES,   /* Add / Edit / Reorder / Delete / Import >                */
-    MS_IMPORT,     /* SoftAP (phone) / Web (PC)                               */
-    MS_WIFI,       /* Reconnect / Add network                                 */
-    MS_KEYBOARD,   /* Pair / Forget bonds                                     */
-    MS_SYSTEM,     /* Saver / Clear host keys / Factory reset                 */
-    MS_FX_CRT,     /* value tiles: beam-look fx (scanlines/phosphor/bold...)  */
-    MS_FX_MOTION,  /* value tiles: motion fx (wobble/wipe/collapse/static)    */
+    MS_MAIN = 0,   /* in-session root: Resume / Disconnect / Configuration */
+    MS_CONFIG,     /* hub: two-column section tiles (ui-spec rendition) */
+    MS_PROFILES,   /* Add / Edit / Reorder / Delete / Import > */
+    MS_IMPORT,     /* SoftAP from a phone, or web import from a PC */
+    MS_WIFI,       /* Reconnect / Add network */
+    MS_KEYBOARD,   /* Pair / Forget bonds */
+    MS_SYSTEM,     /* Saver / Clear host keys / Factory reset */
+    MS_FX_CRT,     /* value tiles: beam-look fx (scanlines/phosphor/bold...) */
+    MS_FX_MOTION,  /* value tiles: motion fx (wobble/wipe/collapse/static) */
     MS_FONT,       /* value tiles: terminal font size, applied on reboot     */
     MS_KEYSTORE,   /* contextual: lock now / set code / remove code          */
     MS_DELPROFILE, /* dynamic: pick a stored profile to delete               */
@@ -30,12 +30,13 @@ typedef enum {
     MS_REORDER,    /* dynamic: grab a profile, move it, drop it              */
 } menu_screen_t;
 
-/* One tile. Static parts inline; dynamic parts are callbacks taking the
- * item's @p arg, so one function serves a family of items (font sizes,
- * fx tunables). One of label/label_fn and one of color/color_fn are
- * required. String-returning callbacks run every render (~10 fps): keep
- * them cheap (snapshot expensive reads in the page's on_open) and return
- * @p buf or a static-storage string — never NULL. @p sz is >= 16. */
+/* One tile. Static parts sit inline. Dynamic parts are callbacks that
+ * take the item's @p arg. This lets one function serve a family of
+ * items (font sizes, fx tunables). Each tile must set one of
+ * label/label_fn and one of color/color_fn. String-returning callbacks
+ * run every render (~10 fps): keep them cheap, by snapshotting
+ * expensive reads in the page's on_open. They must return @p buf or a
+ * static-storage string, never NULL. @p sz is >= 16. */
 typedef struct {
     const char *label;
     const char *(*label_fn)(intptr_t arg);       /* overrides label      */
@@ -51,7 +52,7 @@ typedef struct {
     const char *(*value)(intptr_t arg, char *buf, size_t sz);  /* body   */
 } menu_item_t;
 
-#define MENU_BACK_LEAVE (-1)   /* back_to: leave the menu screen (pop)   */
+#define MENU_BACK_LEAVE (-1)   /* pops the whole menu, not another page  */
 
 /* Fit-one-screen contract (ui-spec, locked): a page holds at most what
  * the smallest grid shows — 2 columns x 4 rows at 66x20. A larger

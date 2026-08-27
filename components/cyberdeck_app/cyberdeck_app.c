@@ -29,8 +29,6 @@ static const char *TAG = "cyberdeck_app";
 /* The one shared shell state instance (declared in app_internal.h). */
 struct app_state app;
 
-/* ------------------------------------------------------------ key decode */
-
 static ui_key_t decode_key(const cyberdeck_input_t *ev, char *ch)
 {
     if (ev->type == CYBERDECK_INPUT_HIDKEY) {
@@ -59,19 +57,16 @@ static ui_key_t decode_key(const cyberdeck_input_t *ev, char *ch)
     return K_NONE;
 }
 
-/* ------------------------------------------------------- touch gestures */
-
 /* The strip width is a build-time constant; only the on/off state is a
- * runtime setting, so "apply" is simply width-or-zero. Pushed through the
- * platform seam so the driver is the single owner of the armed state and
- * cannot be left armed by a stale copy of app state. */
+ * runtime setting, so "apply" is simply width-or-zero. This call goes
+ * through the platform seam, so the driver alone owns the armed
+ * state. A stale copy of app state can therefore never leave it
+ * armed. */
 void app_touch_scroll_apply(void)
 {
     if (!app.cfg.set_scroll_edge) return;
     app.cfg.set_scroll_edge(app.touch_scroll ? app.cfg.scroll_edge_px : 0);
 }
-
-/* ------------------------------------------------------------- profiles */
 
 void load_profiles(void)
 {
@@ -98,18 +93,19 @@ void load_profiles(void)
     }
 }
 
-/* Lock companion — see app_internal.h. keystore_lock() wipes the MK and the
- * secrets cache inside the vault, but load_profiles() has already copied the
- * hydrated passwords out here: the HOME list (app.profiles), the connect
- * snapshot (conn) and the editor draft (profile) each carry a
- * plaintext login password or key passphrase. Without this the panic button
- * and the idle auto-lock leave every credential sitting in .bss, and the lock
- * only really covers the key files.
+/* Lock companion — see app_internal.h. keystore_lock() wipes the MK
+ * and the secrets cache inside the vault. But load_profiles() has
+ * already copied the hydrated passwords out here. Three places carry
+ * these plaintext secrets: HOME's list (app.profiles), the connect
+ * snapshot (conn), and the editor draft (profile). Each one holds a
+ * login password or a key passphrase. Without this wipe, the panic
+ * button and the idle auto-lock would leave every credential sitting
+ * in .bss. The lock would then only really cover the key files.
  *
- * Only the secret fields go: names, hosts, users and ports are explicitly
- * not secret (docs/storage_auth.md "orthogonal model" axis 1) and HOME draws
- * its tile grid before any unlock. The next successful unlock re-hydrates
- * via load_profiles(). */
+ * Only the secret fields go. Names, hosts, users, and ports are
+ * explicitly not secret (docs/storage_auth.md "orthogonal model" axis
+ * 1). HOME also draws its tile grid before any unlock. The next
+ * successful unlock re-hydrates via load_profiles(). */
 void app_creds_wipe(void)
 {
     for (int i = 0; i < MAX_PROFILES; i++)
@@ -136,10 +132,10 @@ bool ble_has_bond(void)
     return n > 0;
 }
 
-/* One-time migration: a WiFi credential a past firmware persisted into
- * the driver's NVS was captured at wifi init — fold it into storage (the
- * secrets bundle when the store is open, which it is on the post-unlock
- * path that calls this) unless the SSID is already known. */
+/* This is a one-time migration. A past firmware persisted a WiFi
+ * credential into the driver's NVS. wifi init captures it, then folds
+ * it into storage (the secrets bundle) unless the SSID is already
+ * known. The store is open on the post-unlock path that calls this. */
 void wifi_migrate_nvs_cred(void)
 {
     /* Shared cred scratch (storage.h) — never on this stack: the main
@@ -167,10 +163,10 @@ void wifi_migrate_nvs_cred(void)
     keystore_wipe(sc, sizeof(*sc));
 }
 
-/* One-time seed: a Kconfig fallback credential with a real PSK moves into
- * storage, so sdkconfig can be blanked afterwards — a firmware image must
- * not carry a usable pre-shared key in .rodata. Idempotent: a known SSID
- * (plaintext or @bundle marker row) is never re-seeded. */
+/* One-time seed: a Kconfig fallback credential with a real PSK moves
+ * into storage, so a later rebuild can blank sdkconfig. A firmware
+ * image must not carry a usable pre-shared key in .rodata. Idempotent:
+ * a known SSID (plaintext or @bundle marker row) is never re-seeded. */
 static void wifi_seed_fallback(void)
 {
     if (!app.cfg.fallback_wifi_ssid || !app.cfg.fallback_wifi_ssid[0] ||
@@ -247,8 +243,6 @@ void kick_wifi(void)
     keystore_wipe(nets, sizeof(*nets) * STORAGE_WIFI_MAX);
 }
 
-/* -------------------------------------------------------------- toasts */
-
 void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
 {
     va_list ap;
@@ -256,7 +250,7 @@ void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
     vsnprintf(app.toast, sizeof(app.toast), fmt, ap);
     va_end(ap);
     app.toast_until = now + ms;
-    app.toast_ok    = false;   /* only enter_session() garnishes with a ✓ */
+    app.toast_ok    = false;   /* only enter_session() garnishes with a checkmark */
 }
 
 /* Watch the wifi + BLE keyboard links and toast every transition the user
@@ -295,8 +289,6 @@ static void status_toasts(uint64_t now)
     }
 }
 
-/* -------------------------------------------------------- screen table */
-
 /* The whole surface at a glance, scr_id_t-indexed (designated, so array
  * order can't drift from the enum). Every screen — future plugins
  * included — is a line here; no runtime registration (extensibility.md
@@ -315,8 +307,6 @@ static const nav_screen_t *const SCREENS[SCR_COUNT] = {
     [SCR_SSHIMPORT]  = &sshimport_screen,
     [SCR_UNLOCK]     = &unlock_screen,
 };
-
-/* ---------------------------------------------------------- public API */
 
 esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
 {
@@ -349,8 +339,9 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     storage_kv_load(cyberdeck_settings_ini, app_fx_section, app_fx_fields, &fxc);
     display_fx_set(&fxc);
 
-    /* Plugins (plugin_table.c): settings load, then init. A failing
-     * plugin is logged and skipped — the deck boots without it. */
+    /* Plugins (plugin_table.c): settings load, then init.
+     * cyberdeck_app_init logs and skips a failing plugin; the deck
+     * boots without it. */
     for (int i = 0; i < cyberdeck_plugin_count; i++) {
         const cyberdeck_plugin_t *p = cyberdeck_plugins[i];
         if (p->settings && p->settings_obj)
@@ -403,8 +394,8 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
 {
     if (!ev) return;
 
-    /* Any input feeds the idle timer; a true screensaver wake is swallowed
-     * (see saver_on_input for the just-went-up grace). */
+    /* Any input feeds the idle timer; saver_on_input swallows a true
+     * screensaver wake (see it for the just-went-up grace). */
     if (saver_on_input(now))
         return;
 

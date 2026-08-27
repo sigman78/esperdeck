@@ -8,7 +8,7 @@
 #pragma once
 
 #ifdef ESP_PLATFORM
-#include "sdkconfig.h"       /* CONFIG_INPUT_TOUCH_SCROLL (sim: -D flag) */
+#include "sdkconfig.h"       /* provides CONFIG_INPUT_TOUCH_SCROLL (sim: -D flag) */
 #endif
 
 #include "cyberdeck_app.h"   /* cyberdeck_settings_ini, the font contract */
@@ -36,12 +36,11 @@ extern const storage_kv_field_t app_touch_fields[];
 /* Register settings.ini for factory reset; call once at init. */
 void app_settings_register_reset(void);
 
-/* ------------------------------------------------------ settings model
- * Value cycling + deferred persistence for the menu's tunable tiles
- * (extensibility item 3). Writes are deferred while the owning page is
- * open — a flash write pauses the render ISR for the cache-off window,
- * landing a visible hiccup on the keypress — and flushed from the app
- * tick once the hold lifts, so forced exits still save. */
+/* Value cycling and deferred persistence for the menu's tunable tiles
+ * (extensibility item 3). The owning page defers writes while it stays
+ * open. A flash write pauses the render ISR for the cache-off window,
+ * landing a visible hiccup on the keypress. The app tick flushes the
+ * write once the hold lifts, so forced exits still save. */
 
 typedef enum {
     APP_FX_SCAN, APP_FX_MONO, APP_FX_BOLD, APP_FX_WOBBLE,

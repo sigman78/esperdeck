@@ -1,18 +1,19 @@
 /*
  * app_pacman.c — the HOME Pac-Man marquee, the dynamic-sprite-glyph showcase.
  *
- * Four sprite slots animate a TWO-CELL Pac-Man (a full-height disc, 2W x 2W
- * — 16x16 at 8x16) chomping across a row of pellets at PIXEL resolution: at
- * sub-cell offset k his body straddles three cells, sliced from one art row
- * as TAIL (art >> (W+k)), MID ((art >> k) & M) and HEAD ((art << (W-k)) & M
- * — with the pellet composited into HEAD until the mouth front crosses its
- * center). Slot DOT is the static pellet placed in every cell ahead; cells
- * behind stay blank (eaten). When he exits the right edge the whole run
- * wraps and the pellets respawn.
+ * Four sprite slots animate a TWO-CELL Pac-Man: a full-height disc, 2W x
+ * 2W (16x16 at 8x16). He chomps across a row of pellets at PIXEL
+ * resolution. At sub-cell offset k, his body straddles three cells,
+ * sliced from one art row. TAIL is art >> (W+k). MID is (art >> k) & M.
+ * HEAD is (art << (W-k)) & M, with the pellet composited in until the
+ * mouth front crosses its center. Slot DOT is the static pellet placed
+ * in every cell ahead; cells behind stay blank (eaten). When he exits
+ * the right edge the whole run wraps and the pellets respawn.
  *
  * Sprite slots are a global resource — record every taker here until an
- * allocator exists. Art is predefined per font size: uint32 rows, 2W bits
- * wide, bit (2W-1) = leftmost; generated offline, embedded.
+ * allocator exists. An offline generator predefines the art per font
+ * size: uint32 rows, 2W bits wide, bit (2W-1) = leftmost. It embeds the
+ * result directly.
  */
 
 #include "app_internal.h"
@@ -61,9 +62,10 @@ static const uint16_t pac_dot_12[]  = { 0x000, 0x000, 0x000, 0x000, 0x000,
     0x000, 0x000, 0x000, 0x000, 0x000, 0x0E0, 0x0E0, 0x0E0, 0x000, 0x000,
     0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000 };
 
-/* The static pellet is (re)loaded on marquee (re)entry, not per tick: a
- * per-tick set would invalidate its glyph-cache line and force the ISR to
- * re-decode the most-shared sprite on screen every frame for nothing. */
+/* draw_pacman (re)loads the static pellet on marquee (re)entry, not per
+ * tick. A per-tick load would invalidate its glyph-cache line. It would
+ * also force the ISR to re-decode the most-shared sprite on screen,
+ * every frame, for nothing. */
 static bool s_pac_dot_ready;
 
 /* The owning screen left (session entry blanks all sprite slots) — reload
@@ -114,9 +116,10 @@ void draw_pacman(int row)
     for (int r = 0; r < H; r++)
         t[r] = (uint16_t)(art[r] >> (W + k));
     /* Sprites update before ui_present() publishes the matching cell
-     * placement, so an ISR frame landing in between can pair new art with
-     * last tick's cells — one LCD frame of ghost on cell-advance ticks,
-     * self-healing, accepted. */
+     * placement. An ISR frame landing in between can therefore pair new
+     * art with last tick's cells. This gives one LCD frame of ghosting
+     * on cell-advance ticks. It self-heals; this is an accepted
+     * tradeoff. */
     font_sprite_set_rows16(SPR_PAC_TAIL, t);
     for (int r = 0; r < H; r++)
         t[r] = (uint16_t)((art[r] >> k) & wmask);

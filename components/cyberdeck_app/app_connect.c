@@ -18,16 +18,16 @@
 
 #include "esp_heap_caps.h"   /* key-PEM buffers (idfsim stubs it) */
 
+/* active holds the connecting or connected profile. List edits never
+ * redirect a live session. */
 static struct {
-    conn_profile_t active;          /* snapshot of the profile being
-                                     * connected/connected: list mutations
-                                     * must never redirect a live session  */
+    conn_profile_t active;
     bool     armed;                 /* render one frame, then connect     */
     bool     connecting;            /* async connect worker is running    */
     bool     cancelled;             /* user aborted the in-flight connect */
     uint64_t connect_at;            /* not before (auto-reconnect delay)  */
-    uint64_t started;               /* when the in-flight attempt began   */
-    int      attempt;               /* 0 = user-initiated, >0 = auto-retry # */
+    uint64_t started;                /* when the in-flight attempt began   */
+    int      attempt;               /* counts auto-retries; the user-initiated try is 0 */
     char     pinned_fp[65];         /* fp to pass as expected_fp, "" = none */
     uint64_t session_start;         /* session_enter() time, for NO CARRIER */
 } s_conn;
@@ -72,8 +72,8 @@ static void render_connecting(uint64_t now)
 
     int bw = 42, bx = (ui_cols() - bw) / 2;
     if (s_conn.armed && s_conn.connect_at > now && app.cfg.ssh_retry_delay_ms) {
-        /* Retry wait: an amber bar drains toward the reconnect moment, so
-         * the delay reads as a countdown instead of a stalled connect. */
+        /* During the retry wait, an amber bar drains toward the reconnect
+         * moment. The delay reads as a countdown, not a stalled connect. */
         uint64_t remain = s_conn.connect_at - now;
         if (remain > app.cfg.ssh_retry_delay_ms)
             remain = app.cfg.ssh_retry_delay_ms;
@@ -103,7 +103,7 @@ static void render_connecting(uint64_t now)
 
 #define SCROLLBAR_LINGER_MS  1400
 
-static uint64_t s_scrollbar_until;   /* 0 = not showing */
+static uint64_t s_scrollbar_until;
 
 /* Drag travel not yet spent (shared accumulate-then-floor converter). */
 static ui_drag_t s_scroll_drag;
@@ -181,11 +181,12 @@ void start_connect(int idx, uint64_t not_before, uint64_t now)
     s_conn.attempt = 0;
     s_conn.active  = app.profiles[idx];
     load_pinned_fp();
-    /* Key profile + locked store: unlock first — the PIN pad re-arms this
-     * connect on success (the lazy on-first-key-use trigger). Gates even
-     * when THIS key is still a bare .pem: a present store means keys are
-     * protected or pending adoption (the unlock performs it), so plaintext
-     * must not silently bypass the lock. ABSENT store = feature off. */
+    /* A key profile with a locked store must unlock first. On success,
+     * the PIN pad re-arms this connect (the lazy on-first-key-use
+     * trigger). This gate holds even when this key is still a bare
+     * .pem. A present store means the store already protects the keys,
+     * or unlock will adopt them. Plaintext must never silently bypass
+     * the lock. An absent store turns the feature off. */
     if (s_conn.active.auth == STORAGE_AUTH_KEY &&
         keystore_state() == KEYSTORE_LOCKED) {
         unlock_open(now, true);
@@ -219,8 +220,8 @@ static void start_reconnect(uint64_t not_before, uint64_t now)
     arm_connect(not_before, now);
 }
 
-/* Session died and we are NOT auto-reconnecting: the classic modem death
- * rattle, with link time and the drop reason ("" on a clean EOF). */
+/* The session died, and auto-reconnect is off: the classic modem death
+ * rattle. It shows link time and the drop reason ("" on a clean EOF). */
 void session_dropped(uint64_t now)
 {
     /* A drop can yank the user out of a mid-drag reorder; discard the
@@ -261,8 +262,8 @@ static void session_enter(intptr_t arg, uint64_t now)
     s_conn.attempt       = 0;   /* a future drop counts retries from 1 again */
     display_fx_wipe();     /* raster-reveal the fresh session */
     session_resume(0, now);
-    /* The terminal was cleared inside ssh_client_connect() before the read
-     * task spawned — doing it here would race that task inside vterm. */
+    /* ssh_client_connect() clears the terminal before the read task
+     * spawns. Clearing it here would race that task inside vterm. */
     static const char *const HELLO[] = {
         "jacked in", "link up", "uplink established",
         "handshake clean", "you're in",
@@ -273,12 +274,13 @@ static void session_enter(intptr_t arg, uint64_t now)
     render_session_chrome(now);
 }
 
-/* Key PEMs are read on the shell task (the connect worker has a PSRAM
- * stack and must not touch littlefs — flash I/O asserts there) and must
- * outlive the async connect: the worker reads the cfg strings during the
- * handshake. The PRIVATE key buffer is INTERNAL SRAM — never PSRAM, the
- * external bus is probeable (docs/storage_auth.md RAM hygiene) — and is
- * wiped the moment the connect worker finishes; the .pub is public. */
+/* The shell task reads key PEMs, not the connect worker. The worker's
+ * stack lives in PSRAM and must not touch littlefs, since flash I/O
+ * asserts there. The PEMs must outlive the async connect: the worker
+ * reads the cfg strings during the handshake. The PRIVATE key buffer
+ * lives in INTERNAL SRAM, never PSRAM, since the external bus is
+ * probeable (docs/storage_auth.md RAM hygiene). The connect worker
+ * wipes it the moment it finishes. The .pub buffer stays public. */
 enum { KEY_PEM_MAX = 8192, PUB_PEM_MAX = 2048 };
 static char *s_key_pem = NULL;
 static char *s_pub_pem = NULL;

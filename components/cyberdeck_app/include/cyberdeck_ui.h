@@ -1,10 +1,11 @@
 /*
  * cyberdeck_ui.h — the public UI kit (extensibility item 4 / ui-spec).
  *
- * The drawing surface a plugin screen needs and nothing more: overlay
- * primitives, the verified glyph palette, and the touch-first parts
- * (tile grid, list, buttons) with widget-owned hit-testing. Part state
- * lives in the CALLER's struct; frame composition (clear → render →
+ * This is the drawing surface a plugin screen needs, and nothing
+ * more. It has overlay primitives, the verified glyph palette, and
+ * the touch-first parts (tile grid, list, buttons) with widget-owned
+ * hit-testing. Part state lives in the CALLER's struct; frame
+ * composition (clear → render →
  * chrome → present) belongs to the shell — screens draw, never present.
  * Kit rule: this header must stay buildable in all three contexts
  * (device, simulator, bare Unity tests over idfsim) — no SDL, ESP-IDF
@@ -18,8 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* ------------------------------------------------------- glyph palette
- * Every codepoint below is present in Terminus at all three sizes
+/* Every codepoint below is present in Terminus at all three sizes
  * (verified against the font's range tables). Missing glyphs render as
  * '?', so stick to these — or verify before adding.
  * Frame language: ROUNDED single-line corners for passive info panels
@@ -63,8 +63,6 @@ typedef enum {
     K_ENTER, K_ESC, K_F12, K_CHAR, K_BACKSPACE, K_TAB,
     K_SCROLL_UP, K_SCROLL_DOWN,
 } ui_key_t;
-
-/* ----------------------------------------------------------- primitives */
 
 int  ui_cols(void);
 int  ui_rows(void);
@@ -117,8 +115,6 @@ void ui_tile(int col, int row, int w, int h,
 void ui_field(int col, int row, int width, const char *text,
               int cursor, bool focused, bool mask);
 
-/* ------------------------------------------------------------ tile grid */
-
 /* A page of finger-sized tiles laid out in a grid, with two-axis touch
  * hit-testing. Recomputed by each render and saved for the tap handler.
  * All dimensions are in character cells. */
@@ -144,20 +140,17 @@ int tile_nav(const tilegrid_t *g, int sel, ui_key_t k);
 /** Shared full-screen picker grid (HOME + PAIRING). */
 tilegrid_t picker_grid(int count);
 
-/* --------------------------------------------------------- drag → rows */
-
-/* Accumulate-then-floor drag converter (ui-spec touch rule 4): the touch
- * task polls at 50 ms, so converting each small dy alone floors to zero
- * and a slow drag never scrolls. Travel accumulates in pixel-percent
- * (scaled by CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT); whole rows are spent,
- * the remainder is kept. */
+/* Accumulate-then-floor drag converter (ui-spec touch rule 4). The
+ * touch task polls at 50 ms, so converting each small dy alone floors
+ * to zero. A slow drag would otherwise never scroll. The converter
+ * accumulates travel in pixel-percent (scaled by
+ * CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT), spends whole rows, and keeps
+ * the remainder. */
 typedef struct { int accum; } ui_drag_t;
 
 /** Feed @p dy pixels of travel; returns whole rows (@p row_px each). */
 int  ui_drag_rows(ui_drag_t *d, int dy, int row_px);
 void ui_drag_reset(ui_drag_t *d);
-
-/* ------------------------------------------------------------ ListView */
 
 /* Scrolling list of fixed-height rows — never drops overflow. The part
  * owns geometry, scroll, hit and arrow-nav; the CALLER owns the struct
@@ -176,7 +169,7 @@ typedef struct {
 int  ui_list_visible(const ui_list_t *l);
 /** Clamp sel/top into range and scroll sel into view. */
 void ui_list_clamp(ui_list_t *l);
-/** Top cell row of @p idx, or -1 while it is scrolled out. */
+/** Top cell row of @p idx, or -1 while it stays off-screen. */
 int  ui_list_row_y(const ui_list_t *l, int idx);
 /** Row index at a touch pixel, or -1 (widget-owned hit-testing). */
 int  ui_list_hit(const ui_list_t *l, int px, int py);
@@ -187,18 +180,14 @@ int  ui_list_scroll(ui_list_t *l, int dy_px);
 /** Right-edge overflow cue inside the rect; no-op when all rows fit. */
 void ui_list_draw_scroll(const ui_list_t *l);
 
-/* ------------------------------------------------------ action buttons */
-
-/** Centered @p count-button action bar (Save/Cancel, Trust/Cancel...):
- *  one row of @p tw x @p th tiles with 4-cell gutters, top row @p y0.
+/** Centered @p count-button action bar (Save/Cancel, Trust/Cancel...).
+ *  One row of @p tw x @p th tiles with 4-cell gutters, top row @p y0.
  *  Hit-test and arrow-nav via the tile_* helpers as usual. */
 tilegrid_t ui_button_bar(int y0, int count, int tw, int th);
 
 /** One bar button, drawn in the current pen. */
 void ui_button(const tilegrid_t *g, int slot, const char *label,
                const char *body, bool sel);
-
-/* --------------------------------------------------------------- chrome */
 
 /** Title chip framed by a shade gradient, drawn on row 0. */
 void draw_titlebar(int x0, const char *text);
@@ -209,7 +198,7 @@ void draw_screen_header(const char *title, const char *tag);
 /** Animated cyan ░▒▓█ comet sweeping an otherwise empty row. */
 void draw_rule(int row);
 
-/** 8-frame braille spinner glyph. */
+/** Returns one of 8 braille glyphs, indexed by @p frame mod 8. */
 uint16_t spinner_glyph(uint32_t frame);
 
 /** Braille "noise" glyph from a hash (never blank). */
@@ -223,8 +212,6 @@ bool clock_str(char *buf, size_t sz);
  *  red/white/default stay reserved for alert/focus/body (ui-spec). */
 uint8_t prof_accent(const char *name);
 
-/* ------------------------------------------------- QR / onboarding steps */
-
 /** QR module sampler: true = dark module at (x,y). */
 typedef bool (*qr_module_fn)(int x, int y);
 
@@ -235,8 +222,6 @@ int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption);
 /** Numbered onboarding step row; returns the next step row. */
 int draw_step(int y, char num, const char *label,
               const char *value, uint8_t value_pen, int xlimit);
-
-/* ------------------------------------------------- scrollback indicator */
 
 /** Scrollback fill down the right edge, line count on gray above it.
  *  @p offset is rows back from live, @p total the history available. */

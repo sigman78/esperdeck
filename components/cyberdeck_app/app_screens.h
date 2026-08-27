@@ -22,10 +22,8 @@ typedef enum {
     SCR_COUNT
 } scr_id_t;
 
-/* ---- boot (app_boot.c) ---- */
 extern const nav_screen_t boot_screen;
 
-/* ---- HOME + POWEROFF (app_home.c) ---- */
 extern const nav_screen_t home_screen, poweroff_screen;
 /** Land on HOME (collapses the nav stack — HOME is always the bottom). */
 void enter_home(uint64_t now);
@@ -40,14 +38,15 @@ uint32_t saver_idle_min(void);
 void     saver_set_idle_min(uint32_t min);
 /** Count activity: restart the idle timer, rain off. */
 void saver_reset(uint64_t now);
-/** Feed an input event; true = it woke the rain and must be swallowed. */
+/** Feed an input event; true means it woke the rain, and the caller
+ *  must swallow it. */
 bool saver_on_input(uint64_t now);
-/** Run the rain when HOME is idle; true = this tick was handled. */
+/** Run the rain when HOME is idle; true means the rain handled this
+ *  tick. */
 bool saver_tick_home(uint64_t now);
 /** Idle rain over the DEVICE gate pad; true while the rain owns the screen. */
 bool saver_tick_gate(uint64_t now);
 
-/* ---- pairing (app_pairing.c) ---- */
 extern const nav_screen_t pairing_screen;
 void enter_pairing(uint64_t now);
 
@@ -56,7 +55,6 @@ extern const nav_screen_t hostkey_screen;
 /** Enter the prompt for the fingerprint ssh_client just reported. */
 void hostkey_open(bool mismatch, uint64_t now);
 
-/* ---- unlock (app_unlock.c) ---- */
 extern const nav_screen_t unlock_screen;
 /** Keystore PIN pad. @p resume_connect: re-arm the connect to
  *  app.conn.active once unlocked (the lazy on-first-key-use trigger). */
@@ -68,9 +66,9 @@ void unlock_open_remove(uint64_t now);
 /** DEVICE gate pad (boot/wake/Lock deck): non-skippable, rain-capable. */
 void unlock_open_gate(uint64_t now);
 
-/* ---- connect + session (app_connect.c) ---- */
 extern const nav_screen_t connecting_screen, session_screen;
-/** The profile snapshot being connected / connected (hostkey prompt). */
+/** The profile snapshot that is connecting or already connected
+ *  (hostkey prompt). */
 const conn_profile_t *conn_active(void);
 /** session_enter() time — the menu's UP clock. */
 uint64_t conn_session_start(void);
@@ -95,7 +93,6 @@ void enter_profile(uint64_t now, int edit_idx);
 /** Wipe the draft's secret (app_creds_wipe companion). */
 void profile_creds_wipe(void);
 
-/* ---- menu (app_menu.c) ---- */
 extern const nav_screen_t menu_screen;
 /** Open the in-session root menu (F12 / long-press). */
 void menu_open(uint64_t now);
