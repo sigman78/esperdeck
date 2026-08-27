@@ -292,9 +292,20 @@ void draw_titlebar(int x0, const char *text)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
-/* The StatusBar. One lettered patch per indicator: lit = its accent as
- * the patch background, off = the bar's base blue. A live toast owns
- * the indicator span; the clock keeps the right edge either way. */
+/* One StatusBar patch. Lit = BRIGHT wash of its accent — the overlay
+ * resolve gives BRIGHT bars BLACK text — plus the bold face; off = the
+ * dimmed companion, receding. Patches sit adjacent, no gaps. */
+static int sb_patch(int x, int row, const char *txt, uint8_t accent, bool lit)
+{
+    ui_pen(lit ? accent : OVERLAY_COL_BLUE);
+    ui_puts(x, row, txt,
+            OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD |
+            (lit ? OVERLAY_ATTR_BRIGHT : OVERLAY_ATTR_DIM));
+    return x + (int)strlen(txt);
+}
+
+/* The StatusBar: lettered indicator patches left, clock right; a live
+ * toast owns the indicator span. */
 void ui_statusbar(uint64_t now)
 {
     const int sr = ui_rows() - 1;
@@ -304,19 +315,16 @@ void ui_statusbar(uint64_t now)
 
     if (app.toast[0] && now < app.toast_until) {
         char clip[96];
-        snprintf(clip, sizeof(clip), "%.*s", ui_cols() - 10, app.toast);
-        ui_puts(2, sr, clip, OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD);
+        snprintf(clip, sizeof(clip), " %.*s ", ui_cols() - 12, app.toast);
+        ui_puts(1, sr, clip,
+                OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BRIGHT |
+                OVERLAY_ATTR_BOLD);
     } else {
-        ui_pen(wifi_manager_is_connected() ? OVERLAY_COL_GREEN
-                                           : OVERLAY_COL_BLUE);
-        ui_puts(2, sr, " NET ",
-                OVERLAY_ATTR_INVERSE |
-                (wifi_manager_is_connected() ? 0 : OVERLAY_ATTR_DIM));
+        int x = sb_patch(1, sr, " NET ", OVERLAY_COL_GREEN,
+                         wifi_manager_is_connected());
         const bool kbd = app.cfg.ble && app.cfg.ble->get_state &&
                          app.cfg.ble->get_state() == 4;
-        ui_pen(kbd ? OVERLAY_COL_CYAN : OVERLAY_COL_BLUE);
-        ui_puts(8, sr, " KBD ",
-                OVERLAY_ATTR_INVERSE | (kbd ? 0 : OVERLAY_ATTR_DIM));
+        x = sb_patch(x, sr, " KBD ", OVERLAY_COL_CYAN, kbd);
         /* CAP/NUM wait on lock-state tracking in the input component
          * (extensibility item 6). Keystore lock, cached ~2 s — the
          * ABSENT state stats the filesystem. */
@@ -326,19 +334,21 @@ void ui_statusbar(uint64_t now)
             ks_at = now;
             ks = keystore_state();
         }
-        if (ks != KEYSTORE_ABSENT) {
-            ui_pen(ks == KEYSTORE_LOCKED ? OVERLAY_COL_AMBER
-                                         : OVERLAY_COL_BLUE);
-            ui_putch(15, sr, ks == KEYSTORE_LOCKED ? UI_LED_ON : UI_LED_OFF,
-                     OVERLAY_ATTR_INVERSE);
-        }
+        if (ks != KEYSTORE_ABSENT)
+            sb_patch(x, sr, " LCK ", OVERLAY_COL_AMBER,
+                     ks == KEYSTORE_LOCKED);
     }
 
-    char clk[8];
-    if (clock_str(clk, sizeof(clk))) {
+    char clk[10];
+    if (clock_str(clk + 1, sizeof(clk) - 2)) {
+        clk[0] = ' ';
+        size_t n = strlen(clk);
+        clk[n] = ' ';
+        clk[n + 1] = '\0';
         ui_pen(OVERLAY_COL_BLUE);
-        ui_puts(ui_cols() - (int)strlen(clk) - 2, sr, clk,
-                OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD);
+        ui_puts(ui_cols() - (int)strlen(clk) - 1, sr, clk,
+                OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BRIGHT |
+                OVERLAY_ATTR_BOLD);
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 }
