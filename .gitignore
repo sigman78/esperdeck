@@ -63,3 +63,7 @@ secrets/
 ks_test_storage/
 
 shots/
+
+# Claude Code: settings.json (the comment-lint hook) is shared; the rest is local
+.claude/*
+!.claude/settings.json

@@ -1,0 +1,11 @@
+# Comment lint config for `uncomment` (github.com/sigman78/uncomment).
+# Invoked through tools/check_comments.py — see docs/DEVELOPMENT.md, "Comment lint".
+
+[tool.uncomment]
+# Tool defaults, except: STE01 (sentence length) and STE02 (passive voice)
+# gate as warnings — user call, 2026-08-27. The other STE (Simplified
+# Technical English) rules stay advisory (info).
+
+[tool.uncomment.severity]
+STE01 = "warn"
+STE02 = "warn"

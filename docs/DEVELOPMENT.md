@@ -124,6 +124,30 @@ cd tests/tsm && cmake -B build && cmake --build build --config Debug
 ctest --test-dir build -C Debug
 ```
 
+## Comment lint — `uncomment` gates new comments
+
+Comment policy (short version: comments say WHY, docs carry the essays) is
+enforced by [uncomment](https://github.com/sigman78/uncomment), run from its
+git repo via `uvx` — nothing is vendored. `tools/check_comments.py` owns the
+scope: first-party sources only (vendored `esp_hid`, `monocypher`,
+`libssh2_esp`, dead `terminal`, and all build trees are excluded). Rule
+tuning lives in `uncomment.toml`; everything runs at tool defaults, including
+the STE (Simplified Technical English) wording rules at advisory (info) tier.
+
+```bash
+python tools/check_comments.py            # gate: judge comments added vs origin/master
+python tools/check_comments.py --check    # full scan of the backlog (advisory)
+```
+
+Gate mode is the check that matters: it judges only comments the branch
+added, so the pre-existing backlog never blocks work. Exit 0 = clean,
+1 = findings (printed in agent format with per-item fix actions).
+
+A Claude Code hook (`.claude/settings.json`, PostToolUse on Edit|Write)
+runs the same gate on every file the agent edits, against `git:HEAD`, and
+feeds findings straight back — noisy comments get corrected in-session
+instead of surviving to review.
+
 ## Simulator — build, drive, matching crypto
 
 ```bash
