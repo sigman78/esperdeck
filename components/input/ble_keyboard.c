@@ -13,7 +13,6 @@
 #include "ble_keyboard.h"
 #include "hid_keymap.h"
 #include "storage.h"
-#include "vterm.h"
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -72,28 +71,34 @@ static char    s_connected_name[64] = "";   /* name of the live device, "" = non
 /* Previous HID report keys — for rollover diffing (emit only new keys) */
 static uint8_t s_prev_keys[6];
 
+/* Deck-tracked lock toggles: with a boot-protocol keyboard the HOST owns
+ * caps/num state, and the deck is the host. Reset per connection — a
+ * fresh keyboard's locks are unknowable, so assume off. */
+#define HID_KC_CAPSLOCK  0x39
+#define HID_KC_NUMLOCK   0x53
+static uint8_t s_locks;
+
+uint8_t ble_keyboard_get_locks(void) { return s_locks; }
+
 /* Typematic auto-repeat: HID keyboards report state changes only, so the host
  * (us) must repeat a held key. The most-recently-pressed key repeats. */
 #define KBD_REPEAT_DELAY_US   (400 * 1000)   /* hold time before repeat kicks in */
 #define KBD_REPEAT_PERIOD_US  ( 40 * 1000)   /* ~25 chars/sec while held          */
 static esp_timer_handle_t s_repeat_timer = NULL;
-static uint8_t s_repeat_kc  = 0;             /* keycode being repeated (0 = none) */
-static uint8_t s_repeat_buf[INPUT_EVENT_MAX_LEN];
-static uint8_t s_repeat_len = 0;
+static uint8_t s_repeat_kc = 0;              /* keycode being repeated (0 = none) */
+static input_event_t s_repeat_ev;            /* the event to re-post */
 
 /* Re-emit the held key, then re-arm at the repeat cadence. */
 static void repeat_timer_cb(void *arg)
 {
     (void)arg;
-    if (s_repeat_kc == 0 || s_repeat_len == 0) return;
-    input_event_t ev = { .type = INPUT_EVENT_KEY, .len = s_repeat_len };
-    for (uint8_t j = 0; j < s_repeat_len; j++) ev.buf[j] = s_repeat_buf[j];
-    input_hal_post_event(&ev);
+    if (s_repeat_kc == 0) return;
+    input_hal_post_event(&s_repeat_ev);
     esp_timer_start_once(s_repeat_timer, KBD_REPEAT_PERIOD_US);
 }
 
-/* Start repeating @p kc (translated bytes in buf/len) after the initial delay. */
-static void repeat_arm(uint8_t kc, const uint8_t *buf, uint8_t len)
+/* Start repeating @p kc (its posted event in @p ev) after the initial delay. */
+static void repeat_arm(uint8_t kc, const input_event_t *ev)
 {
     if (!s_repeat_timer) {
         const esp_timer_create_args_t a = {
@@ -102,17 +107,15 @@ static void repeat_arm(uint8_t kc, const uint8_t *buf, uint8_t len)
         if (esp_timer_create(&a, &s_repeat_timer) != ESP_OK) return;
     }
     esp_timer_stop(s_repeat_timer);           /* harmless if not running */
-    s_repeat_kc  = kc;
-    s_repeat_len = len;
-    memcpy(s_repeat_buf, buf, len);
+    s_repeat_kc = kc;
+    s_repeat_ev = *ev;
     esp_timer_start_once(s_repeat_timer, KBD_REPEAT_DELAY_US);
 }
 
 static void repeat_stop(void)
 {
     if (s_repeat_timer) esp_timer_stop(s_repeat_timer);
-    s_repeat_kc  = 0;
-    s_repeat_len = 0;
+    s_repeat_kc = 0;
 }
 
 /* Global GAP event listener — drives link encryption/bonding, which esp_hidh's
@@ -624,6 +627,7 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
         memcpy(s_connected_bda, bda, 6);
         s_connected_dev = data->open.dev;
         memset(s_prev_keys, 0, sizeof(s_prev_keys));
+        s_locks = 0;
         repeat_stop();
         s_state = BLE_CONNECTED;
 
@@ -686,6 +690,7 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
         s_connected_dev = NULL;
         s_connected_name[0] = '\0';
         memset(s_prev_keys, 0, sizeof(s_prev_keys));
+        s_locks = 0;
         repeat_stop();
         s_state = (s_registry_count > 0) ? BLE_RECONNECT : BLE_IDLE;
         ble_gap_disc_cancel();
@@ -718,16 +723,28 @@ static void hidh_callback(void *handler_args, esp_event_base_t base,
             }
             if (held) continue;
 
-            uint8_t buf[INPUT_EVENT_MAX_LEN];
-            uint8_t len = hid_keymap_translate(kc, modifiers,
-                                               vterm_app_cursor_keys(), buf);
-            if (len == 0) continue;
+            /* Lock keys toggle deck-side state and never travel. */
+            if (kc == HID_KC_CAPSLOCK) { s_locks ^= BLE_KBD_LOCK_CAPS; continue; }
+            if (kc == HID_KC_NUMLOCK)  { s_locks ^= BLE_KBD_LOCK_NUM;  continue; }
 
-            input_event_t ev = { .type = INPUT_EVENT_KEY, .len = len };
-            for (uint8_t j = 0; j < len; j++) ev.buf[j] = buf[j];
+            input_event_t ev = { 0 };
+            uint8_t len = hid_keymap_translate(kc, modifiers,
+                                               s_locks & BLE_KBD_LOCK_CAPS,
+                                               ev.buf);
+            if (len) {
+                ev.type = INPUT_EVENT_KEY;
+                ev.len  = len;
+            } else {
+                /* No bytes of its own (arrows, F-keys, nav cluster):
+                 * cross the queue as a HID usage for the consumer to
+                 * encode against live terminal state. */
+                ev.type = INPUT_EVENT_HIDKEY;
+                ev.key  = kc;
+                ev.mods = modifiers;
+            }
             input_hal_post_event(&ev);
 
-            repeat_arm(kc, buf, len);   /* newest key press takes over repeat */
+            repeat_arm(kc, &ev);   /* newest key press takes over repeat */
         }
 
         /* Stop repeating once the held key is released (gone from the report). */
@@ -1000,6 +1017,7 @@ esp_err_t ble_keyboard_backend_init(void)
 #include "ble_keyboard.h"
 esp_err_t   ble_keyboard_backend_init(void)                            { return ESP_OK; }
 ble_state_t ble_keyboard_get_state(void)                               { return BLE_IDLE; }
+uint8_t     ble_keyboard_get_locks(void)                               { return 0; }
 const char *ble_keyboard_get_connected_name(void)                      { return ""; }
 void        ble_keyboard_enter_pairing(void)                           {}
 void        ble_keyboard_exit_pairing(void)                            {}

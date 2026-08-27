@@ -25,17 +25,24 @@ extern const char cyberdeck_font_section[];    /* "font"         */
 typedef struct { char size[16]; } cyberdeck_font_cfg_t;
 extern const storage_kv_field_t cyberdeck_font_fields[];
 
-/* ---- input events (mirrors input_hal layout; sim builds without it) ---- */
+/* ---- input events (mirrors input_hal layout; sim builds without it) ----
+ * Two key currencies: KEY carries layout-owned bytes (printables, Enter,
+ * Esc, Tab, Backspace, Ctrl combos); HIDKEY carries a USB HID usage +
+ * HID modifier byte for keys with no byte of their own — the session
+ * screen encodes those against live terminal state at the point of send. */
 
 #define CYBERDECK_INPUT_KEY        0
 #define CYBERDECK_INPUT_TAP        1
 #define CYBERDECK_INPUT_LONG_PRESS 2
 #define CYBERDECK_INPUT_SCROLL     3
+#define CYBERDECK_INPUT_HIDKEY     4
 
 typedef struct {
     uint8_t  type;
     uint8_t  len;       /* KEY: bytes in buf */
     uint8_t  buf[8];
+    uint8_t  key;       /* HIDKEY: USB HID usage ID */
+    uint8_t  mods;      /* HIDKEY: HID modifier byte */
     uint16_t x, y;      /* touch pixel coords */
     int16_t  dy;        /* SCROLL: pixels since the last event, down positive */
 } cyberdeck_input_t;
@@ -73,6 +80,11 @@ typedef enum {
     CYBERDECK_BLE_CONNECTED,     /* keyboard active, input flowing       */
 } cyberdeck_ble_state_t;
 
+/* Keyboard lock toggles reported by get_locks (mirrors the input
+ * component's BLE_KBD_LOCK_* bits; pinned in main.c). */
+#define CYBERDECK_KBD_LOCK_CAPS 0x01u
+#define CYBERDECK_KBD_LOCK_NUM  0x02u
+
 typedef struct {
     cyberdeck_ble_state_t (*get_state)(void);
     void (*enter_pairing)(void);
@@ -81,6 +93,7 @@ typedef struct {
     void (*select_device)(const uint8_t addr[6], uint8_t addr_type);
     const char *(*get_name)(void);   /* connected device name, "" if none */
     void (*forget)(void);            /* wipe all bonds (recover a bad store) */
+    uint8_t (*get_locks)(void);      /* CYBERDECK_KBD_LOCK_* bitmask */
 } cyberdeck_ble_ops_t;
 
 /* ---- phone-presence service (CYBERDECK_SVC_PRESENCE) -------------------

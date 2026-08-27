@@ -28,7 +28,6 @@ ALLOWED = {
     "cyberdeck_app": {"storage", "ssh", "wifi", "display", "vterm", "font"},
     "wifi":          {"storage"},
     "input":         {"storage", "esp_hid",
-                      "vterm",             # DEBT: DECCKM query in the driver (item 6)
                       "display"},          # tolerable: DISPLAY_WIDTH for the edge strip
     "storage":       {"monocypher"},
 }

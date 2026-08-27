@@ -19,7 +19,6 @@ idf_component_register(
         esp_timer
         freertos
         esp_event
-        vterm
         display
         storage
         mbedtls

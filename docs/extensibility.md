@@ -89,12 +89,14 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
   declares (it rides vterm's transitive REQUIRES). Every vterm-less use of
   the transport — file transfer, a capture/log sink, both on the backlog —
   is blocked on this.
-- **Encoding in the driver**: `input` turns HID keys into VT byte
+- ~~**Encoding in the driver**: `input` turns HID keys into VT byte
   sequences at the source, so `ble_keyboard.c` queries
   `vterm_app_cursor_keys()` — DECCKM (DEC cursor-key mode) — per
   keystroke; the shell then *decodes* those same bytes back into logical
   keys (`decode_key`) for UI navigation. The round-trip marks the
-  encoding as one layer too low.
+  encoding as one layer too low.~~ — fixed by item 6 (2026-08-27):
+  special keys cross the queue as HID usage + modifiers; the session
+  encodes at the point of send.
 - **`storage.h` is the domain-type home**: it defines `conn_profile_t`,
   `wifi_profile_t`, `ble_device_info_t` — why wifi, input and the shell
   include it from their own public headers. Deliberate (a types-only
@@ -297,7 +299,7 @@ in-tree features. Tick items as they merge.
       multi-instance consumer requires it. Home-grid extras become
       registered tiles (visibility predicate + activate) on the new list
       widget. BLE/presence ops migrate to named services with enum states.
-- [ ] **6. Build-system convergence + input unification.** One
+- [x] **6. Build-system convergence + input unification.** One
       `cyberdeck_features.cmake` defining each feature gate once; the
       sim's mirrored `CONFIG_*` defines generated from the same list;
       document (or script) the sim's `add_subdirectory` ordering. The
@@ -649,3 +651,28 @@ in-tree features. Tick items as they merge.
   design lock (menus never scroll/paginate/swipe); INPUT_EVENT_SCROLL
   stays dy-only until a real consumer exists. Verified: 6/6 both
   keystore configs, device build with both guards green.
+- **2026-08-27 (item 6, part 2: the input currency — item 6 complete)**
+  — special keys now cross the input queue as **USB HID usage +
+  modifier byte** (`INPUT_EVENT_HIDKEY` / `CYBERDECK_INPUT_HIDKEY`);
+  printables and the layout-free singles stay KEY bytes with the
+  backend that owns the layout. The session screen is the one place a
+  special key becomes wire bytes — `vtkeys_encode` at the point of
+  send, against the DECCKM state the remote set on *this* vterm — so
+  `ble_keyboard.c` lost its `vterm_app_cursor_keys()` query and the
+  shell lost its CSI parser (`decode_key` maps usages via new
+  `vtkeys_from_hid`/`vtkeys_mods_from_hid`). The `input → vterm` edge
+  is deleted and check_boundaries now enforces its absence (16 edges).
+  The unification dividend: SDL scancodes are defined FROM the HID
+  usage tables, so the sim's keydown scancode IS the device value —
+  `sdl_to_vtkey` deleted, drive verbs post the same events a real
+  keyboard would. **CAP/NUM landed with it**: boot-protocol keyboards
+  carry no lock state (the host owns it, and the deck is the host), so
+  `ble_keyboard` tracks the toggles, applies caps to letters in the
+  keymap, resets per connection, and exposes `get_locks` — a new BLE
+  service op (bits pinned main.c-style); the StatusBar shows amber
+  CAP/NUM patches while a keyboard is connected. Key repeat now
+  re-posts the stored event, so arrows repeat exactly as bytes did.
+  Skipped, optional in the item: the global hotkey registry (no
+  pressure — two shortcut sites). Verified: 6/6 both keystore configs
+  (drive arrows exercise the HIDKEY path end-to-end), device build,
+  both guards green, check_iram 25/21 unchanged.

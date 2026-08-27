@@ -1,11 +1,12 @@
 /*
  * vtkeys -- logical key + modifiers -> terminal byte sequence.
  *
- * The two keyboard backends have nothing in common below this line: the
- * device reads HID usage IDs over BLE, the simulator reads SDL keysyms.
- * Both need the SAME bytes on the wire, so both reduce their keycode to a
- * vtkey_t plus a modifier mask and call vtkeys_encode(). Encoding rules
- * live here once; adding a key or fixing a sequence is a single edit.
+ * Special keys cross the input queue as USB HID usage + HID modifier
+ * byte (the device reads them off the wire; SDL scancodes are defined
+ * from the same usage tables, so the simulator posts identical values).
+ * The session screen — the point of send, where the DECCKM state lives —
+ * maps usage to vtkey_t and encodes. Encoding rules live here once;
+ * adding a key or fixing a sequence is a single edit.
  *
  * Printable characters are NOT handled here — those stay with the backend
  * that owns the keyboard layout.
@@ -57,5 +58,11 @@ typedef enum {
  */
 size_t vtkeys_encode(vtkey_t key, uint8_t mods, bool app_cursor,
                      uint8_t *buf, size_t bufsz);
+
+/** The logical key for a USB HID usage ID (VTKEY_NONE if it has none). */
+vtkey_t vtkeys_from_hid(uint8_t usage);
+
+/** Reduce a HID modifier byte to the VTMOD_* mask (GUI/meta drops). */
+uint8_t vtkeys_mods_from_hid(uint8_t hid_mods);
 
 #endif /* VTKEYS_H */

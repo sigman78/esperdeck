@@ -62,6 +62,44 @@ static const vtkey_def_t s_keys[] = {
 
 #define NKEYS  (sizeof(s_keys) / sizeof(s_keys[0]))
 
+/* USB HID usage -> logical key. The devices' shared currency: the BLE
+ * backend posts HID usages verbatim, and SDL scancodes are defined FROM
+ * the HID usage tables, so the simulator posts the same values. */
+typedef struct {
+    uint8_t hid;
+    uint8_t key;    /* vtkey_t */
+} hid_vtkey_t;
+
+static const hid_vtkey_t s_hid[] = {
+    /* Function keys */
+    { 0x3A, VTKEY_F1  }, { 0x3B, VTKEY_F2  }, { 0x3C, VTKEY_F3  },
+    { 0x3D, VTKEY_F4  }, { 0x3E, VTKEY_F5  }, { 0x3F, VTKEY_F6  },
+    { 0x40, VTKEY_F7  }, { 0x41, VTKEY_F8  }, { 0x42, VTKEY_F9  },
+    { 0x43, VTKEY_F10 }, { 0x44, VTKEY_F11 }, { 0x45, VTKEY_F12 },
+    /* Navigation cluster */
+    { 0x49, VTKEY_INSERT }, { 0x4A, VTKEY_HOME }, { 0x4B, VTKEY_PGUP },
+    { 0x4C, VTKEY_DELETE }, { 0x4D, VTKEY_END  }, { 0x4E, VTKEY_PGDN },
+    /* Arrows */
+    { 0x4F, VTKEY_RIGHT }, { 0x50, VTKEY_LEFT },
+    { 0x51, VTKEY_DOWN  }, { 0x52, VTKEY_UP   },
+};
+
+vtkey_t vtkeys_from_hid(uint8_t usage)
+{
+    for (size_t i = 0; i < sizeof(s_hid) / sizeof(s_hid[0]); i++)
+        if (s_hid[i].hid == usage) return (vtkey_t)s_hid[i].key;
+    return VTKEY_NONE;
+}
+
+uint8_t vtkeys_mods_from_hid(uint8_t hid_mods)
+{
+    /* HID modifier byte: bit0 LCtrl, bit1 LShift, bit2 LAlt, bit3 LGUI,
+     * bits 4-7 the right-hand copies. GUI/meta drops: no xterm weight. */
+    return (uint8_t)((hid_mods & 0x22u ? VTMOD_SHIFT : 0u) |
+                     (hid_mods & 0x44u ? VTMOD_ALT   : 0u) |
+                     (hid_mods & 0x11u ? VTMOD_CTRL  : 0u));
+}
+
 /* Append the decimal form of @p v (0..99 — every parameter we emit). */
 static size_t put_num(uint8_t *p, uint8_t v)
 {

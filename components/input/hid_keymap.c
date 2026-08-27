@@ -1,20 +1,19 @@
 /*
- * HID Usage ID → terminal byte sequence translation table
+ * HID Usage ID → keyboard byte translation table
  *
- * Covers:
- *   - Printable keys 0x04–0x39 via direct table lookup, with Ctrl/Shift/Alt
- *   - Special keys (arrows, F1–F12, nav cluster) mapped to a logical key and
- *     encoded by vtkeys, which the simulator's SDL backend also uses
+ * Printable keys via direct table lookup, with Ctrl/Shift/Alt/CapsLock —
+ * the keyboard layout lives here, with the backend that owns the
+ * keyboard. Special keys (arrows, F1–F12, nav cluster) have no bytes of
+ * their own: they cross the queue as HID usages and get encoded at the
+ * point of send (vtkeys), against live terminal state this driver must
+ * not know.
  */
 
 #include "hid_keymap.h"
 #include "input_hal.h"   /* INPUT_EVENT_MAX_LEN — the caller's buffer */
-#include "vtkeys.h"
 
-/* The caller hands us a slot from the input queue, so the queue's buffer
- * must be able to hold the longest sequence the encoder can produce. */
-_Static_assert(INPUT_EVENT_MAX_LEN >= VTKEYS_MAX_LEN,
-               "input event buffer too small for the longest key sequence");
+_Static_assert(INPUT_EVENT_MAX_LEN >= HID_KEYMAP_MAX_LEN,
+               "input event buffer too small for a translated key");
 
 /* Modifier bit masks (HID modifier byte) */
 #define MOD_LCTRL   (1u << 0)
@@ -69,49 +68,19 @@ static const uint8_t s_printable[][2] = {
 #define PRINTABLE_MAX  0x38u
 #define PRINTABLE_CNT  (PRINTABLE_MAX - PRINTABLE_MIN + 1)
 
-/*
- * Special keys: HID usage ID → logical key. The byte sequences (and the
- * modifier encoding) live in vtkeys.c, shared with the simulator's SDL
- * backend so the two cannot drift.
- */
-typedef struct {
-    uint8_t hid;
-    uint8_t key;    /* vtkey_t */
-} hid_vtkey_t;
-
-static const hid_vtkey_t s_vtkeys[] = {
-    /* Function keys */
-    { 0x3A, VTKEY_F1  }, { 0x3B, VTKEY_F2  }, { 0x3C, VTKEY_F3  },
-    { 0x3D, VTKEY_F4  }, { 0x3E, VTKEY_F5  }, { 0x3F, VTKEY_F6  },
-    { 0x40, VTKEY_F7  }, { 0x41, VTKEY_F8  }, { 0x42, VTKEY_F9  },
-    { 0x43, VTKEY_F10 }, { 0x44, VTKEY_F11 }, { 0x45, VTKEY_F12 },
-    /* Navigation cluster */
-    { 0x49, VTKEY_INSERT }, { 0x4A, VTKEY_HOME }, { 0x4B, VTKEY_PGUP },
-    { 0x4C, VTKEY_DELETE }, { 0x4D, VTKEY_END  }, { 0x4E, VTKEY_PGDN },
-    /* Arrows */
-    { 0x4F, VTKEY_RIGHT }, { 0x50, VTKEY_LEFT },
-    { 0x51, VTKEY_DOWN  }, { 0x52, VTKEY_UP   },
-};
-
-#define VTKEYS_CNT  (sizeof(s_vtkeys) / sizeof(s_vtkeys[0]))
-
-/* HID modifier byte → the three modifiers the wire format can carry.
- * GUI/meta is dropped: xterm has no weight for it. */
-static inline uint8_t hid_to_vtmods(uint8_t m)
-{
-    return (uint8_t)((SHIFT(m) ? VTMOD_SHIFT : 0u) |
-                     (ALT(m)   ? VTMOD_ALT   : 0u) |
-                     (CTRL(m)  ? VTMOD_CTRL  : 0u));
-}
+/* Letter keys 0x04–0x1D: the range caps lock applies to. */
+#define LETTER_MAX  0x1Du
 
 uint8_t hid_keymap_translate(uint8_t keycode, uint8_t modifiers,
-                             bool app_cursor, uint8_t *buf)
+                             bool caps_lock, uint8_t *buf)
 {
     /* --- printable range --- */
     if (keycode >= PRINTABLE_MIN && keycode <= PRINTABLE_MAX) {
         uint8_t idx = keycode - PRINTABLE_MIN;
-        uint8_t ch  = SHIFT(modifiers) ? s_printable[idx][1]
-                                       : s_printable[idx][0];
+        bool shifted = SHIFT(modifiers) != 0;
+        if (caps_lock && keycode <= LETTER_MAX)
+            shifted = !shifted;             /* caps inverts letters only */
+        uint8_t ch = shifted ? s_printable[idx][1] : s_printable[idx][0];
 
         if (CTRL(modifiers)) {
             /* Ctrl+2 → NUL (0x00); all others: ch & 0x1F */
@@ -145,13 +114,5 @@ uint8_t hid_keymap_translate(uint8_t keycode, uint8_t modifiers,
         return 1;
     }
 
-    /* --- arrows, nav cluster, function keys --- */
-    for (uint8_t i = 0; i < VTKEYS_CNT; i++) {
-        if (s_vtkeys[i].hid == keycode)
-            return (uint8_t)vtkeys_encode((vtkey_t)s_vtkeys[i].key,
-                                          hid_to_vtmods(modifiers),
-                                          app_cursor, buf, VTKEYS_MAX_LEN);
-    }
-
-    return 0;   /* unrecognised */
+    return 0;   /* not byte-owned — the caller posts it as a HID usage */
 }
