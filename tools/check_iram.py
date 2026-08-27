@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """check_iram.py -- post-build guard: the render ISR path must be IRAM/DRAM.
 
-With CONFIG_LCD_RGB_ISR_IRAM_SAFE=y the bounce ISR keeps running while the
-flash cache is disabled (settings saves, NVS writes). Any flash-resident
+With CONFIG_LCD_RGB_ISR_IRAM_SAFE=y, the bounce ISR keeps running while
+settings saves and NVS writes disable the flash cache. Any flash-resident
 function it can reach -- or flash/PSRAM-resident data it reads -- is a
-Cache exception at exactly that moment. Placement is decided by the
-linker, so this checks the final ELF, not the sources; CMake runs it as a
-POST_BUILD step on the device build (see the top-level CMakeLists.txt).
+Cache exception at exactly that moment. The linker decides the final
+placement, so this script checks the compiled ELF, not the sources.
+CMake runs the check as a POST_BUILD step on the device build; see the
+top-level CMakeLists.txt.
 
 Two symbol classes:
   * REQUIRED_FUNCS must exist AND sit in IRAM -- key entry points; a
     rename that silently drops one out of the audit fails the build too.
   * The pattern lists cover the static helpers the optimizer may or may
-    not emit as standalone symbols: present -> placement is enforced,
-    inlined-away -> fine.
+    not emit as standalone symbols. When present, the check enforces
+    placement; when inlined away, that's fine.
 
 Usage: check_iram.py --nm <xtensa-nm> <elf>
 """
@@ -36,7 +37,7 @@ REQUIRED_FUNCS = [
     "font_decode_glyph",
 ]
 
-# ISR-reachable code: enforced when present (statics may be inlined away).
+# ISR-reachable code: enforced when present; the optimizer may inline statics away.
 # NOTE: the app shell's flash-resident render_home/render_menu/... must NOT
 # match -- keep these prefixes specific to the render core.
 FUNC_PATTERNS = [

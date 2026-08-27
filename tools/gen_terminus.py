@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""gen_terminus.py -- generate the committed compressed glyph tables.
+"""gen_terminus.py -- generate the compressed glyph tables that ship in components/font.
 
-One-step pipeline: fetch the upstream Terminus Font release (BDF sources,
-downloaded once into tools/.cache/), compress each size with the "v1"
-record format (crop + dedup + PackBits + row palette -- spec in
-components/font/terminus_font.h), self-verify the encoded pools decode
-pixel-exact against the BDF cells, and emit one .c translation unit per
-size into components/font/. The emitted files are COMMITTED; there is no
-build-time generation step.
+The script fetches the upstream Terminus Font release (BDF sources),
+caching the download once in tools/.cache/. It compresses each size with
+the "v1" record format: crop, dedup, PackBits, and a row palette (spec in
+components/font/terminus_font.h). It self-verifies the encoded pools:
+each pool must decode pixel-exact against the BDF cells. Finally, it
+emits one .c translation unit per size into components/font/. Developers
+commit the emitted files to the repo; the build performs no generation
+step.
 
-Coverage: the regular face carries the full Terminus repertoire (~1356
-glyphs); adjacent codepoint ranges whose gap is <= 3 are merged, the gap
-codepoints pointing at the '?' record. The bold face covers BOLD_SUBSET
-only; codepoints whose true bold bitmap equals "smear the regular glyph
-one pixel" are synthesized at decode time (0xFFFF idx sentinel) and only
-the exceptions store a record.
+Coverage: the regular face carries the full Terminus repertoire (about
+1356 glyphs). The script merges adjacent codepoint ranges whose gap is 3
+codepoints or less. The gap codepoints then point at the '?' record.
+
+The bold face covers BOLD_SUBSET only. The script synthesizes matching
+codepoints at decode time, using the 0xFFFF idx sentinel. A codepoint
+matches when smearing the regular glyph one pixel reproduces its true
+bold bitmap. Only the exceptions store a record.
 
 Usage:
-    python gen_terminus.py                  # all sizes, cached download
-    python gen_terminus.py 8x16 12x24       # only these sizes
-    python gen_terminus.py --src PATH       # local terminus dir or .tar.gz
-    python gen_terminus.py --out DIR        # default: components/font
+    python gen_terminus.py                  # all sizes, cached download.
+    python gen_terminus.py 8x16 12x24       # only these sizes.
+    python gen_terminus.py --src PATH       # local terminus dir or .tar.gz.
+    python gen_terminus.py --out DIR        # default: components/font.
 """
 
 import argparse
@@ -59,10 +62,6 @@ MAX_MERGE_GAP = 3
 # the tool's own report) when bumping the version.
 EXPECTED_BOLD_EXCEPTIONS = {8: 150, 10: 67, 12: 56}
 
-
-# ---------------------------------------------------------------------------
-# Fetching the BDF sources
-# ---------------------------------------------------------------------------
 
 def fetch_bdfs(src):
     """Return a dir containing the six ter-u{16,20,24}{n,b}.bdf files.
@@ -115,10 +114,6 @@ def fetch_bdfs(src):
         sys.exit(f"{tarball}: does not contain all of {', '.join(wanted)}")
     return out
 
-
-# ---------------------------------------------------------------------------
-# BDF parsing
-# ---------------------------------------------------------------------------
 
 def parse_bdf(path):
     """Return (width, height, {codepoint: [row_int; height]})."""
@@ -178,10 +173,6 @@ def compose_cell(fbb, bbx, hexrows, cp):
     return cell
 
 
-# ---------------------------------------------------------------------------
-# Range helpers
-# ---------------------------------------------------------------------------
-
 def contiguous_ranges(cps):
     cps = sorted(cps)
     out = []
@@ -217,10 +208,6 @@ def bold_ranges_for(font_cps):
             out.extend(contiguous_ranges(covered))
     return out
 
-
-# ---------------------------------------------------------------------------
-# Core v1 encoder
-# ---------------------------------------------------------------------------
 
 def crop(rows, height):
     """(start, len, cropped_row_tuple). All-blank: start=0.
@@ -407,11 +394,9 @@ def build_font_data(width, height, normal, real_bold):
     }
 
 
-# ---------------------------------------------------------------------------
-# Self-verification: decode the encoded pools (a Python mirror of
-# font_renderer.c's decoder) and compare every codepoint against the BDF
-# cells under the exact renderer semantics.
-# ---------------------------------------------------------------------------
+# Self-verification decodes the encoded pools and compares each codepoint
+# against the BDF cells. This module reimplements font_renderer.c's
+# decoder in Python, so the check matches the exact renderer semantics.
 
 def decode_record(pool, offset, height, rb, palette):
     """Reimplementation of the v1 decoder for one glyph record."""
@@ -509,10 +494,6 @@ def verify_data(data, normal, real_bold):
           f"{data['n_bold_cps']} bold cps decode pixel-exact")
 
 
-# ---------------------------------------------------------------------------
-# Stats + C emission
-# ---------------------------------------------------------------------------
-
 def face_stats(range_data, pool, nrec, n_real):
     idx_cps = sum(hi - lo + 1 for lo, hi, _ in range_data)
     return {
@@ -534,8 +515,9 @@ def build_stats(data, real_bold_differs):
     bold_total = bold["pool_b"] + bold["idx_b"] + bold["dir_b"]
     total = reg_total + bold_total + pal_b
 
-    # Flat row-array equivalent: one uncompressed row array over the same
-    # merged ranges + the pre-v1 sparse bold table (true-bold != normal).
+    # The flat row-array equivalent uses one uncompressed row array over the
+    # same merged ranges. It also carries the pre-v1 sparse bold table
+    # (true-bold != normal).
     flat = (reg["idx_cps"] + real_bold_differs) * gb \
          + reg["dir_b"] + bold["dir_b"]
 
@@ -655,10 +637,6 @@ def emit_c(out_path, data, stats_lines, nsrc, bsrc):
 
     Path(out_path).write_text("".join(parts), encoding="utf-8", newline="\n")
 
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def parse_wh(spec):
     w, h = spec.lower().split("x")

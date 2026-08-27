@@ -17,8 +17,8 @@ SIM_DEFAULT = Path("build-sim/sim/cyberdeck_sim.exe")
 
 
 def timeout_s(script):
-    """Per-scenario budget: steps fire ~450 ms apart after a 2.5 s boot
-    delay, so the timeout scales with script length (plus slack)."""
+    """Per-scenario budget. Steps fire about 450 ms apart, after a 2.5 s
+    boot delay. The timeout scales with script length, plus slack."""
     return 8 + 0.6 * (script.count("|") + 1)
 
 # Esc first: skips the boot splash, harmless if HOME is already up.
@@ -44,11 +44,11 @@ SCENARIOS = {
         "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
         "|key:right|key:right|key:enter|wait:500|expect:menu"
         "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
-    # Walk the two-column hub: CRT FX (cycle a value tile - toggles [fx]
-    # scanlines, flushed on page exit), FONT, SYSTEM; the breadcrumb
-    # lands back on CONFIGURATION each time. Hub is 2-col row-major:
-    # 0 PROFILES 1 WIFI / 2 KEYBOARD 3 CRT FX / 4 MOTION FX 5 FONT /
-    # 6 SYSTEM 7 KEYSTORE.
+    # Walk the two-column hub: CRT FX, FONT, SYSTEM. Cycling the CRT FX
+    # value tile toggles [fx] scanlines and flushes them on page exit. The
+    # breadcrumb lands back on CONFIGURATION each time. The hub uses a
+    # 2-col row-major layout. Order: 0 PROFILES, 1 WIFI, 2 KEYBOARD,
+    # 3 CRT FX, 4 MOTION FX, 5 FONT, 6 SYSTEM, 7 KEYSTORE.
     "config-pages":
         "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
         "|key:right|key:right|key:enter|wait:500|expect:menu"

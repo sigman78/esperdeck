@@ -1,5 +1,5 @@
-"""Prove the per-cell pair LUT reproduces scan_gpair exactly, for every glyph
-row pattern, every pixel position, and a spread of colour pairs."""
+"""Prove the per-cell pair LUT reproduces scan_gpair exactly. Check every
+glyph row pattern, every pixel position, and a spread of colour pairs."""
 import random
 
 
