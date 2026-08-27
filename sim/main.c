@@ -240,7 +240,7 @@ static void touch_tick(uint64_t now)
 }
 
 /* -------------------------------------------------------------------------
- * --drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|quit" —
+ * --drive "tap:x,y|key:enter|expect:home|shot:menu.bmp|wait:800|quit" —
  * scripted input for UI screenshot automation and regression runs
  * (framebuffer pixel coords; key names: enter, esc, tab, up/down/left/right,
  * f12, sbup/sbdn for scrollback paging, or a single character). Expectations
@@ -303,6 +303,11 @@ static void drive_tick(uint64_t now)
         /* Clean scripted exit after any preceding state/UI assertions;
          * a mismatch or crash anywhere earlier is nonzero. */
         exit(0);
+    } else if (!strncmp(step, "shot:", 5)) {
+        if (display_screenshot_bmp(step + 5) != ESP_OK) {
+            fprintf(stderr, "drive: screenshot '%s' failed\n", step + 5);
+            exit(5);
+        }
     } else if (sscanf(step, "tap:%d,%d", &x, &y) == 2) {
         send_touch(CYBERDECK_INPUT_TAP, (uint16_t)x, (uint16_t)y, now);
     } else if (sscanf(step, "hold:%d,%d", &x, &y) == 2) {

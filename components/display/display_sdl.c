@@ -12,6 +12,9 @@
 #include "esp_log.h"
 #include <SDL2/SDL.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 static const char *TAG = "display_sdl";
 
@@ -90,6 +93,56 @@ void display_render_frame(void)
     SDL_UnlockTexture(s_texture);
     SDL_RenderCopy(s_renderer, s_texture, NULL, NULL);
     SDL_RenderPresent(s_renderer);
+}
+
+/* Render the current frame into a scratch buffer (same chunk renderer the
+ * window path uses) and write it as a bottom-up 24-bit BMP. */
+esp_err_t display_screenshot_bmp(const char *path)
+{
+    const int W = DISPLAY_WIDTH, H = DISPLAY_HEIGHT;
+    color_t *fb = malloc((size_t)W * H * sizeof(color_t));
+    if (!fb) return ESP_ERR_NO_MEM;
+
+    const int band_h   = display_band_height();
+    const int chunk_px = W * band_h;
+    for (int r = 0; r < H / band_h; r++)
+        display_render_chunk(fb + r * chunk_px, r * chunk_px,
+                             chunk_px * (int)sizeof(color_t));
+
+    FILE *f = fopen(path, "wb");
+    if (!f) { free(fb); return ESP_FAIL; }
+
+    const uint32_t row_bytes = (uint32_t)W * 3;      /* 2400: 4-aligned */
+    const uint32_t img_bytes = row_bytes * (uint32_t)H;
+    uint8_t hdr[54] = { 'B', 'M' };
+    uint32_t v;
+    v = 54 + img_bytes;  memcpy(hdr + 2,  &v, 4);    /* file size   */
+    v = 54;              memcpy(hdr + 10, &v, 4);    /* pixel start */
+    v = 40;              memcpy(hdr + 14, &v, 4);    /* BITMAPINFO  */
+    v = (uint32_t)W;     memcpy(hdr + 18, &v, 4);
+    v = (uint32_t)H;     memcpy(hdr + 22, &v, 4);
+    hdr[26] = 1;                                     /* planes      */
+    hdr[28] = 24;                                    /* bpp         */
+    v = img_bytes;       memcpy(hdr + 34, &v, 4);
+    fwrite(hdr, 1, sizeof(hdr), f);
+
+    uint8_t *row = malloc(row_bytes);
+    if (!row) { fclose(f); free(fb); return ESP_ERR_NO_MEM; }
+    for (int y = H - 1; y >= 0; y--) {               /* bottom-up   */
+        const color_t *src = fb + (size_t)y * W;
+        for (int x = 0; x < W; x++) {
+            const uint16_t px = src[x];              /* RGB565      */
+            row[x * 3 + 0] = (uint8_t)((px & 0x1F) << 3);        /* B */
+            row[x * 3 + 1] = (uint8_t)(((px >> 5) & 0x3F) << 2); /* G */
+            row[x * 3 + 2] = (uint8_t)(((px >> 11) & 0x1F) << 3);/* R */
+        }
+        fwrite(row, 1, row_bytes, f);
+    }
+    free(row);
+    fclose(f);
+    free(fb);
+    ESP_LOGI(TAG, "screenshot -> %s", path);
+    return ESP_OK;
 }
 
 void display_toggle_scale(void)

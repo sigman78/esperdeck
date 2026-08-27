@@ -61,3 +61,5 @@ secrets/
 # Git worktrees
 .worktrees/
 ks_test_storage/
+
+shots/
