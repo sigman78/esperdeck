@@ -137,10 +137,11 @@ IRAM_ATTR void render_cache_invalidate(void)
 static IRAM_ATTR void build_pair_lut(uint32_t *out, uint16_t fg, uint16_t bg)
 {
     const uint32_t f = fg, b = bg;
-    out[0] = b | (b << 16);
-    out[1] = b | (f << 16);
-    out[2] = f | (b << 16);
-    out[3] = f | (f << 16);
+    /* uncomment-ignore[UC006]: per-index legend stays (user call, 2026-08-27) */
+    out[0] = b | (b << 16);      /* left bg, right bg */
+    out[1] = b | (f << 16);      /* left bg, right fg */
+    out[2] = f | (b << 16);      /* left fg, right bg */
+    out[3] = f | (f << 16);      /* left fg, right fg */
 }
 
 /* Scanline dim: 93.75% brightness via carry-safe per-field shift/mask. */
