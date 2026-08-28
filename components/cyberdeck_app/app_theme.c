@@ -1,8 +1,8 @@
 /*
- * app_theme.c — bakes the overlay style table: every look the rendition
- * uses, resolved once per ui_colors() call instead of per cell in the
- * ISR. Tones and derivations carried over verbatim from the retired
- * per-cell resolver (docs/overlay-style.md).
+ * app_theme.c — bakes the overlay style table. ui_theme_build() resolves
+ * every look the rendition uses, once per ui_colors() call, not per cell
+ * in the ISR. Tones and derivations carried over verbatim from the
+ * retired per-cell resolver (docs/overlay-style.md).
  */
 
 #include "app_theme.h"
@@ -63,9 +63,9 @@ void ui_theme_build(color_t fg, color_t bg, display_overlay_style_t *out)
         out[UI_TEXT  * OVERLAY_ACCENTS + a] =
             (display_overlay_style_t){ text, bg };
         /* Muted = halfway between the accent and the theme bg (carry-safe
-         * average). On the black theme this is plain half brightness;
-         * on a colored theme it recedes into THAT color instead of into
-         * black, which would converge with a dark bg (theme test). */
+         * average). On the black theme this is plain half brightness.
+         * On a colored theme it recedes into THAT color, not into black.
+         * Halving toward black converges with a dark bg (theme test). */
         out[UI_MUTED * OVERLAY_ACCENTS + a] = (display_overlay_style_t){
             (color_t)(((text >> 1) & 0x7BEF) + ((bg >> 1) & 0x7BEF)), bg };
         out[UI_BAR   * OVERLAY_ACCENTS + a] = (display_overlay_style_t){

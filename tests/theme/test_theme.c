@@ -1,8 +1,8 @@
 /*
- * test_theme.c — the invariant the scrollbar regression lacked: every
- * baked overlay style must keep its text readable against its own
- * background, for every theme the shell actually sets. The BRIGHT|DIM
- * collision (fg == bg == 0x7BEF) is exactly what these assertions catch.
+ * test_theme.c — the invariant the scrollbar regression lacked. Every
+ * baked overlay style must keep readable text on its own background,
+ * for every theme the shell sets. The BRIGHT|DIM collision
+ * (fg == bg == 0x7BEF) is what these assertions catch.
  */
 
 #include "unity.h"

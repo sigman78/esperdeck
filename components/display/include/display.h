@@ -109,7 +109,7 @@ esp_lcd_panel_handle_t display_get_panel(void);
  *   BOLD   use the real bold face; falls back to the normal glyph when
  *          no bold form exists. Pure glyph swap, colors untouched.
  *   SCRIM  honored on TRANSPARENT cells only: the terminal shows through
- *          at ~50% brightness (modal backdrop). No effect on opaque cells.
+ *          at ~50% brightness (modal backdrop).
  */
 #define OVERLAY_ATTR_BOLD     (1 << 0)
 #define OVERLAY_ATTR_SCRIM    (1 << 1)
