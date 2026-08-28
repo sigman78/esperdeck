@@ -1,26 +1,26 @@
 /*
- * app_saver.c — idle screensaver: braille digital rain painting the wall
- * clock. Owns the idle timer; runs inside ST_HOME via saver_tick_home().
+ * app_saver.c — idle screensaver plugin: braille digital rain painting
+ * the wall clock. Pure eye-candy on a real screen. The plugin tick
+ * pushes SCR_SAVER when session_guard reports the deck idle on HOME
+ * or the gate pad. Any input pops it. The lock policy lives in
+ * session_guard.c (extensibility item 7).
  */
 
 #include "app_internal.h"
 #include "app_screens.h"
-#include "app_settings.h"
 #include "app_widgets.h"
+#include "cyberdeck_plugin.h"
+#include "session_guard.h"
 #include "keystore.h"
 
 #include <string.h>
 
-static struct {
-    uint64_t last_input;            /* any key/touch; drives the idle timer  */
-    bool     on;                    /* rain actually on screen (not derived) */
-    uint64_t since;                 /* when the rain went up (wake grace)    */
-    uint32_t idle_ms;               /* [saver] idle timeout (= auto-lock)    */
-} s_saver;
+/* Input inside this window after the rain went up still acts on the
+ * screen underneath — a keypress aimed at a HOME visible milliseconds
+ * ago must not vanish into a wake. */
+#define SAVER_WAKE_GRACE_MS  1000
 
-/* Idle before the rain — configurable (SYSTEM menu, [saver]), and it
- * doubles as the auto-lock interval since engage wipes the MK. */
-#define SAVER_IDLE_MS  (s_saver.idle_ms)
+static uint64_t s_since;             /* when the rain went up */
 
 /* Bold 6x7 block font (2-px strokes) for the screensaver clock, bit 5 =
  * leftmost column. Digits 0-9 plus ':' at index 10 (blinked by clk_mask). */
@@ -72,8 +72,9 @@ static bool clk_mask(const clk_geom_t *g, int x, int y)
  * back off. The block then hops to a fresh spot. Nothing stays put
  * longer than 30 s (LCD safety). It falls back to a floating chip
  * until SNTP delivers real time. */
-static void render_saver(void)
+static void saver_render(uint64_t now)
 {
+    (void)now;
     static uint8_t head[100];    /* per-column head row (grid is 100 wide) */
     static bool    seeded = false;
     static uint8_t sp_ttl[100];  /* splash frames left per column          */
@@ -114,8 +115,6 @@ static void render_saver(void)
      * the hop. */
     bool washing = big && app.anim_frame % CLK_CYCLE >= CLK_CYCLE - CLK_WASH;
 
-    ui_colors(UI_FG, UI_BG);
-    ui_clear();
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     for (int c = 0; c < W; c++) {
@@ -198,90 +197,59 @@ static void render_saver(void)
         ui_chip(cx, cy, 0, clk, 0, 0);
     }
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_no_cursor();
-    ui_present();
 }
 
-void saver_init(uint64_t now)
+static void saver_enter(intptr_t arg, uint64_t now)
 {
-    app_saver_cfg_t sv = { .idle_min = APP_SAVER_DEFAULT_MIN };
-    storage_kv_load(cyberdeck_settings_ini, app_saver_section,
-                    app_saver_fields, &sv);
-    s_saver.idle_ms = sv.idle_min * 60u * 1000u;
-    saver_reset(now);
+    (void)arg;
+    s_since = now;
 }
 
-uint32_t saver_idle_min(void)          { return s_saver.idle_ms / 60000u; }
-void saver_set_idle_min(uint32_t min)  { s_saver.idle_ms = min * 60000u; }
-
-void saver_reset(uint64_t now)
+static void saver_tick(uint64_t now)
 {
-    s_saver.last_input = now;
-    s_saver.on         = false;
-}
-
-bool saver_on_input(uint64_t now)
-{
-    s_saver.last_input = now;
-    if (!s_saver.on) return false;
-    s_saver.on = false;
-    if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
-    /* Only swallow once the rain has been up for a moment. The main
-     * loop ticks before it drains input. A keypress aimed at a HOME
-     * visible milliseconds ago must still act, not vanish into a wake. */
-    bool swallow = now - s_saver.since >= 1000;
-    /* In the two-gates model, a keystore on the deck locks the deck.
-     * The store went cold when the rain came up. A real wake therefore
-     * lands on the non-skippable device pad, never on HOME. */
-    if (swallow && keystore_state() == KEYSTORE_LOCKED) {
-        unlock_open_gate(now);
-        return true;
-    }
-    /* Rain can cover HOME or the gate pad; repaint whichever is under it
-     * (an early keypress inside the 1 s grace still acts on that screen). */
-    app.next_anim = 0;
-    nav_invalidate();
-    return swallow;
-}
-
-bool saver_tick_home(uint64_t now)
-{
-    if (now - s_saver.last_input <= SAVER_IDLE_MS) {
-        s_saver.on = false;
-        return false;
-    }
-    if (now >= app.next_anim) {          /* idle: let it rain */
-        app.next_anim = now + ANIM_PERIOD_MS;
-        if (!s_saver.on) {
-            s_saver.on    = true;   /* input handling keys off what's on screen */
-            s_saver.since = now;
-            /* The deck locks as the rain goes up, so a lifted deck is
-             * already cold — the vault AND the hydrated copies out in app
-             * state. No-op when locked or without a store. */
-            keystore_lock();
-            app_creds_wipe();
-        }
-        render_saver();
-    }
-    return true;
-}
-
-/* Same idle rain, ticked from the DEVICE gate pad (ST_UNLOCK): the pad is
- * non-skippable and must not sit lit forever — the rain covers it, and
- * saver_on_input routes the wake straight back onto the pad. */
-bool saver_tick_gate(uint64_t now)
-{
-    if (now - s_saver.last_input <= SAVER_IDLE_MS) {
-        s_saver.on = false;
-        return false;
-    }
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
-        if (!s_saver.on) {
-            s_saver.on    = true;
-            s_saver.since = now;
-        }
-        render_saver();
+        nav_invalidate();
     }
-    return true;
 }
+
+/* Wake. Inside the grace the input also acts on the revealed screen.
+ * With a locked store a real wake lands on the non-skippable device
+ * pad, never on what the rain covered. The store went cold when the
+ * deck idled (session_guard). */
+static void saver_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
+                        uint64_t now)
+{
+    if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
+    bool swallow = now - s_since >= SAVER_WAKE_GRACE_MS;
+    if (swallow && keystore_state() == KEYSTORE_LOCKED) {
+        unlock_open_gate(now);
+        return;
+    }
+    nav_pop(now);
+    if (!swallow)
+        nav_dispatch_input(ev, k, ch, now);
+}
+
+const nav_screen_t saver_screen = {
+    .name = "saver", .enter = saver_enter, .tick = saver_tick,
+    .input = saver_input, .render = saver_render,
+    .chrome = NAV_CHROME_NONE,
+};
+
+/* Engage: the rain covers an idle HOME, and the idle DEVICE gate pad —
+ * that pad is non-skippable and must not sit lit forever; wake routes
+ * straight back onto it. */
+static void saver_plugin_tick(uint64_t now)
+{
+    int cur = nav_current();
+    bool eligible = cur == SCR_HOME ||
+                    (cur == SCR_UNLOCK && unlock_is_gate());
+    if (eligible && session_guard_idle(now))
+        nav_push(SCR_SAVER, 0, now);
+}
+
+const cyberdeck_plugin_t saver_plugin = {
+    .name = "saver",
+    .tick = saver_plugin_tick,
+};

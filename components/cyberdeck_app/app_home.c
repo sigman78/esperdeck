@@ -4,6 +4,7 @@
  */
 
 #include "app_internal.h"
+#include "session_guard.h"
 #include "app_screens.h"
 #include "app_widgets.h"
 #include "cyberdeck_plugin.h"
@@ -247,23 +248,23 @@ static void render_home(uint64_t now)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    /* Pac-Man marquee just above the StatusBar — the sprite showcase.
+    /* Plugin strips just above the StatusBar (pacman lives there).
      * (Hints and the toast both retired to the bar, ui-spec.) */
-    draw_pacman(ui_rows() - 2);
+    for (int i = 0; i < cyberdeck_plugin_count; i++)
+        if (cyberdeck_plugins[i]->home_strip)
+            cyberdeck_plugins[i]->home_strip(ui_rows() - 2, now);
 }
 
 static void home_enter(intptr_t arg, uint64_t now)
 {
     (void)arg;
     /* kbd_bonded gates the "Pair keyboard" tile; s_ks_present gates
-     * "Lock deck". pacman_reset() undoes the blanking from session entry.
-     * Activity here keeps a drop/provisioning toast alive before the rain
-     * paints over it. */
+     * "Lock deck". Landing here counts as activity: it keeps a
+     * drop/provisioning toast alive before the rain paints over it. */
     s_home.kbd_bonded = ble_has_bond();
     s_ks_present = keystore_state() != KEYSTORE_ABSENT;
-    pacman_reset();
     s_home.next_refresh = 0;
-    saver_reset(now);
+    session_guard_activity(now);
 }
 
 void enter_home(uint64_t now)
@@ -312,27 +313,6 @@ static void home_tick(uint64_t now)
      * a long-dead message. */
     if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
 
-    /* Walk-away auto-lock (prototype): the phone was HERE, then unseen for
-     * a minute, while the store sits unlocked — raise the gate, same path
-     * as the L panic key. Armed on a sighting so a deck booted with the
-     * phone already absent never self-locks out of nowhere; runs on HOME
-     * only (v1 semantics: a live session holds the deck open). */
-    if (app.presence && s_ks_present &&
-        keystore_state() == KEYSTORE_UNLOCKED) {
-        static bool armed;
-        const cyberdeck_presence_ops_t *pr = app.presence;
-        if (pr->present()) {
-            armed = true;
-        } else if (armed && pr->enrolled() && pr->age_ms() > 60000) {
-            armed = false;
-            keystore_lock();
-            app_creds_wipe();
-            unlock_open_gate(now);
-            return;
-        }
-    }
-
-    if (saver_tick_home(now)) return;
     if (now >= s_home.next_refresh) {
         s_home.next_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
         nav_invalidate();   /* live wifi/ble status */

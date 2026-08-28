@@ -453,6 +453,11 @@ void unlock_open_gate(uint64_t now)
     nav_reset(SCR_UNLOCK, UA_GATE, now);   /* nothing behind the gate */
 }
 
+bool unlock_is_gate(void)
+{
+    return s_unlock.gate && !s_unlock.deriving;
+}
+
 void unlock_open_setpin(uint64_t now)
 {
     nav_push(SCR_UNLOCK, UA_SETPIN, now);
@@ -538,9 +543,7 @@ static void unlock_tick(uint64_t now)
      * back on the pad. A cancellable pad — connect fallback, abandoned
      * set-code flow — gives up after a minute and lands on HOME. */
     if (!s_unlock.deriving) {
-        if (s_unlock.gate) {
-            if (saver_tick_gate(now)) return;   /* rain owns the screen */
-        } else if (now - s_unlock.last_input >= IDLE_CANCEL_MS) {
+        if (!s_unlock.gate && now - s_unlock.last_input >= IDLE_CANCEL_MS) {
             /* An abandoned pad always lands HOME, even a menu flow. */
             if (s_flavor == UA_SETPIN || s_flavor == UA_REMOVE)
                 s_flavor = UA_PROMPT;

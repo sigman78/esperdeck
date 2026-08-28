@@ -3,8 +3,9 @@
  * (value cycling, deferred persistence). See app_settings.h.
  */
 
+#include "app_internal.h"    /* app.touch_scroll + the fx snapshot   */
 #include "app_settings.h"
-#include "app_screens.h"     /* saver_idle_min/saver_set_idle_min */
+#include "session_guard.h"   /* the [saver] idle knob lives there    */
 
 #include <stddef.h>
 #include <stdio.h>
@@ -209,20 +210,20 @@ static const uint8_t SAVER_STEPS[] = { 1, 3, 5, 10, 30 };
 
 void app_settings_saver_cycle(void)
 {
-    const uint32_t cur = saver_idle_min();
+    const uint32_t cur = session_guard_idle_min();
     int next = 0;                        /* unknown (hand-edited): snap */
     for (int k = 0; k < NELEM(SAVER_STEPS); k++)
         if (SAVER_STEPS[k] == cur) {
             next = (k + 1) % NELEM(SAVER_STEPS);
             break;
         }
-    saver_set_idle_min(SAVER_STEPS[next]);
+    session_guard_set_idle_min(SAVER_STEPS[next]);
     s_dirty |= DIRTY_SAVER;
 }
 
 void app_settings_saver_format(char *buf, size_t sz)
 {
-    snprintf(buf, sz, "%u min", (unsigned)saver_idle_min());
+    snprintf(buf, sz, "%u min", (unsigned)session_guard_idle_min());
 }
 
 #if CONFIG_INPUT_TOUCH_SCROLL
@@ -260,7 +261,7 @@ void app_settings_idle_flush(void)
     }
     if ((s_dirty & DIRTY_SAVER) && !(s_hold & APP_SETTINGS_HOLD_SYS)) {
         s_dirty &= (uint8_t)~DIRTY_SAVER;
-        app_saver_cfg_t sv = { .idle_min = saver_idle_min() };
+        app_saver_cfg_t sv = { .idle_min = session_guard_idle_min() };
         storage_kv_save(cyberdeck_settings_ini, app_saver_section,
                         app_saver_fields, &sv);
     }
