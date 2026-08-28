@@ -23,14 +23,22 @@ static DRAM_ATTR struct {
 } s_overlay = {};
 
 /* App-registered style table (docs/overlay-style.md); a one-entry black
- * fallback keeps the ISR safe before registration / on a bad index. */
+ * fallback keeps the ISR safe before registration / on a bad index.
+ * The ISR reads {tbl, count} through ONE published pointer. The pair
+ * cannot tear, so count cannot exceed the table it rides with. Two
+ * separate stores would not survive the optimizer or a cross-core
+ * reader (bench registers its palette from core 0; the ISR is core 1). */
+typedef struct {
+    const display_overlay_style_t *tbl;
+    int count;
+} pal_ref_t;
 static DRAM_ATTR const display_overlay_style_t s_pal_fallback[1] = {
     { COLOR_WHITE, COLOR_BLACK },
 };
-static DRAM_ATTR struct {
-    const display_overlay_style_t *tbl;
-    int count;
-} s_pal = { s_pal_fallback, 1 };
+static DRAM_ATTR const pal_ref_t s_pal_fallback_ref = { s_pal_fallback, 1 };
+static DRAM_ATTR pal_ref_t s_pal_refs[2];       /* ping-pong slots */
+static DRAM_ATTR const pal_ref_t * volatile s_pal = &s_pal_fallback_ref;
+static uint8_t s_pal_next;
 
 void display_set_text_buffer(const terminal_cell_t *buf, int cols, int rows)
 {
@@ -49,16 +57,17 @@ void display_set_overlay_buffer(display_overlay_cell_t *buf, int cols, int rows)
 void display_set_overlay_palette(const display_overlay_style_t *pal, int count)
 {
     if (!pal || count <= 0) {
-        pal   = s_pal_fallback;
-        count = 1;
+        s_pal = &s_pal_fallback_ref;
+        return;
     }
-    /* The ISR reads count and tbl separately, in either order. So the
-     * live count must never exceed EITHER table during a swap: shrink
-     * first, set the pointer, then grow. A torn pair under-clamps to
-     * entry 0 for one frame; it never overruns. */
-    if (count < s_pal.count) s_pal.count = count;
-    s_pal.tbl   = pal;
-    s_pal.count = count;
+    /* Fill the off slot, then publish it as one aligned pointer store.
+     * Slot reuse would need two full calls inside the ISR's few-cycle
+     * deref window; palette swaps are screen-entry events. */
+    pal_ref_t *r = &s_pal_refs[s_pal_next];
+    s_pal_next ^= 1;
+    r->tbl   = pal;
+    r->count = count;
+    s_pal = r;
 }
 
 void display_get_text_size(int *cols, int *rows)
@@ -160,10 +169,11 @@ typedef struct {
  * bakes every look at theme time — docs/overlay-style.md). `bold` stays
  * 0 — bold-pop must not recolor chrome; the glyph itself may still use
  * the bold face. */
-static IRAM_ATTR void resolve_overlay_cell(uint8_t ov_pal, cell_colors_t *out)
+static IRAM_ATTR void resolve_overlay_cell(const pal_ref_t *pal,
+                                           uint8_t ov_pal, cell_colors_t *out)
 {
     const display_overlay_style_t *st =
-        &s_pal.tbl[ov_pal < s_pal.count ? ov_pal : 0];
+        &pal->tbl[ov_pal < pal->count ? ov_pal : 0];
     out->fg = st->fg;
     out->bg = st->bg;
     out->underline = 0;
@@ -212,6 +222,8 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
     const display_overlay_cell_t *ov_row =
         (s_overlay.buf && cr < s_overlay.rows)
         ? (s_overlay.buf + cr * s_overlay.cols) : NULL;
+    /* One volatile load: the whole row resolves against one palette. */
+    const pal_ref_t *pal = s_pal;
 
     const uint8_t mono     = g_fx_snap.mono;
     const uint8_t bold_pop = g_fx_snap.bold_pop;
@@ -243,7 +255,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
         const uint16_t ov_cp    = (ov_row && c < s_overlay.cols) ? ov_row[c].cp    : 0;
 
         if (ov_cp != 0) {
-            resolve_overlay_cell(ov_row[c].pal, &cc);
+            resolve_overlay_cell(pal, ov_row[c].pal, &cc);
             font_decode_glyph(ov_cp, (ov_attrs & OVERLAY_ATTR_BOLD) != 0, dst);
         } else {
             const terminal_cell_t *cell = &row_cells[c];
