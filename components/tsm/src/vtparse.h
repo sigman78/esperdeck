@@ -30,8 +30,6 @@
 /* Maximum codepoints the parser buffers before it flushes a VT_EV_PRINT span. */
 #define VTP_PRINT_BUF   64
 
-/* ── Per-type callback vtable ─────────────────────────────────────────────── */
-
 typedef struct {
     /* Printable span: cps[0..ncp-1] are codepoints (valid only during cb). */
     void (*print)(const uint32_t *cps, int ncp, void *user);
@@ -50,8 +48,6 @@ typedef struct {
                   const int32_t *params, int nparams, void *user);
 } vt_callbacks_t;
 /* All slots MUST be non-NULL.  Use a silent no-op for unused event types. */
-
-/* ── Parser state ─────────────────────────────────────────────────────────── */
 
 typedef enum {
     VTP_ST_GROUND = 0,
@@ -75,8 +71,6 @@ typedef enum {
 #define VTP_STR_OSC     1
 #define VTP_STR_DCS     2
 #define VTP_STR_SOS     3   /* SOS / PM / APC — ESC \ terminates silently */
-
-/* ── Parser struct ────────────────────────────────────────────────────────── */
 
 typedef struct {
     vtp_state_t    state;
@@ -105,8 +99,6 @@ typedef struct {
     vt_callbacks_t cb;
     void          *user;
 } vtparse_t;
-
-/* ── Public API ───────────────────────────────────────────────────────────── */
 
 /* Initialise (or re-initialise) a parser.  The caller need not zero the
  * struct beforehand; vtparse_init does a full memset internally.

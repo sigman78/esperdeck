@@ -110,8 +110,6 @@ void tsm_clear_dirty(tsm_t *tsm);
 int tsm_cols(const tsm_t *tsm);
 int tsm_rows(const tsm_t *tsm);
 
-/* ── Scrollback ──────────────────────────────────────────────────────────── */
-
 /* Ring capacity in rows: what tsm_new() actually got, which may be less than
  * asked for. It is 0 when the caller disables scrollback (sb_lines == 0) or
  * the allocation fails. Distinct from tsm_sb_len() — that is 0 on a fresh

@@ -31,8 +31,6 @@
 static tsm_bench_t s_tsm_bench;
 #endif
 
-/* ── Response helper ─────────────────────────────────────────────────────── */
-
 static void send_response(tsm_t *t, const char *s, int len)
 {
     if (t->response_cb)
@@ -44,8 +42,6 @@ void tsm_set_response_cb(tsm_t *t, tsm_response_fn_t cb, void *user)
     t->response_cb   = cb;
     t->response_user = user;
 }
-
-/* ── Utilities ────────────────────────────────────────────────────────────── */
 
 /* Resolve a CSI parameter; return def if the slot is -1 (omitted). */
 static inline int32_t param(const int32_t *params, int nparams, int i, int32_t def)
@@ -94,8 +90,6 @@ static inline tsm_cell_t blank_cell(tsm_t *t)
                          .attrs = 0, .attrs2 = 0 };
 }
 
-/* ── Screen fill / erase ─────────────────────────────────────────────────── */
-
 /* Erase columns [l, r] on row with current bg color. */
 static inline void erase_range(tsm_t *t, int row, int l, int r)
 {
@@ -114,8 +108,6 @@ static void erase_screen(tsm_t *t)
 {
     for (int r = 0; r < t->rows; r++) erase_row(t, r);
 }
-
-/* ── Scrolling ───────────────────────────────────────────────────────────── */
 
 /* sb_clear() does not touch cell data; sb_len = 0 makes it unreachable. */
 static void sb_clear(tsm_t *t)
@@ -206,8 +198,6 @@ static void scroll_down(tsm_t *t, int n)
     for (int r = top; r <= bot; r++) mark_row_dirty(t, r);
 }
 
-/* ── Cursor movement ─────────────────────────────────────────────────────── */
-
 /* Move cursor to absolute (col, row) — clamped to screen. */
 static inline void cursor_goto(tsm_t *t, int col, int row)
 {
@@ -240,8 +230,6 @@ static inline void do_wrap(tsm_t *t)
     }
 }
 
-/* ── Save / restore cursor ───────────────────────────────────────────────── */
-
 static void save_cursor(tsm_t *t, tsm_cursor_save_t *s)
 {
     s->col = t->cx; s->row = t->cy;
@@ -259,8 +247,6 @@ static void restore_cursor(tsm_t *t, const tsm_cursor_save_t *s)
     t->g[0] = s->g0; t->g[1] = s->g1; t->gl = s->gl;
     t->pending_wrap = false;
 }
-
-/* ── Alt screen switch ───────────────────────────────────────────────────── */
 
 /* The ring base is per-grid state. It must travel with the cells pointer in
  * every swap. Otherwise a rotated primary screen comes back scrambled on
@@ -366,8 +352,6 @@ static void do_sgr(tsm_t *t, const int32_t *params, int nparams)
     }
 }
 
-/* ── CSI dispatch ─────────────────────────────────────────────────────────── */
-
 static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams)
 {
@@ -422,7 +406,6 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
     /* Standard CSI sequences */
     switch (final) {
 
-    /* ── Cursor movement ─────────────────────────────────────────────────── */
     case 'A': /* CUU — cursor up */
         cursor_goto(t, t->cx, t->cy - (int)(p1 < 1 ? 1 : p1));
         break;
@@ -487,7 +470,6 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         }
         break;
 
-    /* ── Insert / delete ─────────────────────────────────────────────────── */
     case 'L': /* IL — insert lines */
     {
         int n = (int)(p1 < 1 ? 1 : p1);
@@ -548,7 +530,6 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         scroll_down(t, (int)(p1 < 1 ? 1 : p1));
         break;
 
-    /* ── Misc ────────────────────────────────────────────────────────────── */
     case 'm': /* SGR */
         do_sgr(t, params, nparams);
         break;
@@ -598,8 +579,6 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
     }
 }
 
-/* ── Hard reset ───────────────────────────────────────────────────────────── */
-
 static void do_hard_reset(tsm_t *t)
 {
     if (t->mode.decalt)            /* return to primary first */
@@ -619,8 +598,6 @@ static void do_hard_reset(tsm_t *t)
     t->mode.decawm = true; t->mode.dectcem = true;
     t->pending_wrap = false;
 }
-
-/* ── ESC dispatch ─────────────────────────────────────────────────────────── */
 
 static void do_esc(tsm_t *t, uint8_t intermediate, uint8_t final)
 {
@@ -653,8 +630,6 @@ static void do_esc(tsm_t *t, uint8_t intermediate, uint8_t final)
     }
 }
 
-/* ── OSC dispatch ────────────────────────────────────────────────────────── */
-
 static void do_osc(tsm_t *t, const uint8_t *data, int len)
 {
     if (len < 2) return;
@@ -671,8 +646,6 @@ static void do_osc(tsm_t *t, const uint8_t *data, int len)
         t->title[tlen] = '\0';
     }
 }
-
-/* ── C0 dispatch ──────────────────────────────────────────────────────────── */
 
 static void do_c0(tsm_t *t, uint8_t byte)
 {
@@ -709,8 +682,6 @@ static void do_c0(tsm_t *t, uint8_t byte)
     default: break;
     }
 }
-
-/* ── Print (GROUND printable) ────────────────────────────────────────────── */
 
 static void do_print_span_irm(tsm_t *t, const uint32_t *cps, int count)
 {
@@ -788,8 +759,6 @@ static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
     }
 }
 
-/* ── Per-type vtable callbacks ────────────────────────────────────────────── */
-
 #ifdef CONFIG_VTERM_BENCH
 #define TSM_BENCH_T0()      uint32_t __bt0 = esp_cpu_get_cycle_count()
 #define TSM_BENCH_ADD(field) (s_tsm_bench.field += (esp_cpu_get_cycle_count() - __bt0))
@@ -843,8 +812,6 @@ static const vt_callbacks_t s_tsm_cb = {
     .print = on_print, .c0 = on_c0, .esc = on_esc,
     .csi   = on_csi,   .osc = on_osc, .dcs = on_dcs,
 };
-
-/* ── Public API ───────────────────────────────────────────────────────────── */
 
 /* Only task context touches tsm's own grids: tsm_feed on the SSH read task,
  * and the vterm dirty-row copy. The display ISR reads vterm's separate

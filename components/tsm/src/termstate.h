@@ -14,8 +14,6 @@
 
 #include "esp_heap_caps.h"
 
-/* ── Cursor save/restore slot ────────────────────────────────────────────── */
-
 typedef struct {
     int          col;
     int          row;
@@ -27,8 +25,6 @@ typedef struct {
     charset_id_t g1;
     int          gl;   /* active GL index: 0=G0, 1=G1 */
 } tsm_cursor_save_t;
-
-/* ── Mode flags ──────────────────────────────────────────────────────────── */
 
 typedef struct {
     bool lnm;        /* LNM — line feed / new line mode          */
@@ -43,8 +39,6 @@ typedef struct {
     bool mouse_btn;  /* mouse button reporting (stub)            */
     bool sync_update;  /* ?2026 — synchronized output: freeze renderer */
 } tsm_mode_t;
-
-/* ── Terminal struct ─────────────────────────────────────────────────────── */
 
 struct tsm_s {
     int cols;

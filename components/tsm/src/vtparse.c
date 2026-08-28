@@ -21,8 +21,6 @@
 #define unlikely(x) x
 #endif
 
-/* ── Internal helpers ─────────────────────────────────────────────────────── */
-
 /* Reset parameter state (called on entry to ESC, CSI, DCS). */
 static inline void do_clear(vtparse_t *p)
 {
@@ -71,8 +69,6 @@ static inline void do_prefix(vtparse_t *p, uint8_t b)
         p->prefix = b;
 }
 
-/* ── Event emitters ───────────────────────────────────────────────────────── */
-
 static inline void flush_print(vtparse_t *p)
 {
     int n = p->print_len;
@@ -114,8 +110,6 @@ static inline void emit_dcs(vtparse_t *p, uint8_t final)
     p->cb.dcs(p->prefix, p->intermediate, final, p->params, p->nparams, p->user);
 }
 
-/* ── State transitions ────────────────────────────────────────────────────── */
-
 static inline void enter_ground(vtparse_t *p)
 {
     p->state       = VTP_ST_GROUND;
@@ -154,8 +148,6 @@ static inline void enter_esc(vtparse_t *p)
     do_clear(p);
     p->state = VTP_ST_ESC;
 }
-
-/* ── Per-state byte processors ────────────────────────────────────────────── */
 
 static inline void st_ground(vtparse_t *p, uint8_t b)
 {
@@ -391,8 +383,6 @@ static inline bool utf8_start(vtparse_t *p, uint8_t b)
     return true;
 }
 
-/* ── Public API ───────────────────────────────────────────────────────────── */
-
 void vtparse_init(vtparse_t *p, const vt_callbacks_t *cb, void *user)
 {
     memset(p, 0, sizeof(*p));
@@ -408,7 +398,6 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
     for (size_t i = 0; i < len; i++) {
         uint8_t b = data[i];
 
-        /* ── UTF-8 continuation ─────────────────────────────────────────── */
         if (p->utf8_remain > 0) {
             if ((b & 0xC0u) == 0x80u) {
                 /* Valid continuation byte. */
@@ -434,7 +423,7 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
             /* Fall through to process the current byte normally. */
         }
 
-        /* ── GROUND fast path ─────────────────────────────────────────────
+        /* GROUND fast path
          * No UTF-8 pending (guaranteed above) and in GROUND. Bulk-append a
          * run of printable ASCII, skipping the per-byte switch and the
          * out-of-line append_print call. DEL/C0/C1/UTF-8 leads break the run.
@@ -485,7 +474,6 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
             continue;
         }
 
-        /* ── High bytes (0x80–0xFF) ─────────────────────────────────────── */
         if (b >= 0x80u) {
             /* 0x9C: 8-bit String Terminator — terminates OSC/DCS. */
             if (b == 0x9Cu) {

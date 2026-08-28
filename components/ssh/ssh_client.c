@@ -471,7 +471,6 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
     ssh_client_disconnect();
     s_clean_eof = false;
 
-    /* ── 1. TCP connect ─────────────────────────────────────────────── */
     char port_str[6];
     snprintf(port_str, sizeof(port_str), "%d", (int)config->port);
 
@@ -570,7 +569,6 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
         return SSH_ERR_HOSTKEY_MISMATCH;
     }
 
-    /* ── 6. Authentication ──────────────────────────────────────────── */
     ESP_LOGI(TAG, "Authenticating as '%s'...", config->username);
 
     /* Query which methods the server accepts. */
@@ -656,7 +654,6 @@ auth_done:
     s_kb_password = NULL;
     ESP_LOGI(TAG, "Authenticated");
 
-    /* ── 6b. Keepalive configuration ───────────────────────────────── */
 #if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
     /* Configure keepalive only after userauth completes. A keepalive is an
      * SSH_MSG_GLOBAL_REQUEST (type 80), a connection-protocol message. The
@@ -691,7 +688,6 @@ auth_done:
         return ESP_FAIL;
     }
 
-    /* ── 8. Request PTY ─────────────────────────────────────────────── */
     /* PTY size = the registered display grid (set by vterm_init). */
     int term_cols = 0, term_rows = 0;
     display_get_text_size(&term_cols, &term_rows);
@@ -711,7 +707,6 @@ auth_done:
         return ESP_FAIL;
     }
 
-    /* ── 9. Start shell ─────────────────────────────────────────────── */
     rc = libssh2_channel_shell(s_channel);
     if (rc != 0) {
         ESP_LOGE(TAG, "Shell request failed: %d", rc);

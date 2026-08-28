@@ -34,8 +34,6 @@ static void expect(uint8_t keycode, uint8_t mods, bool app, const char *want)
     TEST_ASSERT_EQUAL_UINT8_ARRAY((const uint8_t *)want, buf, n);
 }
 
-/* ── Printable keys ──────────────────────────────────────────────────────── */
-
 void test_printable_unshifted_and_shifted(void)
 {
     expect(0x04, 0,        false, "a");
@@ -152,8 +150,6 @@ void test_right_hand_modifiers_on_special_keys(void)
     expect(0x4B, M_RSHIFT, false, "\x1b[5;2~");
     expect(0x52, M_RALT,   false, "\x1b[1;3A");
 }
-
-/* ── Unmapped ────────────────────────────────────────────────────────────── */
 
 void test_unknown_keycode_returns_zero(void)
 {

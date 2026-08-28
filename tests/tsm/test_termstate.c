@@ -15,8 +15,6 @@
 #include "color.h"
 #include "charsets.h"
 
-/* ── Helpers ─────────────────────────────────────────────────────────────── */
-
 /* Feed a C string (no NUL) to the terminal. */
 static void feed(tsm_t *t, const char *s)
 {
@@ -36,10 +34,6 @@ static uint16_t cp_at(tsm_t *t, int col, int row)
 
 void setUp(void) {}
 void tearDown(void) {}
-
-/* ════════════════════════════════════════════════════════════════════════════
- * color.c tests
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_color_rgb_black(void)
 {
@@ -111,10 +105,6 @@ void test_color_ansi_grayscale_last(void)
     TEST_ASSERT_NOT_EQUAL(0x0000, got);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * charsets.c tests
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_charset_ascii_identity(void)
 {
     for (uint8_t i = 0x20; i < 0x7F; i++)
@@ -163,10 +153,6 @@ void test_charset_dec_gfx_ascii_passthrough(void)
     TEST_ASSERT_EQUAL_HEX16(0x41, charset_xlat(CHARSET_DEC_GFX, 0x41));
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * tsm_new / lifecycle
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_tsm_new_basic(void)
 {
     tsm_t *t = tsm_new(80, 24, 0);
@@ -208,10 +194,6 @@ void test_tsm_new_null_on_zero_rows(void)
 {
     TEST_ASSERT_NULL(tsm_new(80, 0, 0));
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * Print / cursor advance / auto-wrap
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_print_writes_cell(void)
 {
@@ -262,10 +244,6 @@ void test_print_utf8_three_byte(void)
     TEST_ASSERT_EQUAL_HEX16(0x2500, cp_at(t, 0, 0));
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * C0 controls
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_c0_cr(void)
 {
@@ -318,10 +296,6 @@ void test_c0_lf_scrolls_at_bottom(void)
     TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 2));
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * Cursor positioning (CSI)
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_csi_cup_moves_cursor(void)
 {
@@ -396,10 +370,6 @@ void test_csi_cha(void)
     tsm_free(t);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * Erase operations
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_csi_ed2_clears_screen(void)
 {
     tsm_t *t = tsm_new(10, 3, 0);
@@ -446,10 +416,6 @@ void test_csi_el2_erase_full_line(void)
         TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, (uint8_t)c, 0));
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * SGR attributes
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_sgr_bold(void)
 {
@@ -503,10 +469,6 @@ void test_sgr_default_colors_restored(void)
     TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 1, 0).bg);
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * Scrolling
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_scroll_region_decstbm(void)
 {
@@ -723,10 +685,6 @@ void test_ring_hard_reset_clears_base(void)
     tsm_free(t);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * Insert / delete
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_csi_il_insert_line(void)
 {
     tsm_t *t = tsm_new(10, 4, 0);
@@ -776,10 +734,6 @@ void test_csi_dch_delete_chars(void)
     tsm_free(t);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * Save / restore cursor
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_decsc_decrc(void)
 {
     tsm_t *t = tsm_new(80, 24, 0);
@@ -792,10 +746,6 @@ void test_decsc_decrc(void)
     TEST_ASSERT_EQUAL_UINT8(4, row);
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * Alt screen
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_alt_screen_switch(void)
 {
@@ -812,10 +762,6 @@ void test_alt_screen_switch(void)
     tsm_free(t);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * Cursor visibility
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_dectcem_hide_show(void)
 {
     tsm_t *t = tsm_new(80, 24, 0);
@@ -828,10 +774,6 @@ void test_dectcem_hide_show(void)
     TEST_ASSERT_TRUE(vis);
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * ESC sequences
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_esc_ri_reverse_index(void)
 {
@@ -868,10 +810,6 @@ void test_esc_nel(void)
     tsm_free(t);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * Charset designation
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_charset_dec_gfx_active(void)
 {
     tsm_t *t = tsm_new(80, 24, 0);
@@ -883,10 +821,6 @@ void test_charset_dec_gfx_active(void)
     TEST_ASSERT_EQUAL_HEX16('q', cp_at(t, 1, 0));
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * Dirty tracking
- * ════════════════════════════════════════════════════════════════════════════ */
 
 void test_dirty_after_print(void)
 {
@@ -912,10 +846,6 @@ void test_dirty_cleared(void)
     tsm_free(t);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * ESC RIS — full reset
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_esc_ris_full_reset(void)
 {
     tsm_t *t = tsm_new(10, 3, 0);
@@ -931,10 +861,6 @@ void test_esc_ris_full_reset(void)
     TEST_ASSERT_EQUAL_UINT8(0, cell(t, 0, 0).attrs);
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * DA1 / DSR / CPR response callback
- * ════════════════════════════════════════════════════════════════════════════ */
 
 static char   s_resp_buf[64];
 static size_t s_resp_len;
@@ -1009,10 +935,6 @@ void test_no_response_when_cb_null(void)
     feed(t, "\x1b[6n");
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * Alt screen — dirty tracking + variant escapes
- * ════════════════════════════════════════════════════════════════════════════ */
 
 /* switch_to_primary marks rows dirty → display updates */
 void test_alt_screen_exit_marks_dirty(void)
@@ -1094,10 +1016,6 @@ void test_ris_erases_with_default_colors(void)
     tsm_free(t);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * Synchronized output — mode ?2026
- * ════════════════════════════════════════════════════════════════════════════ */
-
 void test_sync_initial_state(void)
 {
     tsm_t *t = tsm_new(80, 24, 0);
@@ -1165,10 +1083,6 @@ void test_sync_reset_clears_mode(void)
     TEST_ASSERT_FALSE(tsm_sync_update(t));
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * scrollback
- * ════════════════════════════════════════════════════════════════════════════ */
 
 /* Fill a 3-row terminal with numbered lines so history is identifiable.
  * The newline goes BEFORE each line, not after. A trailing newline would
@@ -1406,10 +1320,6 @@ void test_sb_ring_wraps_in_order(void)
     TEST_ASSERT_EQUAL_UINT16('6', tsm_row(t, 2)[1].cp);
     tsm_free(t);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * main
- * ════════════════════════════════════════════════════════════════════════════ */
 
 int main(void)
 {

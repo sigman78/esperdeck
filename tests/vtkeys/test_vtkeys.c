@@ -24,8 +24,6 @@ static void expect(vtkey_t key, uint8_t mods, bool app, const char *want)
     TEST_ASSERT_EQUAL_UINT8_ARRAY((const uint8_t *)want, buf, n);
 }
 
-/* ── Unmodified ──────────────────────────────────────────────────────────── */
-
 void test_arrows_normal_cursor(void)
 {
     expect(VTKEY_UP,    0, false, "\x1b[A");
@@ -71,8 +69,6 @@ void test_function_keys(void)
     expect(VTKEY_F12, 0, false, "\x1b[24~");
 }
 
-/* ── Modifiers ───────────────────────────────────────────────────────────── */
-
 void test_modifier_parameter_weights(void)
 {
     expect(VTKEY_UP, VTMOD_SHIFT,                          false, "\x1b[1;2A");
@@ -116,8 +112,6 @@ void test_unencodable_modifier_bits_ignored(void)
     expect(VTKEY_LEFT, VTMOD_CTRL | 0x08u, false, "\x1b[1;5D");
     expect(VTKEY_LEFT, VTMOD_CTRL | 0xF8u, false, "\x1b[1;5D");
 }
-
-/* ── Bounds ──────────────────────────────────────────────────────────────── */
 
 void test_unknown_keys_write_nothing(void)
 {
