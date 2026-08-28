@@ -26,7 +26,7 @@ static struct {
     bool     connecting;            /* async connect worker is running    */
     bool     cancelled;             /* user aborted the in-flight connect */
     uint64_t connect_at;            /* not before (auto-reconnect delay)  */
-    uint64_t started;                /* when the in-flight attempt began   */
+    uint64_t started;               /* when the in-flight attempt began   */
     int      attempt;               /* counts auto-retries; the user-initiated try is 0 */
     char     pinned_fp[65];         /* fp to pass as expected_fp, "" = none */
     uint64_t session_start;         /* session_enter() time, for NO CARRIER */
