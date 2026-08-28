@@ -1,64 +1,77 @@
 /*
- * app_connect.c — SSH connect lifecycle: CONNECTING (armed / async worker /
- * retry countdown) and the live SESSION (toast chip, drop handling).
+ * app_connect.c — the thin connect/session screens. CONNECTING renders
+ * controller state (armed / worker / retry countdown). SESSION owns the
+ * live chrome (toast chip, scrollback bar) and input. Connect policy —
+ * retry, key resolution, hostkey stops — lives in ssh_session.c
+ * (extensibility item 7).
  */
 
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_widgets.h"
+#include "display.h"     /* display_get_text_size — the PTY geometry */
 #include "display_fx.h"
 #include "font.h"        /* font_height() — drag pixels to terminal rows */
 #include "keystore.h"
 #include "ssh_client.h"
+#include "ssh_session.h"
 #include "vterm.h"
 #include "vtkeys.h"      /* the session encodes HIDKEY events at send */
 
 #include <stdio.h>
 #include <string.h>
 
-#include "esp_heap_caps.h"   /* key-PEM buffers (idfsim stubs it) */
+#ifdef CONFIG_DISPLAY_ISR_BENCH
+#include "esp_log.h"
+#include <inttypes.h>
+#endif
 
-/* active holds the connecting or connected profile. List edits never
- * redirect a live session. */
-static struct {
-    conn_profile_t active;
-    bool     armed;                 /* render one frame, then connect     */
-    bool     connecting;            /* async connect worker is running    */
-    bool     cancelled;             /* user aborted the in-flight connect */
-    uint64_t connect_at;            /* not before (auto-reconnect delay)  */
-    uint64_t started;               /* when the in-flight attempt began   */
-    int      attempt;               /* counts auto-retries; the user-initiated try is 0 */
-    char     pinned_fp[65];         /* fp to pass as expected_fp, "" = none */
-    uint64_t session_start;         /* session_enter() time, for NO CARRIER */
-} s_conn;
+static uint64_t s_session_start;    /* session_enter() time, NO CARRIER */
 
-const conn_profile_t *conn_active(void)   { return &s_conn.active; }
-uint64_t conn_session_start(void)         { return s_conn.session_start; }
+const conn_profile_t *conn_active(void)   { return ssh_session_profile(); }
+uint64_t conn_session_start(void)         { return s_session_start; }
 
 void conn_creds_wipe(void)
 {
-    keystore_wipe(s_conn.active.password, sizeof(s_conn.active.password));
+    ssh_session_creds_wipe();
+}
+
+/* The controller policy is app config plus the display grid. */
+static ssh_session_policy_t conn_policy(void)
+{
+    ssh_session_policy_t pol = {
+        .retry_delay_ms = app.cfg.ssh_retry_delay_ms,
+        .auto_reconnect = app.cfg.auto_reconnect,
+    };
+    display_get_text_size(&pol.term_cols, &pol.term_rows);
+    if (pol.term_cols <= 0 || pol.term_rows <= 0) {
+        pol.term_cols = display_text_cols();
+        pol.term_rows = display_text_rows();
+    }
+    return pol;
 }
 
 static void render_connecting(uint64_t now)
 {
-    /* The status word falls out of the connect state machine. */
-    const char *msg = s_conn.armed
-        ? (now < s_conn.connect_at ? "Retrying" : "Connecting to")
-        : (s_conn.cancelled ? "Cancelling" : "Connecting to");
+    /* The status word falls out of the controller state. */
+    ssh_session_state_t st = ssh_session_state();
+    const char *msg = st == SSH_SESSION_CANCELLING ? "Cancelling"
+        : (st == SSH_SESSION_ARMED && now < ssh_session_retry_at())
+            ? "Retrying" : "Connecting to";
 
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     draw_screen_header("CONNECTING", "// SSH DECK");
 
-    const conn_profile_t *p = &s_conn.active;
+    const conn_profile_t *p = ssh_session_profile();
     int cy = ui_rows() / 2;
+    int attempt = ssh_session_attempt();
 
     char line[96];
     size_t ll = (size_t)snprintf(line, sizeof(line), "%s  %s@%s:%u",
                                  msg, p->user, p->host, (unsigned)p->port);
-    if (s_conn.attempt > 0 && ll < sizeof(line))
-        snprintf(line + ll, sizeof(line) - ll, "  (attempt %d)", s_conn.attempt);
+    if (attempt > 0 && ll < sizeof(line))
+        snprintf(line + ll, sizeof(line) - ll, "  (attempt %d)", attempt);
     /* A long host/user can outgrow a narrow grid: truncate and pin left so
      * the leading status word always survives. */
     int maxw = ui_cols() - 8;
@@ -71,10 +84,12 @@ static void render_connecting(uint64_t now)
     ui_puts(lx, cy - 1, line, 0);
 
     int bw = 42, bx = (ui_cols() - bw) / 2;
-    if (s_conn.armed && s_conn.connect_at > now && app.cfg.ssh_retry_delay_ms) {
+    uint64_t retry_at = ssh_session_retry_at();
+    if (st == SSH_SESSION_ARMED && retry_at > now &&
+        app.cfg.ssh_retry_delay_ms) {
         /* During the retry wait, an amber bar drains toward the reconnect
          * moment. The delay reads as a countdown, not a stalled connect. */
-        uint64_t remain = s_conn.connect_at - now;
+        uint64_t remain = retry_at - now;
         if (remain > app.cfg.ssh_retry_delay_ms)
             remain = app.cfg.ssh_retry_delay_ms;
         int filled = (int)(remain * (uint64_t)bw / app.cfg.ssh_retry_delay_ms);
@@ -87,15 +102,16 @@ static void render_connecting(uint64_t now)
             UI_SHADE1, UI_SHADE2, UI_SHADE3, UI_BLOCK,
             UI_SHADE3, UI_SHADE2, UI_SHADE1
         };
-        ui_pen(s_conn.cancelled ? OVERLAY_COL_AMBER : prof_accent(p->name));
+        ui_pen(st == SSH_SESSION_CANCELLING ? OVERLAY_COL_AMBER
+                                            : prof_accent(p->name));
         for (int i = 0; i < bw; i++)
             ui_putch(bx + i, cy + 1, grad[(i + app.anim_frame) % 7], 0);
-        if (s_conn.connecting) {
+        if (st == SSH_SESSION_CONNECTING) {
             /* Elapsed seconds right of the bar: a stalled handshake at 40 s
              * should look different from one that just started. */
             ui_pen(OVERLAY_COL_BLUE);
             ui_printf(bx + bw + 2, cy + 1, 0, "%2us",
-                      (unsigned)((now - s_conn.started) / 1000));
+                      (unsigned)((now - ssh_session_attempt_started()) / 1000));
         }
     }
     ui_pen(OVERLAY_COL_DEFAULT);
@@ -158,66 +174,48 @@ static void render_session_chrome(uint64_t now)
     ui_present();
 }
 
-/* Fetch the pinned fingerprint (if any) for the active profile's host. */
-static void load_pinned_fp(void)
+/* Arm a connect screen-side: the controller is already armed. */
+static void show_connecting(uint64_t now)
 {
-    if (storage_known_host_get(s_conn.active.host, s_conn.active.port,
-                               s_conn.pinned_fp, sizeof(s_conn.pinned_fp)) != ESP_OK)
-        s_conn.pinned_fp[0] = '\0';
-}
-
-/* Arm a connect: one frame of "Connecting", then do it. */
-static void arm_connect(uint64_t not_before, uint64_t now)
-{
-    s_conn.connect_at = not_before;
-    s_conn.armed      = true;
     if (nav_current() == SCR_CONNECTING) nav_invalidate();
     else nav_replace(SCR_CONNECTING, 0, now);
 }
 
-/* Arm a connect to profile @p idx, snapshotting it into s_conn.active. */
+/* Arm a connect to profile @p idx, snapshotting it into the controller. */
 void start_connect(int idx, uint64_t not_before, uint64_t now)
 {
-    s_conn.attempt = 0;
-    s_conn.active  = app.profiles[idx];
-    load_pinned_fp();
+    const conn_profile_t *p = &app.profiles[idx];
     /* A key profile with a locked store must unlock first. On success,
      * the PIN pad re-arms this connect (the lazy on-first-key-use
      * trigger). This gate holds even when this key is still a bare
      * .pem. A present store means the store already protects the keys,
      * or unlock will adopt them. Plaintext must never silently bypass
      * the lock. An absent store turns the feature off. */
-    if (s_conn.active.auth == STORAGE_AUTH_KEY &&
+    if (p->auth == STORAGE_AUTH_KEY &&
         keystore_state() == KEYSTORE_LOCKED) {
+        ssh_session_policy_t pol = conn_policy();
+        ssh_session_begin(p, &pol, not_before, now);
         unlock_open(now, true);
         return;
     }
-    arm_connect(not_before, now);
+    ssh_session_policy_t pol = conn_policy();
+    ssh_session_begin(p, &pol, not_before, now);
+    show_connecting(now);
 }
 
 /* Re-arm a connect to the ACTIVE snapshot (unlock-screen resume). */
 void connect_resume_active(uint64_t now)
 {
-    s_conn.attempt = 0;
-    arm_connect(now, now);
+    ssh_session_rearm(now);
+    show_connecting(now);
 }
 
 /* Re-arm a connect to the active snapshot with @p fp pre-pinned — the
  * hostkey prompt's trust path (explicit user action, not a retry). */
 void connect_arm_pinned(const char *fp, uint64_t now)
 {
-    snprintf(s_conn.pinned_fp, sizeof(s_conn.pinned_fp), "%s", fp);
-    s_conn.attempt = 0;
-    arm_connect(now, now);
-}
-
-/* Re-arm an automatic reconnect to the ACTIVE snapshot (advances the
- * visible attempt counter; survives edits/deletes of the stored list). */
-static void start_reconnect(uint64_t not_before, uint64_t now)
-{
-    s_conn.attempt++;
-    load_pinned_fp();
-    arm_connect(not_before, now);
+    ssh_session_rearm_pinned(fp, now);
+    show_connecting(now);
 }
 
 /* The session died, and auto-reconnect is off: the classic modem death
@@ -227,7 +225,7 @@ void session_dropped(uint64_t now)
     /* A drop can yank the user out of a mid-drag reorder; discard the
      * uncommitted permutation or a later delete would persist it. */
     menu_abort_reorder();
-    uint32_t dur = (uint32_t)((now - s_conn.session_start) / 1000);
+    uint32_t dur = (uint32_t)((now - s_session_start) / 1000);
     const char *why = ssh_client_last_error();
     display_bell();
     if (why[0]) display_fx_static();   /* transport error: signal-loss snow */
@@ -258,8 +256,10 @@ static void session_enter(intptr_t arg, uint64_t now)
      * not leftover HOME marquee art (font.h: local UI namespace). */
     font_sprite_clear_all();
 
-    s_conn.session_start = now;
-    s_conn.attempt       = 0;   /* a future drop counts retries from 1 again */
+    s_session_start = now;
+#ifdef CONFIG_DISPLAY_ISR_BENCH
+    display_render_bench_reset();
+#endif
     display_fx_wipe();     /* raster-reveal the fresh session */
     session_resume(0, now);
     /* ssh_client_connect() clears the terminal before the read task
@@ -274,190 +274,104 @@ static void session_enter(intptr_t arg, uint64_t now)
     render_session_chrome(now);
 }
 
-/* The shell task reads key PEMs, not the connect worker. The worker's
- * stack lives in PSRAM and must not touch littlefs, since flash I/O
- * asserts there. The PEMs must outlive the async connect: the worker
- * reads the cfg strings during the handshake. The PRIVATE key buffer
- * lives in INTERNAL SRAM, never PSRAM, since the external bus is
- * probeable (docs/storage_auth.md RAM hygiene). The connect worker
- * wipes it the moment it finishes. The .pub buffer stays public. */
-enum { KEY_PEM_MAX = 8192, PUB_PEM_MAX = 2048 };
-static char *s_key_pem = NULL;
-static char *s_pub_pem = NULL;
-
-/* Connect-time credential (password or key passphrase). The profile
- * snapshot may predate the unlock (lazy gate) and so miss its diverted
- * secret — resolve from the bundle here, .bss (internal SRAM), wiped with
- * the key PEM once the handshake is over. */
-static char s_secret[sizeof(((conn_profile_t *)0)->password)];
-
-static const char *resolve_secret(const conn_profile_t *p)
+/* Route a controller event to navigation and toasts. True when the
+ * event navigated away (the caller stops its tick). */
+static bool handle_session_event(ssh_session_event_t ev, uint64_t now)
 {
-    /* A real value in the snapshot wins; the @bundle marker (a snapshot
-     * taken while locked) must NEVER reach libssh2 as a literal. */
-    if (p->password[0] && strcmp(p->password, STORAGE_PW_BUNDLED) != 0)
-        return p->password;
-    if (keystore_state() == KEYSTORE_UNLOCKED) {
-        char skey[48];
-        snprintf(skey, sizeof(skey), "profile:%s", p->name);
-        if (keystore_secret_get(skey, s_secret, sizeof(s_secret)) == ESP_OK)
-            return s_secret;
-    }
-    return "";
-}
-
-static void wipe_key_pem(void)
-{
-    if (s_key_pem) keystore_wipe(s_key_pem, KEY_PEM_MAX);
-    keystore_wipe(s_secret, sizeof(s_secret));
-}
-
-/* Kick off the connect on a worker task (non-blocking) so the shell keeps
- * ticking — the "Connecting" bar animates and a tap/ESC can cancel. */
-static void do_connect_start(uint64_t now)
-{
-    const conn_profile_t *p = &s_conn.active;
-
-    ssh_config_t cfg = {
-        .host        = p->host,
-        .port        = p->port,
-        .username    = p->user,
-        .expected_fp = s_conn.pinned_fp[0] ? s_conn.pinned_fp : NULL,
-    };
-    if (p->auth == STORAGE_AUTH_KEY) {
-        /* Locked store slipped past the start_connect gate (reconnect,
-         * re-arm, or a lock trigger fired since): same bounce — covers
-         * bare .pem keys the wrapped-only INVALID_STATE path below can't. */
-        if (keystore_state() == KEYSTORE_LOCKED) {
-            unlock_open(now, true);
-            return;
-        }
-        if (!s_key_pem) s_key_pem = heap_caps_malloc(KEY_PEM_MAX,
-                                        MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-        if (!s_pub_pem) s_pub_pem = heap_caps_malloc(PUB_PEM_MAX,
-                                        MALLOC_CAP_SPIRAM);
-        size_t klen = 0;
-        esp_err_t ge = (!s_key_pem || !s_pub_pem) ? ESP_ERR_NO_MEM
-                     : storage_get_key(p->key_id, s_key_pem, KEY_PEM_MAX, &klen);
-        if (ge == ESP_ERR_INVALID_STATE) {
-            /* Locked store slipped past the start_connect gate (e.g. an
-             * auto-reconnect after a future lock trigger): same bounce. */
-            unlock_open(now, true);
-            return;
-        }
-        if (ge != ESP_OK) {
-            toast(now, "key '%s' unreadable", p->key_id);
-            enter_home(now);
-            return;
-        }
-        cfg.private_key_pem = s_key_pem;
-        const char *pw = resolve_secret(p);      /* key passphrase */
-        cfg.passphrase = pw[0] ? pw : NULL;
-
-        char pub_path[160];   /* optional .pub beside the key */
-        snprintf(pub_path, sizeof(pub_path), "%s/keys/%s.pub",
-                 storage_platform_mount_point(), p->key_id);
-        FILE *pf = fopen(pub_path, "r");
-        if (pf) {
-            size_t n = fread(s_pub_pem, 1, PUB_PEM_MAX - 1, pf);
-            fclose(pf);
-            if (n > 0) { s_pub_pem[n] = '\0'; cfg.public_key_pem = s_pub_pem; }
-        }
-    } else {
-        cfg.password = resolve_secret(p);
-    }
-
-    if (ssh_client_connect_start(&cfg) != ESP_OK) {
-        wipe_key_pem();
-        toast(now, "connect busy - try again");
-        enter_home(now);
-        return;
-    }
-    s_conn.connecting  = true;
-    s_conn.cancelled   = false;
-    s_conn.started     = now;
-    app.next_anim = 0;
-    nav_invalidate();
-}
-
-/* Handle the async connect result once the worker finishes. */
-static void do_connect_finish(uint64_t now, esp_err_t err)
-{
-    /* Handshake over either way — libssh2 has derived what it needs, so
-     * the plaintext key must not linger for the session's lifetime. */
-    wipe_key_pem();
-    if (s_conn.cancelled) {
-        if (err == ESP_OK) ssh_client_disconnect();   /* it connected as we cancelled */
-        s_conn.cancelled = false;
-        toast(now, "cancelled");
-        enter_home(now);
-        return;
-    }
-    switch (err) {
-    case ESP_OK:
+    switch (ev) {
+    case SSH_SESSION_EV_CONNECTED:
         nav_replace(SCR_SESSION, 0, now);
-        break;
-
-    case SSH_ERR_HOSTKEY_UNKNOWN:
+        return true;
+    case SSH_SESSION_EV_NEED_UNLOCK:
+        unlock_open(now, true);
+        return true;
+    case SSH_SESSION_EV_KEY_UNREADABLE:
+        toast(now, "key '%s' unreadable", ssh_session_profile()->key_id);
+        enter_home(now);
+        return true;
+    case SSH_SESSION_EV_HOSTKEY_UNKNOWN:
         hostkey_open(false, now);
-        break;
-
-    case SSH_ERR_HOSTKEY_MISMATCH:
+        return true;
+    case SSH_SESSION_EV_HOSTKEY_MISMATCH:
         hostkey_open(true, now);
-        break;
-
-    case SSH_ERR_AUTH:
+        return true;
+    case SSH_SESSION_EV_AUTH_FAILED:
         toast_for(now, ERR_TOAST_MS, "auth failed: %.40s",
                   ssh_client_last_error());
         enter_home(now);
-        break;
-
+        return true;
+    case SSH_SESSION_EV_BUSY:
+        toast(now, "connect busy - try again");
+        enter_home(now);
+        return true;
+    case SSH_SESSION_EV_RETRYING:
+        toast(now, "connect failed - retrying");
+        return false;                    /* countdown renders here */
+    case SSH_SESSION_EV_FAILED:
+        toast_for(now, ERR_TOAST_MS, "failed: %.44s",
+                  ssh_client_last_error());
+        enter_home(now);
+        return true;
+    case SSH_SESSION_EV_CANCELLED:
+        toast(now, "cancelled");
+        enter_home(now);
+        return true;
     default:
-        if (app.cfg.auto_reconnect) {
-            toast(now, "connect failed - retrying");
-            start_reconnect(now + app.cfg.ssh_retry_delay_ms, now);
-        } else {
-            toast_for(now, ERR_TOAST_MS, "failed: %.44s",
-                      ssh_client_last_error());
-            enter_home(now);
-        }
-        break;
+        return false;
     }
 }
 
 static void connecting_tick(uint64_t now)
 {
-    if (s_conn.armed && now >= s_conn.connect_at) {
-        s_conn.armed = false;
-        do_connect_start(now);           /* launches worker; returns at once */
-    } else if (s_conn.armed || s_conn.connecting) {
-        if (s_conn.connecting && ssh_client_connect_ready()) {
-            s_conn.connecting = false;
-            do_connect_finish(now, ssh_client_connect_take_result());
-        } else if (now >= app.next_anim) {  /* keep the bar/countdown alive */
-            app.next_anim = now + ANIM_PERIOD_MS;
-            nav_invalidate();
-        }
+    if (handle_session_event(ssh_session_poll(now), now))
+        return;
+    if (now >= app.next_anim) {          /* keep the bar/countdown alive */
+        app.next_anim = now + ANIM_PERIOD_MS;
+        nav_invalidate();
     }
 }
 
 static void session_tick(uint64_t now)
 {
-    if (!ssh_client_is_connected()) {
+    switch (ssh_session_poll(now)) {
+    case SSH_SESSION_EV_DROP_RETRYING:
+        display_fx_static();   /* brief signal-loss snow, then retry */
+        toast(now, "session dropped - reconnecting");
+        nav_replace(SCR_CONNECTING, 0, now);
+        return;
+    case SSH_SESSION_EV_DROPPED:
         if (ssh_client_session_eof()) {
             /* Remote closed the channel cleanly (exit/logout): a
-             * deliberate end, not a drop — never auto-reconnect. */
+             * deliberate end, not a drop — release the transport now. */
             ssh_client_disconnect();
-            session_dropped(now);
-        } else if (app.cfg.auto_reconnect) {
-            display_fx_static();   /* brief signal-loss snow, then retry */
-            toast(now, "session dropped - reconnecting");
-            start_reconnect(now + app.cfg.ssh_retry_delay_ms, now);
-        } else {
-            session_dropped(now);
         }
+        session_dropped(now);
         return;
+    default:
+        break;
     }
+
+#ifdef CONFIG_DISPLAY_ISR_BENCH
+    /* Render-ISR duty, 30 s cadence (rode the ssh read task before the
+     * transport went terminal-free). */
+    static uint64_t s_bench_last;
+    if (!s_bench_last) s_bench_last = now;
+    if (now - s_bench_last >= 30000) {
+        uint32_t avg_cyc, max_cyc, chunks;
+        display_render_bench_get(&avg_cyc, &max_cyc, &chunks);
+        display_render_bench_reset();
+        uint32_t elapsed_ms = (uint32_t)(now - s_bench_last);
+        uint32_t chunks_per_sec = elapsed_ms ? (chunks * 1000u) / elapsed_ms : 0;
+        /* duty = avg_cycles/chunk * chunks/s / core_hz; tenths of a percent. */
+        uint32_t duty_pct_x10 = (uint32_t)(((uint64_t)avg_cyc * chunks_per_sec * 1000ULL)
+                                            / 240000000ULL);
+        ESP_LOGI("render_bench",
+            "avg=%" PRIu32 " max=%" PRIu32 " duty=%" PRIu32 ".%" PRIu32 "%%",
+            avg_cyc, max_cyc, duty_pct_x10 / 10, duty_pct_x10 % 10);
+        s_bench_last = now;
+    }
+#endif
+
     render_session_chrome(now);
 }
 
@@ -465,18 +379,12 @@ static void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                              uint64_t now)
 {
     (void)ch;
-    /* ESC (keyboard) or any tap/long-press (touch) cancels. */
+    /* ESC (keyboard) or any tap/long-press (touch) cancels. The
+     * controller acks through EV_CANCELLED on the next tick. */
     if (k == K_ESC || ev->type == CYBERDECK_INPUT_TAP ||
         ev->type == CYBERDECK_INPUT_LONG_PRESS) {
-        if (s_conn.armed) {                          /* still in the pre-delay wait */
-            s_conn.armed = false;
-            toast(now, "cancelled");     /* same ack as the mid-connect path */
-            enter_home(now);
-        } else if (s_conn.connecting && !s_conn.cancelled) {
-            s_conn.cancelled = true;
-            ssh_client_connect_cancel();        /* best-effort unblock */
-            nav_invalidate();
-        }
+        ssh_session_cancel(now);
+        nav_invalidate();
     }
 }
 
@@ -533,7 +441,7 @@ const nav_screen_t connecting_screen = {
     .name = "connecting", .tick = connecting_tick,
     .input = connecting_input, .render = render_connecting,
     .chrome = NAV_CHROME_FULL,
-    /* No enter hook: arm_connect() sets the state before navigating. */
+    /* No enter hook: callers arm the controller before navigating here. */
 };
 
 /* No render: the overlay belongs to the remote; the toast chip and the

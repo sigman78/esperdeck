@@ -321,7 +321,7 @@ in-tree features. Tick items as they merge.
 
 ### Phase 3 — prove it, then spend it
 
-- [ ] **7. Migrate in-tree features onto the seam** — the acceptance test
+- [x] **7. Migrate in-tree features onto the seam** — the acceptance test
       for the whole design: the saver becomes a plugin (its lock action
       moves to a core `session_guard`, which also absorbs the walk-away
       policy from `app_home.c` — security policy leaves the eye-candy);
@@ -703,3 +703,29 @@ in-tree features. Tick items as they merge.
   Verified: 6/6 regression on both sim configs, device build +
   check_iram (25/21), boundary check 16 edges, comment gate clean.
   Remaining for item 7: the ssh transport/session split.
+
+- **2026-08-28 (item 7, second leg — ITEM 7 COMPLETE)** — **the ssh
+  split** (branch `feat/ssh-split`). The transport (`ssh_client.c`) no
+  longer knows vterm or display: the drain loop hands bytes to a
+  registered `ssh_sink_t` (`data`/`flush`/`closed`), PTY geometry rides
+  `ssh_config_t` (`term_cols/rows`, 80x24 default), and the buffered
+  reply-write trick is the public `ssh_client_queue_reply()` (callable
+  only from the sink's data(), where the session lock is held). The new
+  session controller (`ssh_session.c/.h`) owns policy — arm/retry
+  scheduling with the attempt counter, key PEM + keystore secret
+  resolution, pinned-fp loading, hostkey stops — and wires the sink +
+  response callback to vterm; one `ssh_session_poll()` per screen tick
+  returns one-shot events (CONNECTED / NEED_UNLOCK / HOSTKEY_* /
+  AUTH_FAILED / RETRYING / DROP_RETRYING / DROPPED / CANCELLED / BUSY /
+  KEY_UNREADABLE / FAILED) that the now-thin `app_connect.c` maps to
+  toasts and navigation. vterm_reset moved controller-side (before
+  connect start — no reader task yet, so no race). Bench relocation:
+  net_bench stays transport-side; the vterm parse-split report rides
+  the sink flush (30 s cadence); the render-ISR duty report moved to
+  the session screen tick. Boundary result: `ssh → display` DELETED,
+  `ssh → vterm` re-scoped to the controller (sound), `ssh → storage`
+  added and sanctioned — check_boundaries still 16 edges, zero debt
+  rows left. ARCHITECTURE.md pipes/threading/boundary sections
+  rewritten. Verified: 6/6 regression both sim configs, device build +
+  check_iram (25/21), comment gate clean. File transfer and capture
+  sinks (item 8) can now consume the transport without a terminal.

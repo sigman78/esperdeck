@@ -280,7 +280,7 @@ the keyboard. On the device the two pipes run on separate cores. The
 diagram traces both pipes; the bullets below it restate each one in words.
 
 ```
-  remote host ──► libssh2 ──► ssh_read_task ──► vterm_feed ──► tsm parse
+  remote host ──► libssh2 ──► ssh_read_task ──► sink: vterm_feed ──► tsm parse
    (SSH/PTY)                    (core 0)              │            │
                                                       │      cells + dirty rows
                                                       │            │ vterm_flush
@@ -296,9 +296,10 @@ diagram traces both pipes; the bullets below it restate each one in words.
 ```
 
 - **Remote → screen.** `ssh_read_task` drains the libssh2 channel until
-  EAGAIN, budgeted per wake. It feeds raw bytes to `vterm_feed()`, which
-  drives `tsm`. `tsm` updates cells and tracks per-row dirty spans. One
-  `vterm_flush()` per batch copies dirty rows to the display cell buffer;
+  EAGAIN, budgeted per wake. It hands raw bytes to the registered byte
+  sink (`ssh_sink_t`); `ssh_session.c` wires that sink to `vterm_feed()`,
+  which drives `tsm`. `tsm` updates cells and tracks per-row dirty spans.
+  One sink flush per batch copies dirty rows to the display cell buffer;
   the copy is withheld while DEC `?2026` synchronized output is active, to
   avoid tearing. The ISR renders whatever is currently in the cell buffer.
   The pipeline is instrumented: in-session `vterm_bench`/`render_bench`
@@ -306,10 +307,10 @@ diagram traces both pipes; the bullets below it restate each one in words.
   tuning history).
 - **Terminal replies.** When `tsm` must answer the host (Device
   Attributes, cursor-position report), it calls a response callback.
-  `ssh_client` registers the callback at connect (`vterm_set_response_cb`)
-  and *buffers* the reply instead of writing mid-parse. The reason:
-  `vterm_write` runs inside `ssh_read_task`, which is inside libssh2, so a
-  direct write would re-enter the library.
+  `ssh_session` registers one that targets `ssh_client_queue_reply()`,
+  which *buffers* the reply instead of writing mid-parse. The reason:
+  the sink parse runs inside `ssh_read_task`, which is inside libssh2,
+  so a direct write would re-enter the library.
 - **Keyboard → remote.** The BLE HID, touch, and UART backends translate
   input into terminal byte sequences and post them to the `input_hal`
   queue. `main_task` drains the queue into the shell. In `STATE_SESSION`
@@ -321,7 +322,7 @@ diagram traces both pipes; the bullets below it restate each one in words.
 | Context | Core | Stack | Job |
 |---------|------|-------|-----|
 | `main_task` | 1 | 12 KB **internal DRAM** | shell tick + input pump; writes flash (profiles, known-hosts) |
-| `ssh_read_task` | 0 | PSRAM (static) | remote drain → `vterm_feed`/`vterm_flush` |
+| `ssh_read_task` | 0 | PSRAM (static) | remote drain → byte sink (vterm via `ssh_session`) |
 | NimBLE host | 0 | (NimBLE) | BLE HID keyboard |
 | LCD DMA ISR | 1 | IRAM | rasterize bands from the cell + overlay buffers (~55% of the core) |
 
@@ -360,9 +361,10 @@ lock. The simulator compiles the identical code against the
 compatibility layer, so OS specifics never enter the components.
 
 Lock order is fixed and acyclic: `ssh_read_task` already holds
-`ssh_client`'s session lock when it calls `vterm_feed()`, so the global
-order is session lock → vterm lock. Nothing under the vterm lock calls
-back into ssh — the tsm response callback only buffers bytes.
+`ssh_client`'s session lock when the sink calls `vterm_feed()`, so the
+global order is session lock → vterm lock. Nothing under the vterm lock
+calls back into ssh — the reply path only buffers bytes
+(`ssh_client_queue_reply`).
 
 Deliberately outside the lock:
 
@@ -442,14 +444,15 @@ on 2026-08-25; since 2026-08-27 the table is *enforced* —
 `tools/check_boundaries.py` diffs the in-tree include graph against it
 after every link (device and simulator) and fails the build on an edge
 the table does not sanction, a cross-component include of a private
-header, or a stale table entry. The debt edges carry their repair plan
-in [`extensibility.md`](extensibility.md).
+header, or a stale table entry. No debt edges remain as of item 7
+(2026-08-28); the history lives in [`extensibility.md`](extensibility.md).
 
 | Edge | What crosses it | Verdict |
 |------|-----------------|---------|
 | `vterm → tsm`, `vterm → display` | the render data plane: cells, cursor, bell, two fx nudges | fused by design |
 | `display → font` | glyph decode, active cell size | sound |
-| `ssh → vterm` (+ `display`, undeclared) | the drain loop feeds the terminal; PTY geometry | **debt** |
+| `ssh → vterm` | the session controller (`ssh_session.c`) wires the terminal; the transport is sink-only | sound |
+| `ssh → storage` | the controller resolves keys, secrets, and known hosts | sound |
 | `cyberdeck_app → storage ssh wifi display vterm font` | full consumer of every service API | sound |
 | `wifi → storage` | profile types + wifi.ini persistence | sound |
 | `input → storage` | the BLE bond registry (`storage_ble_*`) | sound |
@@ -467,17 +470,12 @@ mirror of `input_event_t` translated by each composition root. `wifi`
 and `input` reaching into `storage` is the proportionality rule working
 as intended: a feature owns its persistence through the public API.
 
-The debt edges, each in a sentence:
-
-- **`ssh → vterm/display` — transport fused to presentation.**
-  `ssh_client.c`'s drain loop calls `vterm_feed`/`vterm_flush` directly,
-  registers the terminal's response callback itself, and reads the PTY
-  (pseudo-terminal) geometry from `display` — an edge its CMakeLists
-  never declares (it rides vterm's transitive REQUIRES). Nothing can use
-  the SSH transport without a terminal on top — file transfer and
-  capture sinks are blocked on this.
-
-(Three former debt edges: `storage → display` for the fx settings struct
+(Four former debt edges: `ssh → vterm/display` — the transport fused to
+presentation — was split by item 7 (2026-08-28): the drain loop hands
+bytes to a registered `ssh_sink_t`, PTY geometry rides `ssh_config_t`,
+terminal replies go through `ssh_client_queue_reply()`, and the new
+session controller (`ssh_session.c`) does the wiring — file transfer
+and capture sinks can now consume the transport without a terminal. `storage → display` for the fx settings struct
 and `storage → libssh2_esp` for vendored monocypher were removed by
 extensibility phase 1 — settings now go through the generic kv API in
 `storage_kv.h` with feature-owned field tables, and monocypher is its own
