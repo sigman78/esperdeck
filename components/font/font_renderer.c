@@ -627,7 +627,7 @@ static void gcache_init(void)
     s_gc_owned = buf;
     s_gc_tag   = (uint32_t *)buf;                /* 4-aligned by malloc */
     s_gc_bits  = buf + tag_b;
-    s_gc_data  = buf + tag_b + bits_b;           /* keeps this word-aligned */
+    s_gc_data  = buf + tag_b + bits_b;           /* tag_b+bits_b = 1040, 4-aligned */
 
     for (unsigned i = 0; i < GC_ENT; i++) s_gc_tag[i] = GC_EMPTY;
     for (unsigned i = 0; i < bits_b; i++) s_gc_bits[i] = 0;
