@@ -103,7 +103,7 @@ static void render_connecting(uint64_t now)
 
 #define SCROLLBAR_LINGER_MS  1400
 
-static uint64_t s_scrollbar_until;
+static uint64_t s_scrollbar_until;   /* 0 = not showing */
 
 /* Drag travel not yet spent (shared accumulate-then-floor converter). */
 static ui_drag_t s_scroll_drag;

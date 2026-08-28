@@ -270,7 +270,7 @@ void menu_present_now(uint64_t now)
 void menu_note(uint64_t now, uint32_t ms, bool live_wifi, const char *text)
 {
     toast_for(now, 1, "%s", text);
-    app.toast_until = ms ? now + ms : UINT64_MAX;
+    app.toast_until = ms ? now + ms : UINT64_MAX;   /* MAX = sticky */
     s_menu.note_wifi = live_wifi;
 }
 
