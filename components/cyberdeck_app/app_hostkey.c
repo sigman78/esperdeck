@@ -15,7 +15,7 @@ static struct {
     bool     armed;                 /* mismatch REPLACE needs a 2nd activation */
     uint8_t  arm_src;               /* what armed it: 1 = tap, 2 = Enter       */
     uint32_t frame0;                /* anim_frame at entry (decode reveal)     */
-    int      sel;
+    int      sel;                   /* 0 = trust/replace, 1 = cancel           */
 } s_hostkey;
 
 /* Two side-by-side button tiles: slot 0 = trust/replace, slot 1 = cancel. */
