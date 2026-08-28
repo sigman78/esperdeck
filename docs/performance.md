@@ -396,7 +396,10 @@ penalty (+36 µs over `off`).
    was **wrong**. The comparison that matters is against the terminal
    cell being replaced, not against a terminal space.
 3. **INVERSE bar-tint math is free** — `bars` and `spaces` land 1 cycle
-   apart.
+   apart. (2026-08-28: INVERSE and its tint math are gone — looks bake
+   at theme time and `resolve_overlay_cell()` is a single table load;
+   the `bars` phase now guards that load against regression —
+   docs/overlay-style.md.)
 4. **BOLD is the only path that exceeds the plain-terminal worst case**,
    at every size. `bold` − `dense` per cell: **~114 cyc @8×16**, ~81
    @10×20, ~94 @12×24 — the bold range lookup plus synthesize-and-smear.
@@ -425,7 +428,7 @@ full-screen chrome is the one case worth watching.
   the default.
 - **The overlay branch** could take the same treatment (a `cp == 0x20`
   zero-fill mirror of `render_cache.c:245`), but measure first: finding
-  5 suggests the win is small, and an INVERSE space still renders
+  5 suggests the win is small, and a bar-styled space still renders
   correctly from a zero-filled glyph, because every pixel takes `bg`.
 - Nothing here changes the tsm/parser rankings.
 
@@ -1056,6 +1059,11 @@ and `mc` startup.
   state.
 
 ## Dim-attr + menu-rendition checkpoint (2026-08-26)
+
+*(Historical: the code this measured — `s_overlay_bar_dim` and the DIM
+branch in `resolve_overlay_cell` — was replaced 2026-08-28 by the baked
+style palette; the resolve is now a single table load —
+docs/overlay-style.md.)*
 
 Regression bench for the dimmed-accent overlay attribute
 (`s_overlay_bar_dim` + the DIM branch in `resolve_overlay_cell`) and

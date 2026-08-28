@@ -113,9 +113,8 @@ scroll; pagination: ugly, eats estate):
 - **Tiles are 3 rows** — odd heights only, so text centers on a real
   row; even-height tiles are banned (misaligned text).
 - **Value well**: the right span of a value tile in the *dimmed* accent
-  (requires a dimmed-accent addition to the overlay render path —
-  `DIM|INVERSE` today dims the glyph, not the background), value
-  right-aligned. Tap steps the preset; the fx preset API
+  (`UI_WELL`, the darker companion tone in the style palette —
+  docs/overlay-style.md), value right-aligned. Tap steps the preset; the fx preset API
   (`count/index/set/label`, app_settings.h) is the data contract. No
   slider widget.
 - **BreadcrumbBar** is the title AND the back path; there is no tab
@@ -316,7 +315,8 @@ Contracts, not implementation:
   pagination widgets (ugly, eats estate), master-detail rail (breaks
   past 4 sections), even-height tiles (misaligned text). New display
   requirement: a dimmed-accent variant in the overlay render path
-  (`DIM|INVERSE` dims the glyph, not the background).
+  (`DIM|INVERSE` dimmed the glyph, not the background; met 2026-08-28
+  by `UI_WELL` in the style palette — docs/overlay-style.md).
 - **2026-08-26** — kit part 1 landed (extensibility item 4): ListView +
   the shared drag converter (touch rule 4) as `ui_list_t`/`ui_drag_t`
   in app_widgets; the profile pickers converted to two-line scrolling

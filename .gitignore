@@ -53,6 +53,7 @@ secrets/
 *.pem
 /build-sim
 /build-sim-*
+/build-theme
 
 /sim_storage
 .vs

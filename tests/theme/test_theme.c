@@ -49,11 +49,18 @@ static void test_every_entry_readable(void)
 
 static void test_track_regression(void)
 {
-    /* The gauge look is theme-independent: medium white on dark tint. */
-    ui_theme_build(THEMES[0].fg, THEMES[0].bg, s_pal);
-    const display_overlay_style_t *tr = &s_pal[UI_TRACK * OVERLAY_ACCENTS];
-    TEST_ASSERT_EQUAL_HEX16(0x7BEF, tr->fg);
-    TEST_ASSERT_EQUAL_HEX16(0x39E7, tr->bg);
+    /* One gauge look, period: medium white on dark tint, for every
+     * accent and every theme. Differentiating TRACK rows per accent
+     * must land here first, not surface as a stray-pen scrollbar. */
+    for (unsigned t = 0; t < sizeof THEMES / sizeof *THEMES; t++) {
+        ui_theme_build(THEMES[t].fg, THEMES[t].bg, s_pal);
+        const display_overlay_style_t *tr =
+            &s_pal[UI_TRACK * OVERLAY_ACCENTS];
+        for (int a = 0; a < OVERLAY_ACCENTS; a++) {
+            TEST_ASSERT_EQUAL_HEX16(0x7BEF, tr[a].fg);
+            TEST_ASSERT_EQUAL_HEX16(0x39E7, tr[a].bg);
+        }
+    }
 }
 
 static void test_qr_stays_dark_on_white(void)

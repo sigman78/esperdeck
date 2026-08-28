@@ -378,9 +378,9 @@ uint8_t prof_accent(const char *name)
 }
 
 /* Draw a QR top-right as half-block cells (two QR rows per cell), dark-on-
- * white via INVERSE. Fits itself to the grid, dropping caption/QR when the
- * space runs out. Returns the QR's first column (the caller's text limit),
- * or ui_cols() when no QR was drawn. */
+ * white via the white-pen UI_BAR entry. Fits itself to the grid, dropping
+ * caption/QR when the space runs out. Returns the QR's first column (the
+ * caller's text limit), or ui_cols() when no QR was drawn. */
 int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption)
 {
     if (qsz <= 0) return ui_cols();
@@ -410,8 +410,8 @@ int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption)
     return qx;
 }
 
-/* Numbered onboarding step at row @p y: number + label, then the value as an
- * INVERSE chip — inline after the label when it fits left of @p xlimit
+/* Numbered onboarding step at row @p y: number + label, then the value as a
+ * UI_BAR chip — inline after the label when it fits left of @p xlimit
  * (the QR column), else indented on the next row. Returns the next step row. */
 int draw_step(int y, char num, const char *label,
                      const char *value, uint8_t value_pen, int xlimit)
@@ -440,6 +440,10 @@ int draw_step(int y, char num, const char *label,
 void draw_scrollbar(int offset, int total)
 {
     if (total <= 0) return;
+
+    /* Pin the pen; never inherit the caller's. TRACK bakes one look
+     * for every accent, and the theme test locks that. */
+    ui_pen(OVERLAY_COL_DEFAULT);
 
     const int col  = ui_cols() - 1;
     const int rows = ui_rows();
@@ -471,10 +475,7 @@ void draw_scrollbar(int offset, int total)
         char label[16];
         int n  = snprintf(label, sizeof(label), " %d ", offset);
         int lx = col - 1 - n;
-        if (lx >= 0) {
-            ui_pen(OVERLAY_COL_DEFAULT);
+        if (lx >= 0)
             ui_puts(lx, 0, label, UI_BAR);
-        }
     }
-    ui_pen(OVERLAY_COL_DEFAULT);
 }

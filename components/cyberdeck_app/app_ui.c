@@ -16,10 +16,14 @@
 
 static const char *TAG = "app_ui";
 
-/* The baked style table the ISR reads (DRAM). Rebuilt in place by
- * ui_colors(); a scan racing a rebuild can catch mixed or torn entries
- * for that one frame — colors only, self-corrects next frame. */
+/* The baked style table the ISR reads (DRAM). ui_colors() rebuilds it
+ * in place only when the theme pair changes (screen entry); a scan
+ * racing that rare rebuild can catch mixed entries for one frame —
+ * colors only, self-corrects. A per-frame rebuild would make that
+ * window a steady strobe, so same-pair calls must stay early-returns. */
 static DRAM_ATTR display_overlay_style_t s_theme[UI_PAL_COUNT];
+static color_t s_theme_fg, s_theme_bg;    /* the pair currently baked */
+static bool    s_theme_baked = false;
 
 static display_overlay_cell_t *s_buf[2] = { NULL, NULL };
 static display_overlay_cell_t *s_draw   = NULL;   /* the back buffer */
@@ -145,6 +149,10 @@ void ui_no_cursor(void)
 
 void ui_colors(color_t fg, color_t bg)
 {
+    if (s_theme_baked && fg == s_theme_fg && bg == s_theme_bg) return;
+    s_theme_fg    = fg;
+    s_theme_bg    = bg;
+    s_theme_baked = true;
     ui_theme_build(fg, bg, s_theme);
     display_set_overlay_palette(s_theme, UI_PAL_COUNT);
 }
@@ -174,13 +182,13 @@ void ui_pen(uint8_t color) { s_pen = color; }
 void ui_putch(int col, int row, uint16_t cp, uint8_t style)
 {
     /* (style, pen) → one baked palette entry; UI_BOLD is the only flag
-     * that reaches the display (docs/overlay-style.md). Sim build rejects
-     * anything outside the vocabulary; device stays lean. */
-#ifdef BUILD_SIMULATOR
+     * that reaches the display (docs/overlay-style.md). Rejected on BOTH
+     * builds: out-of-vocabulary codes must fail loudly, not clamp to
+     * palette entry 0. In-range OR aliases (cyberdeck_ui.h) are beyond
+     * any runtime check — the non-composability rule is the guard. */
     assert((style & ~(UI_STYLE_MASK | UI_BOLD)) == 0 &&
            (style & UI_STYLE_MASK) < UI_STYLE_COUNT);
     assert(s_pen < OVERLAY_ACCENTS);
-#endif
     if (s_draw && col >= 0 && col < s_cols && row >= 0 && row < s_rows) {
         display_overlay_cell_t *c = &s_draw[row * s_cols + col];
         c->cp    = cp;

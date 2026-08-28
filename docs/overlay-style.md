@@ -61,8 +61,13 @@ the accent **pen** (`ui_pen`, `OVERLAY_COL_*`) orthogonal to them:
 | `UI_TRACK` | gauge track (scrollback fill)                         | medium white on dark neutral tint              |
 
 A draw call passes **one** style plus optionally `UI_BOLD`. The kit maps
-`(style, pen)` to the palette index (`style * 8 + accent`); a simulator
-assert rejects anything outside the vocabulary. Blinking is not a
+`(style, pen)` to the palette index (`style * 8 + accent`), and
+`ui_putch` asserts the vocabulary on both builds. One hazard survives
+the assert: styles are small consecutive integers, so OR-ing two can
+land on another in-range style — `UI_MUTED|UI_FOCUS` *is* `UI_TRACK`,
+`UI_BAR|UI_MUTED` *is* `UI_WELL` — and renders clean and wrong. No
+check can catch that. One style per call is therefore a hard rule,
+not a convention. Blinking is not a
 render concept: a blinking element is the app choosing a different
 style on alternate animation frames (`blink ? UI_BAR : UI_TEXT`).
 
@@ -74,7 +79,9 @@ in the table like everything else.
 ## Why constrained beats composable here
 
 - **Illegal states are unrepresentable.** A style is an enum value, not
-  a bit soup. The `BRIGHT|DIM` class of bug cannot be expressed.
+  a bit soup. The `BRIGHT|DIM` class of bug cannot be expressed. (The
+  one residual: OR-ing two styles aliases to a wrong-but-valid one —
+  see the vocabulary rule above.)
 - **The rendition is finite, so the palette should be too.** ui-spec
   locked a fixed set of looks after five mockup rounds. An open
   combination space promises flexibility nobody may use, and charges

@@ -24,6 +24,11 @@
  * plus optionally UI_BOLD; the pen picks the accent within it. The kit
  * maps (style, pen) to a baked palette entry — screens never compose
  * color effects.
+ *
+ * Styles are consecutive integers, NOT flags: OR two together and the
+ * result is a different, wrong style (docs/overlay-style.md). UI_BOLD
+ * is the only OR-able bit; ui_putch asserts the vocabulary on both
+ * builds.
  */
 #define UI_TEXT    0   /* accent text on the screen background      */
 #define UI_MUTED   1   /* receding text: the accent at half brightness */

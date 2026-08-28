@@ -49,12 +49,16 @@ void display_set_overlay_buffer(display_overlay_cell_t *buf, int cols, int rows)
 void display_set_overlay_palette(const display_overlay_style_t *pal, int count)
 {
     if (!pal || count <= 0) {
-        s_pal.count = 1;
-        s_pal.tbl   = s_pal_fallback;   /* written last — see buf above */
-        return;
+        pal   = s_pal_fallback;
+        count = 1;
     }
-    s_pal.count = count;
+    /* The ISR reads count and tbl separately, in either order. So the
+     * live count must never exceed EITHER table during a swap: shrink
+     * first, set the pointer, then grow. A torn pair under-clamps to
+     * entry 0 for one frame; it never overruns. */
+    if (count < s_pal.count) s_pal.count = count;
     s_pal.tbl   = pal;
+    s_pal.count = count;
 }
 
 void display_get_text_size(int *cols, int *rows)
