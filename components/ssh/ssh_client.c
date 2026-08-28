@@ -398,7 +398,6 @@ static void ssh_read_task(void *arg)
             display_render_bench_reset();
             uint32_t elapsed_ms = (uint32_t)(now - last_stat) * portTICK_PERIOD_MS;
             uint32_t chunks_per_sec = elapsed_ms ? (chunks * 1000u) / elapsed_ms : 0;
-            /* uncomment-ignore[UC005]: formula legend for the constants below */
             /* duty = avg_cycles/chunk * chunks/s / core_hz; tenths of a percent. */
             uint32_t duty_pct_x10 = (uint32_t)(((uint64_t)avg_cyc * chunks_per_sec * 1000ULL)
                                                 / 240000000ULL);

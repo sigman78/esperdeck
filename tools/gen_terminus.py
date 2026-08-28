@@ -42,7 +42,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO_ROOT / "components" / "font"
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
 
-# uncomment-ignore[UC005]: column legend for the SIZES table
 #           WxH:   (normal BDF,     bold BDF)
 SIZES = {(8, 16):  ("ter-u16n.bdf", "ter-u16b.bdf"),
          (10, 20): ("ter-u20n.bdf", "ter-u20b.bdf"),
@@ -53,7 +52,6 @@ SIZES = {(8, 16):  ("ter-u16n.bdf", "ter-u16b.bdf"),
 BOLD_SUBSET = [
     (0x0020, 0x007E),   # ASCII
     (0x00A0, 0x017F),   # Latin-1 supplement + Extended-A
-    # uncomment-ignore[UC005]: range label like its neighbors
     (0x0400, 0x045F),   # Cyrillic (basic Russian + extensions)
 ]
 

@@ -53,7 +53,6 @@ void test_color_rgb_white(void)
 
 void test_color_rgb_red(void)
 {
-    /* uncomment-ignore[UC005]: RGB565 bit-packing derivation */
     /* r=0xF8 → bits[15:11]=11111; g=0, b=0 → 0xF800 */
     TEST_ASSERT_EQUAL_HEX16(0xF800, color_rgb(0xFF, 0, 0));
 }
