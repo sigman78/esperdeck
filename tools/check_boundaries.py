@@ -23,8 +23,8 @@ from pathlib import Path
 ALLOWED = {
     "vterm":         {"tsm", "display"},   # render data plane, fused by design
     "display":       {"font"},
-    "ssh":           {"vterm",             # DEBT: drain loop feeds the terminal (item 7)
-                      "display"},          # DEBT: PTY geometry, undeclared (item 7)
+    "ssh":           {"vterm",             # session controller drives the terminal
+                      "storage"},          # controller resolves keys/known hosts
     "cyberdeck_app": {"storage", "ssh", "wifi", "display", "vterm", "font"},
     "wifi":          {"storage"},
     "input":         {"storage", "esp_hid",

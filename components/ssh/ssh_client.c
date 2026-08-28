@@ -8,14 +8,12 @@
  *   ssh_client_disconnect() — clean shutdown
  *
  * A dedicated FreeRTOS task (ssh_read_task, core 0) blocks on
- * libssh2_channel_read() and feeds output into vterm. ssh_client_connect()
+ * libssh2_channel_read() and hands output to the sink. ssh_client_connect()
  * switches the session to non-blocking mode after it opens the shell. This
  * lets the read task detect EOF and errors promptly.
  */
 
 #include "ssh_client.h"
-#include "vterm.h"
-#include "display.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -103,7 +101,7 @@ static bool              s_libssh2_initialized = false;
 /* ssh_read_task runs in PSRAM. Internal DRAM grows scarce once WiFi,
  * NimBLE, and the display overlay start. A dynamic 8 KB internal stack
  * alloc then fails with "Failed to create ssh_read_task". The task only
- * touches sockets, crypto, and vterm writes, with no flash or ISR work.
+ * touches sockets, crypto, and the sink parser, with no flash or ISR work.
  * An external-RAM stack is therefore safe. The TCB stays in internal
  * DRAM. The task reuses the stack buffer across sessions. */
 #define SSH_READ_STACK_BYTES 8192
@@ -136,13 +134,13 @@ static volatile esp_err_t s_connect_result = ESP_FAIL;
 /*
  * Serializes all libssh2 session/channel calls. libssh2 is not thread-safe
  * per session, and ssh_read_task (core 0) races ssh_client_send (core 1).
- * The vterm response callback runs inside the read task's tsm_feed while
+ * The reply-queue call runs inside the read task's sink data() while
  * the read task already holds the lock — it must NOT take it again.
  */
 static SemaphoreHandle_t s_session_lock = NULL;
 
 /* Pending terminal-response bytes: DA1 and cursor-position replies that tsm
- * emits while it parses during vterm_write. The response callback must
+ * emits while the sink parses a chunk. The reply path must
  * never write these to libssh2. The callback runs inside the read task
  * while the read task holds s_session_lock. A blocking write there could
  * park the read task while it still holds the lock. If disconnect() then
@@ -190,17 +188,17 @@ static void ssh_cleanup(void)
     ESP_LOGI(TAG, "SSH cleanup done  — libssh2 heap: %zu B (expect 0)", s_alloc_bytes);
 }
 
-/* This callback sends terminal responses (DA1, cursor-position replies)
- * from tsm back to the remote. */
-static void ssh_vterm_response_cb(const char *data, size_t len, void *user)
+/* The session's registered byte sink (from ssh_config_t). */
+static const ssh_sink_t *s_sink;
+
+void ssh_client_queue_reply(const uint8_t *data, size_t len)
 {
-    (void)user;
     if (!s_connected || len == 0) return;
-    /* This callback runs inside the read loop with s_session_lock held. It
-     * must only buffer data here; see the s_resp_buf note for why it must
-     * never write to libssh2. It drops the overflow tail. The buffer only
-     * fills when the uplink jams, and in that case the session is about to
-     * drop anyway. */
+    /* Runs inside the read loop with s_session_lock held (the sink data()
+     * contract). It must only buffer here; see the s_resp_buf note for
+     * why it must never write to libssh2. It drops the overflow tail.
+     * The buffer only fills when the uplink jams, and in that case the
+     * session is about to drop anyway. */
     size_t room = sizeof(s_resp_buf) - s_resp_len;
     if (len > room) len = room;
     if (len) {
@@ -236,8 +234,8 @@ static void log_last_error(const char *context)
     set_last_error(buf);
 }
 
-/* ssh_client_connect() pins ssh_read_task to core 0. The task feeds
- * remote output into vterm.
+/* ssh_client_connect() pins ssh_read_task to core 0. The task hands
+ * remote output to the registered sink.
  *
  * Each wake drains the channel until EAGAIN, or until it spends the
  * per-wake budget (SSH_DRAIN_BUDGET bytes / SSH_DRAIN_BUDGET_US). It then
@@ -284,10 +282,6 @@ static void ssh_read_task(void *arg)
 
     /* Fresh counters per session — otherwise the first 30 s report blends
      * in everything accumulated since boot. */
-    vterm_bench_reset();
-#ifdef CONFIG_DISPLAY_ISR_BENCH
-    display_render_bench_reset();
-#endif
     net_bench_reset();
     s_nb_last_data_us = 0;
 
@@ -298,12 +292,12 @@ static void ssh_read_task(void *arg)
 
         do {
             xSemaphoreTake(s_session_lock, portMAX_DELAY);
-            /* vterm_feed below may re-enter libssh2 via the response cb —
-             * that is safe: same task, lock already held, cb does not
-             * re-take. */
+            /* The sink data() below may re-enter libssh2 via
+             * ssh_client_queue_reply() — that is safe: same task, lock
+             * already held, the queue call does not re-take. */
             n = libssh2_channel_read(s_channel, s_read_buf, SSH_READ_CHUNK);
             if (n > 0) {
-                vterm_feed(s_read_buf, (size_t)n);  /* parse only; present below */
+                s_sink->data(s_read_buf, (size_t)n, s_sink->user);
                 drained += (size_t)n;
             } else if (n == LIBSSH2_ERROR_EAGAIN) {
                 /* No data — good time to send a keepalive if one is due.
@@ -349,8 +343,8 @@ static void ssh_read_task(void *arg)
         /* Present the whole batch once (no-op while a ?2026 synchronized
          * update is open — btop frames land atomically). Present even if the
          * session just dropped so the tail of the output reaches the display. */
-        if (drained > 0)
-            vterm_flush();
+        if (drained > 0 && s_sink->flush)
+            s_sink->flush(s_sink->user);
 
         if (!s_connected) break;
 
@@ -367,16 +361,13 @@ static void ssh_read_task(void *arg)
             s_nb_data_wakes++;
         }
 
-        /* Periodic bench dump (vterm parse split, arrival gaps, render-ISR
+        /* Periodic bench dump (arrival gaps and stalls; the consumer-side
          * duty). Each line blocks this task on the UART (~9 ms/100 chars),
          * so print on an idle wake — forced out once 5 s overdue — and skip
          * the lines that would be all zeros. */
         TickType_t now = xTaskGetTickCount();
         if ((now - last_stat) >= pdMS_TO_TICKS(30000) &&
             (drained == 0 || (now - last_stat) >= pdMS_TO_TICKS(35000))) {
-
-            vterm_bench_report();      /* one line; silent when nothing fed */
-            vterm_bench_reset();
 
             if (s_nb_data_wakes) {
                 int rssi = 0;
@@ -392,19 +383,6 @@ static void ssh_read_task(void *arg)
                 net_bench_reset();     /* last_data_us survives the window */
             }
 
-#ifdef CONFIG_DISPLAY_ISR_BENCH
-            uint32_t avg_cyc, max_cyc, chunks;
-            display_render_bench_get(&avg_cyc, &max_cyc, &chunks);
-            display_render_bench_reset();
-            uint32_t elapsed_ms = (uint32_t)(now - last_stat) * portTICK_PERIOD_MS;
-            uint32_t chunks_per_sec = elapsed_ms ? (chunks * 1000u) / elapsed_ms : 0;
-            /* duty = avg_cycles/chunk * chunks/s / core_hz; tenths of a percent. */
-            uint32_t duty_pct_x10 = (uint32_t)(((uint64_t)avg_cyc * chunks_per_sec * 1000ULL)
-                                                / 240000000ULL);
-            ESP_LOGI("render_bench",
-                "avg=%" PRIu32 " max=%" PRIu32 " duty=%" PRIu32 ".%" PRIu32 "%%",
-                avg_cyc, max_cyc, duty_pct_x10 / 10, duty_pct_x10 % 10);
-#endif
             last_stat = now;
         }
 
@@ -414,6 +392,8 @@ static void ssh_read_task(void *arg)
         vTaskDelay(drained > 0 ? 1 : pdMS_TO_TICKS(10));
     }
 
+    if (s_sink->closed)
+        s_sink->closed(s_clean_eof, s_sink->user);
     s_read_task_done = true;   /* disconnect() polls this before cleanup */
     s_read_task = NULL;
     vTaskDelete(NULL);
@@ -451,10 +431,12 @@ esp_err_t ssh_client_init(void)
 
 esp_err_t ssh_client_connect(const ssh_config_t *config)
 {
-    if (!config || !config->host || !config->username) {
+    if (!config || !config->host || !config->username ||
+        !config->sink || !config->sink->data) {
         ESP_LOGE(TAG, "Invalid config");
         return ESP_ERR_INVALID_ARG;
     }
+    s_sink = config->sink;
 
     if (!s_session_lock) {
         s_session_lock = xSemaphoreCreateMutex();
@@ -688,13 +670,10 @@ auth_done:
         return ESP_FAIL;
     }
 
-    /* PTY size = the registered display grid (set by vterm_init). */
-    int term_cols = 0, term_rows = 0;
-    display_get_text_size(&term_cols, &term_rows);
-    if (term_cols <= 0 || term_rows <= 0) {
-        term_cols = display_text_cols();
-        term_rows = display_text_rows();
-    }
+    /* PTY size comes with the config; the terminal-free default is the
+     * classic 80x24. */
+    int term_cols = config->term_cols ? config->term_cols : 80;
+    int term_rows = config->term_rows ? config->term_rows : 24;
     rc = libssh2_channel_request_pty_ex(s_channel,
                                         "xterm-256color", 14,
                                         NULL, 0,
@@ -715,26 +694,12 @@ auth_done:
     }
     ESP_LOGI(TAG, "Shell opened");
 
-    /* ── 10. Switch to non-blocking and wire vterm responses ────────── */
+    /* ── 10. Switch to non-blocking for the read loop ───────────────── */
     libssh2_session_set_blocking(s_session, 0);
-    vterm_set_response_cb(ssh_vterm_response_cb, NULL);
 
-    /* ── 11. Reset the terminal, then spawn the read task on core 0 ───── */
-    /* This task resets the terminal before the read task exists. vterm has
-     * no lock, so main_task racing the read task's feed inside tsm_feed on
-     * two cores could corrupt the grid. Doing the reset here makes the
-     * read task the session's sole vterm writer.
-     *
-     * This uses a full reset, not a \e[2J clear. Otherwise everything the
-     * previous session left in the emulator leaks into this one. That
-     * includes SGR colors, the alt screen, and application cursor keys. It
-     * also includes charsets, scroll region, a half-received escape
-     * sequence, and the old host's scrollback. SGR colors are the worst
-     * case. An ED erase fills with the CURRENT fg/bg. So a session that
-     * died inside a white-on-blue dialog(1) UI paints the next greeting
-     * white-on-blue. */
-    vterm_reset();
-
+        /* The session controller reset the terminal before this connect
+     * began. The read task below is the session's sole consumer-side
+     * writer. */
     s_connected = true;
     s_read_task_done = false;
     if (!s_read_task_stack)
@@ -849,7 +814,6 @@ esp_err_t ssh_client_disconnect(void)
         s_session_lock = xSemaphoreCreateMutex();
     }
 
-    vterm_set_response_cb(NULL, NULL);
     ssh_cleanup();
 
 #if CONFIG_SSH_WIFI_PS_NONE

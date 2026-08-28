@@ -16,6 +16,21 @@
 #define SSH_ERR_HOSTKEY_MISMATCH  (SSH_ERR_BASE + 2)  /* pinned fp does not match!        */
 #define SSH_ERR_AUTH              (SSH_ERR_BASE + 3)  /* all auth methods failed          */
 
+/*
+ * Byte sink — where the read task delivers remote output (the seam
+ * that keeps the transport terminal-free; extensibility item 7).
+ * data() parses one chunk on the read task with the session lock
+ * held. It may call ssh_client_queue_reply(), and nothing else on
+ * this API. flush() runs once after each drained batch. closed()
+ * fires when the session ends, clean or not.
+ */
+typedef struct {
+    void (*data)(const char *buf, size_t len, void *user);
+    void (*flush)(void *user);
+    void (*closed)(bool clean_eof, void *user);
+    void *user;
+} ssh_sink_t;
+
 // SSH configuration
 typedef struct {
     const char *host;
@@ -42,6 +57,10 @@ typedef struct {
      * fingerprint set.
      */
     const char *expected_fp;
+    /* Remote-output consumer; required. Must outlive the session. */
+    const ssh_sink_t *sink;
+    /* PTY geometry for the remote; 0,0 falls back to 80x24. */
+    uint16_t term_cols, term_rows;
 } ssh_config_t;
 
 /**
@@ -79,6 +98,13 @@ esp_err_t ssh_client_connect_take_result(void);
 /** Best-effort abort of an in-flight async connect (unblocks a stalled
  *  handshake; the worker still finishes and reports an error). */
 void ssh_client_connect_cancel(void);
+
+/**
+ * Queue terminal-response bytes (DA1, cursor reports) for the remote.
+ * Call ONLY from inside the sink's data() callback — the read loop
+ * drains the queue with non-blocking writes. Overflow drops the tail.
+ */
+void ssh_client_queue_reply(const uint8_t *data, size_t len);
 
 /**
  * Disconnect from SSH server
