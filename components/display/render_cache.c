@@ -98,7 +98,7 @@ IRAM_ATTR bool render_cache_has_cells(void)
  * docs/ARCHITECTURE.md for the history behind this shape. row, scan, and
  * frame key the cache: any change forces a rebuild, and row == -1 starts
  * empty. */
-/* uncomment-ignore[UC006]: per-field legend stays (user call, 2026-08-27) */
+/* unwaffle-ignore[UC006]: per-field legend stays (user call, 2026-08-27) */
 static DRAM_ATTR struct {
     _Alignas(4) uint8_t rows[FONT_MAX_CACHE_BYTES];  /* decoded glyphs  */
     uint32_t pr[2][RENDER_MAX_COLS][4];              /* pixel-pair LUT  */
@@ -137,7 +137,7 @@ IRAM_ATTR void render_cache_invalidate(void)
 static IRAM_ATTR void build_pair_lut(uint32_t *out, uint16_t fg, uint16_t bg)
 {
     const uint32_t f = fg, b = bg;
-    /* uncomment-ignore[UC006]: per-index legend stays (user call, 2026-08-27) */
+    /* unwaffle-ignore[UC006]: per-index legend stays (user call, 2026-08-27) */
     out[0] = b | (b << 16);      /* left bg, right bg */
     out[1] = b | (f << 16);      /* left bg, right fg */
     out[2] = f | (b << 16);      /* left fg, right bg */

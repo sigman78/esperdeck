@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Comment lint wrapper: runs `uncomment` (github.com/sigman78/uncomment) via
-uvx. Scope lives in uncomment.toml (exclude globs, respect-gitignore,
+"""Comment lint wrapper: runs `unwaffle` (github.com/sigman78/unwaffle) via
+uvx. Scope lives in unwaffle.toml (exclude globs, respect-gitignore,
 skip-generated); this wrapper only picks the scan root and adapts the
 Claude Code hook. Rationale in docs/DEVELOPMENT.md, "Comment lint".
 
@@ -13,7 +13,7 @@ Modes:
                                       file vs git HEAD. Exit 2 feeds findings
                                       back.
 
-Exit codes follow uncomment: 0 clean, 1 findings, 2 hook-feedback/bad input.
+Exit codes follow unwaffle: 0 clean, 1 findings, 2 hook-feedback/bad input.
 """
 
 import json
@@ -22,12 +22,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-UNCOMMENT = ["uvx", "--from", "git+https://github.com/sigman78/uncomment",
-             "uncomment"]
+UNWAFFLE = ["uvx", "unwaffle@0.15.0"]
 
 # Hook-only filter. A file named explicitly on the CLI always scans.
 # Naming is intent, so the config excludes cannot cover the per-file hook
-# path. This mirrors uncomment.toml's exclude list plus build/fetched trees.
+# path. This mirrors unwaffle.toml's exclude list plus build/fetched trees.
 VENDORED = {"esp_hid", "monocypher", "libssh2_esp", "terminal"}
 SKIP_DIRS = {"_deps", "__pycache__", "managed_components", ".git", ".cache"}
 EXTS = {".c", ".h", ".cpp", ".hpp", ".py"}
@@ -46,7 +45,7 @@ def in_scope(path_str):
 
 
 def run(args):
-    return subprocess.run(UNCOMMENT + args + ["."], cwd=ROOT).returncode
+    return subprocess.run(UNWAFFLE + args + ["."], cwd=ROOT).returncode
 
 
 def hook_mode():
@@ -59,7 +58,7 @@ def hook_mode():
         return 0
     rel = Path(path).resolve().relative_to(ROOT)
     proc = subprocess.run(
-        UNCOMMENT + ["gate", str(rel),
+        UNWAFFLE + ["gate", str(rel),
                      "--baseline", "git:HEAD", "--format", "agent"],
         cwd=ROOT, capture_output=True, text=True, encoding="utf-8",
         errors="replace")
