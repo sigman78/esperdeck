@@ -1,5 +1,6 @@
 /*
- * app_pacman.c — the HOME Pac-Man marquee, the dynamic-sprite-glyph showcase.
+ * app_pacman.c — Pac-Man marquee plugin, the dynamic-sprite-glyph
+ * showcase riding the home_strip hook.
  *
  * Four sprite slots animate a TWO-CELL Pac-Man: a full-height disc, 2W x
  * 2W (16x16 at 8x16). He chomps across a row of pellets at PIXEL
@@ -17,7 +18,8 @@
  */
 
 #include "app_internal.h"
-#include "app_widgets.h"
+#include "app_screens.h"     /* SCR_HOME — the strip's owner */
+#include "cyberdeck_plugin.h"
 #include "font.h"
 
 enum { SPR_PAC_TAIL = 0, SPR_PAC_MID = 1, SPR_PAC_HEAD = 2, SPR_PAC_DOT = 3 };
@@ -62,17 +64,19 @@ static const uint16_t pac_dot_12[]  = { 0x000, 0x000, 0x000, 0x000, 0x000,
     0x000, 0x000, 0x000, 0x000, 0x000, 0x0E0, 0x0E0, 0x0E0, 0x000, 0x000,
     0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000, 0x000 };
 
-/* draw_pacman (re)loads the static pellet on marquee (re)entry, not per
- * tick. A per-tick load would invalidate its glyph-cache line. It would
- * also force the ISR to re-decode the most-shared sprite on screen,
- * every frame, for nothing. */
+/* The strip draw (re)loads the static pellet on marquee (re)entry, not
+ * per tick. A per-tick load would invalidate its glyph-cache line. It
+ * would also force the ISR to re-decode the most-shared sprite on
+ * screen, every frame, for nothing. */
 static bool s_pac_dot_ready;
 
-/* The owning screen left (session entry blanks all sprite slots) — reload
- * the pellet on the next draw. */
-void pacman_reset(void)
+/* Away from HOME the sprite slots are fair game (session entry blanks
+ * them all) — mark the pellet for reload on the next draw. */
+static void pac_tick(uint64_t now)
 {
-    s_pac_dot_ready = false;
+    (void)now;
+    if (nav_current() != SCR_HOME)
+        s_pac_dot_ready = false;
 }
 
 static const uint16_t *pac_dot_art(void)
@@ -84,8 +88,9 @@ static const uint16_t *pac_dot_art(void)
     }
 }
 
-void draw_pacman(int row)
+static void pac_strip(int row, uint64_t now)
 {
+    (void)now;
     const int W = font_width(), H = font_height(), cols = ui_cols();
     const uint16_t *dot = pac_dot_art();
     const uint32_t *art;
@@ -146,3 +151,9 @@ void draw_pacman(int row)
         ui_putch(x, row, font_sprite_cp(SPR_PAC_DOT), 0);
     ui_pen(OVERLAY_COL_DEFAULT);
 }
+
+const cyberdeck_plugin_t pacman_plugin = {
+    .name       = "pacman",
+    .tick       = pac_tick,
+    .home_strip = pac_strip,
+};

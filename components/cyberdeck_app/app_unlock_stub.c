@@ -20,6 +20,7 @@ void unlock_open(uint64_t now, bool resume_connect)
 void unlock_open_setpin(uint64_t now) { (void)now; }
 void unlock_open_remove(uint64_t now) { (void)now; }
 void unlock_open_gate(uint64_t now)   { (void)now; }
+bool unlock_is_gate(void)             { return false; }
 
 const nav_screen_t unlock_screen = {
     .name = "unlock-disabled",

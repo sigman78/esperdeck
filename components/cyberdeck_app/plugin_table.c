@@ -13,10 +13,12 @@
 
 #include "cyberdeck_plugin.h"
 
-/* No plugins built yet — first candidates are the screensaver zoo and
- * the info-saver widgets (extensibility item 8, feat-ideas.md). A row
- * is one line: `&weather_plugin,` above the sentinel. */
+extern const cyberdeck_plugin_t pacman_plugin;   /* app_pacman.c */
+extern const cyberdeck_plugin_t saver_plugin;    /* app_saver.c  */
+
 const cyberdeck_plugin_t *const cyberdeck_plugins[] = {
-    NULL,   /* sentinel keeps the array non-empty; never iterated */
+    &pacman_plugin,
+    &saver_plugin,
 };
-const int cyberdeck_plugin_count = 0;
+const int cyberdeck_plugin_count =
+    (int)(sizeof(cyberdeck_plugins) / sizeof(cyberdeck_plugins[0]));

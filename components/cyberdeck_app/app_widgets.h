@@ -15,12 +15,6 @@
  *  for NAV_CHROME_FULL screens. */
 void ui_statusbar(uint64_t now);
 
-/* app_pacman.c — the HOME marquee (dynamic-sprite showcase).
- * draw_pacman renders one tick at overlay @p row. pacman_reset marks
- * its static pellet sprite for reload after session entry blanks the
- * slots. */
-void draw_pacman(int row);
-void pacman_reset(void);
 
 /** Free-RAM summary for the header (debug stat, dev screens only). */
 void ram_stats(char *buf, size_t sz);

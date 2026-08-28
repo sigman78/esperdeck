@@ -18,7 +18,7 @@
 typedef enum {
     SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
     SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
-    SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK,
+    SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK, SCR_SAVER,
     SCR_COUNT
 } scr_id_t;
 
@@ -30,22 +30,10 @@ void enter_home(uint64_t now);
 /** Session teardown entry: CRT collapse over the dead frame, then HOME. */
 void enter_home_after_collapse(uint64_t now);
 
-/* ---- screensaver (app_saver.c) ---- */
-/** Load the [saver] setting and start the idle timer. Call once at init. */
-void saver_init(uint64_t now);
-/** Idle timeout in minutes (= the auto-lock interval; SYSTEM menu knob). */
-uint32_t saver_idle_min(void);
-void     saver_set_idle_min(uint32_t min);
-/** Count activity: restart the idle timer, rain off. */
-void saver_reset(uint64_t now);
-/** Feed an input event; true means it woke the rain, and the caller
- *  must swallow it. */
-bool saver_on_input(uint64_t now);
-/** Run the rain when HOME is idle; true means the rain handled this
- *  tick. */
-bool saver_tick_home(uint64_t now);
-/** Idle rain over the DEVICE gate pad; true while the rain owns the screen. */
-bool saver_tick_gate(uint64_t now);
+/* ---- screensaver (app_saver.c, plugin) ---- */
+/** The rain screen; the saver plugin pushes it when session_guard says
+ *  the deck idles on HOME or the gate pad. Any input pops it. */
+extern const nav_screen_t saver_screen;
 
 extern const nav_screen_t pairing_screen;
 void enter_pairing(uint64_t now);
@@ -65,6 +53,9 @@ void unlock_open_setpin(uint64_t now);
 void unlock_open_remove(uint64_t now);
 /** DEVICE gate pad (boot/wake/Lock deck): non-skippable, rain-capable. */
 void unlock_open_gate(uint64_t now);
+/** True while the pad on screen is the non-skippable device gate (and
+ *  not mid-derive) — the saver plugin may rain over it. */
+bool unlock_is_gate(void);
 
 extern const nav_screen_t connecting_screen, session_screen;
 /** The profile snapshot that is connecting or already connected

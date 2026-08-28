@@ -50,7 +50,8 @@ NFC (near-field communication) tap-to-unlock, file transfer + SD card.
 1. ~~Adding a screen touches ~9 sites in 6 files~~ — item 2 (2026-08-26)
    cut it to: the module (hooks + file-static state), one registration
    line, CMake, and a menu/home entry (the last falls with items 3/5).
-   Still telling: pacman is a widget, the saver a tick-hijack (item 7).
+   ~~Still telling: pacman is a widget, the saver a tick-hijack~~ —
+   both are plugins now (item 7, 2026-08-28).
 2. Menu actions are a ~240-line positional `(page, index)` switch
    (`menu_activate()`, `app_menu.c`); array order is the API, a hazard the
    code itself documents (`app_menu_defs.h`). Five of eleven pages bypass
@@ -682,3 +683,23 @@ in-tree features. Tick items as they merge.
   unrendered entirely (the keymap ignores num lock — an indicator
   with no referent; get_locks keeps reporting the bit). ui-spec
   indicator table updated.
+
+- **2026-08-28 (item 7, first leg)** — **saver + pacman are plugins**
+  (branch `feat/plugin-migrations`). New core `session_guard.c` owns
+  the idle timer, the idle auto-lock, and the walk-away policy (moved
+  from `app_home.c`) — the deck now locks on idle even in a build
+  without the saver, and the `[saver]` knob repointed there. The saver
+  is a plugin whose tick pushes a real `SCR_SAVER` screen when the
+  guard reports idle on HOME or the gate pad (the tick-hijack seams —
+  `saver_tick_home/gate`, `saver_on_input` — are gone; wake is normal
+  input on the saver screen, grace-forwarded via
+  `nav_dispatch_input`). Pacman rides a new optional `home_strip(row,
+  now)` descriptor hook (HOME renders every plugin's strip above the
+  StatusBar) and re-arms its pellet reload from its own tick instead
+  of `pacman_reset()` call sites. `unlock_is_gate()` is the one new
+  unlock query (the saver may rain over the non-cancellable pad
+  only). Walk-away now pauses while the rain is up (guard gates on
+  HOME) — equivalent outcomes, since idle already locked the store.
+  Verified: 6/6 regression on both sim configs, device build +
+  check_iram (25/21), boundary check 16 edges, comment gate clean.
+  Remaining for item 7: the ssh transport/session split.

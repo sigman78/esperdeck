@@ -58,6 +58,11 @@ typedef struct {
 
     const home_tile_t *home_tiles;
     int n_home_tiles;
+
+    /* Free drawing on HOME's strip row (above the StatusBar), called
+     * from HOME's render each frame. Strips share the one row —
+     * today's single consumer is the Pac-Man marquee. */
+    void (*home_strip)(int row, uint64_t now);
 } cyberdeck_plugin_t;
 
 /* plugin_table.c — the built plugins, in HOME-tile display order. */

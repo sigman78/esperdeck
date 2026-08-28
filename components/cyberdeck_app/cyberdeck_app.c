@@ -12,6 +12,7 @@
 #include "app_screens.h"
 #include "app_settings.h"
 #include "cyberdeck_plugin.h"
+#include "session_guard.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -306,6 +307,7 @@ static const nav_screen_t *const SCREENS[SCR_COUNT] = {
     [SCR_PROFILE]    = &profile_screen,
     [SCR_SSHIMPORT]  = &sshimport_screen,
     [SCR_UNLOCK]     = &unlock_screen,
+    [SCR_SAVER]      = &saver_screen,
 };
 
 esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
@@ -321,7 +323,7 @@ esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
     app.touch_scroll = tc.scroll;
     app_touch_scroll_apply();
     app_settings_register_reset();
-    saver_init(now_ms);    /* [saver] load + idle timer starts at boot */
+    session_guard_init(now_ms);   /* [saver] load + idle timer starts at boot */
 
     esp_err_t err = ui_init();
     if (err != ESP_OK) return err;
@@ -380,6 +382,7 @@ void cyberdeck_app_tick(uint64_t now)
 
     status_toasts(now);
     app_settings_idle_flush();   /* deferred settings saves, once held pages close */
+    session_guard_tick(now);     /* idle + walk-away lock, saver or not */
 
     for (int i = 0; i < cyberdeck_plugin_count; i++) {
         const cyberdeck_plugin_t *p = cyberdeck_plugins[i];
@@ -394,10 +397,7 @@ void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
 {
     if (!ev) return;
 
-    /* Any input feeds the idle timer; saver_on_input swallows a true
-     * screensaver wake (see it for the just-went-up grace). */
-    if (saver_on_input(now))
-        return;
+    session_guard_activity(now);   /* every input feeds the idle timer */
 
     char ch = 0;
     ui_key_t k = (ev->type == CYBERDECK_INPUT_KEY ||
