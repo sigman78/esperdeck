@@ -166,7 +166,7 @@ static void render_session_chrome(uint64_t now)
         snprintf(pad, sizeof(pad), "  %s", app.toast);
         ui_chip(x - 3, 0, UI_PL_L, pad, 0, 0);
         ui_putch(x - 1, 0, el < 800 ? spinner_glyph(app.anim_frame) : 0x2713,
-                 OVERLAY_ATTR_INVERSE);
+                 UI_BAR);
     } else {
         ui_chip(x - 1, 0, UI_PL_L, app.toast, 0, 0);
     }

@@ -97,10 +97,10 @@ static void draw_crumb(int x0, int w, int sc)
     ui_tile(x0, 0, w, 3, crumb, "", false);
     /* ui_puts is Latin-1 only, so the ◄ back chevron overdraws the
      * placeholder '<' the crumb string carries. */
-    ui_putch(x0 + 2, 1, UI_POINT_L, OVERLAY_ATTR_INVERSE);
+    ui_putch(x0 + 2, 1, UI_POINT_L, UI_BAR);
     char clk[8];
     if (clock_str(clk, sizeof(clk)))
-        ui_puts(x0 + w - 2 - (int)strlen(clk), 1, clk, OVERLAY_ATTR_INVERSE);
+        ui_puts(x0 + w - 2 - (int)strlen(clk), 1, clk, UI_BAR);
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
@@ -115,11 +115,9 @@ static void draw_value_tile(int x, int y, int tw, const char *label,
     if (ww > 14) ww = 14;
     for (int r = 0; r < 3; r++)
         for (int c = 0; c < ww; c++)
-            ui_putch(x + tw - ww + c, y + r, ' ',
-                     OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_DIM);
+            ui_putch(x + tw - ww + c, y + r, ' ', UI_WELL);
     ui_puts(x + tw - 2 - (int)strlen(body), y + 1, body,
-            OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_DIM |
-            (sel ? OVERLAY_ATTR_BOLD : 0));
+            UI_WELL | (sel ? UI_BOLD : 0));
 }
 
 static void render_menu(uint64_t now)
@@ -209,15 +207,12 @@ static void render_menu(uint64_t now)
                  * explains on activation). */
                 for (int r = 0; r < 3; r++)
                     for (int c = 0; c < g.tw; c++)
-                        ui_putch(tx + c, ty + r, ' ',
-                                 OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_DIM);
-                ui_puts(tx + 2, ty + 1, label,
-                        OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_DIM |
-                        OVERLAY_ATTR_BOLD);
+                        ui_putch(tx + c, ty + r, ' ', UI_WELL);
+                ui_puts(tx + 2, ty + 1, label, UI_WELL | UI_BOLD);
                 if (sel) {          /* focus rail, as ui_tile draws it */
                     ui_pen(OVERLAY_COL_WHITE);
                     for (int r = 0; r < 3; r++)
-                        ui_putch(tx, ty + r, UI_RHALF, OVERLAY_ATTR_INVERSE);
+                        ui_putch(tx, ty + r, UI_RHALF, UI_BAR);
                 }
                 continue;
             }

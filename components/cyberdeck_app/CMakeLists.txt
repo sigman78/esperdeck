@@ -13,7 +13,7 @@ else()
 endif()
 
 cyberdeck_component_register(
-    SRCS         cyberdeck_app.c app_nav.c app_ui.c app_widgets.c
+    SRCS         cyberdeck_app.c app_nav.c app_ui.c app_theme.c app_widgets.c
                  session_guard.c
                  app_menu_defs.c app_settings.c plugin_table.c
                  app_boot.c app_home.c app_pacman.c app_saver.c app_pairing.c

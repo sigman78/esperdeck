@@ -153,7 +153,7 @@ static void pf_draw_selector(int row, bool focused, const char *value)
     int fw = pf_fw();
     char bar[64];
     snprintf(bar, sizeof(bar), "< %-*.*s >", fw - 4, fw - 4, value);
-    ui_puts(pf_fx(), row, bar, focused ? OVERLAY_ATTR_INVERSE : 0);
+    ui_puts(pf_fx(), row, bar, focused ? UI_BAR : UI_TEXT);
 }
 
 static void render_profile(uint64_t now)

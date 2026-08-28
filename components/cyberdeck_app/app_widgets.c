@@ -274,10 +274,10 @@ void draw_titlebar(int x0, const char *text)
     for (int i = 0; i < 4; i++)
         ui_putch(x++, 0, lg[i], 0);
     ui_pen(OVERLAY_COL_CYAN);
-    ui_putch(x++, 0, ' ', OVERLAY_ATTR_INVERSE);
-    ui_puts (x, 0, text, OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD);
+    ui_putch(x++, 0, ' ', UI_BAR);
+    ui_puts (x, 0, text, UI_BAR | UI_BOLD);
     x += (int)strlen(text);
-    ui_putch(x++, 0, ' ', OVERLAY_ATTR_INVERSE);
+    ui_putch(x++, 0, ' ', UI_BAR);
     static const uint16_t rg[4] = { UI_BLOCK, UI_SHADE3, UI_SHADE2, UI_SHADE1 };
     ui_pen(OVERLAY_COL_MAGENTA);
     for (int i = 0; i < 4; i++)
@@ -285,15 +285,13 @@ void draw_titlebar(int x0, const char *text)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
-/* One StatusBar patch. Lit = BRIGHT wash of its accent — the overlay
- * resolve gives BRIGHT bars BLACK text — plus the bold face; off = the
- * dimmed companion, receding. Patches sit adjacent, no gaps. */
+/* One StatusBar patch. Lit = the FOCUS wash of its accent (dark text)
+ * plus the bold face; off = the WELL companion, receding. Patches sit
+ * adjacent, no gaps. */
 static int sb_patch(int x, int row, const char *txt, uint8_t accent, bool lit)
 {
     ui_pen(lit ? accent : OVERLAY_COL_BLUE);
-    ui_puts(x, row, txt,
-            OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BOLD |
-            (lit ? OVERLAY_ATTR_BRIGHT : OVERLAY_ATTR_DIM));
+    ui_puts(x, row, txt, (lit ? UI_FOCUS : UI_WELL) | UI_BOLD);
     return x + (int)strlen(txt);
 }
 
@@ -304,14 +302,12 @@ void ui_statusbar(uint64_t now)
     const int sr = ui_rows() - 1;
     ui_pen(OVERLAY_COL_BLUE);
     for (int c = 0; c < ui_cols(); c++)
-        ui_putch(c, sr, ' ', OVERLAY_ATTR_INVERSE);
+        ui_putch(c, sr, ' ', UI_BAR);
 
     if (app.toast[0] && now < app.toast_until) {
         char clip[96];
         snprintf(clip, sizeof(clip), " %.*s ", ui_cols() - 12, app.toast);
-        ui_puts(1, sr, clip,
-                OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BRIGHT |
-                OVERLAY_ATTR_BOLD);
+        ui_puts(1, sr, clip, UI_FOCUS | UI_BOLD);
     } else {
         /* A keystore-lock indicator is deliberately absent (user call,
          * 2026-08-27). A locked deck shows the PIN pad; the state is
@@ -338,8 +334,7 @@ void ui_statusbar(uint64_t now)
         clk[n + 1] = '\0';
         ui_pen(OVERLAY_COL_BLUE);
         ui_puts(ui_cols() - (int)strlen(clk) - 1, sr, clk,
-                OVERLAY_ATTR_INVERSE | OVERLAY_ATTR_BRIGHT |
-                OVERLAY_ATTR_BOLD);
+                UI_FOCUS | UI_BOLD);
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 }
@@ -404,7 +399,7 @@ int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption)
                        : top ? 0x2580u              /* upper half block */
                        : bot ? 0x2584u              /* lower half block */
                        : ' ';
-            ui_putch(qx + cc, qy + cr, g, OVERLAY_ATTR_INVERSE);
+            ui_putch(qx + cc, qy + cr, g, UI_BAR);
         }
     }
     if (caption && qy + crows <= ui_rows() - 3) {
@@ -429,11 +424,11 @@ int draw_step(int y, char num, const char *label,
     int vx = 6 + (int)strlen(label) + 1;
     ui_pen(value_pen);
     if (vx + (int)strlen(value) + 2 <= xlimit) {
-        ui_printf(vx, y, OVERLAY_ATTR_INVERSE, " %s ", value);
+        ui_printf(vx, y, UI_BAR, " %s ", value);
         ui_pen(OVERLAY_COL_DEFAULT);
         return y + 2;
     }
-    ui_printf(8, y + 1, OVERLAY_ATTR_INVERSE, " %s ", value);
+    ui_printf(8, y + 1, UI_BAR, " %s ", value);
     ui_pen(OVERLAY_COL_DEFAULT);
     return y + 3;
 }
@@ -459,30 +454,26 @@ void draw_scrollbar(int offset, int total)
     const int full = f / 8;
     const int rem  = f % 8;
 
-    /* Every cell needs the SAME attrs. Mixing INVERSE with plain cells
-     * gives them different backgrounds and leaves a black notch at the
-     * boundary. BRIGHT then DIM lands a dark-gray bg under a
-     * medium-white fg without adding palette entries. */
-    const uint8_t bar_attrs = OVERLAY_ATTR_BRIGHT | OVERLAY_ATTR_DIM;
-    ui_pen(OVERLAY_COL_WHITE);
+    /* Every cell shares the one TRACK entry, so the column's background
+     * is seamless and the fill always contrasts with it. */
     for (int y = 0; y < rows; y++) {
         const int from_bottom = rows - 1 - y;
         uint16_t  cp;
         if (from_bottom < full)                cp = UI_BLOCK;
         else if (from_bottom == full && rem)   cp = BLK_LOWER(rem);
         else                                   cp = ' ';
-        ui_putch(col, y, cp, bar_attrs);
+        ui_putch(col, y, cp, UI_TRACK);
     }
 
-    /* Pen 0 + INVERSE resolves to neutral gray with dark text. Nothing at
-     * offset 0 — the empty bar already says it. */
+    /* Pen 0 BAR is neutral gray with dark text. Nothing at offset 0 —
+     * the empty bar already says it. */
     if (offset > 0) {
         char label[16];
         int n  = snprintf(label, sizeof(label), " %d ", offset);
         int lx = col - 1 - n;
         if (lx >= 0) {
             ui_pen(OVERLAY_COL_DEFAULT);
-            ui_puts(lx, 0, label, OVERLAY_ATTR_INVERSE);
+            ui_puts(lx, 0, label, UI_BAR);
         }
     }
     ui_pen(OVERLAY_COL_DEFAULT);

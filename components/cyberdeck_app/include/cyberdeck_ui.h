@@ -14,10 +14,39 @@
 
 #pragma once
 
-#include "display.h"     /* color_t, OVERLAY_ATTR_* / OVERLAY_COL_* */
+#include "display.h"     /* color_t, display_overlay_style_t */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/*
+ * Overlay styling (docs/overlay-style.md): a draw call names ONE style
+ * plus optionally UI_BOLD; the pen picks the accent within it. The kit
+ * maps (style, pen) to a baked palette entry — screens never compose
+ * color effects.
+ */
+#define UI_TEXT    0   /* accent text on the screen background      */
+#define UI_MUTED   1   /* receding text: the accent at half brightness */
+#define UI_BAR     2   /* solid bar / chip / selection / QR         */
+#define UI_WELL    3   /* value well: darker companion of the bar   */
+#define UI_FOCUS   4   /* focused / lit bar: pastel wash, dark text */
+#define UI_TRACK   5   /* gauge track: medium white on dark tint    */
+#define UI_STYLE_COUNT 6
+#define UI_STYLE_MASK  0x07
+#define UI_BOLD    (1 << 3)   /* bold glyph face; composes with any style */
+
+/* Pen accents — index within a style's palette bank. */
+#define OVERLAY_COL_DEFAULT   0
+#define OVERLAY_COL_GREEN     1
+#define OVERLAY_COL_CYAN      2
+#define OVERLAY_COL_MAGENTA   3
+#define OVERLAY_COL_AMBER     4
+#define OVERLAY_COL_RED       5
+#define OVERLAY_COL_BLUE      6
+#define OVERLAY_COL_WHITE     7
+#define OVERLAY_ACCENTS       8
+
+#define UI_PAL_COUNT (UI_STYLE_COUNT * OVERLAY_ACCENTS)
 
 /* Every codepoint below is present in Terminus at all three sizes
  * (verified against the font's range tables). Missing glyphs render as
@@ -71,38 +100,39 @@ int  ui_rows(void);
  *  default by ui_clear()/ui_dim(). */
 void ui_pen(uint8_t color);
 
-/** Transparent DIM scrim fading the session behind it; draw opaque chrome
+/** Transparent scrim fading the session behind it; draw opaque chrome
  *  on top afterwards. For modals over a session. */
 void ui_dim(void);
 
-/** Put one codepoint; attrs = 0 or OVERLAY_ATTR_* flags. */
-void ui_putch(int col, int row, uint16_t cp, uint8_t attrs);
+/** Put one codepoint; style = one UI_* style, optionally | UI_BOLD. */
+void ui_putch(int col, int row, uint16_t cp, uint8_t style);
 
 /** Put an ASCII/Latin-1 string (byte = codepoint, no UTF-8 decode). */
-void ui_puts(int col, int row, const char *s, uint8_t attrs);
+void ui_puts(int col, int row, const char *s, uint8_t style);
 
 /** UTF-8 variant: decodes multi-byte sequences to BMP codepoints
  *  (beyond-BMP and malformed input render '?'). Chrome glyphs should
  *  still prefer the verified UI_* palette above. */
-void ui_puts_u8(int col, int row, const char *s, uint8_t attrs);
+void ui_puts_u8(int col, int row, const char *s, uint8_t style);
 
 /** printf into a row (ASCII), truncated to the overlay width. */
-void ui_printf(int col, int row, uint8_t attrs, const char *fmt, ...);
+void ui_printf(int col, int row, uint8_t style, const char *fmt, ...);
 
 /** Horizontal rule: left_cp fill_cp... right_cp */
 void ui_hline(int col, int row, int width,
               uint16_t left_cp, uint16_t fill_cp, uint16_t right_cp);
 
 /** Fill a rectangle with spaces (opaque background). */
-void ui_fill(int col, int row, int w, int h, uint8_t attrs);
+void ui_fill(int col, int row, int w, int h, uint8_t style);
 
 /** Box with border and title centered in the top rule. */
 void ui_box(int col, int row, int w, int h, const char *title);
 
-/** Chip: optional caps around " text " INVERSE, in the current pen.
+/** Chip: optional caps around a " text " bar in the current pen.
+ *  @p style adds to the bar (UI_BOLD, or UI_FOCUS to replace it).
  *  Returns the column after the chip. */
 int ui_chip(int col, int row, uint16_t left_cp, const char *text,
-            uint16_t right_cp, uint8_t attrs);
+            uint16_t right_cp, uint8_t style);
 
 /** Finger-sized tile: a solid bar in the pen color with a bold title and an
  *  optional body line. Selection washes the bar pastel; an overlong body

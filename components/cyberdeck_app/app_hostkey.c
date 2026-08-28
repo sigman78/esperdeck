@@ -54,8 +54,8 @@ static void render_hostkey(uint64_t now)
     draw_titlebar(2, s_hostkey.mismatch ? "HOST KEY ALERT" : "NEW HOST KEY");
 
     if (s_hostkey.mismatch) {
-        /* Blink via INVERSE (ui_puts emits Latin-1 bytes — no UTF-8 here). */
-        uint8_t blink = ((app.anim_frame / 5) & 1) ? OVERLAY_ATTR_INVERSE : 0;
+        /* Blink = alternating the style, not a render attr: bar vs text. */
+        uint8_t blink = ((app.anim_frame / 5) & 1) ? UI_BAR : UI_TEXT;
         ui_puts(4, 5, "!  HOST KEY CHANGED - possible attack  !", blink);
         ui_puts(4, 7, "The server's key DIFFERS from the pinned one.", 0);
         ui_puts(4, 8, "Only replace it if you KNOW the server was rekeyed.", 0);
