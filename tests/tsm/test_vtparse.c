@@ -7,16 +7,16 @@
  *   ./build/test_vtparse
  *
  * Coverage:
- *   - C0 controls
- *   - ESC sequences (with and without intermediates)
- *   - CSI: params, defaults, prefix markers, sub-params, intermediates
- *   - OSC: BEL-terminated, ESC \-terminated, truncation
- *   - DCS: entry and ESC \-termination stub
+ *   - C0 controls.
+ *   - ESC sequences (with and without intermediates).
+ *   - CSI: params, defaults, prefix markers, sub-params, intermediates.
+ *   - OSC: BEL-terminated, ESC \-terminated, truncation.
+ *   - DCS: entry and ESC \-termination stub.
  *   - UTF-8: 2-byte, 3-byte, 4-byte (→ U+FFFD), split feeds,
- *             stray continuation, interrupted by ESC, invalid lead
+ *             stray continuation, interrupted by ESC, invalid lead.
  *   - GROUND fast-path run scanner: multi-flush, exact-64 boundary, runs
- *             interrupted by ESC/UTF-8/DEL/C1, CR/LF-separated runs
- *   - State recovery: ESC interrupts CSI, 0x18/0x1A reset to ground
+ *             interrupted by ESC/UTF-8/DEL/C1, CR/LF-separated runs.
+ *   - State recovery: ESC interrupts CSI, 0x18/0x1A reset to ground.
  */
 
 #include "unity.h"
@@ -52,11 +52,11 @@ static vtparse_t      g_parser;
 static recorded_event_t g_events[MAX_EVENTS];
 static int            g_event_count;
 
-/* Separate storage for OSC data (the parser's buffer is reused). */
+/* Separate storage for OSC data: the parser reuses its buffer. */
 static uint8_t        g_osc_store[MAX_EVENTS][VTP_OSC_MAX + 1];
 static int            g_osc_idx;
 
-/* Separate storage for PRINT span data (the parser's print_buf is reused). */
+/* Separate storage for PRINT span data: the parser reuses its print_buf. */
 static uint32_t       g_print_store[MAX_EVENTS][VTP_PRINT_BUF];
 static int            g_print_idx;
 
@@ -256,7 +256,8 @@ void test_esc_7_8(void)
 
 void test_esc_eq_gt(void)
 {
-    /* ESC = DECKPAM, ESC > DECKPNM */
+    /* ESC '=' selects DECKPAM (application keypad); ESC '>' selects DECKPNM
+     * (numeric keypad). */
     uint8_t bs[] = { 0x1B, '=', 0x1B, '>' };
     feed_bytes(bs, 4);
     TEST_ASSERT_EQUAL_INT(2, g_event_count);
@@ -400,7 +401,7 @@ void test_csi_truecolor_semicolons(void)
 
 void test_csi_max_params(void)
 {
-    /* 16 params — should all be captured */
+    /* The parser must capture all 16 params. */
     uint8_t bs[] = { 0x1B, '[',
         '1',';','2',';','3',';','4',';','5',';','6',';','7',';','8',';',
         '9',';','1','0',';','1','1',';','1','2',';','1','3',';','1','4',
@@ -413,7 +414,8 @@ void test_csi_max_params(void)
 
 void test_csi_malformed_second_private_marker(void)
 {
-    /* ESC [ ? 2 ? h — second '?' after digits is malformed → no dispatch */
+    /* ESC [ ? 2 ? h: a second '?' after digits breaks the sequence, so the
+     * parser does not dispatch. */
     uint8_t bs[] = { 0x1B, '[', '?', '2', '?', 'h' };
     feed_bytes(bs, 6);
     TEST_ASSERT_EQUAL_INT(0, g_event_count);
@@ -533,7 +535,7 @@ void test_dcs_no_crash_on_data(void)
 
 void test_utf8_2byte(void)
 {
-    /* é = U+00E9 → 0xC3 0xA9 */
+    /* é encodes as U+00E9, emitted as UTF-8 bytes 0xC3 0xA9. */
     uint8_t bs[] = { 0xC3, 0xA9 };
     feed_bytes(bs, 2);
     TEST_ASSERT_EQUAL_INT(1, g_event_count);
@@ -554,7 +556,7 @@ void test_utf8_3byte(void)
 
 void test_utf8_4byte_replaced_with_fffd(void)
 {
-    /* 😀 = U+1F600 → SMP, unsupported font → U+FFFD */
+    /* U+1F600 (an SMP emoji) with an unsupported font falls back to U+FFFD. */
     uint8_t bs[] = { 0xF0, 0x9F, 0x98, 0x80 };
     feed_bytes(bs, 4);
     TEST_ASSERT_EQUAL_INT(1, g_event_count);
@@ -663,7 +665,7 @@ void test_utf8_mixed_ascii_and_multibyte(void)
 void test_utf8_state_persists_across_writes(void)
 {
     /* Feed a 3-byte sequence byte-by-byte via separate vtparse_feed calls. */
-    /* Я = U+042F → 0xD0 0xAF */
+    /* Я encodes as U+042F, emitted as UTF-8 bytes 0xD0 0xAF. */
     uint8_t b0[] = { 0xD0 };
     uint8_t b1[] = { 0xAF };
     vtparse_feed(&g_parser, b0, 1);
@@ -681,7 +683,7 @@ void test_utf8_state_persists_across_writes(void)
 void test_fastpath_run_multi_flush(void)
 {
     /* 100 printable bytes in one feed: buffer fills at 64 and flushes
-     * mid-run, then the trailing flush emits the remaining 36 as a second
+     * mid-run. The trailing flush emits the remaining 36 as a second
      * span. */
     uint8_t bs[100];
     for (int i = 0; i < 100; i++)
@@ -732,8 +734,8 @@ void test_fastpath_interrupted_by_esc(void)
 
 void test_fastpath_interrupted_by_utf8(void)
 {
-    /* Run, UTF-8 lead+continuation, run: all in one span, since no flush
-     * boundary is crossed (mirrors test_utf8_mixed_ascii_and_multibyte). */
+    /* Run, UTF-8 lead+continuation, run: all land in one span, since nothing
+     * crosses a flush boundary (mirrors test_utf8_mixed_ascii_and_multibyte). */
     uint8_t bs[] = { 'A','A','A', 0xC3,0xA9, 'B','B','B' };
     feed_bytes(bs, sizeof(bs));
     TEST_ASSERT_EQUAL_INT(1, g_event_count);
@@ -749,9 +751,9 @@ void test_fastpath_interrupted_by_utf8(void)
 
 void test_fastpath_interrupted_by_del(void)
 {
-    /* DEL breaks the scan but is itself silently dropped — no flush, so
-     * bytes on either side land in the same span (matches per-byte
-     * st_ground, which does not flush on 0x7F). */
+    /* DEL breaks the scan but is itself silently dropped. No flush happens,
+     * so bytes on either side land in the same span. This matches per-byte
+     * st_ground, which does not flush on 0x7F. */
     uint8_t bs[] = { 'A','A','A', 0x7F, 'B','B','B' };
     feed_bytes(bs, sizeof(bs));
     TEST_ASSERT_EQUAL_INT(1, g_event_count);
@@ -854,10 +856,10 @@ void test_0x1a_resets_to_ground(void)
 void test_csi_ignore_returns_to_ground(void)
 {
     /* Malformed CSI should not leave parser stuck.  Next sequence works. */
-    uint8_t bs[] = { 0x1B, '[', '1', '?', 'h',  /* malformed → CSI_IGNORE */
-                     0x1B, '[', '2', 'J' };       /* valid ED2 */
+    uint8_t bs[] = { 0x1B, '[', '1', '?', 'h',
+                     0x1B, '[', '2', 'J' };
     feed_bytes(bs, sizeof(bs));
-    TEST_ASSERT_EQUAL_INT(1, g_event_count);  /* only the valid one */
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
     TEST_ASSERT_EQUAL_UINT8('J', g_events[0].as_csi.final);
     TEST_ASSERT_EQUAL_INT32(2,   g_events[0].as_csi.params[0]);
 }
@@ -865,10 +867,10 @@ void test_csi_ignore_returns_to_ground(void)
 void test_sos_pm_apc_ignored_until_st(void)
 {
     /* SOS string content must not produce events; text after ST does. */
-    uint8_t bs[] = { 0x1B, 'X',            /* SOS */
-                     'j','u','n','k',       /* ignored */
-                     0x1B, '\\',            /* ST */
-                     'Z' };                 /* printable in GROUND */
+    uint8_t bs[] = { 0x1B, 'X',
+                     'j','u','n','k',
+                     0x1B, '\\',
+                     'Z' };
     feed_bytes(bs, sizeof(bs));
     TEST_ASSERT_EQUAL_INT(1, g_event_count);
     TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[0].type);
@@ -891,7 +893,6 @@ int main(void)
     RUN_TEST(test_c0_so_si);
     RUN_TEST(test_del_ignored);
 
-    /* Printable ASCII */
     RUN_TEST(test_printable_ascii);
 
     /* ESC sequences */

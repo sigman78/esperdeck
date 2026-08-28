@@ -1,6 +1,6 @@
 /*
- * splash.h — boot splash (ANSI color test card). Only compiled and shown
- * when CONFIG_CYBERDECK_BOOT_SPLASH is enabled.
+ * splash.h — boot splash (ANSI color test card). The build includes and
+ * shows this only when CONFIG_CYBERDECK_BOOT_SPLASH turns it on.
  */
 
 #pragma once

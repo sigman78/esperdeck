@@ -2,7 +2,7 @@
  * BLE HID keyboard — public API
  *
  * Exposes the 5-state connection lifecycle and pairing primitives.
- * The backend is driven by esp_hidh and Bluedroid GAP callbacks.
+ * esp_hidh and Bluedroid GAP callbacks drive the backend.
  * Call ble_keyboard_backend_init() (via input_hal_init()) to start.
  */
 
@@ -36,8 +36,8 @@ const char *ble_keyboard_get_connected_name(void);
 
 /**
  * Switch to BLE_PAIRING_SCAN mode.
- * Can be called from any state. Disconnects an active connection first.
- * Clears the scan results buffer.
+ * Call this from any state; it disconnects an active connection first
+ * and clears the scan results buffer.
  */
 void ble_keyboard_enter_pairing(void);
 

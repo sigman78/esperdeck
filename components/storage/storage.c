@@ -28,10 +28,6 @@
 
 static const char *TAG = "storage";
 
-/* -------------------------------------------------------------------------
- * Internal path helpers
- * ---------------------------------------------------------------------- */
-
 static void profiles_path(char *buf, size_t bufsz)
 {
     snprintf(buf, bufsz, "%s/profiles.ini", storage_platform_mount_point());
@@ -52,10 +48,6 @@ bool storage_key_id_ok(const char *key_id)
     if (strlen(key_id) >= STORAGE_KEY_ID_LEN) return false;
     return strpbrk(key_id, "/\\:") == NULL;
 }
-
-/* -------------------------------------------------------------------------
- * INI parse helpers
- * ---------------------------------------------------------------------- */
 
 /* Remove trailing \r, \n, space in place */
 static void rtrim(char *s)
@@ -95,10 +87,7 @@ static int parse_kv(const char *line, char *key, size_t keysz,
     return 1;
 }
 
-/* -------------------------------------------------------------------------
- * Atomic file replace (public — see storage_kv.h)
- * ---------------------------------------------------------------------- */
-
+/* Atomic file replace; declared for other modules in storage_kv.h. */
 FILE *storage_atomic_open(storage_atomic_file_t *af, const char *path)
 {
     af->f = NULL;
@@ -124,10 +113,10 @@ esp_err_t storage_atomic_close(storage_atomic_file_t *af)
         remove(af->tmp);
         return ESP_FAIL;
     }
-    /* Try an atomic replace first: on LittleFS rename() clobbers the
-     * destination in one operation, so the old file is never absent (no
-     * power-loss window that could lose known_hosts.ini). Only if rename()
-     * refuses to overwrite (Windows/sim) do we remove-then-rename. */
+    /* Try an atomic replace first. On LittleFS, rename() clobbers the
+     * destination in one step. The old file is never absent, so there is
+     * no power-loss window that could lose known_hosts.ini. Only if
+     * rename() refuses to overwrite (Windows/sim) do we remove-then-rename. */
     if (rename(af->tmp, af->dst) == 0)
         return ESP_OK;
     remove(af->dst);
@@ -139,10 +128,6 @@ esp_err_t storage_atomic_close(storage_atomic_file_t *af)
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * Lifecycle
- * ---------------------------------------------------------------------- */
-
 esp_err_t storage_init(void)
 {
     esp_err_t ret = storage_platform_init();
@@ -153,10 +138,6 @@ esp_err_t storage_init(void)
     ESP_LOGI(TAG, "Storage ready at '%s'", storage_platform_mount_point());
     return ESP_OK;
 }
-
-/* -------------------------------------------------------------------------
- * Profile load
- * ---------------------------------------------------------------------- */
 
 esp_err_t storage_load_profiles(conn_profile_t *out, int *count, int max)
 {
@@ -244,10 +225,6 @@ esp_err_t storage_load_profiles(conn_profile_t *out, int *count, int max)
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * Profile save
- * ---------------------------------------------------------------------- */
-
 esp_err_t storage_profiles_write_raw(const conn_profile_t *profiles, int count)
 {
     if (!profiles && count > 0) return ESP_ERR_INVALID_ARG;
@@ -291,8 +268,8 @@ storage_cred_scratch_t *storage_cred_scratch(void)
 }
 
 /* The save-layer's OWN staging union — deliberately separate from
- * storage_cred_scratch(): the diverting saves below are called with that
- * buffer as their SOURCE (adoption, restore, migration). */
+ * storage_cred_scratch(): the diverting saves below use that buffer as
+ * their SOURCE (adoption, restore, migration). */
 static union {
     conn_profile_t profiles[STORAGE_MAX_PROFILES];
     wifi_profile_t nets[STORAGE_WIFI_MAX];
@@ -301,10 +278,10 @@ static union {
 esp_err_t storage_save_profiles(const conn_profile_t *profiles, int count)
 {
     /* Secrets-under-MK: with an UNLOCKED store, passwords divert into the
-     * wrapped bundle and the ini keeps metadata only; stale bundle entries
-     * (deleted/renamed profiles) are pruned against the saved list. With
-     * the store locked or absent, plaintext is written as before and
-     * adopted at the next unlock (ks_adopt_secrets). */
+     * wrapped bundle, and the ini keeps metadata only. keystore_secrets_prune()
+     * then drops any stale bundle entry (a deleted or renamed profile) not
+     * in the saved list. With the store locked or absent, storage writes
+     * plaintext as before, and the next unlock adopts it (ks_adopt_secrets). */
     if (keystore_state() != KEYSTORE_UNLOCKED)
         return storage_profiles_write_raw(profiles, count);
 
@@ -333,15 +310,13 @@ esp_err_t storage_save_profiles(const conn_profile_t *profiles, int count)
     return e;
 }
 
-/* -------------------------------------------------------------------------
- * WiFi profiles — wifi.ini
+/* WiFi profiles — wifi.ini:
  *
  *   [net0]
  *   ssid=HomeAP
  *   password=secret
  *
- * Section names are labels only; file order = connect-preference order.
- * ---------------------------------------------------------------------- */
+ * Section names are labels only; file order = connect-preference order. */
 
 static void wifi_path(char *buf, size_t bufsz)
 {
@@ -502,10 +477,6 @@ bool storage_secrets_pending(void)
     return ini_has_plaintext_password(path);
 }
 
-/* -------------------------------------------------------------------------
- * Generic key=value settings — the storage_kv.h engine
- * ---------------------------------------------------------------------- */
-
 /* Numeric accept-range: explicit min/max, or the type width. */
 static void kv_range(const storage_kv_field_t *fd, uint32_t *lo, uint32_t *hi)
 {
@@ -638,8 +609,8 @@ esp_err_t storage_kv_save(const char *filename, const char *section,
     if (!section) {
         kv_write_fields(f, fields, obj);       /* flat: whole file is ours */
     } else {
-        /* Streamed RMW: foreign sections pass through verbatim, our
-         * section is regenerated in place (duplicates absorbed).
+        /* Streamed RMW: foreign sections pass through verbatim; the writer
+         * rebuilds our section in place (duplicates absorbed).
          * Single-writer. Overlong lines pass through opaquely — only a
          * whole line can be a header. */
         bool written = false, in_ours = false, in_long = false;
@@ -707,15 +678,14 @@ esp_err_t storage_reset_register(const char *filename)
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * Known SSH host keys — known_hosts.ini, flat "host:port=fp" lines
- * ---------------------------------------------------------------------- */
+/* Known SSH host keys: known_hosts.ini, flat "host:port=fp" lines. */
 
 #define KNOWN_HOSTS_MAX 16
 
-/* In-RAM copy of known_hosts.ini for read-modify-write. ~3.6 KB — heap, not
- * stack: known_host_set/delete are reachable from the 6 KB httpd worker task
- * (web profile manager), which a stack copy of this size would overflow. */
+/* In-RAM copy of known_hosts.ini for read-modify-write. ~3.6 KB: heap, not
+ * stack. known_host_set/delete are reachable from the 6 KB httpd worker
+ * task (web profile manager). A stack copy of this size would overflow
+ * that task. */
 typedef struct {
     char keys[KNOWN_HOSTS_MAX][96];
     char vals[KNOWN_HOSTS_MAX][128];
@@ -868,10 +838,6 @@ esp_err_t storage_known_host_delete(const char *host, uint16_t port)
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * Find profile by name
- * ---------------------------------------------------------------------- */
-
 const conn_profile_t *storage_find_profile(const conn_profile_t *profiles,
                                             int count,
                                             const char *name)
@@ -884,10 +850,6 @@ const conn_profile_t *storage_find_profile(const conn_profile_t *profiles,
     return NULL;
 }
 
-/* -------------------------------------------------------------------------
- * Key get
- * ---------------------------------------------------------------------- */
-
 esp_err_t storage_get_key(const char *key_id,
                            char       *buf,
                            size_t      buf_len,
@@ -897,8 +859,8 @@ esp_err_t storage_get_key(const char *key_id,
         return ESP_ERR_INVALID_ARG;
 
     /* Wrapped key takes precedence: keys/<id>.kw1 (see keystore.h). While
-     * the store is locked this reports ESP_ERR_INVALID_STATE so the caller
-     * can bounce to an unlock prompt instead of "key unreadable". */
+     * locked, the store reports ESP_ERR_INVALID_STATE so the caller can
+     * bounce to an unlock prompt instead of "key unreadable". */
     if (keystore_is_wrapped(key_id)) {
         size_t n = 0;
         uint8_t ctype = 0;
@@ -939,10 +901,6 @@ esp_err_t storage_get_key(const char *key_id,
     ESP_LOGI(TAG, "Read key '%s' (%zu bytes)", key_id, n);
     return ESP_OK;
 }
-
-/* -------------------------------------------------------------------------
- * Key set
- * ---------------------------------------------------------------------- */
 
 esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
 {
@@ -1018,10 +976,6 @@ esp_err_t storage_delete_key(const char *key_id)
     ESP_LOGI(TAG, "Deleted key '%s'", key_id);
     return ESP_OK;
 }
-
-/* -------------------------------------------------------------------------
- * Key enumeration + metadata
- * ---------------------------------------------------------------------- */
 
 static int cmp_key_id(const void *a, const void *b)
 {
@@ -1120,8 +1074,9 @@ esp_err_t storage_key_info(const char *key_id,
     FILE *f = fopen(path, "r");
     if (!f) return ESP_ERR_NOT_FOUND;
 
-    /* Heap, not stack (httpd task calls this), and big enough that a
-     * 4096-bit RSA base64 blob (~730 chars) can't swallow the comment. */
+    /* Heap, not stack: the httpd task calls this. The buffer is big enough
+     * that a 4096-bit RSA base64 blob (~730 chars) can't swallow the
+     * comment. */
     enum { PUB_LINE_MAX = 2048 };
     char *line = heap_caps_malloc(PUB_LINE_MAX,
                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -1147,10 +1102,6 @@ esp_err_t storage_key_info(const char *key_id,
     free(line);
     return ESP_OK;
 }
-
-/* -------------------------------------------------------------------------
- * Bulk removal
- * ---------------------------------------------------------------------- */
 
 esp_err_t storage_known_hosts_clear(void)
 {

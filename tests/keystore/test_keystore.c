@@ -23,9 +23,7 @@
 #define MKDIR(p) mkdir((p), 0755)
 #endif
 
-/* ------------------------------------------------------------------
- * storage platform seam — throwaway directory, no walk-up magic
- * ---------------------------------------------------------------- */
+/* Test storage platform seam: a throwaway directory, no walk-up discovery. */
 
 #define TEST_MOUNT "ks_test_storage"
 
@@ -37,10 +35,6 @@ esp_err_t storage_platform_init(void)
     MKDIR(TEST_MOUNT "/keys");
     return ESP_OK;
 }
-
-/* ------------------------------------------------------------------
- * File helpers
- * ---------------------------------------------------------------- */
 
 static long file_size(const char *path)
 {
@@ -99,18 +93,12 @@ static const char TEST_PEM[] =
     "QyNTUxOQAAACBOTA5ISCJNU1FURVNUS0VZTk9UUkVBTNOTFAKEDATAAAA\n"
     "-----END OPENSSH PRIVATE KEY-----\n";
 
-/* ------------------------------------------------------------------ */
-
 void setUp(void)
 {
     storage_factory_reset();   /* removes keystore.kv1 + keys/*, wipes MK */
 }
 
 void tearDown(void) {}
-
-/* ------------------------------------------------------------------
- * Store lifecycle
- * ---------------------------------------------------------------- */
 
 static void test_absent_store_is_feature_off(void)
 {
@@ -182,10 +170,6 @@ static void test_corrupt_header_distinguished_from_wrong_pin(void)
     flip_byte(KV1, 0);                     /* magic */
     TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_CRC, keystore_unlock("1234"));
 }
-
-/* ------------------------------------------------------------------
- * Wrap / unwrap
- * ---------------------------------------------------------------- */
 
 static void test_wrap_unwrap_roundtrip_binary(void)
 {
@@ -287,10 +271,6 @@ static void test_cross_store_transplant_rejected(void)
         keystore_unwrap("k", out, sizeof(out), &n, NULL));
 }
 
-/* ------------------------------------------------------------------
- * PIN change
- * ---------------------------------------------------------------- */
-
 static void test_change_pin_rewraps_slot_only(void)
 {
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));
@@ -308,7 +288,7 @@ static void test_change_pin_rewraps_slot_only(void)
     /* change_pin on a locked store must not leave it unlocked */
     TEST_ASSERT_EQUAL_INT(KEYSTORE_LOCKED, keystore_state());
 
-    /* Key file untouched — only the 100 B slot was rewrapped */
+    /* keystore_change_pin rewraps only the 100 B slot; the key file stays untouched. */
     static unsigned char after[8192];
     size_t after_len = 0;
     TEST_ASSERT_EQUAL_INT(0,
@@ -341,10 +321,6 @@ static void test_pin_len_hint_for_autosubmit(void)
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_change_pin("567890", "open sesame"));
     TEST_ASSERT_EQUAL_INT(0, keystore_pin_len());
 }
-
-/* ------------------------------------------------------------------
- * Adoption + storage integration
- * ---------------------------------------------------------------- */
 
 static void test_adopt_plaintext_on_unlock(void)
 {
@@ -431,10 +407,6 @@ static void test_factory_reset_removes_store(void)
     TEST_ASSERT_EQUAL_INT(0, count);
 }
 
-/* ------------------------------------------------------------------
- * Remove (decommission back to plaintext)
- * ---------------------------------------------------------------- */
-
 static void test_remove_restores_plaintext(void)
 {
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));
@@ -488,10 +460,6 @@ static void test_remove_requires_code_even_when_unlocked(void)
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_remove("1234"));
     TEST_ASSERT_EQUAL_INT(KEYSTORE_ABSENT, keystore_state());
 }
-
-/* ------------------------------------------------------------------
- * Secrets bundle
- * ---------------------------------------------------------------- */
 
 static void test_secrets_roundtrip(void)
 {
@@ -713,7 +681,7 @@ static void test_secrets_prune_and_list_exclusion(void)
     for (int i = 0; i < count; i++)
         TEST_ASSERT_TRUE(strcmp(ids[i], "secrets") != 0);
 
-    /* Re-save without "gone": its secret is pruned, "keep" survives */
+    /* storage_save_profiles drops the "gone" secret on resave; "keep" survives. */
     TEST_ASSERT_EQUAL_INT(ESP_OK, storage_save_profiles(p, 1));
     char val[64];
     TEST_ASSERT_EQUAL_INT(ESP_OK,
@@ -722,10 +690,6 @@ static void test_secrets_prune_and_list_exclusion(void)
     TEST_ASSERT_EQUAL_INT(ESP_ERR_NOT_FOUND,
         keystore_secret_get("profile:gone", val, sizeof(val)));
 }
-
-/* ------------------------------------------------------------------
- * Failed-attempt backoff
- * ---------------------------------------------------------------- */
 
 static uint64_t s_fake_ms;
 static uint64_t fake_uptime(void) { return s_fake_ms; }
@@ -817,7 +781,7 @@ static void test_key_id_path_traversal_rejected(void)
                               storage_key_info(EVIL[i], NULL, 0, NULL, 0));
         TEST_ASSERT_FALSE(keystore_is_wrapped(EVIL[i]));
     }
-    /* An over-long id is rejected too (it would truncate into a collision) */
+    /* storage_set_key rejects an over-long id too; letting it through would truncate to a colliding id. */
     char toolong[STORAGE_KEY_ID_LEN + 8];
     memset(toolong, 'k', sizeof(toolong) - 1);
     toolong[sizeof(toolong) - 1] = '\0';
@@ -831,10 +795,10 @@ static void test_key_id_path_traversal_rejected(void)
     TEST_ASSERT_EQUAL_UINT(3, got);
 }
 
-/* A set that cannot fit must leave the cache EXACTLY as it found it. The
- * first cut of this function cut the old entry before discovering the new
- * one didn't fit, so the cache silently lost a line the file still had —
- * and the next successful set wrote that loss through to flash. */
+/* A failed set must leave the cache exactly as it found it.
+ * Cutting the old entry before checking whether the new value fits
+ * would silently lose that line. The next successful set would then
+ * write the loss through to flash. */
 static void test_secret_set_overflow_leaves_cache_intact(void)
 {
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));
@@ -850,24 +814,22 @@ static void test_secret_set_overflow_leaves_cache_intact(void)
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_secret_set("pad3", big));
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_secret_set("victim", "keepme"));
 
-    /* Replacing "victim" with something far too large must fail cleanly:
-     * the six bytes it frees nowhere near cover the 512 it wants. */
+    /* Replacing "victim" with something too large must fail cleanly.
+     * The six bytes it frees can't cover the 512 bytes it wants. */
     TEST_ASSERT_EQUAL_INT(ESP_ERR_NO_MEM, keystore_secret_set("victim", big));
 
     char out[64];
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_secret_get("victim", out, sizeof(out)));
     TEST_ASSERT_EQUAL_STRING("keepme", out);
 
-    /* The real damage was deferred: a LATER successful set persists the
-     * cache, so victim has to survive a store + reload round trip. */
+    /* The damage surfaces later: a LATER successful set persists the cache.
+     * Victim must survive a store-and-reload round trip. */
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_secret_set("pad3", NULL)); /* remove */
     keystore_lock();
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_unlock("1234"));
     TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_secret_get("victim", out, sizeof(out)));
     TEST_ASSERT_EQUAL_STRING("keepme", out);
 }
-
-/* ------------------------------------------------------------------ */
 
 int main(void)
 {

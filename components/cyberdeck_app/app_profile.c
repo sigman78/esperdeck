@@ -17,14 +17,15 @@
 #include "esp_heap_caps.h"   /* key-id list lives in SPIRAM */
 
 static struct {
-    conn_profile_t draft;           /* profile being entered            */
+    conn_profile_t draft;           /* the profile the user is entering */
     char     port[6];               /* port as text (parsed on save)    */
     int      field;                 /* focused field (pf_field_t)       */
     int      cursor;                /* caret within the focused field   */
     char     err[40];               /* inline validation error, "" = ok */
-    int      edit_idx;              /* stored index being edited, -1 = new */
-    char     orig_name[32];         /* name at edit entry (slot re-found
-                                     * by name at save time)            */
+    int      edit_idx;              /* index the user is editing, -1 = new */
+    /* orig_name holds the name at edit entry. save() re-finds the slot
+     * by name, since profiles may reorder meanwhile. */
+    char     orig_name[32];
     char   (*keys)[STORAGE_KEY_ID_LEN];  /* SPIRAM, PF_KEY_MAX entries  */
     int      nkeys;
     int      key_sel;               /* index into keys, -1 = none       */
@@ -99,8 +100,9 @@ static void pf_load_keys(void)
     if (s_pf.keys)
         storage_list_keys(s_pf.keys, PF_KEY_MAX, &s_pf.nkeys);
 
-    /* Preselect the draft's key when editing; a draft without one starts on
-     * the first stored key (adopted only when auth is toggled to key). */
+    /* Preselect the draft's key when editing. A draft without one starts
+     * on the first stored key. It adopts that key only if the user
+     * switches auth to key. */
     s_pf.key_sel = -1;
     for (int i = 0; i < s_pf.nkeys; i++)
         if (strcmp(s_pf.keys[i], s_pf.draft.key_id) == 0) {
@@ -134,9 +136,10 @@ static void pf_key_cycle(int dir)
     pf_key_refresh_info();
 }
 
-/* Form geometry — derived from the grid so the editor fits 100x30 down to
- * 66x20: wide grids center the form, narrow ones hug the left edge and drop
- * to single-row field spacing. The touch hit-test shares these. */
+/* Form geometry derives from the grid, so the editor fits sizes from
+ * 100x30 down to 66x20. Wide grids center the form. Narrow ones hug
+ * the left edge and drop to single-row field spacing. The touch
+ * hit-test shares these values. */
 static int pf_x0(void)   { return ui_cols() >= 97 ? 26 : 2; }   /* form left  */
 static int pf_fx(void)   { return pf_x0() + 8; }                /* field left */
 static int pf_fw(void)   { int w = ui_cols() - pf_fx() - 2;     /* field width */
@@ -241,14 +244,14 @@ void enter_profile(uint64_t now, int edit_idx)
     nav_push(SCR_PROFILE, edit_idx, now);
 }
 
-/* Validate the draft and persist it: append for a new profile, replace the
- * original (found by its entry-time name) for an edit. Returns "" on success
- * or a short reason to show inline on failure. */
+/* Validate the draft and persist it. Append for a new profile; replace
+ * the original (found by its entry-time name) for an edit. Returns ""
+ * on success or a short reason to show inline on failure. */
 static const char *profile_commit(void)
 {
     if (s_pf.draft.name[0] == '\0') return "name required";
-    /* A '[' or ']' in the name breaks the INI section header on save and
-     * silently corrupts the file on reload. Reject them. */
+    /* A '[' or ']' in the name breaks the INI section header on save. It
+     * also silently corrupts the file on reload. Reject them. */
     if (strpbrk(s_pf.draft.name, "[]")) return "name: no [ or ]";
     if (s_pf.draft.host[0] == '\0') return "host required";
     if (s_pf.draft.user[0] == '\0') return "user required";
@@ -268,7 +271,7 @@ static const char *profile_commit(void)
     int n = 0;
     if (storage_load_profiles(set, &n, MAX_PROFILES - 1) != ESP_OK) n = 0;
 
-    int slot = -1;                        /* slot being replaced (edit) */
+    int slot = -1;                        /* slot to overwrite, when editing */
     if (s_pf.edit_idx >= 0) {
         for (int i = 0; i < n; i++)
             if (strcmp(set[i].name, s_pf.orig_name) == 0) { slot = i; break; }
@@ -327,7 +330,7 @@ static void pf_focus_step(int dir)
     pf_focus(f);
 }
 
-/* Leave the editor: the stack knows where it was opened from. */
+/* Leave the editor: the stack remembers where the caller opened it from. */
 static void exit_profile(uint64_t now, bool saved)
 {
     nav_pop(now);
@@ -385,7 +388,7 @@ static void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
         case K_RIGHT: pf_focus(PF_CANCEL); nav_invalidate(); break;
         case K_UP:                              /* backward through ring */
             pf_focus_step(-1); nav_invalidate(); break;
-        case K_DOWN: case K_TAB:                /* forward (Cancel wraps) */
+        case K_DOWN: case K_TAB:                /* forward, wraps past Cancel */
             pf_focus_step(+1); nav_invalidate(); break;
         case K_ENTER:
             if (s_pf.field == PF_CANCEL) { exit_profile(now, false); break; }

@@ -1,7 +1,7 @@
 /*
  * display_sdl.c — SDL2 backend for the PC simulator: same display.h API as
  * lcd_driver.c, all pixel rendering delegated to display_render_chunk.
- * Compiled only when BUILD_SIMULATOR is defined.
+ * This file builds only under BUILD_SIMULATOR.
  */
 
 #ifdef BUILD_SIMULATOR
@@ -95,8 +95,8 @@ void display_render_frame(void)
     SDL_RenderPresent(s_renderer);
 }
 
-/* Render the current frame into a scratch buffer (same chunk renderer the
- * window path uses) and write it as a bottom-up 24-bit BMP. */
+/* Render the current frame into a scratch buffer, using the same chunk
+ * renderer as the window path. Write it out as a bottom-up 24-bit BMP. */
 esp_err_t display_screenshot_bmp(const char *path)
 {
     const int W = DISPLAY_WIDTH, H = DISPLAY_HEIGHT;
@@ -154,8 +154,9 @@ void display_toggle_scale(void)
 
 void display_window_to_fb(int wx, int wy, uint16_t *fx, uint16_t *fy)
 {
-    /* RenderCopy stretches the texture over the whole window (NULL dst rect),
-     * so the mapping is a straight rescale by the current window size. */
+    /* RenderCopy stretches the texture over the whole window (NULL dst rect).
+     * The mapping is therefore a straight rescale by the current window
+     * size. */
     int win_w = DISPLAY_WIDTH, win_h = DISPLAY_HEIGHT;
     SDL_GetWindowSize(s_window, &win_w, &win_h);
     if (win_w <= 0) win_w = DISPLAY_WIDTH;

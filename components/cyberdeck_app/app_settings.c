@@ -55,14 +55,13 @@ void app_settings_register_reset(void)
     storage_reset_register(cyberdeck_settings_ini);
 }
 
-/* ------------------------------------------------------ settings model */
-
 enum { DIRTY_FX = 1 << 0, DIRTY_SAVER = 1 << 1, DIRTY_TOUCH = 1 << 2 };
 static uint8_t s_dirty, s_hold;
 
-/* fx presets — one ordered table per tunable: labels for the UI, index()
- * snapping the live cfg to a preset, apply() writing the (possibly
- * composite) fields. Times are label'd from the fixed preset frames. */
+/* fx presets use one ordered table per tunable. The table carries UI
+ * labels. index() snaps the live cfg to a preset. apply() writes the
+ * (possibly composite) fields. The fixed preset frames supply the
+ * time labels. */
 
 typedef struct {
     const char *const *labels;
@@ -179,7 +178,8 @@ const char *app_settings_fx_label(app_fx_tunable_t t, int idx)
 }
 
 /* Apply preset @p idx live; the [fx] write stays deferred. An enabled
- * event effect gets a one-shot preview so the change is seen at once. */
+ * event effect gets a one-shot preview, so the user sees the change
+ * at once. */
 void app_settings_fx_set(app_fx_tunable_t t, int idx)
 {
     if ((unsigned)t >= (unsigned)NELEM(FX_PRESETS)) return;

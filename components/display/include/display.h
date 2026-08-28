@@ -21,9 +21,9 @@
 /*
  * Bounce band: one character row at 8x16, HALF a row for taller fonts —
  * full 20/24-scanline bounce buffers would cost up to +25.6 KB of scarce
- * internal DMA RAM. Runtime because the font size is chosen at boot, but
- * fixed after: esp_lcd captures the geometry at panel init (size changes
- * need a reboot).
+ * internal DMA RAM. Boot picks the font size, so the band height is a
+ * runtime value. esp_lcd then fixes the geometry at panel init; changing
+ * size needs a reboot.
  */
 int display_band_height(void);   /* scanlines in one bounce band */
 int display_bounce_px(void);     /* DISPLAY_WIDTH * display_band_height() */
@@ -32,8 +32,8 @@ int display_bounce_px(void);     /* DISPLAY_WIDTH * display_band_height() */
  * BEFORE the panel comes up. Rejects a size that would not tile the panel. */
 void display_render_set_font(int width, int height);
 
-/* Upper bound over every selectable size — sizes static allocations made
- * before the font is known. */
+/* Upper bound over every selectable size. Static allocations use it
+ * before the boot sequence picks the font. */
 #define BOUNCE_BUFFER_MAX_PX  (DISPLAY_WIDTH * FONT_MAX_BAND)
 
 /* Character grid implied by the panel and the ACTIVE font.
@@ -107,10 +107,10 @@ esp_lcd_panel_handle_t display_get_panel(void);
  * display_set_overlay_colors().
  *   INVERSE  swaps fg/bg per cell (solid bars, selection).
  *   DIM      on a transparent cell = scrim: the terminal shows through at
- *            ~50% brightness (modal backdrop). On an opaque cell = the
- *            muted variant: an INVERSE bar drops to the darker bar
- *            palette (value wells, ui-spec), text renders its accent at
- *            half brightness (inactive indicators).
+ *            ~50% brightness (modal backdrop). On an opaque cell, DIM
+ *            selects the muted variant. An INVERSE bar drops to the
+ *            darker bar palette (value wells, ui-spec). Text renders its
+ *            accent at half brightness (inactive indicators).
  *   BRIGHT   focus wash: bg 50% toward white — a focused bar turns pastel.
  *   BOLD     use the real bold face; falls back to the normal glyph when
  *            no bold form exists. Pure glyph swap, colors untouched.
@@ -158,7 +158,9 @@ void display_bell(void);
 void display_set_text_buffer(const terminal_cell_t *buf, int cols, int rows);
 
 /**
- * Set backlight brightness (0-100%)
+ * Set backlight brightness (0-100).
+ * Not implemented: the driver ignores brightness and always leaves the
+ * backlight fully on. lcd_driver.c has the pending PWM implementation.
  */
 esp_err_t display_set_backlight(uint8_t brightness);
 
@@ -171,8 +173,8 @@ void display_set_cursor(int x, int y, cursor_mode_t mode);
 /**
  * Drain (read, do not reset) the render-ISR per-chunk cycle bench.
  * avg_cycles/max_cycles cover the samples since the last reset; chunks is
- * the sample count. All zero when CONFIG_DISPLAY_ISR_BENCH is disabled.
- * Safe to call from any task — internal SRAM is uncached on the S3.
+ * the sample count. All zero when CONFIG_DISPLAY_ISR_BENCH is off.
+ * Safe to call from any task: internal SRAM has no cache on the S3.
  */
 void display_render_bench_get(uint32_t *avg_cycles, uint32_t *max_cycles, uint32_t *chunks);
 
@@ -186,8 +188,10 @@ void display_render_frame(void);
 /** Toggle the SDL2 window between 1× and 2× scale. */
 void display_toggle_scale(void);
 
-/** Map window coordinates (SDL mouse) to framebuffer coordinates — the
- *  texture is stretched to the window size; results are clamped. */
+/** Map window coordinates (SDL mouse) to framebuffer coordinates.
+ *  SDL_RenderCopy stretches the display texture to fill the window. This
+ *  function reverses that with a straight rescale, then clamps the result
+ *  to the framebuffer. */
 void display_window_to_fb(int wx, int wy, uint16_t *fx, uint16_t *fy);
 
 /** Render the current frame off-screen and write it as a 24-bit BMP —

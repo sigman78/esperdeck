@@ -63,13 +63,10 @@ esp_err_t storage_platform_init(void)
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * BLE device registry — NVS persistence
- *
- * Kept in NVS (not the LittleFS partition) so it lives next to the NimBLE
- * bond it pairs with: reflashing the storage/littlefs image no longer orphans
- * a paired keyboard, and "Forget bonds" clears both together.
- * ---------------------------------------------------------------------- */
+/* BLE device registry: NVS persistence. Kept in NVS, not the LittleFS
+ * partition, so it lives next to the NimBLE bond it pairs with. Reflashing
+ * the storage/littlefs image no longer orphans a paired keyboard. "Forget
+ * bonds" clears both together. */
 
 #define BLE_NS    "ble_reg"
 #define BLE_LIST  "list"

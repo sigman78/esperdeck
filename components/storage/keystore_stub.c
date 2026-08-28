@@ -1,8 +1,9 @@
 /*
  * keystore_stub.c — inert stand-in for the secure store (keystore.c).
  *
- * Compiled when CONFIG_CYBERDECK_KEYSTORE is disabled or when the vault
- * implementation is absent from the tree (closed-source builds strip it).
+ * This file compiles when CONFIG_CYBERDECK_KEYSTORE turns off the vault.
+ * It also compiles when the vault implementation is absent from the tree
+ * (closed-source builds strip it).
  * Every answer is the ABSENT-store answer, which the rest of the firmware
  * already treats as "feature off, plaintext behavior" — no caller needs a
  * single #ifdef. keystore_wipe stays real: open code uses it to scrub
@@ -65,8 +66,8 @@ esp_err_t keystore_remove(const char *pin)
 
 void keystore_wipe(void *buf, size_t len)
 {
-    /* Real scrubbing even without the vault: volatile so the store
-     * cannot be elided as dead. */
+    /* Real scrubbing even without the vault: volatile keeps the compiler
+     * from eliding the store as dead. */
     volatile unsigned char *p = (volatile unsigned char *)buf;
     if (!p) return;
     while (len--) *p++ = 0;

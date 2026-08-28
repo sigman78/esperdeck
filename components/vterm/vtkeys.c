@@ -10,7 +10,7 @@
  *                   modified:   ESC [ n ; m ~
  *
  * where m = 1 + modifier mask. Note the asymmetry that makes modified keys
- * work at all: a modified arrow is ALWAYS CSI, never SS3, because SS3 has
+ * work at all. A modified arrow is always CSI, never SS3, because SS3 has
  * no room for parameters.
  */
 
@@ -142,8 +142,8 @@ size_t vtkeys_encode(vtkey_t key, uint8_t mods, bool app_cursor,
             tmp[n++] = d->code;
         }
     } else {
-        /* Modified: CSI for every family. The letter family borrows the
-         * unused "1" first parameter purely as a slot to hang ;m on. */
+        /* With a modifier, every family uses CSI. The letter family
+         * borrows the unused "1" first parameter as a slot to hang ;m on. */
         tmp[n++] = '[';
         n += put_num(tmp + n, d->kind == K_TILDE ? d->code : 1);
         tmp[n++] = ';';

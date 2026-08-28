@@ -2,11 +2,11 @@
  * app_nav.h — screen table + navigation stack (internal to the shell).
  *
  * Screens are hook tables in one compile-time, id-indexed table
- * (SCREENS[], cyberdeck_app.c); navigation is a small
- * stack of (screen, arg) entries, so "back" is nav_pop instead of a
- * bespoke destination per screen. The shell owns the frame:
- * clear → render(now) → [chrome, item 4] → present, once per tick and
- * only when something invalidated — screens never clear or present.
+ * (SCREENS[], cyberdeck_app.c). Navigation is a small stack of (screen,
+ * arg) entries. "Back" is therefore nav_pop, not a bespoke destination
+ * per screen. The shell owns the frame: clear → render(now) → [chrome,
+ * item 4] → present, once per tick. It renders only when something
+ * invalidated; screens never clear or present.
  * (docs/extensibility.md item 2; the design half is docs/ui-spec.md.)
  */
 
@@ -43,9 +43,10 @@ typedef struct {
 bool nav_init(const nav_screen_t *const *screens, int count);
 
 /* Stack ops. Every op exits the departing screen, enters/resumes the
- * arriving one, and invalidates. The bottom entry never pops. False means
- * invalid id, stack full, a push of a screen already on the stack
- * (per-screen state is single-instance), or a pop at the bottom. */
+ * arriving one, and invalidates. The bottom entry never pops. False
+ * means an invalid id, a full stack, or a pop at the bottom. It also
+ * means a push of a screen already on the stack, since per-screen
+ * state is single-instance. */
 bool nav_push(int id, intptr_t arg, uint64_t now);
 bool nav_replace(int id, intptr_t arg, uint64_t now);  /* swap the top  */
 bool nav_reset(int id, intptr_t arg, uint64_t now);    /* whole stack   */

@@ -154,8 +154,8 @@ static void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
             } else if (s_hostkey.armed && s_hostkey.arm_src == 1) {
                 hostkey_trust_and_connect(now);  /* 2nd tap fires */
             } else {
-                /* Arming is modality-matched: a tap can only be fired by a
-                 * second TAP — an accidental tap + habitual Enter can't re-pin. */
+                /* Arming is modality-matched: only a second TAP fires it.
+                 * An accidental tap plus habitual Enter can't re-pin. */
                 s_hostkey.armed   = true;
                 s_hostkey.arm_src = 1;
                 nav_invalidate();
@@ -184,7 +184,7 @@ static void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
             else            enter_home(now);
         }
     } else {
-        /* CHANGED key — possible MITM. 'Y' always replaces; Enter follows
+        /* Host key changed — possible MITM. 'Y' always replaces; Enter follows
          * the selection (default = Cancel) with two-step arming only Enter
          * itself can fire. Every other input backs the arming down. */
         if (k == K_CHAR && (ch == 'y' || ch == 'Y')) {

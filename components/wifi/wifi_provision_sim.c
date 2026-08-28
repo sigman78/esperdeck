@@ -1,6 +1,7 @@
 /*
- * wifi_provision — host/sim stub. No real provisioning; just enough state so
- * the shell's provisioning screen can be exercised in the simulator.
+ * wifi_provision — host/sim stub. No real provisioning; it holds just enough
+ * state so developers can exercise the shell's provisioning screen in the
+ * simulator.
  */
 
 #include "wifi_provision.h"

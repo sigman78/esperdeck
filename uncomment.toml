@@ -2,10 +2,20 @@
 # Invoked through tools/check_comments.py — see docs/DEVELOPMENT.md, "Comment lint".
 
 [tool.uncomment]
-# Tool defaults, except: STE01 (sentence length) and STE02 (passive voice)
-# gate as warnings — user call, 2026-08-27. The other STE (Simplified
-# Technical English) rules stay advisory (info).
+# Scope: exclude vendored / third-party components and build trees. Bare
+# names match a path component at any depth, so they hold for any scan
+# root. respect-gitignore (on by default) prunes the gitignored build
+# output; "build*" is a belt for checkouts without git.
+exclude = [
+    "esp_hid",       # vendored Espressif HID stack
+    "monocypher",    # vendored crypto library
+    "libssh2_esp",   # vendored libssh2 port layer
+    "terminal",      # dead component, slated for removal
+    "build*",
+]
 
+# STE01 (sentence length) and STE02 (passive voice) gate as warnings —
+# user call, 2026-08-27. The other STE rules stay advisory (info).
 [tool.uncomment.severity]
 STE01 = "warn"
 STE02 = "warn"

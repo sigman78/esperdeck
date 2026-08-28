@@ -1,8 +1,8 @@
 /*
- * app_menu.c — the overlay menu screen: generic page rendering + input
- * dispatch over the app_menu_defs.c item tables, plus the dynamic
- * profile pickers (delete / edit / reorder — the future ListView
- * consumers, extensibility item 4).
+ * app_menu.c is the overlay menu screen. It renders generic pages and
+ * dispatches input over the app_menu_defs.c item tables. It also drives
+ * the dynamic profile pickers: delete, edit, reorder. These are the
+ * future ListView consumers (extensibility item 4).
  */
 
 #include "app_internal.h"
@@ -10,9 +10,9 @@
 static struct {
     int      sel;
     int      screen;                /* menu_screen_t: page of the menu tree */
-    int      root;                  /* entry page: back from here pops the
-                                       screen (MS_MAIN in-session, MS_CONFIG
-                                       from HOME, deep links later)         */
+    /* root is the entry page. Back from here pops the screen: MS_MAIN
+     * in-session, MS_CONFIG from HOME, deep links later. */
+    int      root;
     bool     armed;                 /* a destructive item needs a 2nd hit   */
     bool     note_wifi;             /* live-track wifi_status_str()         */
     int      reorder_grab;          /* grabbed stored index, -1 = none      */
@@ -302,9 +302,10 @@ void menu_goto(int sc)
     nav_invalidate();
 }
 
-/* Discard a grabbed-but-not-dropped reorder: the pending moves only live in
- * app.profiles until a drop saves them, and a session drop can yank the
- * user out mid-drag — a later save would silently persist them. */
+/* Discard a grabbed-but-not-dropped reorder. The pending moves only
+ * live in app.profiles until a drop saves them. A session drop can
+ * yank the user out mid-drag; a later save would then silently
+ * persist them. */
 void menu_abort_reorder(void)
 {
     if (s_menu.screen == MS_REORDER && s_menu.reorder_grab >= 0) {
@@ -335,9 +336,10 @@ void menu_back(uint64_t now)
     }
 }
 
-/* Delete the stored profile at @p idx, plus its key files and TOFU host pin
- * if no other profile still references them. A live session is untouched:
- * it runs on the connect module's snapshot. */
+/* Delete the stored profile at @p idx, plus its key files and TOFU
+ * host pin. It deletes the files only if no other profile still
+ * references them. This never touches a live session, which runs on
+ * the connect module's snapshot instead. */
 static void delete_profile_at(int idx)
 {
     if (idx < 0 || idx >= app.stored_count) return;
@@ -467,9 +469,10 @@ static void menu_resume(intptr_t arg, uint64_t now)
     menu_goto(s_menu.screen);
 }
 
-/* Any departure — pop, or another screen pushed on top — releases the
- * settings hold so deferred writes flush on the next tick, and drops a
- * leftover STICKY note (an arm prompt must not follow the user out). */
+/* Any departure — a pop, or another screen pushed on top — releases
+ * the settings hold. This lets deferred writes flush on the next tick.
+ * It also drops a leftover STICKY note: an arm prompt must not follow
+ * the user out. */
 static void menu_exit(uint64_t now)
 {
     (void)now;
@@ -494,8 +497,9 @@ static void menu_tick(uint64_t now)
         session_dropped(now);
         return;
     }
-    /* Live feedback on the 10 fps gate: wifi-tracking notes rewrite from
-     * the real state, expired notes clear, the UP/LINK clocks tick. */
+    /* Live feedback runs on the 10 fps gate. Wifi-tracking notes rewrite
+     * from the real state, expired notes clear, and the UP/LINK clocks
+     * tick. */
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
         if (s_menu.note_wifi && app.toast[0]) {
@@ -541,8 +545,9 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
         int slot = picker ? ui_list_hit(&s_pick, ev->x, ev->y)
                           : tile_hit(&app.grid, ev->x, ev->y);
         if (slot < 0) { menu_back(now); return; }   /* tap outside: back */
-        /* Tapping a DIFFERENT tile than the armed one must disarm first, or
-         * the stale arm fires this tile's destructive action unconfirmed. */
+        /* Tapping a DIFFERENT tile than the armed one must disarm it
+         * first. Otherwise the stale arm fires this tile's destructive
+         * action unconfirmed. */
         if (slot != s_menu.sel && s_menu.armed) {
             s_menu.armed = false;
             menu_clear_note();

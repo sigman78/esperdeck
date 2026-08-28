@@ -34,8 +34,8 @@ extern DRAM_ATTR volatile uint8_t g_fx_frame;
 extern DRAM_ATTR uint16_t g_fx_glow_acc[2];
 
 /* Per-row "last changed" stamps (g_fx_frame value at last flush of the row).
- * Written by display_fx_touch_row (task) and re-pinned by the renderer when
- * a row ages far out, so the uint8 counter can't wrap back into the glow
+ * display_fx_touch_row (a task) writes this stamp. The renderer re-pins it
+ * when a row ages out, so the uint8 counter can't wrap back into the glow
  * window. Byte stores from both contexts — volatile, races are benign. */
 extern DRAM_ATTR volatile uint8_t g_fx_row_stamp[DISPLAY_FX_MAX_ROWS];
 #endif
@@ -47,8 +47,8 @@ extern DRAM_ATTR volatile uint8_t g_fx_row_stamp[DISPLAY_FX_MAX_ROWS];
 extern DRAM_ATTR int8_t g_fx_wobble_lut[256];
 
 /* Event countdowns (frames remaining) + total durations captured at arm
- * time. Totals are written strictly before counters so the ISR never sees
- * a nonzero counter with a zero total. */
+ * time. The arm functions write totals strictly before counters, so the
+ * ISR never sees a nonzero counter with a zero total. */
 extern DRAM_ATTR volatile int16_t g_fx_wipe_left;
 extern DRAM_ATTR volatile int16_t g_fx_wipe_total;
 extern DRAM_ATTR volatile int16_t g_fx_collapse_left;

@@ -1,5 +1,5 @@
-"""Verify the SWAR smear is bit-identical to the per-row loop it replaces,
-for every glyph geometry and both smear directions, over exhaustive rows."""
+"""Verify the SWAR smear is bit-identical to the per-row loop it replaces.
+Check every glyph geometry and both smear directions, over exhaustive rows."""
 import random
 
 

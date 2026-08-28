@@ -1,6 +1,7 @@
-"""Validate render_scan.inc's wobble offset + clipping against the reference
-it replaces: render the line straight, then word-shift it by koff with a black
-fill. Both must agree for every cell geometry and every displacement.
+"""Validate render_scan.inc's wobble offset and clipping against the reference
+it replaces. The reference renders the line straight, then word-shifts it by
+koff with a black fill. Both must agree for every cell geometry and every
+displacement.
 
 Words carry a distinctive tag per (cell, word) so any misplacement shows.
 """

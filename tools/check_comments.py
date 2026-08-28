@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Comment lint wrapper: runs `uncomment` (github.com/sigman78/uncomment) via
-uvx over first-party sources only. Config in uncomment.toml; rationale in
-docs/DEVELOPMENT.md, "Comment lint".
+uvx. Scope lives in uncomment.toml (exclude globs, respect-gitignore,
+skip-generated); this wrapper only picks the scan root and adapts the
+Claude Code hook. Rationale in docs/DEVELOPMENT.md, "Comment lint".
 
 Modes:
   check_comments.py                   gate comments changed vs origin/master.
@@ -24,34 +25,12 @@ ROOT = Path(__file__).resolve().parent.parent
 UNCOMMENT = ["uvx", "--from", "git+https://github.com/sigman78/uncomment",
              "uncomment"]
 
-# Vendored / third-party components: not ours to relint.
+# Hook-only filter. A file named explicitly on the CLI always scans.
+# Naming is intent, so the config excludes cannot cover the per-file hook
+# path. This mirrors uncomment.toml's exclude list plus build/fetched trees.
 VENDORED = {"esp_hid", "monocypher", "libssh2_esp", "terminal"}
-# Path components that mark generated / fetched trees. uncomment does not
-# read .gitignore, so this script filters build outputs itself.
 SKIP_DIRS = {"_deps", "__pycache__", "managed_components", ".git", ".cache"}
 EXTS = {".c", ".h", ".cpp", ".hpp", ".py"}
-
-
-def first_party_roots():
-    comps = sorted(p for p in (ROOT / "components").iterdir()
-                   if p.is_dir() and p.name not in VENDORED)
-    extra = [ROOT / d for d in ("main", "sim", "idfsim", "tools", "tests")]
-    return comps + [d for d in extra if d.is_dir()]
-
-
-def skipped(rel):
-    return any(part in SKIP_DIRS or part.startswith("build")
-               for part in rel.parts)
-
-
-def first_party_files():
-    files = []
-    for root in first_party_roots():
-        for p in sorted(root.rglob("*")):
-            rel = p.relative_to(ROOT)
-            if p.suffix.lower() in EXTS and not skipped(rel):
-                files.append(str(rel))
-    return files
 
 
 def in_scope(path_str):
@@ -62,14 +41,12 @@ def in_scope(path_str):
         rel = p.relative_to(ROOT)
     except ValueError:
         return False
-    if skipped(rel):
-        return False
-    return any(root == p or root in p.parents for root in first_party_roots())
+    return not any(part in VENDORED or part in SKIP_DIRS
+                   or part.startswith("build") for part in rel.parts)
 
 
 def run(args):
-    return subprocess.run(UNCOMMENT + args + first_party_files(),
-                          cwd=ROOT).returncode
+    return subprocess.run(UNCOMMENT + args + ["."], cwd=ROOT).returncode
 
 
 def hook_mode():
@@ -80,7 +57,6 @@ def hook_mode():
     path = (payload.get("tool_input") or {}).get("file_path", "")
     if not path or not in_scope(path):
         return 0
-    # Repo-relative path: uncomment resolves the git baseline from it.
     rel = Path(path).resolve().relative_to(ROOT)
     proc = subprocess.run(
         UNCOMMENT + ["gate", str(rel),

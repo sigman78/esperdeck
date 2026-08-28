@@ -2,5 +2,5 @@
 /*
  * POSIX unistd.h shim for Windows simulator builds.
  * close() is already remapped to closesocket() via sys/socket.h.
- * Other unistd APIs used in this project can be added here as needed.
+ * Add other unistd APIs this project needs here.
  */

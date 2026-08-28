@@ -36,8 +36,9 @@ static const char *boot_glyph(char c)
     }
 }
 
-/* Boot counter in RTC memory: survives soft resets and starts random at
- * power-on, so boots walk the taglines without NVS or an RNG this early. */
+/* s_boot_seq lives in RTC memory. It survives soft resets and starts
+ * random at power-on. Boots walk the taglines without NVS or an RNG
+ * this early. */
 #ifndef BUILD_SIMULATOR
 static RTC_NOINIT_ATTR uint32_t s_boot_seq;
 #else
@@ -54,8 +55,8 @@ static const char *const BOOT_TAGLINES[] = {
 };
 #define TAGLINE_COUNT (sizeof(BOOT_TAGLINES) / sizeof(BOOT_TAGLINES[0]))
 
-/* Logo wipes in left→right over ~80% of the boot delay behind a bright
- * white scan edge, then holds with the * twinkling. */
+/* The logo wipes left to right over ~80% of the boot delay, behind a
+ * bright white scan edge. It then holds, with the * twinkling. */
 static void render_boot(uint64_t now)
 {
     static const char LOGO[] = "CYBER*DECK";
@@ -99,7 +100,7 @@ static void render_boot(uint64_t now)
     const char *tag = BOOT_TAGLINES[s_boot_seq % TAGLINE_COUNT];
     char sub[40];
     snprintf(sub, sizeof(sub), "%s%.*s", tag, (int)(app.anim_frame % 4), "...");
-    /* Fixed anchor: the full-dots form's width (dot count varies per frame). */
+    /* Anchors to the full-dots form's width; the dot count varies per frame. */
     ui_puts((ui_cols() - ((int)strlen(tag) + 3)) / 2, y0 + GH + 2, sub, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
 }
@@ -111,9 +112,11 @@ static void boot_enter(intptr_t arg, uint64_t now)
     s_boot.until = now + app.cfg.boot_delay_ms;
 }
 
-/* Splash over (elapsed or skipped): HOME — behind the DEVICE gate whenever
- * a keystore exists (two-gates model: a store on the deck means the deck
- * is locked; no store = feature off, straight to HOME). */
+/* The splash ends when its delay elapses, or the user skips it. Boot
+ * then goes to HOME, but the DEVICE screen gates it whenever a keystore
+ * exists. In the two-gates model, a store on the deck locks the deck.
+ * No store means the lock feature is off, so boot goes straight to
+ * HOME. */
 static void boot_done(uint64_t now)
 {
     display_fx_wipe();   /* raster-reveal whatever comes up next */

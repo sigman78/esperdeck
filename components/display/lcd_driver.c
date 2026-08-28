@@ -89,8 +89,9 @@ static esp_err_t panel_bringup(void)
     };
     ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(panel_handle, &cbs, NULL));
 
-    /* esp_lcd allocates its own DMA bounce buffers internally when
-     * bounce_buffer_size_px is set — no separate allocation needed here. */
+    /* esp_lcd allocates its own DMA bounce buffers internally whenever the
+     * caller sets bounce_buffer_size_px, so this code needs no separate
+     * allocation. */
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
 
     ESP_LOGI(TAG, "LCD initialized: %dx%d, bounce buffer %d bytes, ISR core %d",
@@ -100,10 +101,11 @@ static esp_err_t panel_bringup(void)
     return ESP_OK;
 }
 
-/* esp_lcd_new_rgb_panel() pins the LCD interrupt to the calling core, and
- * core 0 already carries WiFi, NimBLE and the SSH ingest path — the bounce
- * ISR alone eats a third to half of it. Bring the panel up from a transient
- * core-1 task so the ISR lands on the (near-idle) shell core instead. */
+/* esp_lcd_new_rgb_panel() pins the LCD interrupt to the calling core. Core 0
+ * already carries WiFi, NimBLE, and the SSH ingest path. The bounce ISR
+ * alone can eat a third to half of it. This code starts panel bring-up
+ * from a transient core-1 task, so the ISR lands on the near-idle shell
+ * core. */
 typedef struct {
     TaskHandle_t caller;
     esp_err_t    result;

@@ -1,8 +1,8 @@
 /*
  * render_fx_pass.c — effect APPLICATION on rendered bands: clip window,
- * wobble, static burst, bell tag, and the once-per-frame tick. Effect
- * STATE is owned by display_fx.c (display_fx_internal.h); all passes are
- * bounded per-band work — none is hot.
+ * wobble, static burst, bell tag, and the once-per-frame tick.
+ * display_fx.c (display_fx_internal.h) owns effect STATE. Every pass does
+ * bounded per-band work; none is hot.
  */
 
 #include "render_internal.h"
@@ -129,15 +129,18 @@ IRAM_ATTR void render_fx_clip_apply(color_t *dst, int band_y0, int num_scans,
 }
 
 /*
- * CRT line wobble — a ~16-scanline S-wiggle sweeping down the screen. The
- * displacement is handed to the scan as a per-scanline destination WORD
- * offset (pixels land wobbled as written; no shift pass), which is why it is
- * quantised to EVEN pixels: RGB565 packs two pixels per 32-bit word, and an
- * odd displacement would be a half-word offset the scan cannot express.
- * Design + measured numbers: docs/performance.md § "Wobble fix".
+ * CRT line wobble: a ~16-scanline S-wiggle sweeps down the screen. The
+ * scan takes the displacement as a per-scanline destination WORD offset.
+ * Pixels land wobbled as written, so there is no separate shift pass.
  *
- * Fills @p out with one word offset per scanline of the band and returns true
- * if any is non-zero (false lets the scan take its untouched fast path).
+ * The offset must land on an EVEN pixel. RGB565 packs two pixels per
+ * 32-bit word, so an odd offset would need a half-word shift. The scan
+ * cannot express that. See docs/performance.md, section "Wobble fix", for
+ * the design and measured numbers.
+ *
+ * Fills @p out with one word offset per scanline of the band. Returns
+ * true if any offset is non-zero; false lets the scan take its untouched
+ * fast path.
  */
 IRAM_ATTR bool render_fx_wobble_offsets(int start_scan, int num_scans, int8_t *out)
 {

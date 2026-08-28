@@ -1,10 +1,11 @@
 /*
- * app_internal.h — the shell's shared spine (internal to cyberdeck_app).
+ * app_internal.h holds the shell's shared spine (internal to
+ * cyberdeck_app).
  *
- * One state instance (`app`, defined in cyberdeck_app.c), composed of
- * per-module state structs: each screen module owns and mutates its own
- * member (app.pair, app.conn, ...); the core owns the rest. Cross-module
- * entry points are declared in app_screens.h.
+ * One state instance, `app`, defined in cyberdeck_app.c, holds
+ * per-module state structs. Each screen module owns and mutates its own
+ * member (app.pair, app.conn, ...). The core owns the rest.
+ * app_screens.h declares the cross-module entry points.
  */
 
 #pragma once
@@ -56,7 +57,7 @@ struct app_state {
     /* Tile grid of the current screen, saved for touch hit-testing. */
     tilegrid_t grid;
 
-    /* toast (SESSION only; UI states draw status inline) */
+    /* SESSION alone uses the toast; other UI states draw status inline. */
     char     toast[64];
     uint64_t toast_until;
     bool     toast_ok;     /* success toast: spinner-to-checkmark garnish */
@@ -72,20 +73,18 @@ struct app_state {
 
 extern struct app_state app;
 
-/* ------------------------------------------------- core services (cyberdeck_app.c) */
-
 /** (Re)load stored profiles into app.profiles (+ Kconfig fallback synth). */
 void load_profiles(void);
 
 /**
  * Scrub the plaintext credentials load_profiles() hydrated into app state.
- * Call it with every keystore_lock() — that one wipes the master key and
- * the secrets cache INSIDE the vault, and knows nothing about the copies
- * out here. Metadata survives on purpose (HOME renders locked).
+ * Call it with every keystore_lock(). That call wipes the master key and
+ * the secrets cache INSIDE the vault. It knows nothing about the copies
+ * out here. Metadata survives on purpose, so HOME still renders locked.
  */
 void app_creds_wipe(void);
 
-/** True if a keyboard is bonded (present in the BLE registry). */
+/** True if the BLE registry holds a bonded keyboard. */
 bool ble_has_bond(void);
 
 /** Connect wifi_manager from wifi.ini (or the Kconfig fallback). */

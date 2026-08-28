@@ -63,7 +63,7 @@ struct tsm_s {
     int alt_base;
 
     /* Rows evicted off the top of the PRIMARY screen, newest last. Alt-screen
-     * scrolls never feed it: a full-screen app repainting itself is not
+     * scrolls never feed it. A full-screen app repainting itself is not
      * history, and would bury the shell output worth scrolling back to.
      *
      * sb_off is the VIEW, not storage. Only tsm_row() reads it, so the parser

@@ -1,5 +1,5 @@
-"""Simulate the glyph cache against the exact t:mixNNN access pattern, to
-explain why 8x16 degrades more than 10x20 at the same `span`."""
+"""Simulate the glyph cache against the exact t:mixNNN access pattern.
+This explains why 8x16 degrades more than 10x20 at the same `span`."""
 M32 = 0xFFFFFFFF
 
 

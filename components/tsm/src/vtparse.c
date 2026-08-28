@@ -351,8 +351,8 @@ static inline void st_osc(vtparse_t *p, uint8_t b)
         emit_osc(p);
         enter_ground(p);
     } else if (b >= 0x20 && b <= 0x7E) {
-        /* Collect printable ASCII bytes (7-bit only; UTF-8 in titles is
-         * ignored in Phase 1 — high bytes don't reach this function). */
+        /* Collect printable ASCII bytes (7-bit only). Phase 1 ignores UTF-8
+         * in titles; high bytes don't reach this function. */
         if (p->osc_len < VTP_OSC_MAX)
             p->osc_buf[p->osc_len++] = b;
         /* Bytes beyond VTP_OSC_MAX are silently dropped. */
@@ -435,10 +435,10 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
         }
 
         /* ── GROUND fast path ─────────────────────────────────────────────
-         * No UTF-8 pending (guaranteed above) and in GROUND: bulk-append a
+         * No UTF-8 pending (guaranteed above) and in GROUND. Bulk-append a
          * run of printable ASCII, skipping the per-byte switch and the
-         * out-of-line append_print call.  DEL/C0/C1/UTF-8 leads break the
-         * run and fall to the normal per-byte path below on the next pass. */
+         * out-of-line append_print call. DEL/C0/C1/UTF-8 leads break the run.
+         * Then fall to the normal per-byte path below on the next pass. */
         if (p->state == VTP_ST_GROUND && b >= 0x20 && b <= 0x7E) {
             size_t j = i;
             for (;;) {
@@ -456,11 +456,11 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
         }
 
         /* ── CSI parameter fast path ──────────────────────────────────────
-         * Digits, ':' and ';' are the contiguous range 0x30..0x3B and make
-         * up ~90% of SGR-dense streams (truecolor btop). Accumulate the
-         * run with do_param inlined, skipping the anywhere-checks and the
-         * state switch per byte. Any other byte falls back to st_csi_param
-         * on the next pass — which treats 0x30..0x3B identically. */
+         * Digits, ':' and ';' are the contiguous range 0x30..0x3B. They make
+         * up ~90% of SGR-dense streams (truecolor btop). Accumulate the run
+         * with do_param inlined, skipping the anywhere-checks and the state
+         * switch per byte. Any other byte falls back to st_csi_param on the
+         * next pass, which treats 0x30..0x3B identically. */
         if (p->state == VTP_ST_CSI_PARAM && b >= 0x30 && b <= 0x3B) {
             size_t j = i;
             do {
@@ -507,7 +507,7 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
                 /* Invalid lead or out-of-range → replacement character. */
                 append_print(p, 0xFFFDu);
             }
-            /* In non-GROUND states, unexpected high bytes are discarded. */
+            /* In non-GROUND states, the parser discards unexpected high bytes. */
             continue;
         }
 

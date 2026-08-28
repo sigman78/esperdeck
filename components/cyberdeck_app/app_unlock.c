@@ -1,15 +1,16 @@
 /*
  * app_unlock.c — keystore code entry (ST_UNLOCK).
  *
- * One screen, four phases: UNLOCK (the PIN pad's day job), and the set-code
- * flow OLD → NEW → CONFIRM reached from the menu (create skips OLD). 3x4
- * pad (touch) with BLE-keyboard parity: digits append, Backspace deletes,
- * Enter submits; a passphrase slot is reachable by just typing it.
- * Auto-submits at the known PIN length (keystore_pin_len header hint).
+ * One screen, four phases. UNLOCK is the PIN pad's day job. The
+ * set-code flow runs OLD → NEW → CONFIRM, reached from the menu
+ * (create skips OLD). 3x4 pad (touch) with BLE-keyboard parity: digits
+ * append, Backspace deletes, Enter submits; a passphrase slot is
+ * reachable by just typing it. Auto-submits at the known PIN length
+ * (keystore_pin_len header hint).
  *
- * Every keystore derivation runs on a worker task — Argon2id takes ~1 s on
- * the S3 and keeps ~1 KiB + hash state on the caller's stack
- * (docs/storage_auth.md), so it must never run inline in a UI tick. The
+ * Every keystore derivation runs on a worker task. Argon2id takes ~1 s
+ * on the S3. It keeps ~1 KiB plus hash state on the caller's stack
+ * (docs/storage_auth.md). It must never run inline in a UI tick. The
  * screen animates "DERIVING KEY" meanwhile and swallows input (the
  * derivation is not cancellable). change-code = two derivations (~2 s).
  *
@@ -19,7 +20,7 @@
  */
 
 #include "app_internal.h"
-#include "app_menu_defs.h"   /* MS_KEYSTORE (the menu return target) */
+#include "app_menu_defs.h"   /* pulls in MS_KEYSTORE, the menu return target */
 #include "app_screens.h"
 #include "app_widgets.h"
 #include "display_fx.h"
@@ -33,9 +34,10 @@
 #include "freertos/task.h"
 
 static struct {
-    char     code[65];              /* typed code, KEYSTORE_PIN_MAX + 1;
-                                     * .bss = internal SRAM; wiped on
-                                     * submit/leave                        */
+    /* code holds the typed PIN, sized to KEYSTORE_PIN_MAX + 1. It lives in
+     * .bss, so it lands in internal SRAM. Submit or leaving the screen
+     * wipes it. */
+    char     code[65];
     int      len;
     uint8_t  expected;              /* auto-submit length (0 = Enter only) */
     uint8_t  mode;                  /* entry phase (um_mode)               */
@@ -48,9 +50,9 @@ static struct {
     uint64_t last_input;            /* idle-cancel clock (IDLE_CANCEL_MS)  */
     char     reveal_ch;             /* newest typed char, echoed briefly...*/
     uint64_t reveal_until;          /* ...while defining a code (0 = off)  */
-    /* Two-gates model: a keystore on the deck means the deck is LOCKED.
-     * gate = this pad is the DEVICE gate (boot/wake): non-skippable, no
-     * idle-cancel, the saver rains over it. */
+    /* In the two-gates model, a keystore on the deck locks the deck.
+     * The gate field marks this pad as the DEVICE gate (boot/wake):
+     * non-skippable, no idle-cancel, and the saver rains over it. */
     bool     gate;
 } s_unlock;
 
@@ -119,8 +121,9 @@ static void render_unlock(uint64_t now)
 
     bool tall = ui_rows() >= 24;
     draw_titlebar(2, phase_title());
-    /* Corner tag = WHY this pad is up (two-gates model): the immovable
-     * device gate, a key-connect prompt, or a keystore menu flow. */
+    /* The corner tag shows why this pad is up (two-gates model). It
+     * shows one of three states: the immovable device gate, a
+     * key-connect prompt, or a keystore menu flow. */
     ui_pen(OVERLAY_COL_BLUE);
     ui_puts(ui_cols() - 12, 0,
             s_unlock.gate          ? "// DEVICE  "
@@ -140,8 +143,9 @@ static void render_unlock(uint64_t now)
     g.x0 = (ui_cols() - (g.tw * 3 + g.gx * 2)) / 2;
     app.grid = g;
 
-    /* Status / entry row: the code being typed, or what the deck is doing
-     * with it. A note (wrong code, mismatch) flashes until input resumes. */
+    /* Status / entry row: shows the code the user is typing, or what
+     * the deck is doing with it. A note (wrong code, mismatch) flashes
+     * until input resumes. */
     if (s_unlock.deriving) {
         static const char MSG[] = "DERIVING KEY";
         int x = (ui_cols() - (int)sizeof(MSG) + 1) / 2;
@@ -154,8 +158,9 @@ static void render_unlock(uint64_t now)
         ui_puts((ui_cols() - (int)strlen(s_unlock.note)) / 2, entry_row,
                 s_unlock.note, blink);
     } else if (keystore_backoff_ms() > 0) {
-        /* Failed-attempt wait: a live countdown owns the entry row (the
-         * ~10 Hz re-render keeps it ticking; submits are refused anyway). */
+        /* Failed-attempt wait: a live countdown owns the entry row. The
+         * ~10 Hz re-render keeps it ticking; the pad refuses submits
+         * anyway. */
         char msg[32];
         snprintf(msg, sizeof(msg), "LOCKED \xB7 RETRY IN %u s",
                  (unsigned)((keystore_backoff_ms() + 999) / 1000));
@@ -163,12 +168,13 @@ static void render_unlock(uint64_t now)
         ui_puts((ui_cols() - (int)strlen(msg)) / 2, entry_row, msg,
                 OVERLAY_ATTR_BOLD);
     } else {
-        /* Entry cells — [X] taken / [_] still to come, one bracketed slot
-         * per character with a gap between them: at a glance the row reads
-         * as "three of four", which the old ●/○ pair did not. The newest
-         * entry briefly shows its character while defining a code. A
-         * free-length row appends a blinking caret cell; a row too long
-         * for the screen falls back to compact marks. */
+        /* Entry cells show [X] for taken and [_] for still to come. Each
+         * is one bracketed slot per character, with a gap between them.
+         * At a glance the row reads as "three of four", which the old
+         * ●/○ pair did not. The newest entry briefly shows its
+         * character while defining a code. A free-length row appends a
+         * blinking caret cell. A row too long for the screen falls
+         * back to compact marks. */
         int len = s_unlock.len;
         int n   = s_unlock.expected ? s_unlock.expected : len + 1;
         if (n * 4 - 1 <= ui_cols() - 2) {
@@ -209,13 +215,14 @@ static void render_unlock(uint64_t now)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    /* A pressed tile is drawn LAST, displaced one cell right+down and lit —
-     * the classic button push-in. The full-screen clear each frame erases
-     * the displacement when PRESS_MS expires, and drawing it last keeps
-     * the shifted tile on top of its lower neighbor on gutterless grids.
-     * Only touch lights a tile (see unlock_input): mirroring keystrokes
-     * onto the pad would shoulder-surf the code onto a screen the typist
-     * isn't even looking at. */
+    /* render_unlock draws a pressed tile LAST, displaced one cell right
+     * and down, and lit — the classic button push-in. The full-screen
+     * clear each frame erases the displacement when PRESS_MS expires.
+     * Drawing it last also keeps the shifted tile on top of its lower
+     * neighbor on gutterless grids. Only touch lights a tile (see
+     * unlock_input). Mirroring keystrokes onto the pad would
+     * shoulder-surf the code onto a screen the typist isn't even
+     * looking at. */
     int lit = s_unlock.press_until ? s_unlock.press : -1;
     for (int i = 0; i < 12; i++) {
         if (i == lit) continue;
@@ -232,7 +239,7 @@ static void render_unlock(uint64_t now)
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    /* No mode line: the title, the corner tag, the pad and the live
+    /* No mode line. The title, the corner tag, the pad, and the live
      * entry row already say everything (redundancy call, 2026-08-27). */
 }
 
@@ -261,7 +268,7 @@ static void wipe_entry(void)
     s_unlock.reveal_until = 0;
 }
 
-/* Land wherever this screen was opened from. */
+/* Land wherever the caller opened this screen from. */
 static void unlock_finish(uint64_t now)
 {
     wipe_entry();
@@ -466,11 +473,12 @@ static void worker_result(uint64_t now, esp_err_t r)
     }
     if (s_op == OP_UNLOCK) {
         if (r == ESP_OK) {
-            /* Secrets just became readable: re-read profiles so the RAM
-             * copies hydrate their diverted passwords, fold any credential
-             * a past firmware left in the driver's NVS into the bundle,
-             * and kick WiFi — with driver persistence retired, this is
-             * where the deck first gets a usable PSK (pre-shared key). */
+            /* Secrets just became readable. Re-read profiles so the RAM
+             * copies hydrate their diverted passwords. Fold any
+             * credential a past firmware left in the driver's NVS into
+             * the bundle. Then kick WiFi. Driver persistence no
+             * longer runs, so this is where the deck first gets a
+             * usable PSK (pre-shared key). */
             load_profiles();
             wifi_migrate_nvs_cred();
             if (!wifi_manager_is_connected()) kick_wifi();
@@ -525,10 +533,10 @@ static void unlock_tick(uint64_t now)
     }
 
     /* An unattended pad must not sit lit forever, and the two pad kinds
-     * resolve that differently. The DEVICE gate cannot cancel (that would
-     * be a bypass): the rain falls over it and wake lands right back on
-     * the pad. A cancellable pad — connect fallback, abandoned set-code
-     * flow — gives up after a minute and lands on HOME. */
+     * resolve that differently. The DEVICE gate cannot cancel (that
+     * would be a bypass). The rain falls over it, and wake lands right
+     * back on the pad. A cancellable pad — connect fallback, abandoned
+     * set-code flow — gives up after a minute and lands on HOME. */
     if (!s_unlock.deriving) {
         if (s_unlock.gate) {
             if (saver_tick_gate(now)) return;   /* rain owns the screen */
@@ -574,8 +582,8 @@ static void unlock_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     }
     if (ev->type != CYBERDECK_INPUT_KEY) return;
 
-    /* No pad_flash() here on purpose — a keyboard press is not visible on
-     * the deck, so echoing it as a lit tile would leak the code to the
+    /* No pad_flash() here on purpose. A keyboard press is not visible
+     * on the deck. Echoing it as a lit tile would leak the code to the
      * room. The entry row alone acknowledges the keystroke. */
     if (k == K_ESC)            unlock_cancel(now);
     else if (k == K_ENTER)     submit(now);

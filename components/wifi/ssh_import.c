@@ -33,10 +33,10 @@
 
 static const char *TAG = "ssh_import";
 
-/* Body cap. The private-key decode buffer is sized from the ACTUAL body
- * length rather than from this ceiling — decoding only ever shrinks, so the
- * body bounds every field decoded out of it and a key still cannot be
- * silently truncated within an accepted body (see alloc_secret). */
+/* Body cap. The private-key decode buffer takes its size from the actual
+ * body length, not from this ceiling. Decoding only ever shrinks the data,
+ * so the body length bounds every field decoded from it. That keeps a key
+ * intact within an accepted body (see alloc_secret). */
 #define BODY_MAX 16384
 
 static volatile int s_state = SSH_IMPORT_ST_IDLE;
@@ -91,11 +91,9 @@ bool ssh_import_qr_module(int x, int y)
     return qr_getbit(y * QR_MAX + x);
 }
 
-/* ------------------------------------------------------------- HTML form */
-
-/* The proof-code field is emitted between HEAD and TAIL: hidden+prefilled in
- * SOFTAP (the WPA2 join already proved possession), visible+required in WEB
- * (the typed code is the only gate). */
+/* get_form() emits the proof-code field between HEAD and TAIL. SOFTAP hides
+ * and prefills it: the WPA2 join already proved possession. WEB shows it
+ * and requires it: the typed code is the only gate. */
 static const char FORM_HEAD[] =
     "<!doctype html><html><head><meta charset=utf-8>"
     "<meta name=viewport content=\"width=device-width,initial-scale=1\">"
@@ -225,8 +223,6 @@ static esp_err_t ok_page(httpd_req_t *req, const char *msg, const char *sub)
     return ESP_OK;
 }
 
-/* ---------------------------------------------------- form-urlencoded parse */
-
 static int hexval(int c)
 {
     if (c >= '0' && c <= '9') return c - '0';
@@ -236,7 +232,7 @@ static int hexval(int c)
 }
 
 /* URL-decode src[..slen) into dst (NUL-terminated, capped at dcap). Returns
- * true if the whole input fit; false if it was truncated at the cap. */
+ * true if the whole input fit; returns false if the cap truncated it. */
 static bool url_decode(const char *src, int slen, char *dst, int dcap)
 {
     int o = 0;
@@ -280,7 +276,7 @@ static int form_field(const char *body, const char *name, char *out, int cap)
 
 /* True if @p s holds a control char (< 0x20). profiles.ini is line-oriented,
  * so a newline in any field would forge a new key/section line — reject it.
- * (The PEM key blob is exempt: it is stored in its own file, not the INI.) */
+ * (The PEM key blob is exempt: its own file holds it, not the INI.) */
 static bool has_ctrl(const char *s)
 {
     for (; *s; s++)
@@ -309,11 +305,11 @@ static void set_err(const char *msg)
 }
 
 /* Gate every mutating/reading endpoint on the session code. 64 bits puts
- * the code out of offline reach (gen_code), but the ONLINE path still gets
- * belt and braces: misses back off linearly and POP_FAIL_LOCKOUT misses
- * brick the session (even a correct code is refused) until the user
- * reopens the import modal for a fresh code. Compare is constant-time-ish
- * so timing doesn't leak a prefix match. */
+ * the code out of offline reach (gen_code). The online path still backs
+ * off misses linearly. After POP_FAIL_LOCKOUT misses, the session bricks.
+ * It refuses even a correct code until the user reopens the import modal
+ * for a fresh code. The compare runs constant-time-ish, so timing can't
+ * leak a prefix match. */
 #define POP_FAIL_LOCKOUT 8
 
 static bool check_pop(const char *pop)
@@ -370,16 +366,12 @@ static void unique_key_id(const conn_profile_t *list, int n, const char *name,
     }
 }
 
-/* ------------------------------------------------------- RAM hygiene
- *
- * Everything this file touches on a save is exactly what the vault exists to
- * protect: the pasted private key, its passphrase, and (via a hydrated
- * storage_load_profiles) every stored login password. It all lands in SPIRAM
- * or on the httpd worker stack, so it must be scrubbed before the memory goes
- * back — plain free() left whole PEMs readable on the external bus
- * (docs/storage_auth.md "RAM hygiene"). Free through these helpers, never
- * free() directly, for anything that has held plaintext.
- * ------------------------------------------------------------------- */
+/* RAM hygiene: a save handles real secrets. It touches the pasted private
+ * key, its passphrase, and (via a hydrated storage_load_profiles) every
+ * stored login password. All of it lands in SPIRAM or on the httpd worker
+ * stack. Scrub it before freeing: plain free() leaves whole PEMs readable
+ * on the external bus (docs/storage_auth.md "RAM hygiene"). Free secrets
+ * only through these helpers; never call free() directly. */
 
 static void wipe_free(void *p, size_t len)
 {
@@ -401,8 +393,8 @@ static void *alloc_secret(size_t len)
 
 #define PROFILE_SET_BYTES (sizeof(conn_profile_t) * (IMPORT_PROFILE_MAX + 1))
 
-/* Load the current profile set into a fresh SPIRAM array. Passwords come back
- * HYDRATED when the store is unlocked, so the result is secret — release it
+/* Load the current profile set into a fresh SPIRAM array. Passwords come
+ * back HYDRATED once the store unlocks, so the result is secret. Release it
  * with free_profile_set(), never free(). */
 static conn_profile_t *load_profile_set(int *n)
 {
@@ -418,20 +410,21 @@ static void free_profile_set(conn_profile_t *list)
     wipe_free(list, PROFILE_SET_BYTES);
 }
 
-/* The secret-bearing locals of handle_save(), grouped into one object so
- * post_save() can scrub them in a SINGLE place rather than before each of a
- * dozen early returns. Deliberately NOT a static: post_save owns it on the
- * stack. The httpd worker's 6 KB is committed whether or not we use it, so
- * borrowing ~750 B of it for the duration of a request costs no resident
- * RAM, whereas .bss would hold that internal SRAM forever for an action the
- * deck performs once in a blue moon. Net stack use is unchanged from having
- * these as plain locals — they just moved one frame up. */
+/* handle_save() groups its secret-bearing locals into one object.
+ * post_save() can then scrub them in a single place, instead of before
+ * each of a dozen early returns. Deliberately NOT a static: post_save
+ * owns it on the stack. The httpd worker's 6 KB stack exists whether or
+ * not we use it. So borrowing ~750 B of it for one request costs no
+ * resident RAM. A .bss array would hold that internal SRAM forever, for
+ * an action the deck performs once in a blue moon. Net stack use stays
+ * the same as having these as plain locals — they just moved one frame
+ * up. */
 typedef struct {
     char           pop[24];
     char           password[128];
     char           passphrase[128];
     conn_profile_t old;          /* hydrated: carries the stored plaintext */
-    conn_profile_t pf;           /* the profile being written              */
+    conn_profile_t pf;           /* the new profile to save                */
 } save_scratch_t;
 
 /* Escape @p src into a JSON string-literal body (quotes NOT added). All
@@ -450,10 +443,10 @@ static void json_escape(const char *src, char *dst, int cap)
     dst[o] = '\0';
 }
 
-/* Append into out[cap] at offset o, SATURATING at cap-1: snprintf returns
- * the would-be length, so a raw "o += snprintf(...)" can push o past cap
- * and turn the next call's (cap - o) into a huge size_t. Saturation keeps
- * every call in bounds and the final overflow check catches truncation. */
+/* Append into out[cap] at offset o, saturating at cap-1. snprintf returns
+ * the would-be length. A raw "o += snprintf(...)" can push o past cap.
+ * That would turn the next call's (cap - o) into a huge size_t. Saturation
+ * keeps every call in bounds; the final overflow check catches truncation. */
 static int json_append(char *out, int cap, int o, const char *fmt, ...)
 {
     if (o >= cap - 1) return cap - 1;
@@ -490,8 +483,8 @@ static bool read_small_body(httpd_req_t *req, char *buf, int cap)
     return true;
 }
 
-/* Caller MUST be post_save(): it owns @p sc and the single wipe that scrubs
- * it on every exit path out of here. */
+/* Caller MUST be post_save(). It owns @p sc and the single wipe that
+ * scrubs it on every exit path here. */
 static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
 {
     char name[40], host[80], user[40], port[8], auth[16];
@@ -519,8 +512,9 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
         return ok_page(req, "&#10007; Missing fields",
                        "Name, host and username are required.");
     }
-    /* INI-safety: no control chars (would forge a line) in any INI field, and
-     * no [ ] in the name (would forge a section header). */
+    /* INI-safety: no control chars in any INI field — a control char would
+     * forge a line. No [ or ] in the name either — that would forge a
+     * section header. */
     if (has_ctrl(name) || has_ctrl(host) || has_ctrl(user) ||
         has_ctrl(sc->password) || has_ctrl(sc->passphrase) ||
         has_ctrl(keyid)) {
@@ -541,8 +535,8 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
         return ok_page(req, "&#10007; Bad port", "Port must be 1-65535.");
     }
 
-    /* Load the set once: same-name slot lookup (replace semantics + inherit
-     * rules), capacity check, and key-id collision resolution all use it. */
+    /* Load the set once. Same-name slot lookup (replace semantics + inherit
+     * rules), the capacity check, and key-id collision resolution all use it. */
     int n = 0;
     conn_profile_t *list = load_profile_set(&n);
     if (!list) {
@@ -555,7 +549,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
         if (strcmp(list[i].name, name) == 0) { slot = i; break; }
     if (slot >= 0) sc->old = list[slot];
 
-    /* A brand-new name at capacity fails BEFORE any key is written. */
+    /* A brand-new name at capacity fails before the code writes any key. */
     if (slot < 0 && n >= IMPORT_PROFILE_MAX) {
         free_profile_set(list);
         set_err("profile list full");
@@ -580,7 +574,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
             snprintf(pf->password, sizeof(pf->password), "%s",
                      sc->old.password);
 
-        /* The body bounds any field decoded out of it, so this is the
+        /* The body bounds any field decoded from it. So this is the
          * smallest cap that still cannot truncate a key (alloc_secret). */
         size_t key_cap = (size_t)req->content_len + 1;
 
@@ -689,7 +683,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
         return ok_page(req, "&#10007; Save failed", "Could not write profiles.");
     }
 
-    /* The update dropped or swapped this profile's key: GC the orphan .pem
+    /* The update dropped or swapped this profile's key. GC the orphan .pem
      * when no profile references it anymore (mirrors the on-device editor). */
     if (sc->old.auth == STORAGE_AUTH_KEY && sc->old.key_id[0]) {
         bool shared = false;
@@ -706,7 +700,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
     s_err[0] = '\0';
     snprintf(s_last, sizeof(s_last), "%s", pf->name);
     if (s_lock) xSemaphoreGive(s_lock);
-    s_count++;                                   /* publish after s_last is set */
+    s_count++;                                   /* publish only after setting s_last */
     ESP_LOGI(TAG, "imported profile '%s' (%s)", pf->name, want_key ? "key" : "password");
 
     char sub[80];
@@ -849,17 +843,16 @@ static esp_err_t post_delete(httpd_req_t *req)
     s_err[0] = '\0';
     snprintf(s_last, sizeof(s_last), "%s", name);
     if (s_lock) xSemaphoreGive(s_lock);
-    s_deleted++;                                 /* publish after s_last is set */
+    s_deleted++;                                 /* publish only after setting s_last */
     ESP_LOGI(TAG, "deleted profile '%s' via web", name);
     return json_reply(req, "200 OK", "{\"ok\":true}");
 }
 
-/* ------------------------------------------------------------- HTTP handlers */
-
-/* Must the browser user type the proof code? WEB mode only — in SoftAP the
- * WPA2 join is the proof and the field is hidden+prefilled. The DEV Kconfig
- * toggle prefills it in WEB mode too (the page then carries the code, so
- * the gate is effectively off for anyone who can load the page). */
+/* Must the browser user type the proof code? WEB mode only — in SoftAP
+ * the WPA2 join is the proof, and the form hides and prefills the field.
+ * The DEV Kconfig toggle prefills it in WEB mode too. The page then
+ * carries the code, so the gate is effectively off for anyone who can
+ * load the page. */
 bool ssh_import_pop_required(void)
 {
 #ifdef CONFIG_SSH_IMPORT_POP_DISABLED
@@ -918,10 +911,11 @@ static esp_err_t post_save(httpd_req_t *req)
      * never runs concurrently — no outer lock needed (and holding s_lock here
      * would self-deadlock, since set_err()/the success path re-take it). s_lock
      * guards only the s_last/s_err strings shared with the render task. */
-    /* The body is the rawest copy of everything secret in this request — the
-     * pasted PEM, its passphrase, the login password, the proof code — so it
-     * gets scrubbed, not just freed. The scratch is owned here for the same
-     * reason: one wipe covers every early return inside handle_save(). */
+    /* The body is the rawest copy of everything secret in this request.
+     * That includes the pasted PEM, its passphrase, the login password, and
+     * the proof code. post_save() scrubs it, not just frees it. The scratch
+     * object lives here for the same reason: one wipe covers every early
+     * return inside handle_save(). */
     save_scratch_t sc;
     memset(&sc, 0, sizeof(sc));
     esp_err_t e = handle_save(req, body, &sc);
@@ -952,16 +946,16 @@ static esp_err_t start_httpd(void)
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------- lifecycle */
-
-/* 16 random hex chars = a fresh per-session proof code (also a valid WPA2 key,
- * which needs 8..63 ASCII). Two esp_random() draws, not one: in SOFTAP mode
- * this string IS the WPA2 passphrase, and a single 32-bit draw put a captured
- * handshake inside a 2^32 offline search — hours on a GPU, after which the
- * attacker owns profile writes and can plant a key. 64 bits takes that off
- * the table for the cost of eight more characters to type.
- * Not MAC-derived: MAC bytes leak in the SSID + AP beacon, which would let a
- * passive listener reconstruct the PSK and decrypt the SoftAP link. */
+/* 16 random hex chars = a fresh per-session proof code (also a valid
+ * WPA2 key, which needs 8..63 ASCII). Two esp_random() draws, not one:
+ * in SOFTAP mode this string IS the WPA2 passphrase. A single 32-bit
+ * draw would put a captured handshake inside a 2^32 offline search —
+ * hours on a GPU. After that, the attacker owns profile writes and can
+ * plant a key. 64 bits takes that off the table for the cost of eight
+ * more characters to type.
+ * Not MAC-derived: MAC bytes leak in the SSID and AP beacon. That would
+ * let a passive listener reconstruct the PSK and decrypt the SoftAP
+ * link. */
 static void gen_code(void)
 {
     uint32_t hi = esp_random(), lo = esp_random();
@@ -1071,8 +1065,9 @@ const char *ssh_import_url(void)          { return s_url; }
 int         ssh_import_count(void)        { return s_count; }
 int         ssh_import_deleted(void)      { return s_deleted; }
 
-/* Status strings are written by the httpd task under s_lock; copy under the
- * same lock into a small static so the render task never reads a torn string. */
+/* The httpd task writes status strings under s_lock. Copy them under the
+ * same lock into a small static, so the render task never reads a torn
+ * string. */
 const char *ssh_import_last(void)
 {
     static char snap[32];

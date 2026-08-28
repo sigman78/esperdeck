@@ -31,12 +31,12 @@ static const char *TAG = "app_home";
  * create/remove always route through other screens, so this stays true. */
 static bool s_ks_present;
 
-/* Trailing HOME tiles after the profiles, as home_tile_t rows (the
- * plugin seam's shape, dogfooded — extensibility item 5): "New profile"
- * only as a first-run shortcut, "Pair keyboard" only while nothing is
- * bonded, "Lock deck" (the panic button belongs on HOME, not three taps
- * deep) while a keystore exists, plugin tiles next, Configuration
- * always last. */
+/* Trailing HOME tiles follow the profiles, as home_tile_t rows. They
+ * dogfood the plugin seam's shape (extensibility item 5). "New profile"
+ * shows only as a first-run shortcut. "Pair keyboard" shows only while
+ * the deck holds no bond. "Lock deck" shows while a keystore exists;
+ * the panic button belongs on HOME, not three taps deep. Plugin tiles
+ * come next, and Configuration always comes last. */
 static bool tile_new_visible(void)  { return app.stored_count == 0; }
 static bool tile_pair_visible(void) { return app.ble && !s_home.kbd_bonded; }
 static bool tile_lock_visible(void) { return s_ks_present; }
@@ -117,8 +117,9 @@ static void render_home(uint64_t now)
         rssi       = wifi_manager_get_rssi();
     }
 
-    /* SSID clamped to a fixed field so the dBm suffix always fits and the
-     * line stays clear of the right-aligned wordmark (starts at cols-10). */
+    /* The render clamps SSID to a fixed field, so the dBm suffix always
+     * fits. This also keeps the line clear of the right-aligned wordmark
+     * (starts at cols-10). */
     int sw = ui_cols() >= 97 ? 16 : 10;
     char net[48];
     snprintf(net, sizeof(net), "%-*.*s %s", sw, sw,
@@ -147,10 +148,10 @@ static void render_home(uint64_t now)
     int ke = draw_status_led(1, kbd, "KBD", kbdinfo);
 
     /* Phone-presence chip after the KBD status. COLOR alone carries the
-     * state (a fill-vs-hollow LED on top read as noise): green = near
-     * (RSSI over the ~1-2 m gate), blue = in range but far, red =
-     * enrolled but gone, amber = enroll mode (advertising, waiting for
-     * the phone to pair). */
+     * state; a fill-vs-hollow LED on top would read as noise. Green
+     * means near, with RSSI over the ~1-2 m gate. Blue means in range
+     * but far. Red means enrolled but gone. Amber means enroll mode:
+     * advertising, waiting for the phone to pair. */
     if (app.presence &&
         (app.presence->enrolled() ||
          app.presence->enroll_state() == CYBERDECK_ENROLL_ADVERTISING)) {
@@ -166,7 +167,7 @@ static void render_home(uint64_t now)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
-    /* All systems go: a small amber ☺ in the margin when net + keyboard up. */
+    /* All systems go: a small amber smiley in the margin when net + keyboard up. */
     if (wifi_manager_is_connected() && kbd) {
         ui_pen(OVERLAY_COL_AMBER);
         ui_putch(0, 1, 0x263A, 0);
@@ -224,8 +225,8 @@ static void render_home(uint64_t now)
         }
     }
 
-    /* Vacant tile sockets get a whisper of CRT static: a few dim braille
-     * specks per empty slot, re-hashed every ~0.8 s. */
+    /* Vacant tile sockets get a whisper of CRT static. Each empty slot
+     * shows a few dim braille specks, re-hashed every ~0.8 s. */
     ui_pen(OVERLAY_COL_BLUE);
     for (int i = g.count; i < g.ncols * g.nrows; i++) {
         for (int k = 0; k < 5; k++) {
@@ -254,12 +255,14 @@ static void render_home(uint64_t now)
 static void home_enter(intptr_t arg, uint64_t now)
 {
     (void)arg;
-    s_home.kbd_bonded = ble_has_bond();   /* gate the "Pair keyboard" HOME tile */
-    s_ks_present = keystore_state() != KEYSTORE_ABSENT;  /* "Lock deck" tile */
-    pacman_reset();   /* session entry blanked the sprite slots */
+    /* kbd_bonded gates the "Pair keyboard" tile; s_ks_present gates
+     * "Lock deck". pacman_reset() undoes the blanking from session entry.
+     * Activity here keeps a drop/provisioning toast alive before the rain
+     * paints over it. */
+    s_home.kbd_bonded = ble_has_bond();
+    s_ks_present = keystore_state() != KEYSTORE_ABSENT;
+    pacman_reset();
     s_home.next_refresh = 0;
-    /* Arriving on HOME counts as activity: a session drop or provisioning
-     * toast must live its full lifetime before the rain paints over it. */
     saver_reset(now);
 }
 
@@ -280,9 +283,10 @@ static bool home_activate_extra(int slot, uint64_t now)
     return true;
 }
 
-/* Session teardown: hide the overlay so the CRT collapse plays over the last
- * live terminal frame, and enter HOME only once it finishes. Toasts set by
- * the caller survive — they are state, rendered when HOME appears. */
+/* On session teardown, poweroff_enter hides the overlay. This lets the
+ * CRT collapse play over the last live terminal frame; HOME appears
+ * only once it finishes. Toasts set by the caller survive — they are
+ * state, rendered when HOME appears. */
 static void poweroff_enter(intptr_t arg, uint64_t now)
 {
     ui_hide();
@@ -416,11 +420,12 @@ static void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
             unlock_open_gate(now);
         }
         else if ((ch == 'p' || ch == 'P') && app.presence) {
-            /* Phone presence (prototype): P starts/cancels enroll mode when
-             * no phone is stored; with one enrolled, P shows status and a
-             * SECOND P within 2 s forgets (identity + bond) and drops
-             * straight back into enroll — the clean re-pair gesture. The
-             * phone side still needs its own "Forget This Device". */
+            /* Phone presence is a prototype. P starts or cancels enroll
+             * mode when the deck holds no phone. With one phone enrolled,
+             * P shows status. A second P within 2 s forgets the identity
+             * and bond. It then drops straight back into enroll: the
+             * clean re-pair gesture. The phone side still needs its own
+             * "Forget This Device". */
             static uint64_t s_p_last;
             const cyberdeck_presence_ops_t *pr = app.presence;
             if (pr->enroll_state() == CYBERDECK_ENROLL_ADVERTISING) {

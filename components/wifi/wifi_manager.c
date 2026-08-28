@@ -2,8 +2,8 @@
  * WiFi manager — device implementation (esp_wifi STA).
  *
  * All state transitions run on the default event-loop task; the app polls
- * wifi_manager_get_state() from its own task. Strings (ip, ssid) are fully
- * written before the state that advertises them is published.
+ * wifi_manager_get_state() from its own task. The code fully writes
+ * strings (ip, ssid) before it publishes the state that advertises them.
  */
 
 #include "wifi_manager.h"
@@ -37,9 +37,9 @@ static char s_ssid[33] = "";
 
 static esp_timer_handle_t s_retry_timer = NULL;
 
-/* ---- wall clock: one-shot NTP, system clock deliberately untouched ----
- * Stepping the system clock decades forward mid-session corrupts libssh2's
- * blocking-timeout arithmetic (elapsed = difftime(time(NULL), start)), so
+/* Wall clock: one-shot NTP only. The system clock stays deliberately
+ * untouched. Stepping it decades forward mid-session corrupts libssh2's
+ * blocking-timeout arithmetic (elapsed = difftime(time(NULL), start)). So
  * we keep the epoch as a private offset against the monotonic esp_timer. */
 static volatile int64_t s_ntp_offset_us = 0;   /* epoch_us - esp_timer_us */
 static volatile bool    s_ntp_running   = false;
@@ -211,14 +211,15 @@ esp_err_t wifi_manager_init(void)
     esp_err_t err = esp_wifi_init(&cfg);
     if (err != ESP_OK) return err;
 
-    /* Secrets-under-MK: the driver's own NVS persistence is retired —
+    /* Secrets-under-MK retires the driver's own NVS persistence —
      * credentials stay in RAM, storage (wifi.ini / the secrets bundle) is
-     * the single persistence. Whatever an earlier firmware left in NVS is
-     * captured here NON-destructively; the copy is cleared only by
-     * wifi_manager_clear_nvs_cred() AFTER the migration has verifiably
-     * saved it (never destroy the only copy first). If this IDF returns
-     * nothing pre-start, the stale NVS copy simply survives until the
-     * flash-encryption endgame — a residue, never a loss. */
+     * the single persistence. wifi_manager_init() captures whatever an
+     * earlier firmware left in NVS, NON-destructively.
+     * wifi_manager_clear_nvs_cred() clears the copy only AFTER the
+     * migration has verifiably saved it to storage (never destroy the
+     * only copy first). If this IDF returns nothing pre-start, the stale
+     * NVS copy survives until the flash-encryption endgame — a residue,
+     * never a loss. */
     /* ~740 B: too big for the 3.5 KB main-task stack, one-shot — so a
      * transient internal-heap alloc, wiped before free. */
     wifi_config_t *nvs_cfg =

@@ -27,7 +27,7 @@
 /* Maximum bytes collected into the OSC string buffer (truncated beyond). */
 #define VTP_OSC_MAX     256
 
-/* Maximum codepoints buffered before a VT_EV_PRINT span is flushed. */
+/* Maximum codepoints the parser buffers before it flushes a VT_EV_PRINT span. */
 #define VTP_PRINT_BUF   64
 
 /* ── Per-type callback vtable ─────────────────────────────────────────────── */
@@ -108,9 +108,10 @@ typedef struct {
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
 
-/* Initialise (or re-initialise) a parser.  The struct need not be zeroed
- * beforehand; vtparse_init does a full memset internally.
- * The vtable is copied; the caller's vt_callbacks_t need not remain live. */
+/* Initialise (or re-initialise) a parser.  The caller need not zero the
+ * struct beforehand; vtparse_init does a full memset internally.
+ * vtparse_init copies the vtable; the caller's vt_callbacks_t need not
+ * remain live. */
 void vtparse_init(vtparse_t *p, const vt_callbacks_t *cb, void *user);
 
 /* Feed raw bytes.  May call dispatch zero or more times per byte. */

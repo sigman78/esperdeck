@@ -1,9 +1,10 @@
 /*
  * storage_sim.c — local directory platform backend (simulator only).
  *
- * Locates an existing sim_storage/ by walking up from the current working
- * directory (so the exe works from repo root, build-sim/, or build-sim/sim/).
- * If none is found, creates sim_storage/ in the CWD.
+ * storage_platform_init() walks up from the current working directory to
+ * find an existing sim_storage/. This lets the exe run from repo root,
+ * build-sim/, or build-sim/sim/. If it finds none, it creates sim_storage/
+ * in the CWD.
  */
 
 #include "storage.h"
@@ -77,9 +78,7 @@ esp_err_t storage_platform_init(void)
     return ESP_OK;
 }
 
-/* -------------------------------------------------------------------------
- * BLE device registry — in-memory stub (the simulator has no BLE).
- * ---------------------------------------------------------------------- */
+/* BLE device registry: in-memory stub (the simulator has no BLE). */
 static ble_device_info_t s_ble[STORAGE_BLE_MAX];
 static int               s_ble_count = 0;
 

@@ -100,8 +100,8 @@ void test_modified_tilde_family(void)
                                       false, "\x1b[24;8~");
 }
 
-/* SS3 has nowhere to put a parameter, so a modifier forces CSI even when
- * the unmodified key would have gone out as SS3. */
+/* SS3 has nowhere to put a parameter.
+ * A modifier therefore forces CSI, even for a key that would use SS3 unmodified. */
 void test_modified_keys_are_always_csi(void)
 {
     expect(VTKEY_LEFT, VTMOD_CTRL, true,  "\x1b[1;5D");
@@ -127,7 +127,7 @@ void test_unknown_keys_write_nothing(void)
     TEST_ASSERT_EQUAL_size_t(0, vtkeys_encode(VTKEY_UP, 0, false, NULL, 8));
 }
 
-/* A short buffer must be refused outright, never partially filled. */
+/* vtkeys_encode must refuse a short buffer outright, never partially fill it. */
 void test_short_buffer_leaves_output_untouched(void)
 {
     uint8_t buf[VTKEYS_MAX_LEN];

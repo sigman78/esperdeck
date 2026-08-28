@@ -16,9 +16,9 @@ static DRAM_ATTR struct {
 
 /* Overlay buffer — optional second compositing layer (shell chrome). */
 static DRAM_ATTR struct {
-    display_overlay_cell_t *buf;   /* written LAST in the setter — the ISR
-                                    * must never see a fresh pointer with
-                                    * stale cols/rows */
+    /* The setter writes buf last: the ISR must never read a fresh pointer
+     * paired with stale cols/rows. */
+    display_overlay_cell_t *buf;
     int     cols, rows;
     color_t fg, bg;
 } s_overlay = { .fg = COLOR_BLACK, .bg = COLOR_CYAN };
@@ -91,11 +91,14 @@ IRAM_ATTR bool render_cache_has_cells(void)
     return s_cells.buf != NULL && s_cells.cols > 0 && s_cells.rows > 0;
 }
 
-/* Column cache. bg/xf carry two variants selected per scanline so the hot
- * loop pays no per-pixel effect cost; glyphs are DECODED into rows[] (the
- * compressed font has nothing to point at). One bank, rebuilt on a row's
- * first chunk, reused by its second via the validity tags — the measured
- * history behind this shape is in docs/ARCHITECTURE.md. */
+/* Column cache: one row's glyphs and resolved colors, rebuilt at most once
+ * per frame. bg/xf/pr each hold two variants ([0] normal, [1] scanline-dim)
+ * so the hot loop skips per-pixel effect math. rows[] holds decoded glyph
+ * bitmaps; the compressed font has nothing else to point at. See
+ * docs/ARCHITECTURE.md for the history behind this shape. row, scan, and
+ * frame key the cache: any change forces a rebuild, and row == -1 starts
+ * empty. */
+/* uncomment-ignore[UC006]: per-field legend stays (user call, 2026-08-27) */
 static DRAM_ATTR struct {
     _Alignas(4) uint8_t rows[FONT_MAX_CACHE_BYTES];  /* decoded glyphs  */
     uint32_t pr[2][RENDER_MAX_COLS][4];              /* pixel-pair LUT  */
@@ -120,18 +123,21 @@ IRAM_ATTR void render_cache_invalidate(void)
 }
 
 /*
- * The scan writes pixel PAIRS as one 32-bit store: low half is the left pixel,
- * high half the right. A cell only ever has two colours, so there are exactly
- * four possible pairs — precompute them once per cell per ROW and let the scan
- * index them with the glyph's two bits, instead of recomputing
+ * The scan writes pixel PAIRS as one 32-bit store: low half is the left
+ * pixel, high half the right. A cell only ever has two colours, so there
+ * are exactly four possible pairs.
+ *
+ * build_pair_lut() precomputes them once per cell per row. The scan then
+ * indexes them with the glyph's two bits. That replaces recomputing
  * `bg ^ (xf & mask)` for every pixel on every scanline.
  *
- * Index bit 1 is the LEFT pixel, bit 0 the RIGHT, matching
+ * Index bit 1 is the LEFT pixel; bit 0 is the RIGHT. That matches
  * `(glyph_row >> (W-2-p)) & 3` at the scan's pixel position p.
  */
 static IRAM_ATTR void build_pair_lut(uint32_t *out, uint16_t fg, uint16_t bg)
 {
     const uint32_t f = fg, b = bg;
+    /* uncomment-ignore[UC006]: per-index legend stays (user call, 2026-08-27) */
     out[0] = b | (b << 16);      /* left bg, right bg */
     out[1] = b | (f << 16);      /* left bg, right fg */
     out[2] = f | (b << 16);      /* left fg, right bg */
@@ -145,8 +151,9 @@ static inline uint16_t fx_dim565(uint16_t p)
 }
 
 /* Luma-map onto a monochrome phosphor ramp: mode 1 = green, 2 = amber.
- * IRAM_ATTR, not `inline`: at -Os GCC outlines this into FLASH while its
- * only caller runs from the bounce ISR with the flash cache disabled. */
+ * IRAM_ATTR, not `inline`: at -Os, GCC would outline this into FLASH.
+ * Its only caller runs from the bounce ISR, where the flash cache is
+ * off. */
 static IRAM_ATTR uint16_t fx_mono565(uint16_t p, uint8_t mode)
 {
     const uint32_t r6 = ((p >> 11) & 0x1F) << 1;

@@ -23,10 +23,11 @@ typedef struct {
     const char *username;
     const char *password;     // Password auth (when private_key_pem is NULL)
     /*
-     * Key auth passes PEM CONTENTS, not file paths: the connect worker runs
-     * on a PSRAM stack, and any flash I/O (littlefs fopen included) from a
-     * PSRAM-stack task asserts in spi_flash_disable_interrupts_caches_and_
-     * other_cpu(). The caller (shell task, internal stack) reads the files.
+     * Key auth passes PEM CONTENTS, not file paths. The connect worker
+     * runs on a PSRAM stack. Any flash I/O there, including littlefs
+     * fopen, asserts inside spi_flash_disable_interrupts_caches_and_
+     * other_cpu(). The caller — the shell task, on an internal stack —
+     * reads the files instead.
      */
     const char *private_key_pem;  // NUL-terminated PEM key → public-key auth
     const char *public_key_pem;   // Optional pubkey contents; needed for ECDSA
@@ -35,9 +36,10 @@ typedef struct {
     const char *passphrase;   // Optional: decrypts an encrypted private key
     /*
      * Pinned host-key fingerprint (lowercase hex SHA256, 64 chars) from a
-     * previous session.  NULL = unknown host: the connect stops after the
-     * handshake with SSH_ERR_HOSTKEY_UNKNOWN so the caller can show a
-     * trust-on-first-use prompt, then retry with the fingerprint set.
+     * previous session. NULL means an unknown host. The connect then stops
+     * after the handshake with SSH_ERR_HOSTKEY_UNKNOWN. This lets the
+     * caller show a trust-on-first-use prompt, then retry with the
+     * fingerprint set.
      */
     const char *expected_fp;
 } ssh_config_t;
@@ -56,11 +58,11 @@ esp_err_t ssh_client_init(void);
 esp_err_t ssh_client_connect(const ssh_config_t *config);
 
 /**
- * Asynchronous connect: run ssh_client_connect() on a worker task so the UI
- * stays live during DNS/TCP/handshake/auth. The caller MUST keep the strings
- * referenced by @p config alive until the result is taken (the struct is
- * shallow-copied). Returns ESP_OK once the worker is launched, or
- * ESP_ERR_INVALID_STATE if a connect is already in flight.
+ * Runs ssh_client_connect() on a worker task, asynchronously, so the UI
+ * stays live during DNS, TCP, handshake, and auth. The caller MUST keep
+ * the strings referenced by @p config alive until it takes the result
+ * (the struct is shallow-copied). Returns ESP_OK once the worker launches,
+ * or ESP_ERR_INVALID_STATE if a connect is already in flight.
  */
 esp_err_t ssh_client_connect_start(const ssh_config_t *config);
 

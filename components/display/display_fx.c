@@ -30,7 +30,7 @@ DRAM_ATTR volatile uint8_t g_fx_frame   = 0;
 DRAM_ATTR volatile uint8_t g_fx_cfg_gen = 0;
 
 /* Wobble LUT starts flat (matches .wobble = 0); display_fx_set rebuilds it
- * whenever a config is applied. */
+ * whenever the caller applies a new config. */
 DRAM_ATTR int8_t g_fx_wobble_lut[256] = { 0 };
 
 #if DISPLAY_FX_ROW_GLOW

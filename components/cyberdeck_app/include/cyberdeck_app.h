@@ -47,12 +47,12 @@ typedef struct {
     int16_t  dy;        /* SCROLL: pixels since the last event, down positive */
 } cyberdeck_input_t;
 
-/* ---- capability services (extensibility item 5b) ------------------------
- * A service is a named ops struct the composition root registers for a
- * capability that may be absent on a platform (BLE on the simulator).
- * The shell and plugins resolve optional dependencies by name instead of
- * this config growing a typed field per capability. The array and every
- * ops struct it points at must outlive the app — pass statics. */
+/* Capability services (extensibility item 5b). A service is a named
+ * ops struct. The composition root registers it for a capability that
+ * may be absent on a platform (BLE on the simulator). The shell and
+ * plugins resolve optional dependencies by name, instead of growing a
+ * typed field per capability in this config. The array and every ops
+ * struct it points at must outlive the app — pass statics. */
 
 #define CYBERDECK_SVC_BLE_KEYBOARD "ble-keyboard"  /* cyberdeck_ble_ops_t      */
 #define CYBERDECK_SVC_PRESENCE     "presence"      /* cyberdeck_presence_ops_t */
@@ -67,10 +67,10 @@ typedef struct {
  *  name documents. */
 const void *cyberdeck_service(const char *name);
 
-/* ---- BLE keyboard service (CYBERDECK_SVC_BLE_KEYBOARD) ------------------
- * States mirror the input component's ble_state_t — the shell is
- * platform-neutral and cannot see that header, so main.c (the one file
- * that sees both) static-asserts the two enums stay in step. */
+/* BLE keyboard service (CYBERDECK_SVC_BLE_KEYBOARD). States mirror the
+ * input component's ble_state_t. The shell is platform-neutral and
+ * cannot see that header. So main.c (the one file that sees both)
+ * static-asserts the two enums stay in step. */
 
 typedef enum {
     CYBERDECK_BLE_IDLE = 0,      /* stack up, not scanning               */
@@ -96,10 +96,10 @@ typedef struct {
     uint8_t (*get_locks)(void);      /* CYBERDECK_KBD_LOCK_* bitmask */
 } cyberdeck_ble_ops_t;
 
-/* ---- phone-presence service (CYBERDECK_SVC_PRESENCE) -------------------
- * Prototype policy input (docs/feat-ideas.md §8b tier A): presence gates
- * behavior — it is never key material. Enroll states mirror the input
- * component's ble_presence_enroll_t (same static-assert pin in main.c). */
+/* Prototype policy input for CYBERDECK_SVC_PRESENCE (docs/feat-ideas.md
+ * §8b tier A). Presence gates behavior; it is never key material. Enroll
+ * states mirror the input component's ble_presence_enroll_t (same
+ * static-assert pin in main.c). */
 
 typedef enum {
     CYBERDECK_ENROLL_IDLE = 0,     /* not advertising                    */
@@ -110,9 +110,10 @@ typedef enum {
 typedef struct {
     bool     (*enrolled)(void);
     bool     (*present)(void);        /* resolved sighting < ~45 s ago     */
-    bool     (*is_near)(void);        /* present AND RSSI over near gate
-                                         (not `near`: windows.h defines that
-                                         legacy keyword away, killing MSVC) */
+    /* is_near is true when present AND RSSI clears the near gate. It
+     * avoids the name `near`: windows.h defines that legacy keyword,
+     * breaking MSVC. */
+    bool     (*is_near)(void);
     uint32_t (*age_ms)(void);         /* ms since last sighting, ~0 = now  */
     int      (*rssi)(void);           /* smoothed, 0 = none yet            */
     void     (*enroll_start)(void);   /* advertise for phone pairing       */
@@ -120,8 +121,6 @@ typedef struct {
     cyberdeck_enroll_state_t (*enroll_state)(void);
     void     (*forget)(void);
 } cyberdeck_presence_ops_t;
-
-/* ---- configuration ------------------------------------------------------ */
 
 typedef struct {
     uint64_t boot_delay_ms;       /* splash hold before the shell appears  */
@@ -145,15 +144,13 @@ typedef struct {
     int n_services;
 
     /* Arm/disarm the right-edge scroll strip, in pixels (0 = off). Same
-     * seam as the services above: the shell states what it wants and the
-     * platform owns the touch driver, so cyberdeck_app never depends on `input`.
-     * NULL where there is no touch panel — the simulator drives the gesture
-     * from its own mouse handling. */
+     * seam as the services above. The shell states what it wants, and
+     * the platform owns the touch driver. cyberdeck_app therefore never
+     * depends on `input`. NULL where there is no touch panel — the
+     * simulator drives the gesture from its own mouse handling. */
     void (*set_scroll_edge)(int width_px);
     int  scroll_edge_px;              /* strip width when the gesture is on */
 } cyberdeck_app_config_t;
-
-/* ---- lifecycle ---------------------------------------------------------- */
 
 /**
  * Initialize the shell. Call after display/vterm/storage/wifi/ssh init.
@@ -167,7 +164,7 @@ void cyberdeck_app_tick(uint64_t now_ms);
 /** Feed one input event (keyboard bytes or touch). */
 void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now_ms);
 
-/** True while an SSH session is active (bytes are being forwarded). */
+/** True while an SSH session is active and forwards bytes. */
 bool cyberdeck_app_in_session(void);
 
 #ifdef BUILD_SIMULATOR

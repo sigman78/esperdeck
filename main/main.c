@@ -42,9 +42,6 @@ static const char *TAG = "cyberdeck";
 #define CONFIG_SSH_AUTO_RECONNECT 0
 #endif
 
-/* -------------------------------------------------------------------------
- * Heap diagnostic helper
- * ---------------------------------------------------------------------- */
 static void log_heap(const char *label)
 {
     ESP_LOGI(TAG, "Heap %-30s  total=%7u  int=%7u  int_blk=%7u",
@@ -54,9 +51,6 @@ static void log_heap(const char *label)
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
 }
 
-/* -------------------------------------------------------------------------
- * System init helpers
- * ---------------------------------------------------------------------- */
 static void init_nvs(void)
 {
     esp_err_t ret = nvs_flash_init();
@@ -78,9 +72,6 @@ static void init_network(void)
     tzset();
 }
 
-/* -------------------------------------------------------------------------
- * BLE keyboard ops for the shell (device backend = ble_keyboard/NimBLE)
- * ---------------------------------------------------------------------- */
 /* The shell mirrors input's state enums (it is platform-neutral and never
  * includes input's headers); this is the one file that sees both, so pin
  * the pairs together here. */
@@ -136,9 +127,6 @@ static const cyberdeck_service_t s_services[] = {
     { CYBERDECK_SVC_PRESENCE,     &s_presence_ops },
 };
 
-/* -------------------------------------------------------------------------
- * Main task — pumps input into the shell
- * ---------------------------------------------------------------------- */
 static uint64_t now_ms(void)
 {
     return (uint64_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
@@ -170,13 +158,11 @@ static void main_task(void *pvParameters)
     }
 }
 
-/* -------------------------------------------------------------------------
- * Application entry point
- * ---------------------------------------------------------------------- */
-/* Resolve the font size to boot with: the stored choice when it names a size
- * this build links, otherwise the Kconfig default. font_init() applies a
- * final fallback if even that size was compiled out, so a stale setting or a
- * trimmed build can never leave the renderer without a glyph table. */
+/* Resolve the font size to boot with. Use the stored choice when it names
+ * a size this build links, or the Kconfig default otherwise. font_init()
+ * applies a final fallback if the build dropped even that size. So a
+ * stale setting or a trimmed build can never leave the renderer without
+ * a glyph table. */
 static font_size_t boot_font_size(void)
 {
 #if defined(CONFIG_CYBERDECK_FONT_DEFAULT_12X24)
@@ -192,9 +178,10 @@ static font_size_t boot_font_size(void)
                     cyberdeck_font_fields, &fc);
     if (fc.size[0]) {
         for (int i = 0; i < FONT_SIZE_COUNT; i++) {
-            /* Availability, not just the name: honouring a size this build
-             * dropped would send font_init() to its last-resort "first
-             * linked size", overriding the configured default. */
+            /* This checks availability, not just the name. Honouring a
+             * size this build dropped would send font_init() to its
+             * last-resort "first linked size", overriding the configured
+             * default. */
             if (font_size_available((font_size_t)i) &&
                 strcmp(fc.size, font_size_name((font_size_t)i)) == 0) {
                 want = (font_size_t)i;
@@ -271,14 +258,17 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(cyberdeck_app_init(&app_cfg, now_ms()));
 
-    /* The shell writes profiles/known-hosts to flash from this task, so its
-     * stack must be internal DRAM (flash ops forbid external-RAM stacks).
-     * Static (.bss) rather than heap: by this point NimBLE + WiFi + the
-     * 2x12 KB overlay have fragmented internal DRAM, and the 12 KB
-     * contiguous heap_caps_malloc here failed intermittently — boot then
+    /* The shell writes profiles/known-hosts to flash from this task. Its
+     * stack must be internal DRAM; flash ops forbid external-RAM stacks.
+     *
+     * This stack is static (.bss), not heap. By this point NimBLE, WiFi,
+     * and the 2x12 KB overlay have fragmented internal DRAM. A 12 KB
+     * contiguous heap_caps_malloc here failed intermittently. Boot then
      * halted on the splash screen with everything else still running.
-     * Same RAM cost, zero fragmentation risk, and the heap keeps a big
-     * block free for NimBLE's connect-time allocations. */
+     *
+     * A static stack costs the same RAM and carries zero fragmentation
+     * risk. It also leaves the heap a big block free for NimBLE's
+     * connect-time allocations. */
 #define MAIN_TASK_STACK 12288
     static StaticTask_t s_main_task_tcb;
     static StackType_t  s_main_task_stack[MAIN_TASK_STACK / sizeof(StackType_t)];

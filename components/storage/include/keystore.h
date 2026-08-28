@@ -1,11 +1,12 @@
 /*
  * keystore.h — PIN-unlocked wrapped key store (docs/storage_auth.md).
  *
- * A random 32-byte master key (MK) wraps every key file; the MK itself is
- * stored in <mount>/keystore.kv1, wrapped by Argon2id(PIN, salt) in one of
+ * A random 32-byte master key (MK) wraps every key file. The store keeps
+ * the MK in <mount>/keystore.kv1, wrapped by Argon2id(PIN, salt) in one of
  * up to four slots (LUKS-style indirection). Key files live beside the
- * legacy plaintext ones as keys/<id>.kw1 (XChaCha20-Poly1305, AAD binds
- * key id + store uuid, so renaming or transplanting a file breaks the tag).
+ * legacy plaintext ones as keys/<id>.kw1 (XChaCha20-Poly1305). The AAD
+ * binds key id and store uuid, so renaming or transplanting a file breaks
+ * the tag.
  *
  * Compiled on BOTH device and simulator; the file formats are byte-identical
  * (explicit little-endian serialization, Monocypher primitives from the
@@ -66,15 +67,15 @@ uint8_t keystore_pin_len(void);
 
 /**
  * Create a new store: random MK + uuid, @p pin wrapped into slot 0.
- * The store is left UNLOCKED. Refuses to overwrite an existing store
- * (ESP_ERR_INVALID_STATE) — delete keystore.kv1 first if you mean it.
+ * This leaves the store UNLOCKED. It refuses to overwrite an existing
+ * store (ESP_ERR_INVALID_STATE) — delete keystore.kv1 first if you mean it.
  */
 esp_err_t keystore_create(const char *pin);
 
 /**
- * Derive the KEK from @p pin and try every occupied slot. On success the MK
- * stays in RAM (state UNLOCKED) and any bare keys/<id>.pem files are adopted:
- * wrapped to .kw1 and deleted (best-effort migration).
+ * Derive the KEK from @p pin and try every occupied slot. On success the
+ * MK stays in RAM (state UNLOCKED). Adoption then wraps any bare
+ * keys/<id>.pem files to .kw1 and deletes them (best-effort migration).
  * ESP_OK also when already unlocked.
  */
 esp_err_t keystore_unlock(const char *pin);
@@ -84,7 +85,7 @@ void keystore_lock(void);
 
 /**
  * Re-wrap the slot that @p old_pin opens with @p new_pin (fresh salt+nonce).
- * Key files are untouched. Works locked or unlocked; @p old_pin must be
+ * Key files stay untouched. Works locked or unlocked; @p old_pin must be
  * correct either way.
  */
 esp_err_t keystore_change_pin(const char *old_pin, const char *new_pin);
@@ -108,12 +109,12 @@ esp_err_t keystore_unwrap(const char *key_id, void *buf, size_t buf_len,
 bool keystore_is_wrapped(const char *key_id);
 
 /**
- * Decommission the store: prove @p pin (even when already unlocked — this
- * writes private keys back as plaintext), unwrap every keys/<id>.kw1 to a
- * bare keys/<id>.pem, then delete keystore.kv1 (state ABSENT, feature off).
- * A key that fails to unwrap aborts BEFORE the header is deleted; a crash
- * mid-way is safe — the next unlock re-adopts the emitted .pem files.
- * ESP_FAIL = wrong code.
+ * Decommission the store: prove @p pin (this works even when already
+ * unlocked). This call writes private keys back as plaintext. It unwraps
+ * every keys/<id>.kw1 to a bare keys/<id>.pem, then deletes keystore.kv1
+ * (state ABSENT, feature off). A key that fails to unwrap aborts before it
+ * deletes the header. A crash mid-way is safe: the next unlock re-adopts
+ * the emitted .pem files. ESP_FAIL = wrong code.
  */
 esp_err_t keystore_remove(const char *pin);
 
@@ -130,15 +131,13 @@ void keystore_reset_cache(void);
  */
 void keystore_wipe(void *buf, size_t len);
 
-/* -------------------------------------------------------------------------
- * Secrets bundle — keys/secrets.kw1 (content_type 2)
+/* Secrets bundle: keys/secrets.kw1 (content_type 2).
  *
  * One wrapped blob of "namespace:key=value" lines holding every non-key
  * credential: "profile:<name>=<password-or-passphrase>" and
  * "wifi:<ssid>=<psk>". Cached in internal SRAM with exactly the master
  * key's lifetime (loaded lazily after unlock, wiped at lock). Values may
- * not contain newlines; keys may not contain '=' or newlines.
- * ---------------------------------------------------------------------- */
+ * not contain newlines; keys may not contain '=' or newlines. */
 
 /**
  * Fetch a secret into @p out (NUL-terminated). ESP_ERR_INVALID_STATE while
@@ -155,8 +154,8 @@ esp_err_t keystore_secret_set(const char *skey, const char *value);
 
 /**
  * Drop every "<prefix><name>=" entry whose <name> is not in @p keep —
- * e.g. prune "profile:" entries after a profile delete/rename. Rewraps
- * only when something was removed. No-op while locked.
+ * e.g. prune "profile:" entries after a profile delete/rename. It rewraps
+ * only when it removes something. No-op while locked.
  */
 void keystore_secrets_prune(const char *prefix,
                             const char *const *keep, int nkeep);

@@ -19,7 +19,7 @@ static int s_screen_count;
 
 typedef struct { int id; intptr_t arg; } nav_entry_t;
 static nav_entry_t s_stack[NAV_STACK_MAX];
-static int  s_depth;       /* 0 = nothing entered yet (init only) */
+static int  s_depth;       /* zero only before the first entry */
 static bool s_dirty;
 
 bool nav_init(const nav_screen_t *const *screens, int count)
@@ -92,8 +92,8 @@ bool nav_push(int id, intptr_t arg, uint64_t now)
         ESP_LOGW(TAG, "stack full pushing %s", screen(id)->name);
         return false;
     }
-    /* One stack entry per screen: state is file-static in the owning
-     * module, so a duplicate entry would share (and clobber) it. */
+    /* Each screen gets one stack entry. Its state is file-static in the
+     * owning module, so a duplicate entry would share, and clobber, it. */
     for (int i = 0; i < s_depth; i++) {
         if (s_stack[i].id == id) {
             ESP_LOGW(TAG, "%s already on the stack, push rejected",
@@ -152,7 +152,7 @@ void nav_frame(uint64_t now)
     if (!s_dirty) return;
     s_dirty = false;
     d = screen(nav_current());
-    if (!d || !d->render) return;        /* self-managed (session) */
+    if (!d || !d->render) return;        /* SESSION renders itself */
 
     ui_colors(UI_FG, UI_BG);
     ui_clear();

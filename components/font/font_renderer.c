@@ -1,12 +1,12 @@
 /*
  * Font rendering implementation — compressed glyph table format ("v1").
  *
- * Glyph tables are not flat per-codepoint row arrays: each face has a
- * range/idx table whose idx entries are BYTE OFFSETS into a compact "pool"
- * of variable-length PackBits-encoded glyph records (see terminus_font.h
- * for the exact wire format). Rendering therefore always goes through
- * font_decode_glyph(), which expands a record into a plain row buffer on
- * every call — there is no cached pointer to a ready-made glyph.
+ * Glyph tables are not flat per-codepoint row arrays. Each face has a
+ * range/idx table. Idx entries hold BYTE OFFSETS into a compact "pool" of
+ * variable-length PackBits-encoded glyph records. See terminus_font.h for
+ * the exact wire format. Rendering always goes through font_decode_glyph(),
+ * which expands a record into a plain row buffer on every call. No cached
+ * pointer points to a ready-made glyph.
  */
 
 #include "font.h"
@@ -15,8 +15,8 @@
 #include "esp_log.h"
 #include <string.h>
 
-/* The simulator provides an idfsim/esp_heap_caps.h stub, so this is
- * unconditional — the glyph cache is built on both targets. */
+/* The simulator provides an idfsim/esp_heap_caps.h stub. This include stays
+ * unconditional, and both targets build the glyph cache. */
 #include "esp_heap_caps.h"
 
 #if defined(_MSC_VER)
@@ -33,8 +33,8 @@ typedef struct {
     uint8_t         width;
     uint8_t         height;
     const char     *name;
-    const FontFace *regular;    /* NULL when this size is compiled out */
-    const FontFace *bold;       /* NULL when bold is compiled out      */
+    const FontFace *regular;    /* NULL when the build skips this size */
+    const FontFace *bold;       /* NULL when the build skips bold      */
 } font_variant_t;
 
 static const font_variant_t s_variants[FONT_SIZE_COUNT] = {
@@ -82,7 +82,7 @@ static DRAM_ATTR const uint16_t  *s_palette        = NULL;
 
 static DRAM_ATTR int              s_width          = 8;
 static DRAM_ATTR int              s_height         = 16;
-static DRAM_ATTR int              s_rb             = 1;   /* FONT_ROW_BYTES(s_width) */
+static DRAM_ATTR int              s_rb             = 1;
 static DRAM_ATTR size_t           s_glyph_bytes    = 16;
 
 static font_size_t                s_active         = FONT_SIZE_8X16;
@@ -90,25 +90,25 @@ static font_size_t                s_active         = FONT_SIZE_8X16;
 /* ---- Dynamic sprite glyphs (contract in font.h) ----
  *
  * Double-buffered per slot: font_sprite_set() fills the inactive buffer,
- * flips `active`, and invalidates the slot's decoded-glyph-cache keys — so a
- * cache refill in the ISR always copies a COMPLETE bitmap, and the sprite
- * check itself lives only on the cache-miss path (decode_uncached), never in
- * the per-cell hot path. Zero-initialized => every slot starts blank.
+ * flips `active`, and invalidates the slot's decoded-glyph-cache keys. A
+ * cache refill in the ISR always copies a COMPLETE bitmap. The sprite check
+ * itself lives only on the cache-miss path (decode_uncached), never in the
+ * per-cell hot path. Zero-initialized => every slot starts blank.
  * 4-aligned so the refill's word copy applies (strides 16/40/48 are 4n). */
 static DRAM_ATTR _Alignas(4) uint8_t
     s_sprite_rows[FONT_SPRITE_COUNT][2][FONT_MAX_GLYPH_BYTES];
 static DRAM_ATTR volatile uint8_t s_sprite_active[FONT_SPRITE_COUNT];
-/* Bumped at the START of every set(): a cache fill that spans the whole
+/* Bumped at the START of every set(). A cache fill spanning the whole
  * update sees the change and declines to publish its line (gc_fill). */
 static DRAM_ATTR volatile uint8_t s_sprite_gen[FONT_SPRITE_COUNT];
 
 static void gcache_init(void);   /* decoded-glyph cache; see below */
 
 #ifndef BUILD_SIMULATOR
-/* Copy one face's range table + idx arrays + pool into internal DRAM so the
- * bounce-buffer ISR can read it while the flash cache is disabled (NVS
- * writes). idx arrays are always uint16_t regardless of row width — they
- * hold pool byte offsets, not rows. Returns false when DRAM is exhausted
+/* Copy one face's range table, idx arrays, and pool into internal DRAM.
+ * This lets the bounce-buffer ISR read them while NVS writes disable the
+ * flash cache. idx arrays are always uint16_t regardless of row width —
+ * they hold pool byte offsets, not rows. Returns false when DRAM runs out
  * (caller keeps the flash-resident tables for this face). */
 static bool load_face(const FontFace *src,
                       const FontRange **out_ranges, const uint8_t **out_pool)
@@ -154,8 +154,8 @@ static bool load_face(const FontFace *src,
     return true;
 }
 
-/* Palette is copied once per size and shared by the regular and bold face
- * (rb==2 sizes only). */
+/* load_palette() copies the palette once per size; the regular and bold
+ * face share it (rb==2 sizes only). */
 static bool load_palette(const uint16_t *src, uint16_t len, const uint16_t **out)
 {
     if (!len) {
@@ -197,9 +197,9 @@ size_t      font_glyph_bytes(void) { return s_glyph_bytes; }
  */
 void font_init(font_size_t size)
 {
-    /* A stored setting can outlive the Kconfig that provided its size, so an
-     * unavailable request falls back to the first size still linked in
-     * rather than leaving the renderer without a table. */
+    /* A stored setting can outlive the Kconfig that provided its size. An
+     * unavailable request falls back to the first linked size, rather than
+     * leaving the renderer without a table. */
     if (!font_size_available(size)) {
         font_size_t fallback = FONT_SIZE_COUNT;
         for (int i = 0; i < FONT_SIZE_COUNT; i++) {
@@ -226,9 +226,9 @@ void font_init(font_size_t size)
     s_bold_smear_left = bold ? bold->smear_left : 0;
 
 #ifndef BUILD_SIMULATOR
-    /* Fall back to the flash-resident tables on DRAM exhaustion: renders
-     * fine except while the flash cache is disabled (e.g. during NVS
-     * writes). Better than a NULL dereference. */
+    /* Fall back to the flash-resident tables on DRAM exhaustion. This
+     * renders fine, except while NVS writes disable the flash cache. It
+     * beats a NULL dereference. */
     if (!load_face(reg, &s_ranges, &s_pool)) {
         s_ranges = reg->ranges;
         s_pool   = reg->pool;
@@ -273,8 +273,8 @@ void font_init(font_size_t size)
 #endif
 }
 
-/* ---- Decode path: IRAM_ATTR, no libc calls (flash cache may be disabled
- * when the bounce ISR runs). Everything below is reachable from
+/* ---- Decode path: IRAM_ATTR, no libc calls. The bounce ISR may disable
+ * the flash cache while it runs. Everything below is reachable from
  * font_decode_glyph(). ---- */
 
 /* Binary search shared by both faces; returns the pool BYTE OFFSET for `cp`
@@ -297,11 +297,11 @@ static IRAM_ATTR bool lookup_offset(const FontRange *ranges, int n, uint16_t cp,
 }
 
 /* Runs before EVERY glyph decode, so its width matters. Measured on internal
- * SRAM: a byte store costs the same as a word store (~5 cyc either way — the
- * cost is per instruction, not per byte), so byte-at-a-time fills pay 4x.
- * Callers hand us the 4-aligned row cache with a 4-multiple glyph stride
- * (16 / 40 / 48 B), so the word path is the one that runs; the byte loop is
- * kept for the host tests, which pass arbitrary buffers. */
+ * SRAM: a byte store costs the same as a word store (~5 cyc either way).
+ * The cost is per instruction, not per byte, so byte-at-a-time fills pay
+ * 4x. Callers hand us the 4-aligned row cache with a 4-multiple glyph
+ * stride (16 / 40 / 48 B). The word path is the one that runs. The byte
+ * loop stays for the host tests, which pass arbitrary buffers. */
 static IRAM_ATTR void zero_fill(void *out, size_t n)
 {
     uint8_t *o = (uint8_t *)out;
@@ -316,8 +316,9 @@ static IRAM_ATTR void zero_fill(void *out, size_t n)
         o[i] = 0;
 }
 
-/* rb==2 symbol reader: u8 palette index, or the 0xFF escape followed by 2
- * raw row bytes (little-endian) inline in the pool stream. Advances *pp. */
+/* rb==2 symbol reader. It returns a u8 palette index. Or it reads the 0xFF
+ * escape, followed by 2 raw row bytes (little-endian) inline in the pool
+ * stream. Advances *pp. */
 static IRAM_ATTR uint16_t read_symbol16(const uint8_t **pp)
 {
     const uint8_t *p = *pp;
@@ -411,18 +412,17 @@ static IRAM_ATTR void decode_regular(uint16_t cp, void *out)
         if (lookup_offset(s_ranges, s_num_ranges, 0x003F, &qoff))
             decode_record(s_pool, qoff, out);
     }
-    /* else: leave zero-filled */
 }
 
 #if FONT_BOLD_ENABLED
 /* Smear one pixel in the face's smear direction, in place, per row. 8x16 is
  * the only LEFT-smearing (rb==1) size; 10x20/12x24 smear RIGHT (rb==2). The
  * per-variant s_bold_smear_left flag drives the choice, not rb, per spec. */
-/* The smear is a per-row shift-or with no carry between rows, which makes it
- * exactly a SWAR operation: process 4 rows (rb==1) or 2 rows (rb==2) per
- * 32-bit word and mask off the bit that would cross a lane boundary.
- *   left : per lane (v << 1), so clear each lane's bit 0 after shifting
- *   right: per lane (v >> 1), so clear each lane's top bit after shifting
+/* The smear is a per-row shift-or with no carry between rows. This makes it
+ * exactly a SWAR operation. It processes 4 rows (rb==1) or 2 rows (rb==2)
+ * per 32-bit word. It masks off the bit that would cross a lane boundary.
+ *   left : per lane (v << 1), so clear each lane's bit 0 after shifting.
+ *   right: per lane (v >> 1), so clear each lane's top bit after shifting.
  * Bit-identical to the byte/halfword loop it replaces. Both the row cache and
  * the glyph stride are 4-aligned, so the word path always applies. */
 static IRAM_ATTR void smear_glyph(void *out)
@@ -520,10 +520,11 @@ static IRAM_ATTR void decode_uncached(uint16_t cp, bool bold, void *out)
 /*
  * Decoded-glyph cache — 256 entries, 2-way set associative, bounded.
  *
- * build_row_cache() decodes every visible cell on every frame (3000/frame at
- * 100x30) over a working set far smaller than the font, so cache the decoded
- * rows and evict. Sizing and associativity rationale (birthday bound, why
- * not LRU/4-way): "Glyph tables & the row cache" in docs/ARCHITECTURE.md;
+ * build_row_cache() decodes every visible cell on every frame (3000/frame
+ * at 100x30). The working set is far smaller than the font, so the cache
+ * keeps decoded rows and evicts stale ones. Sizing and associativity
+ * rationale (birthday bound, why not LRU/4-way): "Glyph tables & the row
+ * cache" in docs/ARCHITECTURE.md;
  * measured effect in docs/performance.md. Filled lazily; the first frame
  * warms it. Internal DRAM: the bounce ISR reads this with the flash cache
  * disabled.
@@ -564,8 +565,8 @@ static IRAM_ATTR unsigned gc_fill(unsigned set, uint32_t key,
                     s_gc_data + (size_t)(set * GC_WAYS + way) * s_glyph_bytes);
 
     /* A sprite update racing this fill would otherwise leave old pixels
-     * cached under a valid tag with nothing left to invalidate them (the
-     * updater's invalidates ran before our tag store). Publish the line
+     * cached under a valid tag. Nothing would invalidate them, since the
+     * updater's invalidates ran before our tag store. Publish the line
      * only on an unchanged generation; the caller still gets the decoded
      * bytes, and the next lookup simply refills. */
     if (slot < FONT_SPRITE_COUNT && s_sprite_gen[slot] != gen)
@@ -600,8 +601,8 @@ IRAM_ATTR void font_decode_glyph(uint16_t cp, bool bold, void *out)
 
 static void gcache_init(void)
 {
-    /* font_init() is once-per-boot today (a size change needs a reboot), but
-     * do not leave a stale cache behind if that ever changes. */
+    /* font_init() is once-per-boot today (a size change needs a reboot).
+     * Do not leave a stale cache behind if that ever changes. */
     s_gc_tag = NULL; s_gc_bits = NULL; s_gc_data = NULL;
     heap_caps_free(s_gc_owned);
     s_gc_owned = NULL;
@@ -626,7 +627,7 @@ static void gcache_init(void)
     s_gc_owned = buf;
     s_gc_tag   = (uint32_t *)buf;                /* 4-aligned by malloc */
     s_gc_bits  = buf + tag_b;
-    s_gc_data  = buf + tag_b + bits_b;           /* tag_b+bits_b = 1040, 4-aligned */
+    s_gc_data  = buf + tag_b + bits_b;           /* = 1040 total, 4-aligned */
 
     for (unsigned i = 0; i < GC_ENT; i++) s_gc_tag[i] = GC_EMPTY;
     for (unsigned i = 0; i < bits_b; i++) s_gc_bits[i] = 0;
@@ -639,8 +640,8 @@ static void gcache_init(void)
 /* ---- Dynamic sprite glyphs: the task-side write path ---- */
 
 /* Drop any cached decode of @p cp, both bold variants. A tag store is a
- * single 32-bit write and the ISR treats GC_EMPTY as a miss, so this is safe
- * against a concurrent reader. */
+ * single 32-bit write. The ISR treats GC_EMPTY as a miss, so this stays
+ * safe against a concurrent reader. */
 static void gc_invalidate_cp(uint16_t cp)
 {
     if (!s_gc_tag)

@@ -1,14 +1,15 @@
 /*
  * sim/main.c — host composition root.
  *
- * SDL event pumping and host key translation live here; the shell
- * (profile picker, session flow, menus) is the same cyberdeck_app code
- * that runs on the device. BLE is not available on the host (ble = NULL);
- * the SDL keyboard stands in for the BLE keyboard.
+ * SDL event pumping and host key translation live here. The shell is the
+ * same cyberdeck_app code that runs on the device. It covers the profile
+ * picker, session flow, and menus. BLE is not available on the host
+ * (ble = NULL); the SDL keyboard stands in for the BLE keyboard.
  *
- * Controls: F12 = in-session menu, Alt+Enter = window scale,
- *           left-click = touch (tap on release < 300 ms, long-press when
- *           held >= 500 ms — GT911 timing), right-click = instant long-press.
+ * Controls: F12 opens the in-session menu. Alt+Enter changes the window
+ * scale. Left-click acts as touch: tap on release under 300 ms, long-press
+ * at 500 ms or more, matching GT911 timing. Right-click acts as an
+ * instant long-press.
  */
 
 #include <SDL2/SDL.h>
@@ -87,12 +88,13 @@ static void send_key_bytes(const char *seq, size_t len, uint64_t now)
 }
 
 /*
- * Mouse → touch emulation, mirroring the GT911 state machine in
- * touch_input.c: tap = press + release within TAP_MAX_MS, long-press fires
- * while still held at LONG_PRESS_MS, a release in between lands in the dead
- * zone and posts nothing. Events carry the press-down position, mapped from
- * window to framebuffer space (the window may be scaled or resized).
- * Right-click skips the hold and posts a long-press immediately.
+ * Mouse → touch emulation mirrors the GT911 state machine in
+ * touch_input.c. A tap is a press and release within TAP_MAX_MS. A
+ * long-press fires while still held at LONG_PRESS_MS. A release in
+ * between lands in the dead zone and posts nothing. Events carry the
+ * press-down position, mapped from window to framebuffer space, since
+ * the window can scale or resize. Right-click skips the hold and posts
+ * a long-press immediately.
  */
 #define TOUCH_TAP_MAX_MS    300
 #define TOUCH_LONG_PRESS_MS 500
@@ -141,11 +143,12 @@ static void touch_mouse_up(const SDL_MouseButtonEvent *b, uint64_t now)
     touch_state = TOUCH_IDLE;
 }
 
-/* Right-edge scroll drag, mirroring touch_input.c's STATE_SCROLLING: a press
- * that STARTS in the strip and then travels vertically turns into a stream of
- * SCROLL events instead of the tap it would have been. Armed by the shell
- * through sim_set_scroll_edge (the cfg.set_scroll_edge seam), so the menu
- * toggle governs the simulator exactly as it governs the panel. */
+/* Right-edge scroll drag mirrors touch_input.c's STATE_SCROLLING. A press that
+ * starts in the strip and travels vertically turns into a stream of SCROLL
+ * events. It replaces the tap the press would otherwise have been. The
+ * shell arms this through sim_set_scroll_edge (the cfg.set_scroll_edge
+ * seam). The menu toggle then governs the simulator exactly as it governs
+ * the panel. */
 static int      s_scroll_edge_px = 0;
 static uint16_t s_scroll_last_y;
 
@@ -154,12 +157,12 @@ static void sim_set_scroll_edge(int width_px)
     s_scroll_edge_px = width_px < 0 ? 0 : width_px;
 }
 
-/* Mouse wheel → scroll, sim-only. The panel has no wheel, so this rides the
- * same SCROLL event as the edge drag rather than inventing a second path:
- * one notch is reported as a cell of travel, which the shell then scales by
- * the configured drag speed exactly as it does a finger. SDL gives positive
- * y for a push away from you, which should show older lines — the same
- * direction as dragging the content down. */
+/* Mouse wheel → scroll, sim-only. The panel has no wheel. This rides the
+ * same SCROLL event as the edge drag rather than inventing a second path.
+ * The code reports one notch as a cell of travel. The shell then scales
+ * that by the configured drag speed exactly as it scales a finger. SDL
+ * gives positive y for a push away from you. That should show older
+ * lines, the same direction as dragging the content down. */
 static void mouse_wheel(const SDL_MouseWheelEvent *w, uint64_t now)
 {
     if (!w->y) return;
@@ -216,9 +219,9 @@ static void touch_tick(uint64_t now)
  * scripted input for UI screenshot automation and regression runs
  * (framebuffer pixel coords; key names: enter, esc, tab, up/down/left/right,
  * f12, sbup/sbdn for scrollback paging, or a single character). Expectations
- * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms
- * apart (wait:N overrides the gap) starting 2.5 s after boot, injected
- * through the same paths as real input. Sim-only test hook.
+ * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms apart
+ * (wait:N overrides the gap), starting 2.5 s after boot. Each step
+ * injects through the same paths as real input. Sim-only test hook.
  * ---------------------------------------------------------------------- */
 static const char *s_drive      = NULL;
 static uint64_t    s_drive_next = 0;
@@ -301,9 +304,9 @@ int main(int argc, char *argv[])
     int cli_rc = keystore_cli_main(argc, argv);
     if (cli_rc >= 0) return cli_rc;
 
-    /* --drive <script> is consumed first (scripted-input test hook); the
-     * remaining positionals: host [port [user [password]]] become the
-     * "(default)" entry in the profile picker. */
+    /* main() consumes --drive <script> first (scripted-input test hook).
+     * The remaining positionals — host [port [user [password]]] — become
+     * the "(default)" entry in the profile picker. */
     if (argc > 2 && strcmp(argv[1], "--drive") == 0) {
         s_drive      = argv[2];
         s_drive_next = SDL_GetTicks64() + 2500;
@@ -332,7 +335,7 @@ int main(int argc, char *argv[])
 
     /* The sim links exactly one size (cmake -DFONT_SIZE=...), so the request
      * is irrelevant — font_init falls back to whichever one that is. The
-     * renderer still has to be told, or it keeps its 8x16 defaults. */
+     * caller must still tell the renderer, or it keeps its 8x16 defaults. */
     font_init(FONT_SIZE_8X16);
     display_render_set_font(font_width(), font_height());
     display_init();

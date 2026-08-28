@@ -1,20 +1,21 @@
 /*
- * render_scan.c — the HOT per-size band scan (instantiated from
- * render_scan.inc) plus the passes that touch its output: underline,
- * DIM dither, and the cursor overlay. Owns the cursor state.
+ * render_scan.c — the HOT per-size band scan, instantiated from
+ * render_scan.inc. It also holds the passes that touch the scan's output:
+ * underline, DIM dither, and the cursor overlay. It owns the cursor state.
  */
 
 #include "render_internal.h"
 
 /*
- * Reference definition of the pixel-pair packing, kept for documentation and
- * for the host golden tests: leftmost pixel = top glyph bit, packed into the
- * LOW half of a little-endian uint32; mask = 0u - bit, pixel = bg ^ (xf & mask)
- * with xf = fg^bg.
+ * Reference definition of the pixel-pair packing, kept for documentation
+ * and for the host golden tests. Leftmost pixel = top glyph bit, packed
+ * into the LOW half of a little-endian uint32. mask = 0u - bit, pixel =
+ * bg ^ (xf & mask), with xf = fg^bg.
  *
  * The scan no longer evaluates this per pixel. build_pair_lut() in
- * render_cache.c precomputes all four outcomes per cell once per ROW and the
- * scan indexes them with the glyph's two bits — see render_scan.inc.
+ * render_cache.c precomputes all four outcomes per cell once per ROW.
+ * The scan then indexes them with the glyph's two bits — see
+ * render_scan.inc.
  */
 RENDER_FORCE_INLINE uint32_t scan_gpair(unsigned row, int w, int p,
                                         uint16_t bg, uint16_t xf)

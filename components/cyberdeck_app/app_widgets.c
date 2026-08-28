@@ -15,8 +15,6 @@
 
 #include "esp_heap_caps.h"   /* free-RAM stats (idfsim stubs it) */
 
-/* --------------------------------------------------------- drag → rows */
-
 #ifndef CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT
 #define CONFIG_INPUT_TOUCH_SCROLL_SPEED_PCT 100
 #endif
@@ -35,8 +33,6 @@ void ui_drag_reset(ui_drag_t *d)
 {
     d->accum = 0;
 }
-
-/* ------------------------------------------------------------ ListView */
 
 int ui_list_visible(const ui_list_t *l)
 {
@@ -127,8 +123,6 @@ void ui_list_draw_scroll(const ui_list_t *l)
         ui_putch(x, y, (y >= y0 && y <= y1) ? UI_SHADE3 : UI_SHADE1, 0);
 }
 
-/* ------------------------------------------------------ action buttons */
-
 tilegrid_t ui_button_bar(int y0, int count, int tw, int th)
 {
     tilegrid_t g = { .tw = tw, .th = th, .gx = 4, .gy = 0,
@@ -155,8 +149,8 @@ int tile_y(const tilegrid_t *g, int slot)
 }
 
 /* Map a touch pixel to a tile slot, or -1 for a gutter / margin / empty cell.
- * This is the two-axis hit-test: a tap must land inside a tile on BOTH axes,
- * not merely on the right row. */
+ * This is the two-axis hit-test. A tap must land inside a tile on BOTH
+ * axes, not merely on the right row. */
 int tile_hit(const tilegrid_t *g, int px, int py)
 {
     if (g->ncols <= 0 || g->nrows <= 0) return -1;
@@ -444,10 +438,8 @@ int draw_step(int y, char num, const char *label,
     return y + 3;
 }
 
-/* ------------------------------------------------- scrollback indicator */
-
-/* U+2581..U+2588 fill the bottom n/8 of a cell. (No upper-eighth glyphs
- * exist in Terminus, which is why the fill is anchored to the bottom.) */
+/* U+2581..U+2588 fill the bottom n/8 of a cell. Terminus has no
+ * upper-eighth glyphs, so the fill anchors to the bottom. */
 #define BLK_LOWER(n)  ((uint16_t)(0x2580u + (n)))
 
 void draw_scrollbar(int offset, int total)
@@ -467,10 +459,10 @@ void draw_scrollbar(int offset, int total)
     const int full = f / 8;
     const int rem  = f % 8;
 
-    /* Every cell needs the SAME attrs: mixing INVERSE with plain cells gives
-     * them different backgrounds and leaves a black notch at the boundary.
-     * BRIGHT then DIM lands a dark-gray bg under a medium-white fg without
-     * adding palette entries. */
+    /* Every cell needs the SAME attrs. Mixing INVERSE with plain cells
+     * gives them different backgrounds and leaves a black notch at the
+     * boundary. BRIGHT then DIM lands a dark-gray bg under a
+     * medium-white fg without adding palette entries. */
     const uint8_t bar_attrs = OVERLAY_ATTR_BRIGHT | OVERLAY_ATTR_DIM;
     ui_pen(OVERLAY_COL_WHITE);
     for (int y = 0; y < rows; y++) {

@@ -29,7 +29,7 @@ typedef enum {
     VTKEY_F9, VTKEY_F10, VTKEY_F11, VTKEY_F12,
 } vtkey_t;
 
-/* Modifier mask. Values are the xterm bit weights: the parameter sent is
+/* Modifier mask. Values are the xterm bit weights. The parameter sent is
  * 1 + mask, so shift alone is 2, ctrl alone is 5, ctrl+shift is 6. */
 #define VTMOD_SHIFT  0x01u
 #define VTMOD_ALT    0x02u
@@ -45,11 +45,12 @@ typedef enum {
  * @param key         Logical key; VTKEY_NONE writes nothing.
  * @param mods        VTMOD_* bitmask (0 = unmodified).
  * @param app_cursor  DECCKM active — unmodified arrows and Home/End go out
- *                    as SS3 (ESC O x) instead of CSI (ESC [ x). Ignored once
- *                    any modifier is held: xterm always uses CSI for those.
+ *                    as SS3 (ESC O x) instead of CSI (ESC [ x). A held
+ *                    modifier overrides this: xterm always uses CSI for
+ *                    those keys.
  * @param buf         Output, at least VTKEYS_MAX_LEN bytes.
- * @param bufsz       Size of @p buf; nothing is written if the sequence
- *                    would not fit.
+ * @param bufsz       Size of @p buf; the function writes nothing if the
+ *                    sequence would not fit.
  * @return            Bytes written, 0 if the key is unknown or would not fit.
  */
 size_t vtkeys_encode(vtkey_t key, uint8_t mods, bool app_cursor,

@@ -75,14 +75,12 @@ static inline tsm_cell_t *cell_at(tsm_t *t, int col, int row)
     return row_ptr(t, row) + col;
 }
 
-/* Mark column range [l, r] on row as dirty. */
 static inline void mark_dirty(tsm_t *t, int row, int l, int r)
 {
     if (t->dirty[row].l > (uint8_t)l) t->dirty[row].l = (uint8_t)l;
     if (t->dirty[row].r < (uint8_t)r) t->dirty[row].r = (uint8_t)r;
 }
 
-/* Mark entire row dirty. */
 static inline void mark_row_dirty(tsm_t *t, int row)
 {
     mark_dirty(t, row, 0, t->cols - 1);
@@ -107,13 +105,11 @@ static inline void erase_range(tsm_t *t, int row, int l, int r)
     mark_dirty(t, row, l, r);
 }
 
-/* Erase entire row. */
 static inline void erase_row(tsm_t *t, int row)
 {
     erase_range(t, row, 0, t->cols - 1);
 }
 
-/* Erase entire screen. */
 static void erase_screen(tsm_t *t)
 {
     for (int r = 0; r < t->rows; r++) erase_row(t, r);
@@ -121,7 +117,7 @@ static void erase_screen(tsm_t *t)
 
 /* ── Scrolling ───────────────────────────────────────────────────────────── */
 
-/* Cells are left as they are — sb_len = 0 makes them unreachable. */
+/* sb_clear() does not touch cell data; sb_len = 0 makes it unreachable. */
 static void sb_clear(tsm_t *t)
 {
     t->sb_len  = 0;
@@ -147,7 +143,7 @@ static void sb_push_row(tsm_t *t, int row)
  *
  * Full-region scroll rotates the row ring — O(1) bookkeeping plus n erased
  * rows instead of a (span-n)*cols*8 B memmove. A partial region (DECSTBM,
- * IL/DL) copies per logical row: once base != 0 the physical rows are not
+ * IL/DL) copies per logical row. Once base != 0, the physical rows are not
  * contiguous, so the old flat memmove would be wrong. Distinct logical rows
  * never alias physically, so memcpy per row is safe. */
 static void scroll_up(tsm_t *t, int n)
@@ -266,8 +262,9 @@ static void restore_cursor(tsm_t *t, const tsm_cursor_save_t *s)
 
 /* ── Alt screen switch ───────────────────────────────────────────────────── */
 
-/* The ring base is per-grid state: it must travel with the cells pointer in
- * every swap, or a rotated primary screen comes back scrambled on alt exit. */
+/* The ring base is per-grid state. It must travel with the cells pointer in
+ * every swap. Otherwise a rotated primary screen comes back scrambled on
+ * alt exit. */
 static void swap_grids(tsm_t *t)
 {
     tsm_cell_t *tmp = t->cells;
@@ -460,7 +457,6 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         cursor_goto(t, t->cx, (int)(p1 < 1 ? 1 : p1) - 1);
         break;
 
-    /* ── Erase ───────────────────────────────────────────────────────────── */
     case 'J': /* ED — erase display */
         switch (p1 < 0 ? 0 : p1) {
         case 0: /* from cursor to end */
@@ -475,8 +471,8 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
             erase_screen(t);
             break;
         case 3: /* whole screen + scrollback (xterm ED 3) */
-            /* Must NOT share a body with case 2: ED 2 is what every
-             * full-screen app sends on exit, and clearing history there
+            /* Must NOT share a body with case 2. ED 2 is what every
+             * full-screen app sends on exit. Clearing history there
              * throws the session away the moment you quit mc. */
             sb_clear(t);
             erase_screen(t);
@@ -545,7 +541,6 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         break;
     }
 
-    /* ── Scroll ──────────────────────────────────────────────────────────── */
     case 'S': /* SU — scroll up */
         scroll_up(t, (int)(p1 < 1 ? 1 : p1));
         break;
@@ -568,11 +563,11 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         cursor_goto(t, 0, t->mode.decom ? t->scroll_top : 0);
         break;
     }
-    case 's': /* DECSC (also CSI s — save cursor) */
+    case 's': /* DECSC: save cursor. CSI s does the same thing. */
         if (intermediate == 0 && prefix == 0)
             save_cursor(t, &t->saved);
         break;
-    case 'u': /* DECRC (also CSI u — restore cursor) */
+    case 'u': /* DECRC: restore cursor. CSI u does the same thing. */
         if (intermediate == 0 && prefix == 0)
             restore_cursor(t, &t->saved);
         break;
@@ -610,9 +605,9 @@ static void do_hard_reset(tsm_t *t)
     if (t->mode.decalt)            /* return to primary first */
         swap_grids(t);
     sb_clear(t);                   /* RIS drops history, as xterm does */
-    /* SGR to defaults BEFORE the erase: blank_cell() clears with the
-     * CURRENT colors (BCE, right for ED), but RIS must not keep them —
-     * erasing first left the whole grid in the old session's colors. */
+    /* SGR resets to defaults before the erase. blank_cell() clears with the
+     * CURRENT colors (BCE, correct for ED), but RIS must not keep them.
+     * Erasing first would leave the whole grid in the old session's colors. */
     t->attrs = 0; t->attrs2 = 0;
     t->fg = COLOR_DEFAULT_FG; t->bg = COLOR_DEFAULT_BG;
     erase_screen(t);
@@ -748,10 +743,10 @@ static void do_print_span_irm(tsm_t *t, const uint32_t *cps, int count)
     }
 }
 
-/* Batched print: SGR state and the active charset cannot change mid-span
- * (every ESC and SO/SI flushes the parser's print buffer first), so hoist
- * them once and write row segments with a per-cell cost of one template
- * struct copy. Insert mode keeps the per-cell slow path above. */
+/* Batched print. SGR state and the active charset cannot change mid-span:
+ * every ESC and SO/SI flushes the parser's print buffer first. This function
+ * hoists them once and writes row segments at a cost of one template struct
+ * copy per cell. Insert mode keeps the per-cell slow path above. */
 static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
 {
     if (t->mode.irm) { do_print_span_irm(t, cps, count); return; }
@@ -851,14 +846,14 @@ static const vt_callbacks_t s_tsm_cb = {
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
 
-/* tsm's own grids are read/written ONLY from task context (tsm_feed on the
- * SSH read task, the vterm dirty-row copy) — the display ISR reads vterm's
- * separate internal bridge buffer, never these. So the two 24 KB grids live
- * in PSRAM (SPIRAM-first, internal fallback). The tsm_t struct itself and
- * the dirty array go the OTHER way: they hold the per-byte-hot parser state
- * (embedded vtparse_t, print buffer, cursor), and in PSRAM every parsed
- * byte paid cache misses against the grids' traffic — ~1.3 KB of internal
- * DRAM buys that back. */
+/* Only task context touches tsm's own grids: tsm_feed on the SSH read task,
+ * and the vterm dirty-row copy. The display ISR reads vterm's separate
+ * internal bridge buffer instead, never these. So the two 24 KB grids live
+ * in PSRAM (SPIRAM-first, internal fallback). The tsm_t struct and the
+ * dirty array go the OTHER way. They hold the per-byte-hot parser state
+ * (embedded vtparse_t, print buffer, cursor). In PSRAM every parsed byte
+ * paid cache misses against the grids' traffic; ~1.3 KB of internal DRAM
+ * buys that back. */
 static void *tsm_calloc(size_t n, size_t sz)
 {
     void *p = heap_caps_calloc(n, sz, MALLOC_CAP_8BIT | MALLOC_CAP_SPIRAM);
@@ -939,8 +934,8 @@ const tsm_cell_t *tsm_row(const tsm_t *t, int row)
     if (t->sb_off <= 0)
         return &t->cells[phys_row(t, row) * t->cols];
 
-    /* Scrolled back: the top sb_off rows come from history, the rest is the
-     * live grid shifted down by the same amount. */
+    /* Scrolled back: the top sb_off rows come from history. The rest is the
+     * live grid, shifted down by the same amount. */
     if (row < t->sb_off) {
         int i = t->sb_len - t->sb_off + row;
         int p = t->sb_head - t->sb_len + i;

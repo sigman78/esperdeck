@@ -15,7 +15,7 @@
 static const char *TAG = "app_ui";
 
 static display_overlay_cell_t *s_buf[2] = { NULL, NULL };
-static display_overlay_cell_t *s_draw   = NULL;   /* we write here (back)  */
+static display_overlay_cell_t *s_draw   = NULL;   /* the back buffer */
 static int  s_cols    = 0;
 static int  s_rows    = 0;
 static bool s_visible = false;
@@ -28,9 +28,9 @@ static uint32_t s_frame = 0;
 void ui_frame(uint32_t frame) { s_frame = frame; }
 
 /* Bounce marquee: park at the head, crawl to the tail, park, crawl back.
- * One owner slot keyed by tile origin; the epoch resets when another tile
- * (or the same tile after a gap) takes it, so a fresh selection starts at
- * the head. */
+ * The marquee tracks one owner slot by tile origin. The epoch resets
+ * when another tile, or the same tile after a gap, takes over. A
+ * fresh selection then starts at the head. */
 #define MQ_STEP_FRAMES 3   /* frames per character step (~3 cells/s) */
 #define MQ_DWELL_STEPS 5   /* extra steps parked at each end (~1.5 s) */
 
@@ -275,8 +275,9 @@ void ui_tile(int col, int row, int w, int h,
             ui_putch(col + c, row + r, ' ', a);
 
     if (selected) {
-        /* ▐ in INVERSE+WHITE: set pixels (right half) take the dark fg,
-         * clear pixels (left half) the white bg → white rail + seam. */
+        /* ▐ in INVERSE+WHITE gives this effect: set pixels (right half)
+         * take the dark fg. Clear pixels (left half) take the white bg.
+         * The result is a white rail with a seam. */
         uint8_t old_pen = s_pen;
         s_pen = OVERLAY_COL_WHITE;
         for (int r = 0; r < h; r++)
@@ -317,8 +318,9 @@ void ui_field(int col, int row, int width, const char *text,
     if (cursor > len) cursor = len;
 
     /* Scroll so the caret stays visible — but ONLY for the focused field.
-     * An unfocused field always shows from its start, else every repaint
-     * scrolls it by the (focused) field's caret and hides its head. */
+     * An unfocused field always shows from its start. Otherwise every
+     * repaint would scroll it by the (focused) field's caret and hide
+     * its head. */
     int start = 0;
     if (focused && cursor > inner - 1) start = cursor - (inner - 1);
 

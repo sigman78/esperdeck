@@ -1,6 +1,6 @@
 /*
  * keystore_cli_stub.c — stand-in for the provisioning CLI (keystore_cli.c)
- * when the secure store is excluded from the build. -1 = "no CLI command
+ * when the build excludes the secure store. -1 = "no CLI command
  * consumed", so the sim proceeds to the normal SDL loop.
  */
 

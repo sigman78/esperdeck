@@ -66,11 +66,12 @@ static bool clk_mask(const clk_geom_t *g, int x, int y)
     return (k_clk_font[gl][dy / CLK_SY] >> (CLK_FW - 1 - cx / CLK_SX)) & 1;
 }
 
-/* Rain paints the clock out of nothing: digits start as black rain-holes,
- * each head that strikes a stroke settles as a wet blue cell (~10 s to
- * paint); the cycle's last 10 s the rain scrubs it back off, then the block
- * hops to a fresh spot — nothing stays put longer than 30 s (LCD safety).
- * Falls back to a floating chip until SNTP delivers real time. */
+/* Rain paints the clock out of nothing. Digits start as black
+ * rain-holes. Each head that strikes a stroke settles as a wet blue
+ * cell (~10 s to paint). In the cycle's last 10 s, the rain scrubs it
+ * back off. The block then hops to a fresh spot. Nothing stays put
+ * longer than 30 s (LCD safety). It falls back to a floating chip
+ * until SNTP delivers real time. */
 static void render_saver(void)
 {
     static uint8_t head[100];    /* per-column head row (grid is 100 wide) */
@@ -108,8 +109,9 @@ static void render_saver(void)
         ck.colon_on = ((app.anim_frame / 5) & 1) == 0;      /* 1 Hz blink */
     }
 
-    /* Wash-off window: ten seconds is enough for every head to visit every
-     * row (slowest columns wrap in 9 s), so the block is bare by the hop. */
+    /* Wash-off window: ten seconds is enough for every head to visit
+     * every row. Slowest columns wrap in 9 s, so the block is bare by
+     * the hop. */
     bool washing = big && app.anim_frame % CLK_CYCLE >= CLK_CYCLE - CLK_WASH;
 
     ui_colors(UI_FG, UI_BG);
@@ -167,8 +169,9 @@ static void render_saver(void)
         if (!sp_ttl[c]) continue;
         int r = sp_row[c];
         switch (sp_ttl[c]--) {
-        /* Re-check the mask at draw time: a colon blink or minute rollover
-         * mid-splash can move a stroke under the cell (skip the frame). */
+        /* Re-check the mask at draw time. A colon blink or minute
+         * rollover mid-splash can move a stroke under the cell; skip
+         * the frame when that happens. */
         case 3:
             ui_pen(OVERLAY_COL_WHITE);
             if (!clk_mask(&ck, c, r)) ui_putch(c, r, 0x28C0, 0);   /* impact */
@@ -223,13 +226,13 @@ bool saver_on_input(uint64_t now)
     if (!s_saver.on) return false;
     s_saver.on = false;
     if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
-    /* Only swallow once the rain has been up for a moment: the main loop
-     * ticks before it drains input, so a keypress aimed at a HOME visible
-     * milliseconds ago must still act, not vanish into a wake. */
+    /* Only swallow once the rain has been up for a moment. The main
+     * loop ticks before it drains input. A keypress aimed at a HOME
+     * visible milliseconds ago must still act, not vanish into a wake. */
     bool swallow = now - s_saver.since >= 1000;
-    /* DEVICE gate (two-gates model): a keystore on the deck means the deck
-     * is locked — the store went cold when the rain came up, and a real
-     * wake lands on the non-skippable device pad, never on HOME. */
+    /* In the two-gates model, a keystore on the deck locks the deck.
+     * The store went cold when the rain came up. A real wake therefore
+     * lands on the non-skippable device pad, never on HOME. */
     if (swallow && keystore_state() == KEYSTORE_LOCKED) {
         unlock_open_gate(now);
         return true;

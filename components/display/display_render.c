@@ -1,8 +1,9 @@
 /*
  * display_render.c — render-core skeleton, compiled for BOTH the ESP32
- * target (bounce-buffer ISR) and the PC simulator (SDL2 frame loop):
- * public geometry API, the per-chunk pipeline, the optional cycle bench.
- * The work lives in the sibling modules — render_internal.h is the map.
+ * target (bounce-buffer ISR) and the PC simulator (SDL2 frame loop). It
+ * has the public geometry API, the per-chunk pipeline, and the optional
+ * cycle bench. The work lives in the sibling modules — render_internal.h
+ * is the map.
  */
 
 #include "render_internal.h"
@@ -51,6 +52,8 @@ void display_render_set_font(int width, int height)
  * practice the terminal converts at SGR-parse time. */
 color_t IRAM_ATTR display_ansi_to_rgb565(uint8_t ansi_color)
 {
+    /* Colors follow the fixed ANSI-16 order: 0-7 standard, 8-15 bright. */
+    /* uncomment-ignore[UC006]: per-color legend stays (user call, 2026-08-27) */
     static DRAM_ATTR const color_t ansi_palette[16] = {
         RGB565(0,   0,   0  ),  /*  0 Black             */
         RGB565(128, 0,   0  ),  /*  1 Red               */
@@ -140,8 +143,8 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
         return;
     }
 
-    /* Wobble is applied by the scan as a per-scanline destination offset, so
-     * the pixels land displaced instead of being shifted afterwards. NULL
+    /* The scan applies wobble as a per-scanline destination offset, so
+     * pixels land already displaced instead of shifting afterward. NULL
      * xoff keeps the untouched fast path when nothing in the band moves. */
     int8_t wob[FONT_MAX_BAND];
     const bool wobbled = render_fx_wobble_offsets(start_scan, num_scans, wob);
@@ -175,9 +178,9 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
 #ifdef CONFIG_DISPLAY_ISR_BENCH
 #include "esp_cpu.h"
 
-/* Cycle total must be 64-bit (a 30 s window nears the u32 wrap). The ISR's
- * two-word add can tear under a cross-core read, so the reader spins until
- * the chunk count is stable around the read. */
+/* Cycle total must be 64-bit (a 30 s window nears the u32 wrap). The
+ * ISR's two-word add can tear under a cross-core read. The reader spins
+ * until the chunk count stays stable across the read. */
 static DRAM_ATTR struct {
     volatile uint64_t cyc;
     volatile uint32_t n;

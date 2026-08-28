@@ -102,21 +102,24 @@ typedef enum { TERM_DENSE = 0, TERM_SPARSE, TERM_BLANK, TERM_MIXED } term_mode_t
 /* A TUI-shaped repertoire: 160 distinct codepoints spanning ASCII, box
  * drawing, block elements and Latin-1 — what mc / btop / tmux actually put on
  * screen. Deliberately wider than the 95-entry ASCII glyph cache, so it shows
- * what non-ASCII content costs. */
+ * what non-ASCII content costs.
+ *
+ * Codepoint ranges, in order: ASCII 94, box drawing 128, blocks 32,
+ * Latin-1 64, Greek 64, Cyrillic 128. */
 static uint16_t mixed_cp(unsigned k, unsigned span)
 {
     k %= span;
-    if (k <  94) return (uint16_t)(0x0021 + k);           /* ASCII        94 */
+    if (k <  94) return (uint16_t)(0x0021 + k);
     k -= 94;
-    if (k < 128) return (uint16_t)(0x2500 + k);           /* box drawing 128 */
+    if (k < 128) return (uint16_t)(0x2500 + k);
     k -= 128;
-    if (k <  32) return (uint16_t)(0x2580 + k);           /* blocks       32 */
+    if (k <  32) return (uint16_t)(0x2580 + k);
     k -= 32;
-    if (k <  64) return (uint16_t)(0x00C0 + k);           /* Latin-1      64 */
+    if (k <  64) return (uint16_t)(0x00C0 + k);
     k -= 64;
-    if (k <  64) return (uint16_t)(0x0390 + k);           /* Greek        64 */
+    if (k <  64) return (uint16_t)(0x0390 + k);
     k -= 64;
-    return (uint16_t)(0x0410 + (k % 128u));               /* Cyrillic    128 */
+    return (uint16_t)(0x0410 + (k % 128u));
 }
 
 static int utf8_put(char *p, uint16_t cp)
@@ -186,9 +189,10 @@ static void fx_apply(fx_mode_t m)
     display_fx_set(&c);
 }
 
-/* Phase schedule: seven overlay phases over a dense terminal, two that vary
- * the TERMINAL content, then four that vary the EFFECT config. Everything
- * except the fx: phases runs FX_NOWOB, which reproduces the historic runs. */
+/* The phase schedule runs seven overlay phases over a dense terminal. Two
+ * of them vary the TERMINAL content, and four vary the EFFECT config.
+ * Everything except the fx: phases runs FX_NOWOB, which reproduces the
+ * historic runs. */
 static const struct {
     ov_phase_t  ov;
     term_mode_t tm;

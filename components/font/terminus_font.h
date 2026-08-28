@@ -15,16 +15,16 @@
  *              "synthesize: decode the regular glyph, then smear one pixel
  *              in the face's smear direction". Codepoints absorbed by range
  *              merging point at the '?' record — no sentinel needed.
- *   pool     — variable-length glyph records, <= 65534 bytes:
- *              header  h==16: 1 byte  start:4 | (len-1):4
- *                      h>16:  2 bytes start, len   (len==0 -> blank)
+ *   pool     — variable-length glyph records, <= 65534 bytes.
+ *              header  h==16: 1 byte  start:4 | (len-1):4.
+ *                      h>16:  2 bytes start, len   (len==0 -> blank).
  *              body    PackBits stream producing exactly len rows; rows
  *                      outside [start, start+len) are zero.
- *              control c < 0x80: literal, c+1 symbols follow
- *                      c >= 0x80: repeat next symbol (c & 0x7F) + 2 times
- *              symbol  rb==1: raw row byte
+ *              control c < 0x80: literal, c+1 symbols follow.
+ *                      c >= 0x80: repeat next symbol (c & 0x7F) + 2 times.
+ *              symbol  rb==1: raw row byte.
  *              rb==2: u8 index into palette[]; 0xFF = escape,
- *                             2 raw row bytes (LE) follow inline
+ *                             2 raw row bytes (LE) follow inline.
  *   palette  — rb==2 sizes only, <= 255 uint16_t rows, shared by the
  *              regular and bold faces of that size.
  */

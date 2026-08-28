@@ -29,8 +29,9 @@ typedef enum {
 esp_err_t wifi_manager_init(void);
 
 /**
- * Start connecting. Profiles are copied; tried in array order, cycling with
- * backoff until one connects or wifi_manager_disconnect() is called.
+ * Start connecting. This copies the profiles; it tries them in array
+ * order, cycling with backoff until one connects or wifi_manager_disconnect()
+ * stops it.
  */
 esp_err_t wifi_manager_connect(const wifi_profile_t *profiles, int count);
 
@@ -40,8 +41,9 @@ esp_err_t wifi_manager_disconnect(void);
 /**
  * Adopt a connection established outside the manager (e.g. by the provisioning
  * manager). Loads @p profiles as the new preference list and resumes
- * auto-reconnect. If the link is already up (state CONNECTED) it is kept as-is
- * — no disruptive reconnect; otherwise a normal connect is started.
+ * auto-reconnect. If the link is already up (state CONNECTED), the code
+ * keeps it as-is — no disruptive reconnect. Otherwise, it starts a normal
+ * connect.
  */
 /**
  * Hand over the WiFi credential a PAST firmware persisted into the
@@ -52,9 +54,9 @@ esp_err_t wifi_manager_disconnect(void);
 bool wifi_manager_take_nvs_cred(wifi_profile_t *out);
 
 /**
- * Clear the driver's NVS credential copy — call ONLY after the migration
- * has verifiably saved it to storage, and only before any connect on this
- * boot (it resets the driver; STA mode is re-asserted).
+ * Clear the driver's NVS credential copy. Call this ONLY after the
+ * migration has verifiably saved it to storage, and only before any
+ * connect on this boot. It resets the driver; STA mode is re-asserted.
  */
 void wifi_manager_clear_nvs_cred(void);
 
@@ -70,8 +72,8 @@ const char      *wifi_manager_get_ssid(void);
 int              wifi_manager_get_rssi(void);
 
 /** Wall-clock epoch seconds from a one-shot NTP fetch (started at first
- *  link-up), 0 until synced. The SYSTEM clock is deliberately never set:
- *  stepping it decades forward mid-handshake corrupts libssh2's blocking-
+ *  link-up), 0 until synced. The SYSTEM clock is deliberately never set.
+ *  Stepping it decades forward mid-handshake corrupts libssh2's blocking-
  *  timeout arithmetic (elapsed = difftime(time(NULL), start)). */
 time_t           wifi_manager_time(void);
 
