@@ -98,19 +98,20 @@ IRAM_ATTR bool render_cache_has_cells(void)
  * docs/ARCHITECTURE.md for the history behind this shape. row, scan, and
  * frame key the cache: any change forces a rebuild, and row == -1 starts
  * empty. */
+/* uncomment-ignore[UC006]: per-field legend stays (user call, 2026-08-27) */
 static DRAM_ATTR struct {
-    _Alignas(4) uint8_t rows[FONT_MAX_CACHE_BYTES];
-    uint32_t pr[2][RENDER_MAX_COLS][4];
-    uint16_t bg[2][RENDER_MAX_COLS];
-    uint16_t xf[2][RENDER_MAX_COLS];
-    uint8_t  ul[RENDER_MAX_COLS];        /* underline flags */
+    _Alignas(4) uint8_t rows[FONT_MAX_CACHE_BYTES];  /* decoded glyphs  */
+    uint32_t pr[2][RENDER_MAX_COLS][4];              /* pixel-pair LUT  */
+    uint16_t bg[2][RENDER_MAX_COLS];                 /* [variant][col]  */
+    uint16_t xf[2][RENDER_MAX_COLS];                 /* fg ^ bg         */
+    uint8_t  ul[RENDER_MAX_COLS];                    /* underline flags */
 #if OVERLAY_DIM_DITHER
-    uint8_t  dim[RENDER_MAX_COLS];       /* scrim flags */
+    uint8_t  dim[RENDER_MAX_COLS];                   /* scrim flags     */
 #endif
-    int      row;
-    int      scan;
-    uint8_t  frame;
-    bool     any_ul;                     /* skips the underline pass when 0 */
+    int      row;         /* char row held, -1 = none */
+    int      scan;        /* dim variant populated?   */
+    uint8_t  frame;       /* g_fx_frame at build      */
+    bool     any_ul;      /* pass-skip summaries      */
 #if OVERLAY_DIM_DITHER
     bool     any_dim;
 #endif

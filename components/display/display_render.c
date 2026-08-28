@@ -53,23 +53,24 @@ void display_render_set_font(int width, int height)
 color_t IRAM_ATTR display_ansi_to_rgb565(uint8_t ansi_color)
 {
     /* Colors follow the fixed ANSI-16 order: 0-7 standard, 8-15 bright. */
+    /* uncomment-ignore[UC006]: per-color legend stays (user call, 2026-08-27) */
     static DRAM_ATTR const color_t ansi_palette[16] = {
-        RGB565(0,   0,   0  ),
-        RGB565(128, 0,   0  ),
-        RGB565(0,   128, 0  ),
-        RGB565(128, 128, 0  ),
-        RGB565(0,   0,   128),
-        RGB565(128, 0,   128),
-        RGB565(0,   128, 128),
-        RGB565(192, 192, 192),
-        RGB565(128, 128, 128),
-        RGB565(255, 0,   0  ),
-        RGB565(0,   255, 0  ),
-        RGB565(255, 255, 0  ),
-        RGB565(0,   0,   255),
-        RGB565(255, 0,   255),
-        RGB565(0,   255, 255),
-        RGB565(255, 255, 255),
+        RGB565(0,   0,   0  ),  /*  0 Black             */
+        RGB565(128, 0,   0  ),  /*  1 Red               */
+        RGB565(0,   128, 0  ),  /*  2 Green             */
+        RGB565(128, 128, 0  ),  /*  3 Yellow            */
+        RGB565(0,   0,   128),  /*  4 Blue              */
+        RGB565(128, 0,   128),  /*  5 Magenta           */
+        RGB565(0,   128, 128),  /*  6 Cyan              */
+        RGB565(192, 192, 192),  /*  7 White             */
+        RGB565(128, 128, 128),  /*  8 Bright Black/Gray */
+        RGB565(255, 0,   0  ),  /*  9 Bright Red        */
+        RGB565(0,   255, 0  ),  /* 10 Bright Green      */
+        RGB565(255, 255, 0  ),  /* 11 Bright Yellow     */
+        RGB565(0,   0,   255),  /* 12 Bright Blue       */
+        RGB565(255, 0,   255),  /* 13 Bright Magenta    */
+        RGB565(0,   255, 255),  /* 14 Bright Cyan       */
+        RGB565(255, 255, 255),  /* 15 Bright White      */
     };
 
     if (ansi_color < 16) {
