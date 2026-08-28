@@ -124,14 +124,14 @@ cd tests/tsm && cmake -B build && cmake --build build --config Debug
 ctest --test-dir build -C Debug
 ```
 
-## Comment lint — `uncomment` gates new comments
+## Comment lint — `unwaffle` gates new comments
 
 Comment policy (short version: comments say WHY, docs carry the essays) is
-enforced by [uncomment](https://github.com/sigman78/uncomment), run from its
-git repo via `uvx` — nothing is vendored. `tools/check_comments.py` owns the
+enforced by [unwaffle](https://github.com/sigman78/unwaffle), run from PyPI
+via `uvx` pinned to a known-good version — nothing is vendored. `tools/check_comments.py` owns the
 scope: first-party sources only (vendored `esp_hid`, `monocypher`,
 `libssh2_esp`, dead `terminal`, and all build trees are excluded). Rule
-tuning lives in `uncomment.toml`; everything runs at tool defaults, including
+tuning lives in `unwaffle.toml`; everything runs at tool defaults, including
 the STE (Simplified Technical English) wording rules at advisory (info) tier.
 
 ```bash

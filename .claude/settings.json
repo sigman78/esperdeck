@@ -8,7 +8,7 @@
             "type": "command",
             "command": "python tools/check_comments.py --hook",
             "timeout": 90,
-            "statusMessage": "Comment lint (uncomment gate)"
+            "statusMessage": "Comment lint (unwaffle gate)"
           }
         ]
       }

@@ -53,7 +53,7 @@ void display_render_set_font(int width, int height)
 color_t IRAM_ATTR display_ansi_to_rgb565(uint8_t ansi_color)
 {
     /* Colors follow the fixed ANSI-16 order: 0-7 standard, 8-15 bright. */
-    /* uncomment-ignore[UC006]: per-color legend stays (user call, 2026-08-27) */
+    /* unwaffle-ignore[UC006]: per-color legend stays (user call, 2026-08-27) */
     static DRAM_ATTR const color_t ansi_palette[16] = {
         RGB565(0,   0,   0  ),  /*  0 Black             */
         RGB565(128, 0,   0  ),  /*  1 Red               */
