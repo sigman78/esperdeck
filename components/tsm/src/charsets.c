@@ -45,8 +45,6 @@ static const uint16_t s_dec_gfx[31] = {
     0x00B7,  /* 0x7E '~'  · middle dot                */
 };
 
-/* ── Public API ──────────────────────────────────────────────────────────── */
-
 uint16_t charset_xlat(charset_id_t cs, uint8_t cp)
 {
     if (cs == CHARSET_DEC_GFX && cp >= 0x60u && cp <= 0x7Eu) {

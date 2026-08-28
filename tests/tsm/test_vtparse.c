@@ -24,8 +24,6 @@
 #include <string.h>
 #include <stdint.h>
 
-/* ── Event recorder ───────────────────────────────────────────────────────── */
-
 #define MAX_EVENTS  64
 
 /* Local event type enum (mirrors the vtable slot names). */
@@ -157,10 +155,6 @@ void setUp(void)
 void tearDown(void) {}
 
 
-/* ════════════════════════════════════════════════════════════════════════════
- * C0 controls
- * ══════════════════════════════════════════════════════════════════════════ */
-
 void test_c0_bel(void)
 {
     uint8_t b = 0x07;
@@ -206,10 +200,6 @@ void test_del_ignored(void)
     TEST_ASSERT_EQUAL_INT(0, g_event_count);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * Printable ASCII
- * ══════════════════════════════════════════════════════════════════════════ */
-
 void test_printable_ascii(void)
 {
     feed_str("Hi");
@@ -219,10 +209,6 @@ void test_printable_ascii(void)
     TEST_ASSERT_EQUAL_UINT32('H', g_events[0].as_print.cps[0]);
     TEST_ASSERT_EQUAL_UINT32('i', g_events[0].as_print.cps[1]);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * ESC sequences
- * ══════════════════════════════════════════════════════════════════════════ */
 
 void test_esc_D(void)
 {
@@ -285,10 +271,6 @@ void test_esc_charset_dec_special(void)
     TEST_ASSERT_EQUAL_UINT8('(', g_events[0].as_esc.intermediate);
     TEST_ASSERT_EQUAL_UINT8('0', g_events[0].as_esc.final);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * CSI sequences
- * ══════════════════════════════════════════════════════════════════════════ */
 
 void test_csi_no_params(void)
 {
@@ -431,10 +413,6 @@ void test_csi_multiple_sequences(void)
     TEST_ASSERT_EQUAL_INT32(0, g_events[1].as_csi.params[0]);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * OSC sequences
- * ══════════════════════════════════════════════════════════════════════════ */
-
 void test_osc_bel_terminated(void)
 {
     /* ESC ] 0 ; t i t l e BEL */
@@ -493,10 +471,6 @@ void test_osc_8bit_st(void)
     TEST_ASSERT_EQUAL_UINT16(3, g_events[0].as_osc.osc_len);  /* "0;Z" */
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * DCS sequences (Phase 1 stub)
- * ══════════════════════════════════════════════════════════════════════════ */
-
 void test_dcs_hook_emitted(void)
 {
     /* ESC P q … ESC \ — tmux-style passthrough shell */
@@ -528,10 +502,6 @@ void test_dcs_no_crash_on_data(void)
     TEST_ASSERT_EQUAL_INT(1, g_events[0].as_print.ncp);
     TEST_ASSERT_EQUAL_UINT32('A', g_events[0].as_print.cps[0]);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * UTF-8 decoding
- * ══════════════════════════════════════════════════════════════════════════ */
 
 void test_utf8_2byte(void)
 {
@@ -676,10 +646,6 @@ void test_utf8_state_persists_across_writes(void)
     TEST_ASSERT_EQUAL_UINT32(0x042Fu, g_events[0].as_print.cps[0]);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * GROUND fast-path run scanner
- * ══════════════════════════════════════════════════════════════════════════ */
-
 void test_fastpath_run_multi_flush(void)
 {
     /* 100 printable bytes in one feed: buffer fills at 64 and flushes
@@ -811,10 +777,6 @@ void test_fastpath_cr_lf_separated_runs(void)
     TEST_ASSERT_EQUAL_UINT32('C', g_events[6].as_print.cps[0]);
 }
 
-/* ════════════════════════════════════════════════════════════════════════════
- * State recovery
- * ══════════════════════════════════════════════════════════════════════════ */
-
 void test_esc_interrupts_csi(void)
 {
     /* Start a CSI, interrupt with ESC, then complete a new ESC sequence.
@@ -877,10 +839,6 @@ void test_sos_pm_apc_ignored_until_st(void)
     TEST_ASSERT_EQUAL_INT(1, g_events[0].as_print.ncp);
     TEST_ASSERT_EQUAL_UINT32('Z', g_events[0].as_print.cps[0]);
 }
-
-/* ════════════════════════════════════════════════════════════════════════════
- * Test runner
- * ══════════════════════════════════════════════════════════════════════════ */
 
 int main(void)
 {

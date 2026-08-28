@@ -36,8 +36,6 @@ static inline uint8_t cube_to_8(int v)
     return v ? (uint8_t)(55 + v * 40) : 0u;
 }
 
-/* ── Public API ──────────────────────────────────────────────────────────── */
-
 uint16_t color_ansi(uint8_t idx)
 {
     if (idx < 16) {
