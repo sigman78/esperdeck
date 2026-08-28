@@ -31,6 +31,7 @@ def reference(ncols, CW, koff):
 def optimized(ncols, CW, koff):
     """Mirror of the emitted scan: [c0,c1) full cells, <=1 partial each end,
     then black outside [lo, hi)."""
+    # uncomment-ignore[UC005]: sentinel legend for the array below
     line = [None] * NW                     # None = never written (a bug)
 
     c0, c1 = 0, ncols

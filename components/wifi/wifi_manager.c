@@ -61,6 +61,7 @@ static void ntp_task(void *arg)
         if (sock >= 0) {
             struct timeval tv = { .tv_sec = 3 };
             setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            /* uncomment-ignore[UC005]: bitfield legend for the SNTP request byte */
             uint8_t pkt[48] = { 0x1B };        /* LI=0 VN=3 Mode=3 client */
             if (sendto(sock, pkt, sizeof(pkt), 0,
                        res->ai_addr, res->ai_addrlen) == sizeof(pkt) &&
