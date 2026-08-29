@@ -105,8 +105,9 @@ int  ui_rows(void);
  *  default by ui_clear()/ui_dim(). */
 void ui_pen(uint8_t color);
 
-/** Transparent scrim fading the session behind it; draw opaque chrome
- *  on top afterwards. For modals over a session. */
+/** Declare this frame's backdrop a scrim: the render dims the terminal
+ *  under every transparent cell. For modals over a session. Writes no
+ *  cells, so draw order around it does not matter. ui_clear() resets it. */
 void ui_dim(void);
 
 /** Put one codepoint; style = one UI_* style, optionally | UI_BOLD. */

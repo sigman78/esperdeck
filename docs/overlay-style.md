@@ -36,11 +36,17 @@ Styling is **choosing a palette entry**, never composing modifiers.
   `ui_colors()` time — the companion-bar tones, pale text tints, and
   focus washes that used to be per-cell ISR arithmetic live there now,
   verbatim.
-- Exactly two per-cell attributes remain, each with one meaning and no
+- Exactly one per-cell attribute remains, with one meaning and no
   interaction terms:
   - `OVERLAY_ATTR_BOLD` — use the bold glyph face; colors untouched.
-  - `OVERLAY_ATTR_SCRIM` — honored on transparent cells only: dim the
-    terminal showing through (the modal backdrop).
+- The modal backdrop dim is per-frame overlay state, not a cell
+  attribute. `ui_dim()` sets a flag, and `display_set_overlay_buffer()`
+  publishes it with the buffer. The scrim was global in every real
+  frame: a modal dims its whole backdrop, session chrome never dims.
+  Per-cell encoding bought only a per-cell load in the ISR and a
+  full-buffer write per modal frame. Frame state also retires the old
+  "honored on transparent cells only" caveat, which can no longer be
+  expressed.
 
 `INVERSE`, `DIM`, and `BRIGHT` are gone. There is nothing to combine,
 so no combination can be undefined.
