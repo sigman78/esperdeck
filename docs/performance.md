@@ -1083,3 +1083,32 @@ Verdict: no regression — the added DIM ternary is one predicted branch
 per cell per row build and is invisible at chunk granularity. The menu
 rendition changes only what is on screen, not the render path, and the
 `bars`/`spaces`/`dense` phases bound its chrome cost.
+
+## Scrim-as-frame-state checkpoint (2026-08-28)
+
+Regression bench for the scrim refactor: the per-cell
+`OVERLAY_ATTR_SCRIM` attribute became a per-frame flag published with
+the overlay buffer (docs/overlay-style.md). 10x20, three full phase
+cycles, mean and worst `max` per phase, cycles at 240 MHz.
+
+| phase | avg | worst max |
+|---|---|---|
+| `off` | 31,801 cyc — 132 us | 41,630 cyc — 173 us |
+| `clear` | 32,287 cyc — 134 us | 42,610 cyc — 177 us |
+| `scrim` | 32,568 cyc — 135 us | 43,170 cyc — 179 us |
+| `spaces` | 31,307 cyc — 130 us | 40,716 cyc — 169 us |
+| `dense` | 31,302 cyc — 130 us | 40,662 cyc — 169 us |
+| `bars` | 31,307 cyc — 130 us | 40,709 cyc — 169 us |
+| `bold` | 31,314 cyc — 130 us | 40,661 cyc — 169 us |
+
+Verdict: no regression. `scrim` vs `clear` — the operative pair — is
++0.87% avg, +2.3 us worst max: the frame flag costs the same as a bare
+transparent overlay, as designed. The transparent path no longer loads
+overlay attrs per cell, and `ui_dim()` stopped writing ~12 KB per modal
+frame on the shell side.
+
+Side observation, not part of this gate: the opaque phases now cluster
+within 1 us of each other, and `bold` is statistically tied with
+`dense`/`bars` instead of clearly worst — the historical "bold is the
+one to watch" ranking (first measurement above) deserves a re-check
+next time someone benches for its own sake.
