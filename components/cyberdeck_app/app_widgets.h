@@ -9,10 +9,10 @@
 
 #include "app_internal.h"
 
-/** The StatusBar (ui-spec, locked): full-width bar on its own background
- *  at row n-1 — lettered indicator patches (NET/KBD), clock right; a
- *  live toast takes the indicator span over. Composited by the shell
- *  for NAV_CHROME_FULL screens. */
+/** The StatusBar (docs/status-bar.md): full-width bar on its own
+ *  background at row n-1 — a cluster of icon chips left, clock right, a
+ *  live toast clipped into the gap between them. Implemented by
+ *  app_statusbar.c; composited by the shell for NAV_CHROME_FULL screens. */
 void ui_statusbar(uint64_t now);
 
 

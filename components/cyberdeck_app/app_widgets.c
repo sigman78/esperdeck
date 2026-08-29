@@ -285,60 +285,6 @@ void draw_titlebar(int x0, const char *text)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
-/* One StatusBar patch. Lit = the FOCUS wash of its accent (dark text)
- * plus the bold face; off = the WELL companion, receding. Patches sit
- * adjacent, no gaps. */
-static int sb_patch(int x, int row, const char *txt, uint8_t accent, bool lit)
-{
-    ui_pen(lit ? accent : OVERLAY_COL_BLUE);
-    ui_puts(x, row, txt, (lit ? UI_FOCUS : UI_WELL) | UI_BOLD);
-    return x + (int)strlen(txt);
-}
-
-/* The StatusBar: lettered indicator patches left, clock right; a live
- * toast owns the indicator span. */
-void ui_statusbar(uint64_t now)
-{
-    const int sr = ui_rows() - 1;
-    ui_pen(OVERLAY_COL_BLUE);
-    for (int c = 0; c < ui_cols(); c++)
-        ui_putch(c, sr, ' ', UI_BAR);
-
-    if (app.toast[0] && now < app.toast_until) {
-        char clip[96];
-        snprintf(clip, sizeof(clip), " %.*s ", ui_cols() - 12, app.toast);
-        ui_puts(1, sr, clip, UI_FOCUS | UI_BOLD);
-    } else {
-        /* A keystore-lock indicator is deliberately absent (user call,
-         * 2026-08-27). A locked deck shows the PIN pad; the state is
-         * self-evident. Caps is a keyboard sub-state, not a peer of
-         * NET/KBD (design round, 2026-08-27). It renders as an amber
-         * chip fused to the KBD patch, only while the lock is ON. Num
-         * lock never renders — the keymap ignores it, an indicator would
-         * have no referent (get_locks still reports the bit). */
-        int x = sb_patch(1, sr, " NET ", OVERLAY_COL_GREEN,
-                         wifi_manager_is_connected());
-        const bool kbd = app.ble && app.ble->get_state &&
-                         app.ble->get_state() == CYBERDECK_BLE_CONNECTED;
-        x = sb_patch(x, sr, " KBD ", OVERLAY_COL_CYAN, kbd);
-        if (kbd && app.ble->get_locks &&
-            (app.ble->get_locks() & CYBERDECK_KBD_LOCK_CAPS))
-            sb_patch(x, sr, " C ", OVERLAY_COL_AMBER, true);
-    }
-
-    char clk[10];
-    if (clock_str(clk + 1, sizeof(clk) - 2)) {
-        clk[0] = ' ';
-        size_t n = strlen(clk);
-        clk[n] = ' ';
-        clk[n + 1] = '\0';
-        ui_pen(OVERLAY_COL_BLUE);
-        ui_puts(ui_cols() - (int)strlen(clk) - 1, sr, clk,
-                UI_FOCUS | UI_BOLD);
-    }
-    ui_pen(OVERLAY_COL_DEFAULT);
-}
-
 /* Standard modal header: titlebar chip, a right-aligned "// tag" in blue,
  * and a rule on row 3. Shared by CONNECTING / NEW PROFILE. */
 void draw_screen_header(const char *title, const char *tag)
