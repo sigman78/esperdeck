@@ -153,7 +153,7 @@ static void render_unlock(uint64_t now)
         ui_putch(x - 2, entry_row, spinner_glyph(app.anim_frame), 0);
         ui_puts(x, entry_row, MSG, 0);
     } else if (s_unlock.note_until) {
-        uint8_t blink = ((app.anim_frame / 3) & 1) ? OVERLAY_ATTR_INVERSE : 0;
+        uint8_t blink = ((app.anim_frame / 3) & 1) ? UI_BAR : UI_TEXT;
         ui_pen(OVERLAY_COL_AMBER);
         ui_puts((ui_cols() - (int)strlen(s_unlock.note)) / 2, entry_row,
                 s_unlock.note, blink);
@@ -166,7 +166,7 @@ static void render_unlock(uint64_t now)
                  (unsigned)((keystore_backoff_ms() + 999) / 1000));
         ui_pen(OVERLAY_COL_AMBER);
         ui_puts((ui_cols() - (int)strlen(msg)) / 2, entry_row, msg,
-                OVERLAY_ATTR_BOLD);
+                UI_BOLD);
     } else {
         /* Entry cells show [X] for taken and [_] for still to come. Each
          * is one bracketed slot per character, with a gap between them.
@@ -185,7 +185,7 @@ static void render_unlock(uint64_t now)
                 /* Empty slots recede (dim), taken ones step forward (bold
                  * green) — on this all-green theme the glyph alone would
                  * not separate them. */
-                uint8_t a      = filled ? OVERLAY_ATTR_BOLD : OVERLAY_ATTR_DIM;
+                uint8_t a      = filled ? UI_BOLD : UI_MUTED;
                 ui_pen(filled ? OVERLAY_COL_GREEN : OVERLAY_COL_DEFAULT);
                 ui_putch(x,     entry_row, '[', a);
                 ui_putch(x + 2, entry_row, ']', a);
@@ -198,7 +198,7 @@ static void render_unlock(uint64_t now)
                     ui_pen(OVERLAY_COL_GREEN);
                     ui_putch(x + 1, entry_row,
                              ((app.anim_frame / 4) & 1) ? UI_VBAR : '_',
-                             OVERLAY_ATTR_BOLD);
+                             UI_BOLD);
                 } else {
                     ui_putch(x + 1, entry_row, '_', a);
                 }
@@ -208,7 +208,7 @@ static void render_unlock(uint64_t now)
             int x0 = (ui_cols() - (m * 2 + 1)) / 2;
             ui_pen(OVERLAY_COL_GREEN);
             for (int i = 0; i < m; i++)
-                ui_putch(x0 + i * 2, entry_row, 'X', OVERLAY_ATTR_BOLD);
+                ui_putch(x0 + i * 2, entry_row, 'X', UI_BOLD);
             if ((app.anim_frame / 4) & 1)
                 ui_putch(x0 + m * 2, entry_row, UI_VBAR, 0);
         }

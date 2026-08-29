@@ -49,6 +49,10 @@ typedef enum {
 static display_overlay_cell_t *s_ov;
 static int s_ov_cols, s_ov_rows;
 
+/* Bench-local style table: black text on the 8 ANSI backgrounds. */
+#define BENCH_OV_PAL 8
+static display_overlay_style_t s_ov_pal[BENCH_OV_PAL];
+
 /* Rebuild and re-register the overlay for @p phase. Detached first: the ISR
  * must never read a buffer mid-rewrite, and a phase change is not a hot path. */
 static void ov_apply(ov_phase_t phase)
@@ -59,14 +63,13 @@ static void ov_apply(ov_phase_t phase)
 
     const int n = s_ov_cols * s_ov_rows;
     for (int i = 0; i < n; i++) {
-        display_overlay_cell_t c = {
-            .cp = 0, .attrs = 0, .color = OVERLAY_COL_DEFAULT
-        };
+        /* Entry 6 = black-on-cyan, matching the pre-palette bench look. */
+        display_overlay_cell_t c = { .cp = 0, .attrs = 0, .pal = 6 };
         switch (phase) {
         case OV_CLEAR:
             break;
         case OV_SCRIM:
-            c.attrs = OVERLAY_ATTR_DIM;
+            c.attrs = OVERLAY_ATTR_SCRIM;
             break;
         case OV_SPACES:
             c.cp = 0x20;
@@ -75,9 +78,8 @@ static void ov_apply(ov_phase_t phase)
             c.cp = (uint16_t)(uint8_t)s_set[(unsigned)i % SET_LEN];
             break;
         case OV_BARS:
-            c.cp    = 0x20;
-            c.attrs = OVERLAY_ATTR_INVERSE;
-            c.color = (uint8_t)((unsigned)i % OVERLAY_PAL_SIZE);
+            c.cp  = 0x20;
+            c.pal = (uint8_t)((unsigned)i % BENCH_OV_PAL);
             break;
         case OV_BOLD:
             c.cp    = (uint16_t)(uint8_t)s_set[(unsigned)i % SET_LEN];
@@ -231,12 +233,15 @@ static void bench_task(void *arg)
     s_ov_rows = rows;
     s_ov = heap_caps_calloc((size_t)cols * rows, sizeof(*s_ov),
                             MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!s_ov)
+    if (!s_ov) {
         ESP_LOGW(TAG, "no DRAM for %dx%d overlay — measuring 'off' only",
                  cols, rows);
-    else
-        display_set_overlay_colors(display_ansi_to_rgb565(0),
-                                   display_ansi_to_rgb565(6));
+    } else {
+        for (int i = 0; i < BENCH_OV_PAL; i++)
+            s_ov_pal[i] = (display_overlay_style_t){
+                display_ansi_to_rgb565(0), display_ansi_to_rgb565(i) };
+        display_set_overlay_palette(s_ov_pal, BENCH_OV_PAL);
+    }
 
     for (unsigned p = 0;; p = (p + 1) % (sizeof s_phases / sizeof *s_phases)) {
         const ov_phase_t  ov = s_phases[p].ov;

@@ -22,7 +22,8 @@ bool ui_visible(void);
 /** Park the terminal cursor off-screen (call in full-screen modals). */
 void ui_no_cursor(void);
 
-/** Set the two overlay colors (all cells share them; INVERSE swaps). */
+/** Set the screen theme colors: rebakes the overlay style table
+ *  (app_theme.c) and publishes it to the display. */
 void ui_colors(color_t fg, color_t bg);
 
 /** Clear the whole overlay to transparent. */

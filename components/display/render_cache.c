@@ -19,44 +19,26 @@ static DRAM_ATTR struct {
     /* The setter writes buf last: the ISR must never read a fresh pointer
      * paired with stale cols/rows. */
     display_overlay_cell_t *buf;
-    int     cols, rows;
-    color_t fg, bg;
-} s_overlay = { .fg = COLOR_BLACK, .bg = COLOR_CYAN };
+    int cols, rows;
+} s_overlay = {};
 
-/* Overlay accent palettes (index 0 → s_overlay.fg). TEXT accents are VGA
- * bright tones; INVERSE bars use muted companions of the same hues. */
-static DRAM_ATTR const color_t s_overlay_pal[OVERLAY_PAL_SIZE] = {
-    0,                        /* 0: default → replaced by s_overlay.fg */
-    RGB565( 85, 255,  85),    /* 1 green   (VGA bright green)   */
-    RGB565( 85, 255, 255),    /* 2 cyan    (VGA bright cyan)    */
-    RGB565(255,  85, 255),    /* 3 magenta (VGA bright magenta) */
-    RGB565(255, 255,  85),    /* 4 amber   (VGA yellow)         */
-    RGB565(255,  85,  85),    /* 5 red     (VGA bright red)     */
-    RGB565( 85,  85, 255),    /* 6 blue    (VGA bright blue)    */
-    RGB565(255, 255, 255),    /* 7 white   (VGA white)          */
+/* App-registered style table (docs/overlay-style.md); a one-entry black
+ * fallback keeps the ISR safe before registration / on a bad index.
+ * The ISR reads {tbl, count} through ONE published pointer. The pair
+ * cannot tear, so count cannot exceed the table it rides with. Two
+ * separate stores would not survive the optimizer or a cross-core
+ * reader (bench registers its palette from core 0; the ISR is core 1). */
+typedef struct {
+    const display_overlay_style_t *tbl;
+    int count;
+} pal_ref_t;
+static DRAM_ATTR const display_overlay_style_t s_pal_fallback[1] = {
+    { COLOR_WHITE, COLOR_BLACK },
 };
-static DRAM_ATTR const color_t s_overlay_bar[OVERLAY_PAL_SIZE] = {
-    RGB565(148, 148, 148),    /* 0 default → neutral gray       */
-    RGB565( 96, 168,  96),    /* 1 sage                         */
-    RGB565( 80, 160, 168),    /* 2 teal                         */
-    RGB565(168,  96, 160),    /* 3 mauve                        */
-    RGB565(200, 152,  72),    /* 4 ochre                        */
-    RGB565(184,  88,  80),    /* 5 terracotta                   */
-    RGB565(104, 112, 192),    /* 6 periwinkle                   */
-    RGB565(255, 255, 255),    /* 7 white (kept pure — QR)       */
-};
-/* DIM|INVERSE companions at ~60% — the value wells (ui-spec): same hue,
- * clearly darker than the bar beside them. */
-static DRAM_ATTR const color_t s_overlay_bar_dim[OVERLAY_PAL_SIZE] = {
-    RGB565( 89,  89,  89),    /* 0 gray                         */
-    RGB565( 58, 101,  58),    /* 1 sage                         */
-    RGB565( 48,  96, 101),    /* 2 teal                         */
-    RGB565(101,  58,  96),    /* 3 mauve                        */
-    RGB565(120,  91,  43),    /* 4 ochre                        */
-    RGB565(110,  53,  48),    /* 5 terracotta                   */
-    RGB565( 62,  67, 115),    /* 6 periwinkle                   */
-    RGB565(153, 153, 153),    /* 7 white → mid gray             */
-};
+static DRAM_ATTR const pal_ref_t s_pal_fallback_ref = { s_pal_fallback, 1 };
+static DRAM_ATTR pal_ref_t s_pal_refs[2];       /* ping-pong slots */
+static DRAM_ATTR const pal_ref_t * volatile s_pal = &s_pal_fallback_ref;
+static uint8_t s_pal_next;
 
 void display_set_text_buffer(const terminal_cell_t *buf, int cols, int rows)
 {
@@ -72,10 +54,20 @@ void display_set_overlay_buffer(display_overlay_cell_t *buf, int cols, int rows)
     s_overlay.buf  = buf;   /* written last — atomic 32-bit store */
 }
 
-void display_set_overlay_colors(color_t fg, color_t bg)
+void display_set_overlay_palette(const display_overlay_style_t *pal, int count)
 {
-    s_overlay.fg = fg;
-    s_overlay.bg = bg;
+    if (!pal || count <= 0) {
+        s_pal = &s_pal_fallback_ref;
+        return;
+    }
+    /* Fill the off slot, then publish it as one aligned pointer store.
+     * Slot reuse would need two full calls inside the ISR's few-cycle
+     * deref window; palette swaps are screen-entry events. */
+    pal_ref_t *r = &s_pal_refs[s_pal_next];
+    s_pal_next ^= 1;
+    r->tbl   = pal;
+    r->count = count;
+    s_pal = r;
 }
 
 void display_get_text_size(int *cols, int *rows)
@@ -173,34 +165,17 @@ typedef struct {
     uint8_t dim;        /* OVERLAY_DIM_DITHER scrim request */
 } cell_colors_t;
 
-/* Overlay (chrome) cell. `bold` stays 0 — bold-pop must not recolor
- * chrome; the glyph itself may still use the bold face. */
-static IRAM_ATTR void resolve_overlay_cell(uint8_t ov_attrs, uint8_t ov_color,
-                                           cell_colors_t *out)
+/* Overlay (chrome) cell: one style-table load, no color math (the app
+ * bakes every look at theme time — docs/overlay-style.md). `bold` stays
+ * 0 — bold-pop must not recolor chrome; the glyph itself may still use
+ * the bold face. */
+static IRAM_ATTR void resolve_overlay_cell(const pal_ref_t *pal,
+                                           uint8_t ov_pal, cell_colors_t *out)
 {
-    color_t fg, bg;
-    if (ov_attrs & OVERLAY_ATTR_INVERSE) {
-        /* Solid bar; DIM picks the darker companion (value wells). Colored
-         * bars (1-6) get a pale tint of their hue as text — derived from
-         * bg, so a dim bar keeps readable text; gray/white keep dark text
-         * (QR modules stay dark-on-white). */
-        bg = (ov_attrs & OVERLAY_ATTR_DIM) ? s_overlay_bar_dim[ov_color]
-                                           : s_overlay_bar[ov_color];
-        if (ov_color >= 1 && ov_color <= 6 && !(ov_attrs & OVERLAY_ATTR_BRIGHT))
-            fg = (color_t)(((bg >> 2) & 0x39E7) + 0x7BEF + 0x39E7);
-        else
-            fg = s_overlay.bg;
-    } else {
-        fg = ov_color ? s_overlay_pal[ov_color] : s_overlay.fg;
-        if (ov_attrs & OVERLAY_ATTR_DIM)   /* muted accent text */
-            fg = (color_t)((fg >> 1) & 0x7BEFu);
-        bg = s_overlay.bg;
-    }
-    /* Focus wash: bg 50% toward white (carry-safe half-sum). */
-    if (ov_attrs & OVERLAY_ATTR_BRIGHT)
-        bg = (color_t)(((bg >> 1) & 0x7BEF) + 0x7BEF);
-    out->fg = fg;
-    out->bg = bg;
+    const display_overlay_style_t *st =
+        &pal->tbl[ov_pal < pal->count ? ov_pal : 0];
+    out->fg = st->fg;
+    out->bg = st->bg;
     out->underline = 0;
     out->bold      = 0;
     out->dim       = 0;
@@ -227,7 +202,7 @@ static IRAM_ATTR void resolve_terminal_cell(const terminal_cell_t *cell,
 #else
     (void)glow_tier;
 #endif
-    if (ov_attrs & OVERLAY_ATTR_DIM) {
+    if (ov_attrs & OVERLAY_ATTR_SCRIM) {
 #if OVERLAY_DIM_DITHER
         out->dim = 1;   /* full colour; checkerboarded in the post-pass */
 #else
@@ -247,6 +222,8 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
     const display_overlay_cell_t *ov_row =
         (s_overlay.buf && cr < s_overlay.rows)
         ? (s_overlay.buf + cr * s_overlay.cols) : NULL;
+    /* One volatile load: the whole row resolves against one palette. */
+    const pal_ref_t *pal = s_pal;
 
     const uint8_t mono     = g_fx_snap.mono;
     const uint8_t bold_pop = g_fx_snap.bold_pop;
@@ -278,7 +255,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
         const uint16_t ov_cp    = (ov_row && c < s_overlay.cols) ? ov_row[c].cp    : 0;
 
         if (ov_cp != 0) {
-            resolve_overlay_cell(ov_attrs, ov_row[c].color, &cc);
+            resolve_overlay_cell(pal, ov_row[c].pal, &cc);
             font_decode_glyph(ov_cp, (ov_attrs & OVERLAY_ATTR_BOLD) != 0, dst);
         } else {
             const terminal_cell_t *cell = &row_cells[c];

@@ -103,40 +103,27 @@ esp_lcd_panel_handle_t display_get_panel(void);
 
 /*
  * Overlay cell — a second compositing layer above the terminal buffer;
- * cp == 0 is transparent. All cells share the fg/bg pair set via
- * display_set_overlay_colors().
- *   INVERSE  swaps fg/bg per cell (solid bars, selection).
- *   DIM      on a transparent cell = scrim: the terminal shows through at
- *            ~50% brightness (modal backdrop). On an opaque cell, DIM
- *            selects the muted variant. An INVERSE bar drops to the
- *            darker bar palette (value wells, ui-spec). Text renders its
- *            accent at half brightness (inactive indicators).
- *   BRIGHT   focus wash: bg 50% toward white — a focused bar turns pastel.
- *   BOLD     use the real bold face; falls back to the normal glyph when
- *            no bold form exists. Pure glyph swap, colors untouched.
+ * cp == 0 is transparent. A cell's colors come from ONE palette entry
+ * (`pal`) in the app-registered style table; the render never mixes or
+ * derives colors per cell. Rationale: docs/overlay-style.md.
+ *   BOLD   use the real bold face; falls back to the normal glyph when
+ *          no bold form exists. Pure glyph swap, colors untouched.
+ *   SCRIM  honored on TRANSPARENT cells only: the terminal shows through
+ *          at ~50% brightness (modal backdrop).
  */
-#define OVERLAY_ATTR_INVERSE  (1 << 0)
-#define OVERLAY_ATTR_DIM      (1 << 1)
-#define OVERLAY_ATTR_BRIGHT   (1 << 2)
-#define OVERLAY_ATTR_BOLD     (1 << 3)
+#define OVERLAY_ATTR_BOLD     (1 << 0)
+#define OVERLAY_ATTR_SCRIM    (1 << 1)
 
-/* Per-cell accent color: index into the overlay palette. 0 = use the screen's
- * default overlay fg (set via display_set_overlay_colors); 1..N pick a fixed
- * accent so a single screen can mix colors without a per-screen repaint. */
-#define OVERLAY_COL_DEFAULT   0
-#define OVERLAY_COL_GREEN     1
-#define OVERLAY_COL_CYAN      2
-#define OVERLAY_COL_MAGENTA   3
-#define OVERLAY_COL_AMBER     4
-#define OVERLAY_COL_RED       5
-#define OVERLAY_COL_BLUE      6
-#define OVERLAY_COL_WHITE     7
-#define OVERLAY_PAL_SIZE      8
+/* One overlay style: a resolved color pair. What each index MEANS is the
+ * app's concern (cyberdeck_ui.h names them); display only looks them up. */
+typedef struct {
+    color_t fg, bg;
+} display_overlay_style_t;
 
 typedef struct {
-    uint16_t cp;     /* BMP codepoint; 0 = transparent */
-    uint8_t  attrs;  /* OVERLAY_ATTR_* flags            */
-    uint8_t  color;  /* OVERLAY_COL_* accent palette index */
+    uint16_t cp;     /* BMP codepoint; 0 = transparent      */
+    uint8_t  attrs;  /* OVERLAY_ATTR_* flags                */
+    uint8_t  pal;    /* index into the registered style table */
 } display_overlay_cell_t;
 
 /** Register (or clear) the overlay buffer.  Pass NULL to disable the overlay.
@@ -144,8 +131,12 @@ typedef struct {
  *  cols/rows must match the registered terminal buffer dimensions. */
 void display_set_overlay_buffer(display_overlay_cell_t *buf, int cols, int rows);
 
-/** Set the fg/bg RGB565 colors used for all non-transparent overlay cells. */
-void display_set_overlay_colors(color_t fg, color_t bg);
+/** Register the style table overlay cells index with `pal`. The table must
+ *  reside in DRAM and stay alive; out-of-range `pal` resolves entry 0.
+ *  Rebuilding entries in place while visible is fine — a cell's colors
+ *  always come from one entry, so the worst case is one transitional
+ *  frame in the half-updated theme. */
+void display_set_overlay_palette(const display_overlay_style_t *pal, int count);
 
 /** Query the currently registered terminal buffer dimensions (0,0 if not set). */
 void display_get_text_size(int *cols, int *rows);

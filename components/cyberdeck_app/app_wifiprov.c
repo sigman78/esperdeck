@@ -93,7 +93,7 @@ static void render_wifiprov(uint64_t now)
         ram_stats(ram, sizeof(ram));
         ui_pen(OVERLAY_COL_BLUE);
         ui_putch(4, y + 2, UI_DIAMOND, 0);
-        ui_puts(6, y + 2, "RAM", OVERLAY_ATTR_BOLD);
+        ui_puts(6, y + 2, "RAM", UI_BOLD);
         ui_puts(11, y + 2, ram, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
     }

@@ -59,7 +59,8 @@ FUNC_PATTERNS = [
 # ISR-read data: enforced when present (a forgotten DRAM_ATTR on a table
 # lands it in flash rodata at 0x3C..., cached -- exactly the hazard).
 DATA_PATTERNS = [
-    r"s_cc$", r"s_cells$", r"s_overlay$", r"s_overlay_(pal|bar|bar_dim)$",
+    r"s_cc$", r"s_cells$", r"s_overlay$",
+    r"s_pal(_refs|_fallback|_fallback_ref)?$", r"s_theme$",
     r"s_cursor$", r"s_bell$", r"s_fx_noise$", r"g_rs$", r"g_fx_snap$",
     r"g_fx_cfg", r"g_fx_frame$", r"g_fx_wobble_lut$", r"g_fx_glow_acc$",
     r"g_fx_row_stamp$", r"g_fx_(wipe|collapse|static)_", r"wob_env",

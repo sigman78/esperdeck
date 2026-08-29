@@ -6,13 +6,24 @@
  */
 
 #include "app_ui.h"
+#include "app_theme.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "app_ui";
+
+/* The baked style table the ISR reads (DRAM). ui_colors() rebuilds it
+ * in place only when the theme pair changes (screen entry); a scan
+ * racing that rare rebuild can catch mixed entries for one frame —
+ * colors only, self-corrects. A per-frame rebuild would make that
+ * window a steady strobe, so same-pair calls must stay early-returns. */
+static DRAM_ATTR display_overlay_style_t s_theme[UI_PAL_COUNT];
+static color_t s_theme_fg, s_theme_bg;    /* the pair currently baked */
+static bool    s_theme_baked = false;
 
 static display_overlay_cell_t *s_buf[2] = { NULL, NULL };
 static display_overlay_cell_t *s_draw   = NULL;   /* the back buffer */
@@ -138,7 +149,12 @@ void ui_no_cursor(void)
 
 void ui_colors(color_t fg, color_t bg)
 {
-    display_set_overlay_colors(fg, bg);
+    if (s_theme_baked && fg == s_theme_fg && bg == s_theme_bg) return;
+    s_theme_fg    = fg;
+    s_theme_bg    = bg;
+    s_theme_baked = true;
+    ui_theme_build(fg, bg, s_theme);
+    display_set_overlay_palette(s_theme, UI_PAL_COUNT);
 }
 
 void ui_clear(void)
@@ -150,25 +166,34 @@ void ui_clear(void)
 
 void ui_dim(void)
 {
-    /* Transparent scrim: cells stay see-through (cp==0) but flagged DIM, so
-     * the renderer fades the terminal behind them. Draw chrome on top. */
+    /* Transparent scrim: cells stay see-through (cp==0) but flagged SCRIM,
+     * so the renderer fades the terminal behind them. Draw chrome on top. */
     s_pen = OVERLAY_COL_DEFAULT;
     if (!s_draw) return;
     for (int i = 0; i < s_cols * s_rows; i++) {
         s_draw[i].cp    = 0;
-        s_draw[i].attrs = OVERLAY_ATTR_DIM;
-        s_draw[i].color = 0;
+        s_draw[i].attrs = OVERLAY_ATTR_SCRIM;
+        s_draw[i].pal   = 0;
     }
 }
 
 void ui_pen(uint8_t color) { s_pen = color; }
 
-void ui_putch(int col, int row, uint16_t cp, uint8_t attrs)
+void ui_putch(int col, int row, uint16_t cp, uint8_t style)
 {
+    /* (style, pen) → one baked palette entry; UI_BOLD is the only flag
+     * that reaches the display (docs/overlay-style.md). Rejected on BOTH
+     * builds: out-of-vocabulary codes must fail loudly, not clamp to
+     * palette entry 0. In-range OR aliases (cyberdeck_ui.h) are beyond
+     * any runtime check — the non-composability rule is the guard. */
+    assert((style & ~(UI_STYLE_MASK | UI_BOLD)) == 0 &&
+           (style & UI_STYLE_MASK) < UI_STYLE_COUNT);
+    assert(s_pen < OVERLAY_ACCENTS);
     if (s_draw && col >= 0 && col < s_cols && row >= 0 && row < s_rows) {
-        s_draw[row * s_cols + col].cp    = cp;
-        s_draw[row * s_cols + col].attrs = attrs;
-        s_draw[row * s_cols + col].color = s_pen;
+        display_overlay_cell_t *c = &s_draw[row * s_cols + col];
+        c->cp    = cp;
+        c->attrs = (style & UI_BOLD) ? OVERLAY_ATTR_BOLD : 0;
+        c->pal   = (uint8_t)((style & UI_STYLE_MASK) * OVERLAY_ACCENTS + s_pen);
     }
 }
 
@@ -251,37 +276,40 @@ void ui_box(int col, int row, int w, int h, const char *title)
 }
 
 int ui_chip(int col, int row, uint16_t left_cp, const char *text,
-            uint16_t right_cp, uint8_t attrs)
+            uint16_t right_cp, uint8_t style)
 {
+    /* The caps stay accent TEXT; the body is a BAR unless the caller
+     * substitutes another bar-family style (UI_FOCUS). */
+    uint8_t bar = (style & UI_STYLE_MASK) ? style : (uint8_t)(UI_BAR | style);
     int x = col;
-    if (left_cp) ui_putch(x++, row, left_cp, 0);
-    ui_putch(x++, row, ' ', OVERLAY_ATTR_INVERSE);
-    ui_puts(x, row, text, OVERLAY_ATTR_INVERSE | attrs);
+    if (left_cp) ui_putch(x++, row, left_cp, UI_TEXT);
+    ui_putch(x++, row, ' ', bar);
+    ui_puts(x, row, text, bar);
     x += (int)strlen(text);
-    ui_putch(x++, row, ' ', OVERLAY_ATTR_INVERSE);
-    if (right_cp) ui_putch(x++, row, right_cp, 0);
+    ui_putch(x++, row, ' ', bar);
+    if (right_cp) ui_putch(x++, row, right_cp, UI_TEXT);
     return x;
 }
 
 void ui_tile(int col, int row, int w, int h,
              const char *title, const char *body, bool selected)
 {
-    /* DOS-style solid button: a colored bar (INVERSE puts the pen accent in
-     * the background). Focus = pastel wash (BRIGHT) + a lit left rail. */
-    uint8_t a = OVERLAY_ATTR_INVERSE | (selected ? OVERLAY_ATTR_BRIGHT : 0);
+    /* DOS-style solid button: a BAR in the pen accent. Focus = the FOCUS
+     * wash + a lit left rail. */
+    uint8_t a = selected ? UI_FOCUS : UI_BAR;
 
     for (int r = 0; r < h; r++)
         for (int c = 0; c < w; c++)
             ui_putch(col + c, row + r, ' ', a);
 
     if (selected) {
-        /* ▐ in INVERSE+WHITE gives this effect: set pixels (right half)
-         * take the dark fg. Clear pixels (left half) take the white bg.
-         * The result is a white rail with a seam. */
+        /* ▐ on the white BAR entry: set pixels (right half) take the dark
+         * fg. Clear pixels (left half) take the white bg. The result is a
+         * white rail with a seam. */
         uint8_t old_pen = s_pen;
         s_pen = OVERLAY_COL_WHITE;
         for (int r = 0; r < h; r++)
-            ui_putch(col, row + r, UI_RHALF, OVERLAY_ATTR_INVERSE);
+            ui_putch(col, row + r, UI_RHALF, UI_BAR);
         s_pen = old_pen;
     }
 
@@ -295,7 +323,7 @@ void ui_tile(int col, int row, int w, int h,
     int ty    = row + (h - lines) / 2;
     if (title && *title) {
         snprintf(t, sizeof(t), "%-.*s", inner, title);
-        ui_puts(tx, ty, t, a | OVERLAY_ATTR_BOLD);
+        ui_puts(tx, ty, t, a | UI_BOLD);
     }
     if (lines == 2) {
         /* An overlong body bounce-scrolls while selected; unselected tiles
@@ -324,15 +352,16 @@ void ui_field(int col, int row, int width, const char *text,
     int start = 0;
     if (focused && cursor > inner - 1) start = cursor - (inner - 1);
 
-    uint8_t in = focused ? OVERLAY_ATTR_INVERSE : 0;
-    ui_putch(col, row, '[', 0);
-    ui_putch(col + width - 1, row, ']', 0);
+    uint8_t in = focused ? UI_BAR : UI_TEXT;
+    ui_putch(col, row, '[', UI_TEXT);
+    ui_putch(col + width - 1, row, ']', UI_TEXT);
     for (int i = 0; i < inner; i++) {
         int idx = start + i;
         uint16_t cp = ' ';
         if (idx < len) cp = mask ? '*' : (uint8_t)text[idx];
-        /* Block cursor on the focused field's caret cell. */
-        uint8_t a = (focused && idx == cursor) ? (in ^ OVERLAY_ATTR_INVERSE) : in;
+        /* Block cursor on the focused field's caret cell: the un-barred
+         * style inside the barred field. */
+        uint8_t a = (focused && idx == cursor) ? UI_TEXT : in;
         ui_putch(col + 1 + i, row, cp, a);
     }
 }

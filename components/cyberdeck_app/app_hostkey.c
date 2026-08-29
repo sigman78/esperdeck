@@ -31,9 +31,6 @@ static tilegrid_t hostkey_grid(void)
 static void render_hostkey(uint64_t now)
 {
     (void)now;
-    /* Overrides the shell's default overlay colors: mismatch = hazard red. */
-    ui_colors(s_hostkey.mismatch ? COLOR_WHITE : UI_FG,
-              s_hostkey.mismatch ? RGB565(96, 0, 0) : UI_BG);
     ui_fill(0, 0, ui_cols(), ui_rows(), 0);
 
     const conn_profile_t *p = conn_active();
@@ -54,8 +51,8 @@ static void render_hostkey(uint64_t now)
     draw_titlebar(2, s_hostkey.mismatch ? "HOST KEY ALERT" : "NEW HOST KEY");
 
     if (s_hostkey.mismatch) {
-        /* Blink via INVERSE (ui_puts emits Latin-1 bytes — no UTF-8 here). */
-        uint8_t blink = ((app.anim_frame / 5) & 1) ? OVERLAY_ATTR_INVERSE : 0;
+        /* Blink = alternating the style, not a render attr: bar vs text. */
+        uint8_t blink = ((app.anim_frame / 5) & 1) ? UI_BAR : UI_TEXT;
         ui_puts(4, 5, "!  HOST KEY CHANGED - possible attack  !", blink);
         ui_puts(4, 7, "The server's key DIFFERS from the pinned one.", 0);
         ui_puts(4, 8, "Only replace it if you KNOW the server was rekeyed.", 0);
@@ -117,6 +114,10 @@ static void hostkey_enter(intptr_t arg, uint64_t now)
     s_hostkey.arm_src     = 0;
     s_hostkey.sel         = arg ? 1 : 0;
     s_hostkey.frame0      = app.anim_frame;   /* start the decode reveal */
+    /* Overrides the shell's entry-time default: mismatch = hazard red.
+     * Set once here, not in render — the style table is ISR-live. */
+    ui_colors(s_hostkey.mismatch ? COLOR_WHITE : UI_FG,
+              s_hostkey.mismatch ? RGB565(96, 0, 0) : UI_BG);
     app.next_anim = 0;
 }
 

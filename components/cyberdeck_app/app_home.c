@@ -96,7 +96,7 @@ static int draw_status_led(int row, bool on, const char *label, const char *valu
     ui_pen(on ? OVERLAY_COL_GREEN : OVERLAY_COL_RED);
     ui_putch(2, row, cp, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(4, row, label, OVERLAY_ATTR_BOLD);   /* bold key, regular value */
+    ui_puts(4, row, label, UI_BOLD);   /* bold key, regular value */
     ui_puts(9, row, value, 0);
     return 9 + (int)strlen(value);
 }
@@ -164,7 +164,7 @@ static void render_home(uint64_t now)
              : ph     ? OVERLAY_COL_BLUE         /* in range, but far    */
                       : OVERLAY_COL_RED);        /* gone                 */
         ui_putch(ke + 2, 1, UI_LED_ON, 0);
-        ui_puts(ke + 4, 1, "PHN", OVERLAY_ATTR_BOLD);
+        ui_puts(ke + 4, 1, "PHN", UI_BOLD);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 
@@ -180,13 +180,13 @@ static void render_home(uint64_t now)
     ui_pen(OVERLAY_COL_BLUE);
     ui_putch(2, 2, UI_DIAMOND, 0);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(4, 2, "RAM", OVERLAY_ATTR_BOLD);
+    ui_puts(4, 2, "RAM", UI_BOLD);
     ui_puts(9, 2, ram, 0);
 
     /* ── Title + version on the RIGHT (rows 0-1) ────────────────────── */
     ui_pen(OVERLAY_COL_CYAN);
     ui_puts(ui_cols() - (int)strlen("CYBERDECK") - 1, 0, "CYBERDECK",
-            OVERLAY_ATTR_BOLD);
+            UI_BOLD);
     char ver[24];
     snprintf(ver, sizeof(ver), "// %s", app.cfg.version ? app.cfg.version : "?");
     ui_pen(OVERLAY_COL_BLUE);

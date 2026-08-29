@@ -174,7 +174,7 @@ feature; the lock screen keeps the offline savers.
 **Status: partially done** — melt/wipe/marquee primitives exist
 (`display_fx`, `render_fx_pass`); the apply-consistently pass is open.
 
-Melt/wipe clip machinery, BRIGHT focus wash, and the marquee already exist.
+Melt/wipe clip machinery, the UI_FOCUS wash, and the marquee already exist.
 The work here is *applying* them consistently — menu enter/exit wipes,
 toast slide-in, focus pulse — plus sprite-based micro-motion. Fold this
 into §4 instead of running it as its own project. Polish without a

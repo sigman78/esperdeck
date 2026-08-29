@@ -165,10 +165,12 @@ synchronized output presents atomically.
 **Overlay layer.** The shell draws all of its own chrome — profile picker,
 menus, modals, status header — into a second **overlay** buffer,
 composited on top of the terminal cells (`display_set_overlay_buffer`). A
-transparent cell lets the terminal show through. An `OVERLAY_ATTR_DIM`
-scrim dims the live session behind a modal. Because chrome lives in the
-overlay, it never corrupts the `vterm` cell buffer: a full-screen remote
-app (vim, htop) stays intact behind a menu.
+transparent cell lets the terminal show through. An `OVERLAY_ATTR_SCRIM`
+cell dims the live session behind a modal. Overlay cells carry a palette
+index into an app-registered style table, not colors or style bits — the
+rationale and vocabulary live in [`overlay-style.md`](overlay-style.md).
+Because chrome lives in the overlay, it never corrupts the `vterm` cell
+buffer: a full-screen remote app (vim, htop) stays intact behind a menu.
 
 ### Glyph tables & the row cache — compressed tables, decode once per row
 

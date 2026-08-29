@@ -77,6 +77,10 @@ static void enter_top(bool via_pop, uint64_t now)
     const nav_entry_t  *e = &s_stack[s_depth - 1];
     const nav_screen_t *d = screen(e->id);
     if (!d) return;
+    /* Theme is an entry-time decision: default first, then the screen's
+     * enter/resume may override (hostkey hazard). Never per render —
+     * the style table is ISR-live (app_ui.c). */
+    ui_colors(UI_FG, UI_BG);
     if (via_pop && d->resume) d->resume(e->arg, now);
     else if (d->enter)        d->enter(e->arg, now);
     s_dirty = true;
@@ -154,7 +158,6 @@ void nav_frame(uint64_t now)
     d = screen(nav_current());
     if (!d || !d->render) return;        /* SESSION renders itself */
 
-    ui_colors(UI_FG, UI_BG);
     ui_clear();
     d->render(now);
     if (d->chrome == NAV_CHROME_FULL)
