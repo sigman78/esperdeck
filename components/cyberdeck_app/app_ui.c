@@ -30,6 +30,7 @@ static display_overlay_cell_t *s_draw   = NULL;   /* the back buffer */
 static int  s_cols    = 0;
 static int  s_rows    = 0;
 static bool s_visible = false;
+static bool s_scrim   = false;   /* dim the terminal behind this frame */
 static uint8_t s_pen  = OVERLAY_COL_DEFAULT;   /* current accent color */
 
 /* Shell animation clock (~10 fps), fed each tick via ui_frame(); drives the
@@ -99,7 +100,7 @@ void ui_present(void)
 {
     if (!s_draw) return;
     /* Publish the freshly drawn buffer; ISR reads it next scan. */
-    display_set_overlay_buffer(s_draw, s_cols, s_rows);
+    display_set_overlay_buffer(s_draw, s_cols, s_rows, s_scrim);
     s_visible = true;
     /* Swap: next frame is drawn into the buffer the ISR just stopped using. */
     s_draw = (s_draw == s_buf[0]) ? s_buf[1] : s_buf[0];
@@ -108,7 +109,7 @@ void ui_present(void)
 void ui_hide(void)
 {
     if (!s_visible) return;
-    display_set_overlay_buffer(NULL, 0, 0);
+    display_set_overlay_buffer(NULL, 0, 0, false);
     s_visible = false;
 }
 
@@ -159,22 +160,18 @@ void ui_colors(color_t fg, color_t bg)
 
 void ui_clear(void)
 {
-    s_pen = OVERLAY_COL_DEFAULT;   /* each frame starts on the screen default */
+    s_pen   = OVERLAY_COL_DEFAULT;   /* each frame starts on the default */
+    s_scrim = false;                 /* and re-decides its backdrop */
     if (s_draw)
         memset(s_draw, 0, (size_t)s_cols * s_rows * sizeof(*s_draw));
 }
 
 void ui_dim(void)
 {
-    /* Transparent scrim: cells stay see-through (cp==0) but flagged SCRIM,
-     * so the renderer fades the terminal behind them. Draw chrome on top. */
-    s_pen = OVERLAY_COL_DEFAULT;
-    if (!s_draw) return;
-    for (int i = 0; i < s_cols * s_rows; i++) {
-        s_draw[i].cp    = 0;
-        s_draw[i].attrs = OVERLAY_ATTR_SCRIM;
-        s_draw[i].pal   = 0;
-    }
+    /* Frame state, not cells: the renderer fades the terminal under every
+     * transparent cell of this frame. Draw order does not matter. */
+    s_pen   = OVERLAY_COL_DEFAULT;
+    s_scrim = true;
 }
 
 void ui_pen(uint8_t color) { s_pen = color; }

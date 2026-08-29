@@ -57,7 +57,7 @@ static display_overlay_style_t s_ov_pal[BENCH_OV_PAL];
  * must never read a buffer mid-rewrite, and a phase change is not a hot path. */
 static void ov_apply(ov_phase_t phase)
 {
-    display_set_overlay_buffer(NULL, 0, 0);
+    display_set_overlay_buffer(NULL, 0, 0, false);
     if (phase == OV_OFF || !s_ov)
         return;
 
@@ -67,9 +67,7 @@ static void ov_apply(ov_phase_t phase)
         display_overlay_cell_t c = { .cp = 0, .attrs = 0, .pal = 6 };
         switch (phase) {
         case OV_CLEAR:
-            break;
-        case OV_SCRIM:
-            c.attrs = OVERLAY_ATTR_SCRIM;
+        case OV_SCRIM:   /* transparent too; the scrim rides the frame flag */
             break;
         case OV_SPACES:
             c.cp = 0x20;
@@ -90,7 +88,7 @@ static void ov_apply(ov_phase_t phase)
         }
         s_ov[i] = c;
     }
-    display_set_overlay_buffer(s_ov, s_ov_cols, s_ov_rows);
+    display_set_overlay_buffer(s_ov, s_ov_cols, s_ov_rows, phase == OV_SCRIM);
 }
 
 /*

@@ -17,9 +17,11 @@ static DRAM_ATTR struct {
 /* Overlay buffer — optional second compositing layer (shell chrome). */
 static DRAM_ATTR struct {
     /* The setter writes buf last: the ISR must never read a fresh pointer
-     * paired with stale cols/rows. */
+     * paired with stale dimensions. A torn scrim pairing is benign — one
+     * frame in the wrong backdrop tone, colors only. */
     display_overlay_cell_t *buf;
     int cols, rows;
+    bool scrim;
 } s_overlay = {};
 
 /* App-registered style table (docs/overlay-style.md); a one-entry black
@@ -47,11 +49,13 @@ void display_set_text_buffer(const terminal_cell_t *buf, int cols, int rows)
     s_cells.rows = rows;
 }
 
-void display_set_overlay_buffer(display_overlay_cell_t *buf, int cols, int rows)
+void display_set_overlay_buffer(display_overlay_cell_t *buf, int cols, int rows,
+                                bool scrim)
 {
-    s_overlay.cols = cols;
-    s_overlay.rows = rows;
-    s_overlay.buf  = buf;   /* written last — atomic 32-bit store */
+    s_overlay.cols  = cols;
+    s_overlay.rows  = rows;
+    s_overlay.scrim = scrim;
+    s_overlay.buf   = buf;   /* written last — atomic 32-bit store */
 }
 
 void display_set_overlay_palette(const display_overlay_style_t *pal, int count)
@@ -183,7 +187,7 @@ static IRAM_ATTR void resolve_overlay_cell(const pal_ref_t *pal,
 
 /* Terminal cell: colors + attrs, row glow, modal scrim. */
 static IRAM_ATTR void resolve_terminal_cell(const terminal_cell_t *cell,
-                                            int glow_tier, uint8_t ov_attrs,
+                                            int glow_tier, bool scrim,
                                             cell_colors_t *out)
 {
     color_t fg = cell->fg_color;
@@ -202,7 +206,7 @@ static IRAM_ATTR void resolve_terminal_cell(const terminal_cell_t *cell,
 #else
     (void)glow_tier;
 #endif
-    if (ov_attrs & OVERLAY_ATTR_SCRIM) {
+    if (scrim) {
 #if OVERLAY_DIM_DITHER
         out->dim = 1;   /* full colour; checkerboarded in the post-pass */
 #else
@@ -222,6 +226,7 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
     const display_overlay_cell_t *ov_row =
         (s_overlay.buf && cr < s_overlay.rows)
         ? (s_overlay.buf + cr * s_overlay.cols) : NULL;
+    const bool scrim = (ov_row != NULL) && s_overlay.scrim;
     /* One volatile load: the whole row resolves against one palette. */
     const pal_ref_t *pal = s_pal;
 
@@ -251,15 +256,16 @@ static IRAM_ATTR void build_row_cache(int cr, int scan_on)
         uint8_t *dst = s_cc.rows + (size_t)c * (size_t)g_rs.gb;
         cell_colors_t cc;
 
-        const uint8_t  ov_attrs = (ov_row && c < s_overlay.cols) ? ov_row[c].attrs : 0;
-        const uint16_t ov_cp    = (ov_row && c < s_overlay.cols) ? ov_row[c].cp    : 0;
+        const uint16_t ov_cp = (ov_row && c < s_overlay.cols) ? ov_row[c].cp : 0;
 
         if (ov_cp != 0) {
             resolve_overlay_cell(pal, ov_row[c].pal, &cc);
-            font_decode_glyph(ov_cp, (ov_attrs & OVERLAY_ATTR_BOLD) != 0, dst);
+            font_decode_glyph(ov_cp,
+                              (ov_row[c].attrs & OVERLAY_ATTR_BOLD) != 0, dst);
         } else {
             const terminal_cell_t *cell = &row_cells[c];
-            resolve_terminal_cell(cell, glow_tier, ov_attrs, &cc);
+            resolve_terminal_cell(cell, glow_tier, scrim && c < s_overlay.cols,
+                                  &cc);
             /* Blanks (over half of a real screen) skip the decode: word
              * zero-fill — the cache is 4-aligned, every stride is 4n, and
              * memset is off-limits with the flash cache disabled. */

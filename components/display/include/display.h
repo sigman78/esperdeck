@@ -108,11 +108,8 @@ esp_lcd_panel_handle_t display_get_panel(void);
  * derives colors per cell. Rationale: docs/overlay-style.md.
  *   BOLD   use the real bold face; falls back to the normal glyph when
  *          no bold form exists. Pure glyph swap, colors untouched.
- *   SCRIM  honored on TRANSPARENT cells only: the terminal shows through
- *          at ~50% brightness (modal backdrop).
  */
 #define OVERLAY_ATTR_BOLD     (1 << 0)
-#define OVERLAY_ATTR_SCRIM    (1 << 1)
 
 /* One overlay style: a resolved color pair. What each index MEANS is the
  * app's concern (cyberdeck_ui.h names them); display only looks them up. */
@@ -128,8 +125,11 @@ typedef struct {
 
 /** Register (or clear) the overlay buffer.  Pass NULL to disable the overlay.
  *  buf must reside in DRAM (DRAM_ATTR / static DRAM).
- *  cols/rows must match the registered terminal buffer dimensions. */
-void display_set_overlay_buffer(display_overlay_cell_t *buf, int cols, int rows);
+ *  cols/rows must match the registered terminal buffer dimensions.
+ *  `scrim` dims the terminal under the buffer's transparent cells (the
+ *  modal backdrop). It is frame state, published with the buffer. */
+void display_set_overlay_buffer(display_overlay_cell_t *buf, int cols, int rows,
+                                bool scrim);
 
 /** Register the style table overlay cells index with `pal`. The table must
  *  reside in DRAM and stay alive; out-of-range `pal` resolves entry 0.

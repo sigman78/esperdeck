@@ -51,7 +51,7 @@ isolates one branch of the overlay resolve in `render_cache.c`:
 |---|---|---|
 | `off` | not registered | the published baseline: two predicted null checks per column |
 | `clear` | every cell transparent (what `ui_clear()` produces) | the per-column `ov_row[]` load stream, nothing more |
-| `scrim` | transparent + SCRIM — the modal backdrop (`ui_dim()`) | `clear`, plus the scrim branch of `resolve_terminal_cell()` |
+| `scrim` | every cell transparent, registered with the frame scrim flag set — the modal backdrop (`ui_dim()`) | `clear`, plus the scrim branch of `resolve_terminal_cell()` |
 | `spaces` | fully opaque U+0020 | the overlay branch has NO blank fast path, so every cell pays a full `font_decode_glyph()` where the identical space in the terminal layer is a word zero-fill — what a space-padded `ui_printf()` actually costs |
 | `dense` | fully opaque glyph soup | worst-case chrome, max decode rate |
 | `bars` | opaque spaces cycling all 8 palette entries | style variety. Since the style palette (docs/overlay-style.md) every entry costs the same single table load, so this phase guards that: any delta vs `spaces` beyond noise is a resolve regression, not a "bar premium" |
