@@ -279,6 +279,7 @@ static void net_bench_reset(void)
 static void ssh_read_task(void *arg)
 {
     TickType_t last_stat = xTaskGetTickCount();
+    uint32_t   idle_wakes = 0;
 
     /* Fresh counters per session — otherwise the first 30 s report blends
      * in everything accumulated since boot. */
@@ -340,10 +341,12 @@ static void ssh_read_task(void *arg)
                  drained < SSH_DRAIN_BUDGET &&
                  (drain_now_us() - wake_t0) < SSH_DRAIN_BUDGET_US);
 
-        /* Present the whole batch once (no-op while a ?2026 synchronized
+        /* Present the whole batch once (held while a ?2026 synchronized
          * update is open — btop frames land atomically). Present even if the
-         * session just dropped so the tail of the output reaches the display. */
-        if (drained > 0 && s_sink->flush)
+         * session just dropped so the tail of the output reaches the display.
+         * Idle wakes flush too, every ~100 ms, so the vterm ?2026 watchdog
+         * can fire when the stream goes quiet mid-frame. */
+        if (s_sink->flush && (drained > 0 || (++idle_wakes % 10) == 0))
             s_sink->flush(s_sink->user);
 
         if (!s_connected) break;
@@ -375,11 +378,18 @@ static void ssh_read_task(void *arg)
                 wifi_ap_record_t ap;
                 if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) rssi = ap.rssi;
 #endif
+                size_t int_free = 0, int_blk = 0;
+#ifdef ESP_PLATFORM
+                int_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+                int_blk  = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+#endif
                 ESP_LOGI("net_bench",
                     "gap_max=%" PRIu32 "ms n250=%" PRIu32 " n500=%" PRIu32
-                    " burst=%" PRIu32 "B wakes=%" PRIu32 " rssi=%d heap=%zu",
+                    " burst=%" PRIu32 "B wakes=%" PRIu32 " rssi=%d heap=%zu"
+                    " int=%zu/%zu",
                     s_nb_gap_max_ms, s_nb_gaps_250, s_nb_gaps_500,
-                    s_nb_burst_max, s_nb_data_wakes, rssi, s_alloc_bytes);
+                    s_nb_burst_max, s_nb_data_wakes, rssi, s_alloc_bytes,
+                    int_free, int_blk);
                 net_bench_reset();     /* last_data_us survives the window */
             }
 

@@ -967,6 +967,8 @@ bool tsm_app_cursor_keys(const tsm_t *t) { return t->mode.decckm; }
 
 bool tsm_sync_update(const tsm_t *t) { return t->mode.sync_update; }
 
+void tsm_sync_update_end(tsm_t *t) { t->mode.sync_update = false; }
+
 void tsm_bench_get(tsm_bench_t *out)
 {
     if (!out) return;

@@ -48,6 +48,9 @@ test_output/
 
 # Private config (if any)
 private/
+# ...but not the vendored esp_hid component's private headers (a fresh
+# checkout cannot configure without them)
+!components/esp_hid/private/
 secrets/
 *.key
 *.pem

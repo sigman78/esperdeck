@@ -62,6 +62,14 @@ static SemaphoreHandle_t   s_lock;
 static inline void vt_lock(void)   { xSemaphoreTake(s_lock, portMAX_DELAY); }
 static inline void vt_unlock(void) { xSemaphoreGive(s_lock); }
 
+/* ?2026 watchdog. A hold whose ESU never arrives would freeze the picture
+ * for the rest of the session (observed after ~36 h of btop, 2026-09).
+ * Desktop terminals bound the hold; so does this. */
+#define VTERM_SYNC_TIMEOUT_MS 500
+static TickType_t s_sync_since;      /* tick the open hold was first seen */
+static bool       s_sync_open;
+static uint32_t   s_sync_timeouts;   /* incidents since boot */
+
 static void tsm_response_forward(const char *data, size_t len, void *user)
 {
     (void)user;
@@ -238,8 +246,21 @@ void vterm_flush(void)
 {
     if (!s_initialized) return;
     vt_lock();
-    /* ?2026 synchronized update open — hold the frame until ESU. */
-    if (tsm_sync_update(s_tsm)) { vt_unlock(); return; }
+    if (tsm_sync_update(s_tsm)) {
+        TickType_t now = xTaskGetTickCount();
+        if (!s_sync_open) { s_sync_open = true; s_sync_since = now; }
+        /* Hold the frame until ESU — but not forever. */
+        if ((now - s_sync_since) < pdMS_TO_TICKS(VTERM_SYNC_TIMEOUT_MS)) {
+            vt_unlock();
+            return;
+        }
+        s_sync_timeouts++;
+        ESP_LOGW(TAG, "?2026 hold open %u ms — forcing present (incident %" PRIu32 ")",
+                 (unsigned)((now - s_sync_since) * portTICK_PERIOD_MS),
+                 s_sync_timeouts);
+        tsm_sync_update_end(s_tsm);
+    }
+    s_sync_open = false;
 #ifdef CONFIG_VTERM_BENCH
     s_bench.flush_count++;
 #endif
@@ -263,6 +284,7 @@ void vterm_reset(void)
 {
     if (!s_initialized) return;
     vt_lock();
+    s_sync_open = false;         /* new session, new hold */
     tsm_reset(s_tsm);
     refresh_display();
     vt_unlock();
@@ -344,7 +366,7 @@ void vterm_bench_report(void)
     ESP_LOGI("vterm_bench",
         "KB=%" PRIu32 " fl=%" PRIu32 " tsm=%" PRIu32 "ms dr=%" PRIu32
         " pr=%" PRIu32 " csi=%" PRIu32 " c0=%" PRIu32 " par=%" PRIu32
-        " scr=%" PRIu32 "/%" PRIu32 " rows=%" PRIu32,
+        " scr=%" PRIu32 "/%" PRIu32 " rows=%" PRIu32 " st=%" PRIu32,
         s_bench.bytes_fed / 1024u,
         s_bench.flush_count,
         (uint32_t)(s_bench.tsm_cycles  / 240000),
@@ -353,7 +375,8 @@ void vterm_bench_report(void)
         (uint32_t)(tb.csi_cycles       / 240000),
         (uint32_t)(tb.c0_cycles        / 240000),
         (uint32_t)(parse_cycles        / 240000),
-        tb.scroll_up_calls, tb.scroll_down_calls, (uint32_t)tb.scroll_rows);
+        tb.scroll_up_calls, tb.scroll_down_calls, (uint32_t)tb.scroll_rows,
+        s_sync_timeouts);
 #endif
 }
 

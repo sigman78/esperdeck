@@ -15,3 +15,4 @@ typedef struct { void *dummy; } StaticTask_t; /* opaque TCB placeholder */
 #define pdFAIL         ((BaseType_t)0)
 #define portMAX_DELAY  ((TickType_t)0xFFFFFFFFUL)
 #define pdMS_TO_TICKS(ms) ((TickType_t)(ms))
+#define portTICK_PERIOD_MS 1
