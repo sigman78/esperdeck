@@ -66,8 +66,11 @@ static inline void vt_unlock(void) { xSemaphoreGive(s_lock); }
  * for the rest of the session (observed after ~36 h of btop, 2026-09).
  * Desktop terminals bound the hold; so does this. */
 #define VTERM_SYNC_TIMEOUT_MS 500
-static TickType_t s_sync_since;      /* tick the open hold was first seen */
+static TickType_t s_sync_since;      /* tick the current hold was first seen */
 static bool       s_sync_open;
+static uint32_t   s_sync_gen;        /* BSU count that opened the current hold */
+static uint32_t   s_sync_bytes0;     /* bytes fed when the hold opened */
+static uint32_t   s_fed_bytes;       /* bytes fed since boot (wraps, fine) */
 static uint32_t   s_sync_timeouts;   /* incidents since boot */
 
 static void tsm_response_forward(const char *data, size_t len, void *user)
@@ -234,6 +237,7 @@ void vterm_feed(const char *data, size_t len)
 #endif
     vt_lock();
     tsm_feed(s_tsm, (const uint8_t *)data, len);
+    s_fed_bytes += (uint32_t)len;
     vt_unlock();
 #ifdef CONFIG_VTERM_BENCH
     uint32_t t1 = esp_cpu_get_cycle_count();
@@ -248,16 +252,29 @@ void vterm_flush(void)
     vt_lock();
     if (tsm_sync_update(s_tsm)) {
         TickType_t now = xTaskGetTickCount();
-        if (!s_sync_open) { s_sync_open = true; s_sync_since = now; }
+        uint32_t bsu, esu;
+        tsm_sync_counts(s_tsm, &bsu, &esu);
+        /* A new BSU count means a new hold. The previous ESU and this BSU
+         * can land in one drain, so flush never sees the mode closed.
+         * Time every hold from its own BSU. */
+        if (!s_sync_open || bsu != s_sync_gen) {
+            s_sync_open   = true;
+            s_sync_gen    = bsu;
+            s_sync_since  = now;
+            s_sync_bytes0 = s_fed_bytes;
+        }
         /* Hold the frame until ESU — but not forever. */
         if ((now - s_sync_since) < pdMS_TO_TICKS(VTERM_SYNC_TIMEOUT_MS)) {
             vt_unlock();
             return;
         }
         s_sync_timeouts++;
-        ESP_LOGW(TAG, "?2026 hold open %u ms — forcing present (incident %" PRIu32 ")",
+        /* bsu-esu == 1 with little data fed: the ESU is late. bsu-esu > 1
+         * or a frame's worth of bytes: an ESU never came. */
+        ESP_LOGW(TAG, "?2026 hold open %u ms, %" PRIu32 " B fed, bsu=%" PRIu32
+                 " esu=%" PRIu32 " — forcing present (incident %" PRIu32 ")",
                  (unsigned)((now - s_sync_since) * portTICK_PERIOD_MS),
-                 s_sync_timeouts);
+                 s_fed_bytes - s_sync_bytes0, bsu, esu, s_sync_timeouts);
         tsm_sync_update_end(s_tsm);
     }
     s_sync_open = false;
@@ -362,13 +379,16 @@ void vterm_bench_report(void)
      * the pure vtparse share. */
     tsm_bench_t tb;
     tsm_bench_get(&tb);
+    uint32_t bsu, esu;
+    tsm_sync_counts(s_tsm, &bsu, &esu);
     uint64_t shim_cycles = tb.print_cycles + tb.csi_cycles + tb.c0_cycles + tb.other_cycles;
     uint64_t parse_cycles = (s_bench.tsm_cycles > shim_cycles)
                            ? (s_bench.tsm_cycles - shim_cycles) : 0;
     ESP_LOGI("vterm_bench",
         "KB=%" PRIu32 " fl=%" PRIu32 " tsm=%" PRIu32 "ms dr=%" PRIu32
         " pr=%" PRIu32 " csi=%" PRIu32 " c0=%" PRIu32 " par=%" PRIu32
-        " scr=%" PRIu32 "/%" PRIu32 " rows=%" PRIu32 " st=%" PRIu32,
+        " scr=%" PRIu32 "/%" PRIu32 " rows=%" PRIu32 " st=%" PRIu32
+        " sy=%" PRIu32 "/%" PRIu32,
         s_bench.bytes_fed / 1024u,
         s_bench.flush_count,
         (uint32_t)(s_bench.tsm_cycles  / 240000),
@@ -378,7 +398,7 @@ void vterm_bench_report(void)
         (uint32_t)(tb.c0_cycles        / 240000),
         (uint32_t)(parse_cycles        / 240000),
         tb.scroll_up_calls, tb.scroll_down_calls, (uint32_t)tb.scroll_rows,
-        s_sync_timeouts);
+        s_sync_timeouts, bsu, esu);
 #endif
 }
 

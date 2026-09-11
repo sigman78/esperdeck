@@ -1063,6 +1063,16 @@ mid-frame. `vterm_bench` gained `st=` (incidents since boot);
 `net_bench` gained `int=free/largest` internal-heap columns so a 36-h soak
 log answers the leak question too.
 
+First soak hour: seven incidents, six of them in windows with no data gap
+over 500 ms — the stream was flowing. The first watchdog timed a hold from
+the first flush that saw the mode open, so when frame N's ESU and frame
+N+1's BSU landed in one drain wake, flush never saw the mode closed and
+the timer ran on from frame N. tsm now counts BSU/ESU arrivals; a hold is
+timed from its own BSU (a new count = a new hold), and the incident line
+prints bytes fed during the hold plus `bsu`/`esu`, so a late ESU
+(`bsu-esu == 1`, little data) and a lost one (`bsu-esu > 1`, a frame's
+worth of bytes) read differently. `vterm_bench` prints `sy=bsu/esu`.
+
 A soak must run with the serial logger attached from the start: opening
 COM6 power-cycles the deck, so evidence cannot be collected after the fact.
 The root trigger of the missed ESU is still unknown; the first `?2026 hold`

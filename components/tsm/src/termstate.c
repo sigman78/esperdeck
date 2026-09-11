@@ -397,7 +397,10 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
             else       switch_to_primary(t);
             break;
         case 2004: t->mode.bracketed = set; /* TODO: BRACKETED */ break;
-        case 2026: t->mode.sync_update = set;                    break; /* BSU/ESU */
+        case 2026: /* BSU/ESU */
+            t->mode.sync_update = set;
+            if (set) t->sync_bsu++; else t->sync_esu++;
+            break;
         default: break;
         }
         return;
@@ -968,6 +971,12 @@ bool tsm_app_cursor_keys(const tsm_t *t) { return t->mode.decckm; }
 bool tsm_sync_update(const tsm_t *t) { return t->mode.sync_update; }
 
 void tsm_sync_update_end(tsm_t *t) { t->mode.sync_update = false; }
+
+void tsm_sync_counts(const tsm_t *t, uint32_t *bsu, uint32_t *esu)
+{
+    if (bsu) *bsu = t->sync_bsu;
+    if (esu) *esu = t->sync_esu;
+}
 
 void tsm_bench_get(tsm_bench_t *out)
 {

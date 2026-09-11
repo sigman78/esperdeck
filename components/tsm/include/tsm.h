@@ -149,6 +149,9 @@ bool tsm_sync_update(const tsm_t *tsm);
  * The renderer's escape hatch when the ESU never arrives. */
 void tsm_sync_update_end(tsm_t *tsm);
 
+/* BSU (CSI ? 2026 h) and ESU (CSI ? 2026 l) arrivals since creation. */
+void tsm_sync_counts(const tsm_t *tsm, uint32_t *bsu, uint32_t *esu);
+
 /* Response callback */
 
 /* tsm calls this when it must send a terminal response to the host
