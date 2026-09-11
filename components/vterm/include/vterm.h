@@ -109,6 +109,10 @@ int vterm_scroll_capacity(void);
  */
 bool vterm_app_cursor_keys(void);
 
+/* ?2026 watchdog incidents since boot (holds force-closed after the
+ * timeout). Nonzero means a frame would have frozen without it. */
+uint32_t vterm_sync_timeouts(void);
+
 /**
  * Log a performance summary (flushes, bytes, tsm cycles, draw cycles).
  * No-op when the build disables CONFIG_VTERM_BENCH.

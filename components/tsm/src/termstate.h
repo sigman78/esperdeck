@@ -71,6 +71,11 @@ struct tsm_s {
     /* Dirty tracking */
     tsm_row_dirty_t *dirty;  /* rows entries */
 
+    /* ?2026 BSU/ESU arrivals since reset. The renderer times each hold
+     * from its own BSU and tells a late ESU from a lost one. */
+    uint32_t sync_bsu;
+    uint32_t sync_esu;
+
     /* Cursor */
     int  cx;            /* cursor column (0-based) */
     int  cy;            /* cursor row    (0-based) */

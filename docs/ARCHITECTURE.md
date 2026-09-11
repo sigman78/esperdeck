@@ -304,7 +304,10 @@ diagram traces both pipes; the bullets below it restate each one in words.
   which drives `tsm`. `tsm` updates cells and tracks per-row dirty spans.
   One sink flush per batch copies dirty rows to the display cell buffer;
   the copy is withheld while DEC `?2026` synchronized output is active, to
-  avoid tearing. The ISR renders whatever is currently in the cell buffer.
+  avoid tearing — for at most 500 ms: a hold whose end never arrives is
+  force-closed and logged (`vterm: ?2026 hold open`), because otherwise one
+  lost ESU freezes the picture for the rest of the session. The ISR renders
+  whatever is currently in the cell buffer.
   The pipeline is instrumented: in-session `vterm_bench`/`render_bench`
   log lines appear every 30 s ([`performance.md`](performance.md) has the
   tuning history).

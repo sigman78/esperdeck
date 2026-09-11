@@ -145,6 +145,13 @@ bool tsm_app_cursor_keys(const tsm_t *tsm);
  * While true, vterm must not flush dirty rows to the display buffer. */
 bool tsm_sync_update(const tsm_t *tsm);
 
+/* Force-end a synchronized update: same effect as receiving CSI ? 2026 l.
+ * The renderer's escape hatch when the ESU never arrives. */
+void tsm_sync_update_end(tsm_t *tsm);
+
+/* BSU (CSI ? 2026 h) and ESU (CSI ? 2026 l) arrivals since creation. */
+void tsm_sync_counts(const tsm_t *tsm, uint32_t *bsu, uint32_t *esu);
+
 /* Response callback */
 
 /* tsm calls this when it must send a terminal response to the host

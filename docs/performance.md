@@ -989,7 +989,8 @@ bigger stack buffer.)
 
 This required a new vterm API: `vterm_feed()` (parse only) plus
 `vterm_flush()` (present dirty rows; a no-op while a DEC ?2026
-synchronized update is open). `vterm_write()` keeps its old
+synchronized update is open, bounded by a 500 ms watchdog — see
+"Synchronized-update watchdog" below). `vterm_write()` keeps its old
 feed-then-present behavior.
 
 Presentation coalescing comes free where it matters most: **btop wraps
@@ -1040,6 +1041,43 @@ structurally available if measurements call for it; scale
 ~1.2 s to ~100–150 ms.** To validate on hardware: run
 `vterm_bench_report()` before and after, and wall-clock a btop refresh
 and `mc` startup.
+
+### Synchronized-update watchdog (2026-09-10)
+
+Field failure: after ~36 h of `btop` at a 300 ms refresh, the terminal image
+froze while everything else stayed alive — BLE keyboard, F12 overlay, menu
+disconnect — and a fresh session worked. Frozen picture + live session +
+session-scoped recovery points at the one gate between parsed bytes and the
+cell buffer: `vterm_flush()` returned early for as long as tsm reported DEC
+`?2026` (synchronized output) open. One missed ESU (`CSI ? 2026 l`), for
+whatever upstream reason — btop killed mid-frame, a stalled pty, a parse
+desync — and no later byte can ever present. Desktop terminals bound this
+hold (typically 100–1000 ms); we did not.
+
+Now: `vterm_flush()` stamps the tick it first sees the hold open. Past
+500 ms it logs `vterm: ?2026 hold open N ms — forcing present (incident K)`,
+force-ends the mode through `tsm_sync_update_end()` (so the next BSU
+starts a clean hold), and presents. The read task also flushes on idle
+wakes (every ~100 ms) so the watchdog runs when the stream goes quiet
+mid-frame. `vterm_bench` gained `st=` (incidents since boot);
+`net_bench` gained `int=free/largest` internal-heap columns so a 36-h soak
+log answers the leak question too.
+
+First soak hour: seven incidents, six of them in windows with no data gap
+over 500 ms — the stream was flowing. The first watchdog timed a hold from
+the first flush that saw the mode open, so when frame N's ESU and frame
+N+1's BSU landed in one drain wake, flush never saw the mode closed and
+the timer ran on from frame N. tsm now counts BSU/ESU arrivals; a hold is
+timed from its own BSU (a new count = a new hold), and the incident line
+prints bytes fed during the hold plus `bsu`/`esu`, so a late ESU
+(`bsu-esu == 1`, little data) and a lost one (`bsu-esu > 1`, a frame's
+worth of bytes) read differently. `vterm_bench` prints `sy=bsu/esu`.
+
+A soak must run with the serial logger attached from the start: opening
+COM6 power-cycles the deck, so evidence cannot be collected after the fact.
+The root trigger of the missed ESU is still unknown; the first `?2026 hold`
+warning in a soak log, with the surrounding `vterm_bench`/`net_bench`
+lines, is the next lead.
 
 ### Reference notes
 
