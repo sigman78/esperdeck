@@ -342,6 +342,8 @@ int vterm_scroll_capacity(void)
     return s_initialized ? tsm_sb_capacity(s_tsm) : 0;
 }
 
+uint32_t vterm_sync_timeouts(void) { return s_sync_timeouts; }
+
 bool vterm_app_cursor_keys(void)
 {
     if (!s_initialized) return false;

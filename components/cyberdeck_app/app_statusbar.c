@@ -8,6 +8,7 @@
 
 #include "app_widgets.h"
 #include "wifi_manager.h"
+#include "vterm.h"
 
 #include <string.h>
 
@@ -102,9 +103,25 @@ static int poll_kbd(chip_seg_t seg[SB_MAX_SEGS])
     return 1;
 }
 
+/* TEMPORARY soak diagnostic (2026-09): the vterm ?2026 watchdog fired.
+ * Absent until the first incident; then a red X plus the count (9+).
+ * Remove once we know what drops the ESU. */
+static int poll_sync(chip_seg_t seg[SB_MAX_SEGS])
+{
+    const uint32_t n = vterm_sync_timeouts();
+    if (n == 0) return 0;
+    seg[0].state  = CHIP_ALERT;
+    seg[0].icon   = SB_ALERT_ICON;
+    seg[1].state  = CHIP_ON;
+    seg[1].icon   = (uint16_t)(n > 9 ? '9' : '0' + n);
+    seg[1].accent = OVERLAY_COL_AMBER;
+    return 2;
+}
+
 static const chip_desc_t CHIPS[] = {
-    { "net", OVERLAY_COL_GREEN, poll_net },
-    { "kbd", OVERLAY_COL_CYAN,  poll_kbd },
+    { "net",  OVERLAY_COL_GREEN, poll_net  },
+    { "kbd",  OVERLAY_COL_CYAN,  poll_kbd  },
+    { "sync", OVERLAY_COL_AMBER, poll_sync },
 };
 
 /* One segment: a padding cell, the icon, and — for the chip's primary
