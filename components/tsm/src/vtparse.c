@@ -49,8 +49,12 @@ static inline void do_param(vtparse_t *p, uint8_t b)
         return;
     if (p->params[p->param_cur] < 0)
         p->params[p->param_cur] = b - '0';
-    else
-        p->params[p->param_cur] = p->params[p->param_cur] * 10 + (b - '0');
+    else {
+        int32_t value = p->params[p->param_cur];
+        int32_t digit = b - '0';
+        p->params[p->param_cur] = value > (INT32_MAX - digit) / 10
+            ? INT32_MAX : value * 10 + digit;
+    }
     if (p->param_cur + 1 > p->nparams)
         p->nparams = p->param_cur + 1;
 }

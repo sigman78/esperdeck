@@ -840,9 +840,18 @@ void test_sos_pm_apc_ignored_until_st(void)
     TEST_ASSERT_EQUAL_UINT32('Z', g_events[0].as_print.cps[0]);
 }
 
+void test_numeric_parameter_saturates(void)
+{
+    feed_str("\x1b[2147483648;999999999999999999999999999999m");
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT32(INT32_MAX, g_events[0].as_csi.params[0]);
+    TEST_ASSERT_EQUAL_INT32(INT32_MAX, g_events[0].as_csi.params[1]);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_numeric_parameter_saturates);
 
     /* C0 controls */
     RUN_TEST(test_c0_bel);

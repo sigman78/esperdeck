@@ -51,3 +51,8 @@ target_link_libraries(test_termstate PRIVATE unity)
 enable_testing()
 add_test(NAME vtparse_tests   COMMAND test_vtparse)
 add_test(NAME termstate_tests COMMAND test_termstate)
+
+option(TSM_BUILD_FUZZERS "Build host libFuzzer targets with sanitizers" OFF)
+if(TSM_BUILD_FUZZERS)
+    add_subdirectory(fuzz)
+endif()

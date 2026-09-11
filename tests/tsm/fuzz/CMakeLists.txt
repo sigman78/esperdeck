@@ -1,0 +1,33 @@
+if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+    # ASan cannot coexist with Debug's runtime checks or incremental linking.
+    foreach(config DEBUG RELWITHDEBINFO RELEASE MINSIZEREL)
+        string(REGEX REPLACE "/RTC[1su]+" "" CMAKE_C_FLAGS_${config} "${CMAKE_C_FLAGS_${config}}")
+    endforeach()
+    set(fuzz_compile /fsanitize=address /fsanitize=fuzzer /Zi)
+    set(fuzz_link /INCREMENTAL:NO /DEBUG)
+elseif(CMAKE_C_COMPILER_ID MATCHES "Clang" AND NOT MSVC)
+    set(fuzz_compile -g -UNDEBUG -fsanitize=fuzzer,address,undefined
+        -fno-sanitize-recover=undefined -fno-omit-frame-pointer)
+    set(fuzz_link -fsanitize=fuzzer,address,undefined)
+else()
+    message(FATAL_ERROR "TSM fuzzing requires MSVC with C++ AddressSanitizer installed, or Clang (GNU driver).")
+endif()
+
+foreach(name vtparse termstate)
+    add_executable(fuzz_${name} fuzz_${name}.c ${TSM_SRC}/vtparse.c)
+    target_include_directories(fuzz_${name} PRIVATE ${TSM_INC} ${TSM_SRC} ${IDFSIM})
+    target_compile_options(fuzz_${name} PRIVATE ${fuzz_compile})
+    target_link_options(fuzz_${name} PRIVATE ${fuzz_link})
+    if(CMAKE_C_COMPILER_ID STREQUAL "MSVC")
+        get_filename_component(msvc_bin "${CMAKE_C_COMPILER}" DIRECTORY)
+        file(GLOB asan_runtime "${msvc_bin}/clang_rt.asan_dynamic-*.dll")
+        foreach(runtime IN LISTS asan_runtime)
+            add_custom_command(TARGET fuzz_${name} POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${runtime}" "$<TARGET_FILE_DIR:fuzz_${name}>")
+        endforeach()
+    endif()
+    add_test(NAME fuzz_${name}_corpus COMMAND fuzz_${name}
+        -runs=0 -max_len=65536 "${CMAKE_CURRENT_SOURCE_DIR}/corpus")
+    set_tests_properties(fuzz_${name}_corpus PROPERTIES TIMEOUT 120)
+endforeach()
+target_sources(fuzz_termstate PRIVATE ${TSM_SRC}/color.c ${TSM_SRC}/charsets.c ${TSM_SRC}/termstate.c)

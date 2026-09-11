@@ -1321,9 +1321,49 @@ void test_sb_ring_wraps_in_order(void)
     tsm_free(t);
 }
 
+void test_large_cursor_movement_clamps_before_addition(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    TEST_ASSERT_NOT_NULL(t);
+    feed(t, "\x1b[2;3H\x1b[2147483647B\x1b[2147483647C");
+    int col, row;
+    tsm_cursor(t, &col, &row, NULL);
+    TEST_ASSERT_EQUAL_INT(9, col);
+    TEST_ASSERT_EQUAL_INT(4, row);
+    feed(t, "\x1b[2;3H\x1b[2147483647E");
+    tsm_cursor(t, &col, &row, NULL);
+    TEST_ASSERT_EQUAL_INT(0, col);
+    TEST_ASSERT_EQUAL_INT(4, row);
+    tsm_free(t);
+}
+
+void test_large_origin_position_clamps_before_addition(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    TEST_ASSERT_NOT_NULL(t);
+    feed(t, "\x1b[3;5r\x1b[?6h\x1b[2147483647;1H");
+    int row;
+    tsm_cursor(t, NULL, &row, NULL);
+    TEST_ASSERT_EQUAL_INT(4, row);
+    tsm_free(t);
+}
+
+void test_large_erase_count_clamps_before_addition(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    TEST_ASSERT_NOT_NULL(t);
+    feed(t, "abcdefghij\x1b[1;3H\x1b[2147483647X");
+    TEST_ASSERT_EQUAL_UINT16('b', cp_at(t, 1, 0));
+    for (int c = 2; c < 10; ++c) TEST_ASSERT_EQUAL_UINT16(' ', cp_at(t, c, 0));
+    tsm_free(t);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_large_cursor_movement_clamps_before_addition);
+    RUN_TEST(test_large_origin_position_clamps_before_addition);
+    RUN_TEST(test_large_erase_count_clamps_before_addition);
 
     /* color */
     RUN_TEST(test_color_rgb_black);
