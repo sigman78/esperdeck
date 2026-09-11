@@ -410,16 +410,16 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         cursor_goto(t, t->cx, t->cy - (int)(p1 < 1 ? 1 : p1));
         break;
     case 'B': /* CUD — cursor down */
-        cursor_goto(t, t->cx, t->cy + (int)(p1 < 1 ? 1 : p1));
+        cursor_goto(t, t->cx, t->cy + clampi(p1, 1, t->rows - t->cy));
         break;
     case 'C': /* CUF — cursor forward */
-        cursor_goto(t, t->cx + (int)(p1 < 1 ? 1 : p1), t->cy);
+        cursor_goto(t, t->cx + clampi(p1, 1, t->cols - t->cx), t->cy);
         break;
     case 'D': /* CUB — cursor backward */
         cursor_goto(t, t->cx - (int)(p1 < 1 ? 1 : p1), t->cy);
         break;
     case 'E': /* CNL — cursor next line */
-        cursor_goto(t, 0, t->cy + (int)(p1 < 1 ? 1 : p1));
+        cursor_goto(t, 0, t->cy + clampi(p1, 1, t->rows - t->cy));
         break;
     case 'F': /* CPL — cursor preceding line */
         cursor_goto(t, 0, t->cy - (int)(p1 < 1 ? 1 : p1));
@@ -432,7 +432,9 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
     {
         int row = (int)(p1 < 1 ? 1 : p1) - 1;
         int col = (int)(p2 < 1 ? 1 : p2) - 1;
-        if (t->mode.decom) { row += t->scroll_top; }
+        if (t->mode.decom) {
+            row = clampi(row, 0, t->scroll_bot - t->scroll_top) + t->scroll_top;
+        }
         cursor_goto(t, col, row);
         break;
     }
@@ -516,7 +518,7 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
     }
     case 'X': /* ECH — erase characters */
     {
-        int n = (int)(p1 < 1 ? 1 : p1);
+        int n = clampi(p1, 1, t->cols - t->cx);
         int end = t->cx + n - 1;
         if (end >= t->cols) end = t->cols - 1;
         erase_range(t, t->cy, t->cx, end);

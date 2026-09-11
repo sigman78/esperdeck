@@ -124,6 +124,12 @@ cd tests/tsm && cmake -B build && cmake --build build --config Debug
 ctest --test-dir build -C Debug
 ```
 
+TSM also has native MSVC/libFuzzer targets with AddressSanitizer, a generated
+VT corpus, and chunk-boundary equivalence checks. See
+[`tests/tsm/fuzz/README.md`](../tests/tsm/fuzz/README.md) for build, run, replay,
+and crash-minimization commands. Enable them with `-DTSM_BUILD_FUZZERS=ON` in
+a separate host build directory; firmware builds are unaffected.
+
 ## Comment lint — `unwaffle` gates new comments
 
 Comment policy (short version: comments say WHY, docs carry the essays) is
