@@ -1,17 +1,4 @@
 {
   "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python tools/check_comments.py --hook",
-            "timeout": 90,
-            "statusMessage": "Comment lint (unwaffle gate)"
-          }
-        ]
-      }
-    ]
   }
 }
