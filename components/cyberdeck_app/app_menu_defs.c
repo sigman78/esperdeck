@@ -11,6 +11,7 @@
 #include "font.h"
 #include "keystore.h"
 #include "ssh_client.h"
+#include "vterm.h"         /* vterm_reset() — in-session terminal reset */
 
 #ifdef ESP_PLATFORM
 #include "sdkconfig.h"       /* provides CONFIG_CYBERDECK_KEYSTORE (sim: -D flag) */
@@ -50,8 +51,24 @@ static void act_disconnect(intptr_t a, uint64_t now)
     enter_home_after_collapse(now);   /* deliberate CRT power-off */
 }
 
+/* Escape hatch for a wedged client state on a live link (stuck ?2026
+ * hold, garbage after a dropped byte). The remote still believes its
+ * picture is on screen, so it gets a SIGWINCH nudge to repaint. Modes the
+ * remote switched on (DECCKM and friends) are gone until it re-sends
+ * them — the same trade every terminal's "full reset" makes. */
+static void act_reset_terminal(intptr_t a, uint64_t now)
+{
+    (void)a;
+    vterm_reset();
+    int rc = ssh_client_request_redraw();
+    menu_back(now);
+    toast(now, rc == 0 ? "terminal reset - remote asked to redraw"
+                       : "terminal reset - remote NOT nudged");
+}
+
 static const menu_item_t main_items[] = {
     { .label = "Resume session", .color = OVERLAY_COL_GREEN, .action = act_back },
+    { .label = "Reset terminal", .color = OVERLAY_COL_AMBER, .action = act_reset_terminal },
     { .label = "Disconnect",     .color = OVERLAY_COL_AMBER, .action = act_disconnect },
     { .label = "Configuration",  .color = OVERLAY_COL_CYAN,  .action = act_goto,
       .arg = MS_CONFIG },

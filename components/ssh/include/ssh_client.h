@@ -121,6 +121,16 @@ esp_err_t ssh_client_disconnect(void);
 int ssh_client_send(const uint8_t *data, size_t len);
 
 /**
+ * Ask the remote foreground program to repaint, after a local terminal
+ * reset. Sends a pty-size change one column narrower and then the real
+ * size again, so sshd raises SIGWINCH twice. Blocks up to ~2 s on a
+ * congested link.
+ *
+ * @return 0 when both requests went out, -1 otherwise
+ */
+int ssh_client_request_redraw(void);
+
+/**
  * Check if connected
  *
  * @return true if connected

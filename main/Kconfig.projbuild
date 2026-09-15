@@ -193,14 +193,18 @@ menu "Cyberdeck Configuration"
 
     config SSH_RECV_WINDOW
         int "SSH receive window size (bytes)"
-        default 32768
+        default 262144
         range 4096 262144
         help
             Advertised SSH channel receive window. The server will not send more
-            than this many bytes before waiting for our acknowledgment.
-            Smaller values reduce libssh2 heap (packet brigade) at the cost of
-            more round-trips for bulk output. 32768 (32 KB) covers any terminal
-            screen refresh.
+            than this many bytes before waiting for our acknowledgment. It is a
+            promise, not a buffer: the bytes wait in sshd's buffers on the
+            server, and what can land on the deck is capped by lwIP's TCP
+            window, so this costs no local RAM. A small window turns every
+            short Wi-Fi dropout into backpressure on the remote program
+            (docs/btop-freeze-investigation.md); 256 KB gives a 300 ms btop
+            about five seconds of slack and removes the acknowledgment
+            round-trip from bulk output.
 
     config SSH_WIFI_PS_NONE
         bool "Disable WiFi power-save while an SSH session is open"
