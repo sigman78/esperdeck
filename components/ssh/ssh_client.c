@@ -94,6 +94,7 @@ static LIBSSH2_CHANNEL  *s_channel    = NULL;
 static int               s_sock       = -1;
 static TaskHandle_t      s_read_task  = NULL;
 static volatile bool     s_connected  = false;
+static uint16_t          s_term_cols, s_term_rows;   /* pty size connect() sent */
 static volatile bool     s_clean_eof  = false;      /* remote closed channel (exit) */
 static volatile bool     s_read_task_done = true;   /* read task has exited */
 static bool              s_libssh2_initialized = false;
@@ -684,6 +685,8 @@ auth_done:
      * classic 80x24. */
     int term_cols = config->term_cols ? config->term_cols : 80;
     int term_rows = config->term_rows ? config->term_rows : 24;
+    s_term_cols = (uint16_t)term_cols;
+    s_term_rows = (uint16_t)term_rows;
     rc = libssh2_channel_request_pty_ex(s_channel,
                                         "xterm-256color", 14,
                                         NULL, 0,
@@ -863,6 +866,33 @@ int ssh_client_send(const uint8_t *data, size_t len)
         sent += rc;
     }
     return (int)sent;
+}
+
+int ssh_client_request_redraw(void)
+{
+    if (!s_connected || !s_channel) return -1;
+    /* sshd raises SIGWINCH only on a size change. A same-size request
+     * does nothing. So: one column narrower, then the real size. */
+    const int cols = s_term_cols ? s_term_cols : 80;
+    const int rows = s_term_rows ? s_term_rows : 24;
+    const int steps[2] = { cols - 1, cols };
+    for (int i = 0; i < 2; i++) {
+        int rc = LIBSSH2_ERROR_EAGAIN;
+        for (int tries = 0; rc == LIBSSH2_ERROR_EAGAIN && tries < 100; tries++) {
+            if (!s_connected) return -1;
+            xSemaphoreTake(s_session_lock, portMAX_DELAY);
+            rc = s_channel
+                ? libssh2_channel_request_pty_size(s_channel, steps[i], rows)
+                : LIBSSH2_ERROR_CHANNEL_CLOSED;
+            xSemaphoreGive(s_session_lock);
+            if (rc == LIBSSH2_ERROR_EAGAIN) vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (rc != 0) {
+            ESP_LOGW(TAG, "pty size request failed: %d", rc);
+            return -1;
+        }
+    }
+    return 0;
 }
 
 bool ssh_client_is_connected(void)

@@ -147,7 +147,12 @@ Once connected you are in a normal terminal — vim, htop, mc, tmux all
 work, in color, at your chosen font size.
 
 - **Menu:** press **F12** or long-press the screen. From the menu: resume,
-  disconnect, or enter Configuration.
+  reset the terminal, disconnect, or enter Configuration.
+- **Reset terminal:** menu → Reset terminal. The link stays up; the
+  terminal state (colors, modes, scrollback) goes back to power-on and
+  the remote program is asked to repaint, like `reset` in a shell. Use it
+  when the picture is wedged but the session is alive. A full-screen
+  program may need restarting afterwards if its arrow keys misbehave.
 - **Scrollback:** **Shift+PageUp / Shift+PageDown**, or drag along the
   right edge of the screen. A position marker appears while you scroll;
   any other key snaps back to live output.
