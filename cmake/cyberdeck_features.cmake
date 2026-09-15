@@ -26,7 +26,7 @@ endmacro()
 macro(cyberdeck_sim_features)
     # [ssh] mirrors components/libssh2_esp/Kconfig defaults
     add_compile_definitions(
-        CONFIG_SSH_RECV_WINDOW=32768
+        CONFIG_SSH_RECV_WINDOW=262144
         CONFIG_SSH_KEEPALIVE_INTERVAL=60
     )
 

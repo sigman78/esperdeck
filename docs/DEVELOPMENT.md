@@ -188,6 +188,9 @@ ships with cheap always-on counters: during an SSH session a
 `vterm_bench` / `render_bench` line is logged every 30 s
 (parse-vs-state split, scroll volume, render-ISR duty).
 
+The multi-day btop soak and the picture-freeze hunt it caught are
+recorded in [`btop-freeze-investigation.md`](btop-freeze-investigation.md).
+
 ## Licenses — MIT code, OFL font
 
 First-party Cyberdeck code is **MIT** — see [`LICENSE`](../LICENSE).
