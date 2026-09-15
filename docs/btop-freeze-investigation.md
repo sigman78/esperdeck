@@ -57,9 +57,10 @@ no diagnostic weight for this bug and can go.
 
 ## What the deck log shows
 
-Log: `D:/esp32/unbreezy/soak-logs/soak-20260910-215906.log` (wall-clock
-stamped from the PC; the value in parentheses is the deck's millisecond
-uptime). Timeline on 2026-09-14:
+Log: `soak-20260910-215906-btop-freeze.zip`, archived outside the
+repo next to the other soak logs (wall-clock stamped from the PC; the
+value in parentheses is the deck's millisecond uptime). Timeline on
+2026-09-14:
 
 | PC time | Line | Meaning |
 |---|---|---|
@@ -254,12 +255,6 @@ These do not fix btop. For the soak itself, run btop under `tmux` or
 `screen` on the router: a multiplexer keeps consuming btop's output
 during a client stall, so btop never blocks and never triggers its stall
 recovery, and the deck can re-attach after a drop.
-
-## Releasing the bench
-
-The evidence is all on record, so the specimen can go: kill btop on the
-router (`sudo kill 70943`), disconnect on the deck, stop the soak logger
-(PID 22572 on the PC), and reflash as needed. COM6 is safe to open again.
 
 ## Follow-ups
 
