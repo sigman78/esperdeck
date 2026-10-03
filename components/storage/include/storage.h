@@ -10,13 +10,14 @@
  *
  * Platform backends:
  *   - Device: LittleFS mounted at /littlefs  (storage_dev.c)
- *   - Sim:    local directory sim_storage/   (storage_sim.c)
+ *   - Sim:    selected local directory, default sim_storage/ (storage_sim.c)
  */
 
 #ifndef STORAGE_H
 #define STORAGE_H
 
 #include "esp_err.h"
+#include "storage_path.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

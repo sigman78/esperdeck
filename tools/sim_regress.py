@@ -4,16 +4,20 @@
 Each scenario walks a screen flow, asserts the active screen (and important
 published overlay text), then ends with `quit`. A mismatch, crash, or timeout
 fails the scenario. Keyboard-only steps on purpose - no tile coordinates to
-go stale. Run from the repo root after building the simulator:
+go stale. Each scenario gets a fresh temporary copy of sim_storage.example.
+Run from the repo root after building the simulator:
 
     python tools/sim_regress.py [path\\to\\cyberdeck_sim.exe]
 """
 
 import subprocess
 import sys
+import shutil
+import tempfile
 from pathlib import Path
 
-SIM_DEFAULT = Path("build-sim/sim/cyberdeck_sim.exe")
+ROOT = Path(__file__).resolve().parents[1]
+SIM_DEFAULT = ROOT / "build-sim/sim/cyberdeck_sim.exe"
 
 
 def timeout_s(script):
@@ -78,7 +82,7 @@ SCENARIOS = {
 
 
 def main():
-    sim = Path(sys.argv[1]) if len(sys.argv) > 1 else SIM_DEFAULT
+    sim = (Path(sys.argv[1]) if len(sys.argv) > 1 else SIM_DEFAULT).resolve()
     if not sim.exists():
         print(f"simulator not found: {sim} (build it first)")
         return 2
@@ -86,9 +90,14 @@ def main():
     failed = []
     for name, script in SCENARIOS.items():
         try:
-            r = subprocess.run([str(sim), "--drive", script],
-                               timeout=timeout_s(script), cwd=Path.cwd())
-            ok = r.returncode == 0
+            with tempfile.TemporaryDirectory(prefix="deck-regress-") as tmp:
+                fixture = Path(tmp) / "storage"
+                shutil.copytree(ROOT / "sim_storage.example", fixture)
+                r = subprocess.run(
+                    [str(sim), "--storage-dir", str(fixture), "--drive", script],
+                    timeout=timeout_s(script), cwd=tmp,
+                )
+                ok = r.returncode == 0
         except subprocess.TimeoutExpired:
             ok = False
         print(f"{'PASS' if ok else 'FAIL'}  {name}")

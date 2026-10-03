@@ -146,7 +146,7 @@ static esp_err_t ks_random(void *buf, size_t len)
 static esp_err_t ks_write_atomic(const char *path,
                                  const void *data, size_t len)
 {
-    char tmp[176];
+    char tmp[STORAGE_PATH_CAPACITY(176)];
     snprintf(tmp, sizeof(tmp), "%s.tmp", path);
     FILE *f = fopen(tmp, "wb");
     if (!f) {
@@ -222,7 +222,7 @@ static esp_err_t ks_load(void)
 {
     if (s_ks.hdr_loaded) return ESP_OK;
 
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     ks_path(path, sizeof(path));
     FILE *f = fopen(path, "rb");
     if (!f) return ESP_ERR_NOT_FOUND;
@@ -247,7 +247,7 @@ static esp_err_t ks_store_header(void)
 {
     uint8_t raw[KS_HDR_SIZE];
     hdr_serialize(&s_ks.hdr, raw);
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     ks_path(path, sizeof(path));
     return ks_write_atomic(path, raw, sizeof(raw));
 }
@@ -438,7 +438,7 @@ static void bk_load(void)
     s_bk_loaded = true;
     s_bk_count  = 0;
     s_bk_until  = 0;
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     bk_path(path, sizeof(path));
     FILE *f = fopen(path, "r");
     if (!f) return;
@@ -453,7 +453,7 @@ static void bk_fail(void)
 {
     bk_load();
     s_bk_count++;
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     bk_path(path, sizeof(path));
     FILE *f = fopen(path, "w");
     if (f) { fprintf(f, "%u\n", (unsigned)s_bk_count); fclose(f); }
@@ -470,7 +470,7 @@ static void bk_clear(void)
     s_bk_loaded = true;
     s_bk_count  = 0;
     s_bk_until  = 0;
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     bk_path(path, sizeof(path));
     remove(path);
 }
@@ -492,7 +492,7 @@ esp_err_t keystore_create(const char *pin)
 {
     if (!pin_ok(pin)) return ESP_ERR_INVALID_ARG;
 
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     ks_path(path, sizeof(path));
     FILE *f = fopen(path, "rb");
     if (f) {
@@ -544,7 +544,7 @@ static void ks_adopt_plaintext(void)
 
     int adopted = 0;
     for (int i = 0; i < n; i++) {
-        char path[160];
+        char path[STORAGE_PATH_CAPACITY(160)];
         snprintf(path, sizeof(path), "%s/keys/%s.pem",
                  storage_platform_mount_point(), ids[i]);
         FILE *f = fopen(path, "rb");
@@ -699,7 +699,7 @@ esp_err_t keystore_wrap(const char *key_id, uint8_t content_type,
                      s_ks.mk, out + 8,              /* key, nonce */
                      aad, aad_len, plaintext, len);
 
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     kw_path(key_id, path, sizeof(path));
     esp_err_t e = ks_write_atomic(path, out, total);
     heap_caps_free(out);
@@ -714,7 +714,7 @@ esp_err_t keystore_unwrap(const char *key_id, void *buf, size_t buf_len,
     if (!storage_key_id_ok(key_id) || !buf || !written) return ESP_ERR_INVALID_ARG;
     *written = 0;
 
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     kw_path(key_id, path, sizeof(path));
     FILE *f = fopen(path, "rb");
     if (!f) return ESP_ERR_NOT_FOUND;
@@ -771,7 +771,7 @@ esp_err_t keystore_unwrap(const char *key_id, void *buf, size_t buf_len,
 bool keystore_is_wrapped(const char *key_id)
 {
     if (!storage_key_id_ok(key_id)) return false;
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     kw_path(key_id, path, sizeof(path));
     FILE *f = fopen(path, "rb");
     if (!f) return false;
@@ -841,7 +841,7 @@ static esp_err_t secrets_load(void)
 static esp_err_t secrets_store(void)
 {
     if (s_sec_len == 0) {                      /* emptied: drop the file */
-        char path[160];
+        char path[STORAGE_PATH_CAPACITY(160)];
         kw_path(KEYSTORE_SECRETS_ID, path, sizeof(path));
         remove(path);
         return ESP_OK;
@@ -1000,7 +1000,7 @@ static void secrets_restore_plaintext(void)
             storage_wifi_write_raw(sc->u.nets, n);
         crypto_wipe(sc, sizeof(*sc));
     }
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     kw_path(KEYSTORE_SECRETS_ID, path, sizeof(path));
     remove(path);
     secrets_wipe_cache();
@@ -1055,7 +1055,7 @@ esp_err_t keystore_remove(const char *pin)
     e = ESP_OK;
     for (int i = 0; i < n; i++) {
         size_t len = 0;
-        char path[160];
+        char path[STORAGE_PATH_CAPACITY(160)];
         e = keystore_unwrap(ids[i], buf, KW_CT_MAX, &len, NULL);
         if (e == ESP_OK) {
             snprintf(path, sizeof(path), "%s/keys/%s.pem",
@@ -1078,7 +1078,7 @@ esp_err_t keystore_remove(const char *pin)
         return e;
     }
 
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     ks_path(path, sizeof(path));
     remove(path);
     keystore_reset_cache();            /* wipe MK + forget header — ABSENT */

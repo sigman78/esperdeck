@@ -8,6 +8,7 @@
 #define STORAGE_KV_H
 
 #include "esp_err.h"
+#include "storage_path.h"
 #include <stdint.h>
 #include <stdio.h>
 
@@ -18,7 +19,7 @@
  * returns INVALID_ARG. */
 #define STORAGE_KV_LINE_MAX 192   /* whole "key=value" line           */
 #define STORAGE_KV_KEY_MAX   32   /* key or [section] name, incl. NUL */
-#define STORAGE_PATH_MAX    160   /* <mount>/<name>, incl. NUL        */
+#define STORAGE_PATH_MAX    STORAGE_PATH_CAPACITY(160)
 
 /* BOOL saves 0/1 and loads != 0; STR is a truncating copy. */
 typedef enum {

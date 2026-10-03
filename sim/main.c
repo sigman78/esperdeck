@@ -28,6 +28,7 @@
 #include "keystore_cli.h"
 #include "ssh_client.h"
 #include "storage.h"
+#include "storage_sim.h"
 #include "vterm.h"
 #include "vtkeys.h"
 #include "wifi_manager.h"
@@ -297,8 +298,34 @@ static void drive_tick(uint64_t now)
     s_drive_next = now + gap;
 }
 
+static int sim_main(int argc, char *argv[]);
+
 int main(int argc, char *argv[])
 {
+    /* SDL owns the original array and frees each entry after we return. */
+    char **args = malloc((size_t)(argc + 1) * sizeof(*args));
+    if (!args) return 1;
+    memcpy(args, argv, (size_t)(argc + 1) * sizeof(*args));
+    int rc = sim_main(argc, args);
+    free(args);
+    return rc;
+}
+
+static int sim_main(int argc, char *argv[])
+{
+    /* Apply storage selection before either the UI or provisioning CLI starts. */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--storage-dir") != 0) continue;
+        if (i + 1 >= argc || argv[i + 1][0] == '-' ||
+                storage_sim_set_directory(argv[i + 1]) != ESP_OK) {
+            fprintf(stderr, "--storage-dir requires a nonempty, supported path\n");
+            return 2;
+        }
+        memmove(&argv[i], &argv[i + 2], (size_t)(argc - i - 1) * sizeof(*argv));
+        argc -= 2;
+        i--;
+    }
+
     /* Keystore provisioning commands run headless and exit (see
      * keystore_cli.c); returns -1 when none is present. */
     int cli_rc = keystore_cli_main(argc, argv);
@@ -326,6 +353,7 @@ int main(int argc, char *argv[])
 
     if (storage_init() != ESP_OK) {
         fprintf(stderr, "storage_init() failed\n");
+        return 1;
     }
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {

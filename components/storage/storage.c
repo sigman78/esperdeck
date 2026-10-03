@@ -144,7 +144,7 @@ esp_err_t storage_load_profiles(conn_profile_t *out, int *count, int max)
     if (!out || !count || max <= 0) return ESP_ERR_INVALID_ARG;
     *count = 0;
 
-    char path[128];
+    char path[STORAGE_PATH_CAPACITY(128)];
     profiles_path(path, sizeof(path));
 
     FILE *f = fopen(path, "r");
@@ -229,7 +229,7 @@ esp_err_t storage_profiles_write_raw(const conn_profile_t *profiles, int count)
 {
     if (!profiles && count > 0) return ESP_ERR_INVALID_ARG;
 
-    char path[128];
+    char path[STORAGE_PATH_CAPACITY(128)];
     profiles_path(path, sizeof(path));
 
     storage_atomic_file_t af;
@@ -328,7 +328,7 @@ esp_err_t storage_wifi_load(wifi_profile_t *out, int *count, int max)
     if (!out || !count || max <= 0) return ESP_ERR_INVALID_ARG;
     *count = 0;
 
-    char path[128];
+    char path[STORAGE_PATH_CAPACITY(128)];
     wifi_path(path, sizeof(path));
 
     FILE *f = fopen(path, "r");
@@ -398,7 +398,7 @@ esp_err_t storage_wifi_write_raw(const wifi_profile_t *profiles, int count)
 {
     if (!profiles && count > 0) return ESP_ERR_INVALID_ARG;
 
-    char path[128];
+    char path[STORAGE_PATH_CAPACITY(128)];
     wifi_path(path, sizeof(path));
 
     storage_atomic_file_t af;
@@ -470,7 +470,7 @@ static bool ini_has_plaintext_password(const char *path)
 
 bool storage_secrets_pending(void)
 {
-    char path[128];
+    char path[STORAGE_PATH_CAPACITY(128)];
     profiles_path(path, sizeof(path));
     if (ini_has_plaintext_password(path)) return true;
     wifi_path(path, sizeof(path));
@@ -707,7 +707,7 @@ esp_err_t storage_known_host_get(const char *host, uint16_t port,
 {
     if (!host || !fp_out || fp_len == 0) return ESP_ERR_INVALID_ARG;
 
-    char path[128];
+    char path[STORAGE_PATH_CAPACITY(128)];
     known_hosts_path(path, sizeof(path));
 
     FILE *f = fopen(path, "r");
@@ -736,7 +736,7 @@ esp_err_t storage_known_host_set(const char *host, uint16_t port,
 {
     if (!host || !fp_hex) return ESP_ERR_INVALID_ARG;
 
-    char path[128];
+    char path[STORAGE_PATH_CAPACITY(128)];
     known_hosts_path(path, sizeof(path));
 
     /* Read existing entries so we can replace in place */
@@ -793,7 +793,7 @@ esp_err_t storage_known_host_delete(const char *host, uint16_t port)
 {
     if (!host) return ESP_ERR_INVALID_ARG;
 
-    char path[128];
+    char path[STORAGE_PATH_CAPACITY(128)];
     known_hosts_path(path, sizeof(path));
 
     FILE *f = fopen(path, "r");
@@ -877,7 +877,7 @@ esp_err_t storage_get_key(const char *key_id,
         return ESP_OK;
     }
 
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     key_path(key_id, path, sizeof(path));
 
     FILE *f = fopen(path, "r");
@@ -907,7 +907,7 @@ esp_err_t storage_set_key(const char *key_id, const char *pem, size_t len)
     if (!storage_key_id_ok(key_id) || !pem || len == 0)
         return ESP_ERR_INVALID_ARG;
 
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     key_path(key_id, path, sizeof(path));
 
     /* Unlocked store: wrap immediately — plaintext only ever exists in RAM
@@ -964,7 +964,7 @@ esp_err_t storage_shred_file(const char *path)
 esp_err_t storage_delete_key(const char *key_id)
 {
     if (!storage_key_id_ok(key_id)) return ESP_ERR_INVALID_ARG;
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     key_path(key_id, path, sizeof(path));                     /* .pem */
     storage_shred_file(path);              /* plaintext key material */
     snprintf(path, sizeof(path), "%s/keys/%s.kw1",
@@ -1005,11 +1005,11 @@ esp_err_t storage_scan_key_ext(const char *ext,
     if (!ext || !out || !count || max <= 0) return ESP_ERR_INVALID_ARG;
     size_t ext_len = strlen(ext);
 
-    char dir[128];
+    char dir[STORAGE_PATH_CAPACITY(128)];
     snprintf(dir, sizeof(dir), "%s/keys", storage_platform_mount_point());
 
 #ifdef _WIN32
-    char pat[160];
+    char pat[STORAGE_PATH_CAPACITY(160)];
     snprintf(pat, sizeof(pat), "%s/*%s", dir, ext);
     struct _finddata_t fd;
     intptr_t h = _findfirst(pat, &fd);
@@ -1068,7 +1068,7 @@ esp_err_t storage_key_info(const char *key_id,
     if (comment && comment_len) comment[0] = '\0';
     if (!storage_key_id_ok(key_id)) return ESP_ERR_INVALID_ARG;
 
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     snprintf(path, sizeof(path), "%s/keys/%s.pub",
              storage_platform_mount_point(), key_id);
     FILE *f = fopen(path, "r");
@@ -1105,7 +1105,7 @@ esp_err_t storage_key_info(const char *key_id,
 
 esp_err_t storage_known_hosts_clear(void)
 {
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     snprintf(path, sizeof(path), "%s/known_hosts.ini",
              storage_platform_mount_point());
     int r = remove(path);
@@ -1116,11 +1116,11 @@ esp_err_t storage_known_hosts_clear(void)
 /* Remove every regular file under keys/ (leaves the directory itself). */
 static void wipe_keys_dir(void)
 {
-    char dir[128];
+    char dir[STORAGE_PATH_CAPACITY(128)];
     snprintf(dir, sizeof(dir), "%s/keys", storage_platform_mount_point());
-    char path[192];
+    char path[STORAGE_PATH_CAPACITY(192)];
 #ifdef _WIN32
-    char pat[160];
+    char pat[STORAGE_PATH_CAPACITY(160)];
     snprintf(pat, sizeof(pat), "%s/*", dir);
     struct _finddata_t fd;
     intptr_t h = _findfirst(pat, &fd);
@@ -1156,7 +1156,7 @@ esp_err_t storage_factory_reset(void)
         "keystore.kv1", "lock.ini", "backoff.cnt",
         "fx.ini", "saver.ini", "touch.ini", "font.ini",
     };
-    char path[160];
+    char path[STORAGE_PATH_CAPACITY(160)];
     for (int i = 0; i < (int)(sizeof(files) / sizeof(files[0])); i++) {
         snprintf(path, sizeof(path), "%s/%s", mp, files[i]);
         if (i < 2) storage_shred_file(path);

@@ -186,7 +186,7 @@ static int cmd_import(int argc, char **argv, const char *pem_file)
         size_t pl = fread(pub, 1, sizeof(pub), pf);
         fclose(pf);
         if (pl > 0 && pl < sizeof(pub)) {
-            char pub_dst[512];
+            char pub_dst[STORAGE_PATH_CAPACITY(512)];
             snprintf(pub_dst, sizeof(pub_dst), "%s/keys/%s.pub",
                      storage_platform_mount_point(), key_id);
             FILE *out = fopen(pub_dst, "wb");
