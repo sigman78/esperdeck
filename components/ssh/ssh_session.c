@@ -160,7 +160,7 @@ static void launch(uint64_t now)
         const char *pw = resolve_secret(p);      /* key passphrase */
         cfg.passphrase = pw[0] ? pw : NULL;
 
-        char pub_path[160];   /* optional .pub beside the key */
+        char pub_path[STORAGE_PATH_CAPACITY(160)];   /* optional .pub beside the key */
         snprintf(pub_path, sizeof(pub_path), "%s/keys/%s.pub",
                  storage_platform_mount_point(), p->key_id);
         FILE *pf = fopen(pub_path, "r");

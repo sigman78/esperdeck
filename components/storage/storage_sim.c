@@ -1,13 +1,14 @@
 /*
  * storage_sim.c — local directory platform backend (simulator only).
  *
- * storage_platform_init() walks up from the current working directory to
+ * Without an explicit directory, initialization walks up from the CWD to
  * find an existing sim_storage/. This lets the exe run from repo root,
  * build-sim/, or build-sim/sim/. If it finds none, it creates sim_storage/
- * in the CWD.
+ * in the CWD. An explicit directory never falls back to this search.
  */
 
 #include "storage.h"
+#include "storage_sim.h"
 #include "esp_log.h"
 
 #include <stdio.h>
@@ -27,7 +28,19 @@
 
 static const char *TAG = "storage_sim";
 
-static char s_mount[64] = SIM_MOUNT;
+static char s_mount[768] = SIM_MOUNT;
+static bool s_explicit_mount;
+static bool s_initialized;
+
+esp_err_t storage_sim_set_directory(const char *path)
+{
+    if (s_initialized) return ESP_ERR_INVALID_STATE;
+    if (!path || !path[0] || strlen(path) >= sizeof(s_mount))
+        return ESP_ERR_INVALID_ARG;
+    strcpy(s_mount, path);
+    s_explicit_mount = true;
+    return ESP_OK;
+}
 
 const char *storage_platform_mount_point(void)
 {
@@ -46,7 +59,7 @@ static esp_err_t ensure_dir(const char *path)
         ESP_LOGI(TAG, "Created directory '%s'", path);
         return ESP_OK;
     }
-    if (errno == EEXIST)
+    if (errno == EEXIST && dir_exists(path))
         return ESP_OK;
     ESP_LOGE(TAG, "mkdir '%s' failed: errno=%d", path, errno);
     return ESP_FAIL;
@@ -58,7 +71,8 @@ esp_err_t storage_platform_init(void)
     static const char *candidates[] = {
         SIM_MOUNT, "../" SIM_MOUNT, "../../" SIM_MOUNT, "../../../" SIM_MOUNT,
     };
-    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+    for (size_t i = 0; !s_explicit_mount &&
+            i < sizeof(candidates) / sizeof(candidates[0]); i++) {
         if (dir_exists(candidates[i])) {
             snprintf(s_mount, sizeof(s_mount), "%s", candidates[i]);
             break;
@@ -69,12 +83,13 @@ esp_err_t storage_platform_init(void)
     ret = ensure_dir(s_mount);
     if (ret != ESP_OK) return ret;
 
-    char keys[80];
+    char keys[STORAGE_PATH_CAPACITY(80)];
     snprintf(keys, sizeof(keys), "%s/keys", s_mount);
     ret = ensure_dir(keys);
     if (ret != ESP_OK) return ret;
 
     ESP_LOGI(TAG, "Sim storage ready at '%s'", s_mount);
+    s_initialized = true;
     return ESP_OK;
 }
 

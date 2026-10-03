@@ -164,6 +164,12 @@ cmake --build build-sim
 
 - **Optional argv** becomes the `(default)` profile when storage is
   empty.
+- **`--storage-dir PATH`** selects host storage before the UI or keystore
+  provisioning commands start. Relative paths use the launch directory.
+  The directory and its `keys/` child are created if needed; the parent must
+  already exist. Invalid paths fail instead of falling back to other storage.
+  The root supports up to 767 bytes, subject to host OS path limits.
+  Without the option, the existing `sim_storage/` discovery remains available.
 - **Mouse emulates touch** faithfully (tap, drag, long-press =
   right-click).
 - **`--drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|..."`**
@@ -178,6 +184,17 @@ device (mbedTLS 3.6 LTS via CPM, plus the fork's Monocypher ed25519).
 Key exchange, host-key algorithms, and known-hosts pins therefore match
 between sim and device — a fingerprint accepted in the sim is valid on
 the deck.
+
+### Simulator storage isolation tests
+
+`tools/sim_regress.py` copies `sim_storage.example/` into a separate temporary
+directory for each scenario. Test edits never use your normal simulator data.
+Run from the repository root after building the simulator:
+
+```powershell
+python tests/sim/test_storage_dir.py --binary build-sim/sim/cyberdeck_sim.exe
+python tools/sim_regress.py build-sim/sim/cyberdeck_sim.exe
+```
 
 ## Performance — see performance.md for the log
 
