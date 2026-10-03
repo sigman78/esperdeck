@@ -2,6 +2,7 @@
 #pragma once
 #include "esp_err.h"
 #include "esp_log.h"
+#include <stdlib.h>
 
 #define ESP_RETURN_ON_ERROR(x, tag, fmt, ...) \
     do { \
@@ -16,6 +17,9 @@
     do { \
         esp_err_t _ret_val = (x); \
         if (_ret_val != ESP_OK) { \
-            ESP_LOGE("ESP_ERROR_CHECK", "Failed: %d", _ret_val); \
+            ESP_LOGE("ESP_ERROR_CHECK", "%s failed (%d) at %s:%d in %s", \
+                     #x, _ret_val, __FILE__, __LINE__, __func__); \
+            fflush(stderr); \
+            abort(); \
         } \
     } while (0)
