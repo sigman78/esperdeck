@@ -130,6 +130,20 @@ VT corpus, and chunk-boundary equivalence checks. See
 and crash-minimization commands. Enable them with `-DTSM_BUILD_FUZZERS=ON` in
 a separate host build directory; firmware builds are unaffected.
 
+### Host SDK adapter tests
+
+Run in a Windows C compiler environment:
+
+```powershell
+cmake -S tests/idfsim -B build-sim/idfsim-tests -G Ninja
+cmake --build build-sim/idfsim-tests
+ctest --test-dir build-sim/idfsim-tests --output-on-failure
+```
+
+The suite checks task argument delivery, return/self-deletion, detached handle
+cleanup, and fatal error checks in a child process. It does not model FreeRTOS
+scheduling.
+
 ## Comment lint — `unwaffle` gates new comments
 
 Comment policy (short version: comments say WHY, docs carry the essays) is
