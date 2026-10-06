@@ -1358,6 +1358,214 @@ void test_large_erase_count_clamps_before_addition(void)
     tsm_free(t);
 }
 
+static int cursor_col(tsm_t *t)
+{
+    int col, row; bool vis;
+    tsm_cursor(t, &col, &row, &vis);
+    return col;
+}
+
+static int cursor_row(tsm_t *t)
+{
+    int col, row; bool vis;
+    tsm_cursor(t, &col, &row, &vis);
+    return row;
+}
+
+/* The exact shape ncurses emits for xterm-256color `rep`: char, CSI n-1 b. */
+void test_csi_rep_repeats_last_char(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "-\x1b[4b|");
+    for (int c = 0; c < 5; c++)
+        TEST_ASSERT_EQUAL_HEX16('-', cp_at(t, c, 0));
+    TEST_ASSERT_EQUAL_HEX16('|', cp_at(t, 5, 0));
+    TEST_ASSERT_EQUAL_INT(6, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_default_and_zero_mean_one(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "a\x1b[b");
+    TEST_ASSERT_EQUAL_INT(2, cursor_col(t));
+    feed(t, "\x1b[0b");
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 2, 0));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 3, 0));
+    tsm_free(t);
+}
+
+/* Repeats take the SGR in force at the REP, as a retyped character would. */
+void test_csi_rep_uses_current_sgr(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "x\x1b[31m\x1b[2b");
+    TEST_ASSERT_EQUAL_HEX16('x', cp_at(t, 2, 0));
+    TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, 1, 0).fg);
+    TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, 2, 0).fg);
+    TEST_ASSERT_NOT_EQUAL(color_ansi(1), cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+/* ncurses draws box edges this way: a line-drawing glyph, then REP. */
+void test_csi_rep_repeats_dec_graphics_glyph(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "\x1b(0q\x1b[3b\x1b(B");
+    for (int c = 0; c < 4; c++)
+        TEST_ASSERT_EQUAL_HEX16(0x2500, cp_at(t, c, 0));
+    tsm_free(t);
+}
+
+void test_csi_rep_repeats_utf8_char(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "\xe2\x96\x88\x1b[2b");          /* U+2588 full block */
+    for (int c = 0; c < 3; c++)
+        TEST_ASSERT_EQUAL_HEX16(0x2588, cp_at(t, c, 0));
+    tsm_free(t);
+}
+
+/* A char in the last column leaves the wrap pending; REP continues on the
+ * next row with that char, not the one left of it. */
+void test_csi_rep_wraps_from_last_column(void)
+{
+    tsm_t *t = tsm_new(5, 3, 0);
+    feed(t, "abcd#\x1b[3b");
+    TEST_ASSERT_EQUAL_HEX16('#', cp_at(t, 4, 0));
+    for (int c = 0; c < 3; c++)
+        TEST_ASSERT_EQUAL_HEX16('#', cp_at(t, c, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 3, 1));
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_scrolls_at_bottom(void)
+{
+    tsm_t *t = tsm_new(4, 2, 0);
+    feed(t, "\x1b[2;1Hab\x1b[4b");         /* 6 cells from the bottom row */
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 1, 0));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 3, 0));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 1, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 2, 1));
+    tsm_free(t);
+}
+
+void test_csi_rep_without_autowrap_stops_at_margin(void)
+{
+    tsm_t *t = tsm_new(5, 2, 0);
+    feed(t, "\x1b[?7lab\x1b[20b");
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 0, 0));
+    for (int c = 1; c < 5; c++)
+        TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, c, 0));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_INT(0, cursor_row(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_at_line_start_is_noop(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "ab\r\n\x1b[5b");
+    for (int c = 0; c < 10; c++)
+        TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, c, 1));
+    TEST_ASSERT_EQUAL_INT(0, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_insert_mode_shifts_line(void)
+{
+    tsm_t *t = tsm_new(10, 2, 0);
+    feed(t, "aXYZ\x1b[1;2H\x1b[4h\x1b[2b");
+    /* cursor sits after 'a'; two more 'a' push XYZ right */
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 1, 0));
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 2, 0));
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 3, 0));
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 5, 0));
+    tsm_free(t);
+}
+
+/* A hostile count costs exactly one screenful, 24 cells here. 23 fill the
+ * grid; the 24th scrolls one row and lands in the bottom-left cell. */
+void test_csi_rep_huge_count_is_bounded(void)
+{
+    tsm_t *t = tsm_new(8, 3, 0);
+    feed(t, "z\x1b[2147483647b");
+    for (int r = 0; r < 2; r++)
+        for (int c = 0; c < 8; c++)
+            TEST_ASSERT_EQUAL_HEX16('z', cp_at(t, c, r));
+    TEST_ASSERT_EQUAL_HEX16('z', cp_at(t, 0, 2));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 1, 2));
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_marks_rows_dirty(void)
+{
+    tsm_t *t = tsm_new(5, 3, 0);
+    feed(t, "abcd#");
+    tsm_clear_dirty(t);
+    feed(t, "\x1b[2b");
+    const tsm_row_dirty_t *d = tsm_dirty(t);
+    TEST_ASSERT_EQUAL_UINT8(0, d[1].l);
+    TEST_ASSERT_EQUAL_UINT8(1, d[1].r);
+    tsm_free(t);
+}
+
+/* Private-marker or intermediate forms are other sequences, not REP. */
+void test_csi_rep_ignores_prefixed_forms(void)
+{
+    tsm_t *t = tsm_new(10, 2, 0);
+    feed(t, "a\x1b[>3b\x1b[3 b");
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 1, 0));
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_cbt_moves_to_previous_tab_stop(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "\x1b[1;20H\x1b[Z");            /* col 19 -> 16 */
+    TEST_ASSERT_EQUAL_INT(16, cursor_col(t));
+    feed(t, "\x1b[Z");                       /* on a stop -> the one before */
+    TEST_ASSERT_EQUAL_INT(8, cursor_col(t));
+    feed(t, "\x1b[1;20H\x1b[2Z");           /* 19 -> 16 -> 8 */
+    TEST_ASSERT_EQUAL_INT(8, cursor_col(t));
+    feed(t, "\x1b[99Z");                     /* clamps at the left margin */
+    TEST_ASSERT_EQUAL_INT(0, cursor_col(t));
+    feed(t, "\x1b[Z");
+    TEST_ASSERT_EQUAL_INT(0, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_cht_moves_to_next_tab_stop(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "ab\x1b[I");
+    TEST_ASSERT_EQUAL_INT(8, cursor_col(t));
+    feed(t, "\x1b[3I");
+    TEST_ASSERT_EQUAL_INT(32, cursor_col(t));
+    feed(t, "\x1b[2147483647I");             /* clamps at the right margin */
+    TEST_ASSERT_EQUAL_INT(79, cursor_col(t));
+    tsm_free(t);
+}
+
+/* Tab motion cancels a pending wrap, as HT and the cursor moves do. */
+void test_csi_cbt_clears_pending_wrap(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "0123456789\x1b[ZX");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 8, 0));
+    TEST_ASSERT_EQUAL_INT(0, cursor_row(t));
+    tsm_free(t);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1521,6 +1729,22 @@ int main(void)
     RUN_TEST(test_sb_hard_reset_clears_history);
     RUN_TEST(test_sb_partial_region_scroll_is_not_history);
     RUN_TEST(test_sb_ring_wraps_in_order);
+    RUN_TEST(test_csi_rep_repeats_last_char);
+    RUN_TEST(test_csi_rep_default_and_zero_mean_one);
+    RUN_TEST(test_csi_rep_uses_current_sgr);
+    RUN_TEST(test_csi_rep_repeats_dec_graphics_glyph);
+    RUN_TEST(test_csi_rep_repeats_utf8_char);
+    RUN_TEST(test_csi_rep_wraps_from_last_column);
+    RUN_TEST(test_csi_rep_scrolls_at_bottom);
+    RUN_TEST(test_csi_rep_without_autowrap_stops_at_margin);
+    RUN_TEST(test_csi_rep_at_line_start_is_noop);
+    RUN_TEST(test_csi_rep_insert_mode_shifts_line);
+    RUN_TEST(test_csi_rep_huge_count_is_bounded);
+    RUN_TEST(test_csi_rep_marks_rows_dirty);
+    RUN_TEST(test_csi_rep_ignores_prefixed_forms);
+    RUN_TEST(test_csi_cbt_moves_to_previous_tab_stop);
+    RUN_TEST(test_csi_cht_moves_to_next_tab_stop);
+    RUN_TEST(test_csi_cbt_clears_pending_wrap);
 
     return UNITY_END();
 }

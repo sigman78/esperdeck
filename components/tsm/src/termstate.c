@@ -10,6 +10,7 @@
  *   - Scroll region (DECSTBM)
  *   - Character set designation (G0/G1: ASCII, DEC Special Graphics)
  *   - Insert / line / character erase operations
+ *   - Repeat (REP) and tab-stop motion (CHT/CBT, fixed 8-column stops)
  *   - Auto-wrap mode (DECAWM)
  *   - Origin mode (DECOM)
  *   - OSC 0/2 title (stored locally; no OS hook)
@@ -352,6 +353,35 @@ static void do_sgr(tsm_t *t, const int32_t *params, int nparams)
     }
 }
 
+/* REP repeats the glyph already in the grid just before the cursor, in the
+ * current SGR. ncurses sends REP straight after the character, so that cell
+ * is the one to copy. This path writes its own cells: the batched print
+ * span stays single-caller and its codegen unchanged. */
+static void do_rep(tsm_t *t, int32_t count)
+{
+    int src = t->pending_wrap ? t->cx : t->cx - 1;
+    if (src < 0) return;               /* nothing printed on this line yet */
+
+    tsm_cell_t tmpl = { .cp = cell_at(t, src, t->cy)->cp,
+                        .fg = t->fg, .bg = t->bg,
+                        .attrs = t->attrs, .attrs2 = t->attrs2 };
+
+    /* One screenful repaints every cell; a larger count only burns time. */
+    int n = clampi(count, 1, t->cols * t->rows);
+    while (n-- > 0) {
+        if (t->pending_wrap) do_wrap(t);
+        if (t->mode.irm && t->cx + 1 < t->cols) {
+            memmove(cell_at(t, t->cx + 1, t->cy),
+                    cell_at(t, t->cx,     t->cy),
+                    (size_t)(t->cols - t->cx - 1) * sizeof(tsm_cell_t));
+            mark_dirty(t, t->cy, t->cx, t->cols - 1);
+        }
+        *cell_at(t, t->cx, t->cy) = tmpl;
+        mark_dirty(t, t->cy, t->cx, t->cx);
+        cursor_advance(t);
+    }
+}
+
 static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams)
 {
@@ -443,6 +473,24 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
     }
     case 'd': /* VPA — vertical position absolute */
         cursor_goto(t, t->cx, (int)(p1 < 1 ? 1 : p1) - 1);
+        break;
+    case 'I': /* CHT — forward n tab stops, 8 columns apart */
+    {
+        int n = clampi(p1, 1, t->cols);
+        t->cx = clampi((t->cx / 8 + n) * 8, 0, t->cols - 1);
+        t->pending_wrap = false;
+        break;
+    }
+    case 'Z': /* CBT — back n tab stops */
+    {
+        int n = clampi(p1, 1, t->cols);
+        t->cx = clampi(((t->cx + 7) / 8 - n) * 8, 0, t->cols - 1);
+        t->pending_wrap = false;
+        break;
+    }
+    case 'b': /* REP — repeat the preceding graphic character */
+        if (prefix == 0 && intermediate == 0)
+            do_rep(t, p1);
         break;
 
     case 'J': /* ED — erase display */
