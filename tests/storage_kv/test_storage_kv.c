@@ -264,9 +264,11 @@ static void test_long_section_name_rejected(void)
                           storage_kv_load(KV_FILE, LONG_NAME, FIELDS, &c));
 }
 
+/* Sized from STORAGE_PATH_MAX, which is larger on host builds than on the
+ * device. A fixed length would fit there and open a real file. */
 static void test_atomic_open_rejects_long_path(void)
 {
-    char long_path[240];
+    char long_path[STORAGE_PATH_MAX + 1];
     memset(long_path, 'p', sizeof(long_path) - 1);
     long_path[sizeof(long_path) - 1] = '\0';
     storage_atomic_file_t af;
