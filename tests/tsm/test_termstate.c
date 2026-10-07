@@ -1566,6 +1566,101 @@ void test_csi_cbt_clears_pending_wrap(void)
     tsm_free(t);
 }
 
+static bool cursor_visible(tsm_t *t)
+{
+    bool vis;
+    tsm_cursor(t, NULL, NULL, &vis);
+    return vis;
+}
+
+/* terminfo cvvis for xterm-256color is CSI ? 12 ; 25 h, and ncurses
+ * curs_set(2) sends it on its own. */
+void test_decset_list_cvvis_shows_cursor(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "\x1b[?25l");
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    feed(t, "\x1b[?12;25h");
+    TEST_ASSERT_TRUE(cursor_visible(t));
+    tsm_free(t);
+}
+
+void test_decrst_list_resets_every_mode(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "\x1b[?1h");
+    TEST_ASSERT_TRUE(tsm_app_cursor_keys(t));
+    feed(t, "\x1b[?1;25l");
+    TEST_ASSERT_FALSE(tsm_app_cursor_keys(t));
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    tsm_free(t);
+}
+
+void test_decset_list_applies_in_order(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "P\x1b[?1;1049;25h");
+    TEST_ASSERT_TRUE(tsm_app_cursor_keys(t));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));   /* alt screen is blank */
+    feed(t, "\x1b[?25;1049l");
+    TEST_ASSERT_EQUAL_HEX16('P', cp_at(t, 0, 0));
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    tsm_free(t);
+}
+
+void test_decset_list_skips_empty_and_unknown_slots(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "\x1b[?;9999;25l");
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    feed(t, "\x1b[?25;h");
+    TEST_ASSERT_TRUE(cursor_visible(t));
+    tsm_free(t);
+}
+
+void test_decset_list_counts_one_bsu(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    uint32_t bsu, esu;
+    feed(t, "\x1b[?25;2026h");
+    TEST_ASSERT_TRUE(tsm_sync_update(t));
+    feed(t, "\x1b[?2026;25l");
+    TEST_ASSERT_FALSE(tsm_sync_update(t));
+    tsm_sync_counts(t, &bsu, &esu);
+    TEST_ASSERT_EQUAL_UINT32(1, bsu);
+    TEST_ASSERT_EQUAL_UINT32(1, esu);
+    tsm_free(t);
+}
+
+/* A mode list is not a DECRQM query: only the $ p form replies. */
+void test_decset_list_sends_no_response(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "\x1b[?2026;25h\x1b[?25;2026l");
+    TEST_ASSERT_EQUAL_size_t(0, s_resp_len);
+    tsm_free(t);
+}
+
+void test_sm_rm_list_sets_and_resets_irm_and_lnm(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "\x1b[4;20h" "abc\x1b[1;1HX");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));   /* IRM: inserted */
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 1, 0));
+    feed(t, "\n");
+    TEST_ASSERT_EQUAL_INT(0, cursor_col(t));        /* LNM: LF returns */
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+
+    feed(t, "\x1b[20;4l" "abc\x1b[2;1HX");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 1));   /* overwrites, no shift */
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 1, 1));
+    feed(t, "\n");
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));
+    tsm_free(t);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1745,6 +1840,15 @@ int main(void)
     RUN_TEST(test_csi_cbt_moves_to_previous_tab_stop);
     RUN_TEST(test_csi_cht_moves_to_next_tab_stop);
     RUN_TEST(test_csi_cbt_clears_pending_wrap);
+
+    /* mode lists */
+    RUN_TEST(test_decset_list_cvvis_shows_cursor);
+    RUN_TEST(test_decrst_list_resets_every_mode);
+    RUN_TEST(test_decset_list_applies_in_order);
+    RUN_TEST(test_decset_list_skips_empty_and_unknown_slots);
+    RUN_TEST(test_decset_list_counts_one_bsu);
+    RUN_TEST(test_decset_list_sends_no_response);
+    RUN_TEST(test_sm_rm_list_sets_and_resets_irm_and_lnm);
 
     return UNITY_END();
 }
