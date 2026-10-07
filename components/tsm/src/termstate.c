@@ -445,7 +445,12 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         return;
     }
 
-    /* Standard CSI sequences */
+    /* Every case below is the unmarked form. A '<' '=' '>' marker or an
+     * intermediate byte turns the same final into another function. tsm has
+     * none of those. Vim sends CSI > 4 ; 2 m (xterm modifyOtherKeys) at
+     * startup; that is not SGR underline + dim. */
+    if (prefix != 0 || intermediate != 0) return;
+
     switch (final) {
 
     case 'A': /* CUU — cursor up */
@@ -498,8 +503,7 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         break;
     }
     case 'b': /* REP — repeat the preceding graphic character */
-        if (prefix == 0 && intermediate == 0)
-            do_rep(t, p1);
+        do_rep(t, p1);
         break;
 
     case 'J': /* ED — erase display */
@@ -607,12 +611,10 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         break;
     }
     case 's': /* DECSC: save cursor. CSI s does the same thing. */
-        if (intermediate == 0 && prefix == 0)
-            save_cursor(t, &t->saved);
+        save_cursor(t, &t->saved);
         break;
     case 'u': /* DECRC: restore cursor. CSI u does the same thing. */
-        if (intermediate == 0 && prefix == 0)
-            restore_cursor(t, &t->saved);
+        restore_cursor(t, &t->saved);
         break;
     case 'h': /* SM — set mode */
     case 'l': /* RM — reset mode */
@@ -633,7 +635,7 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         }
         break;
     case 'c': /* DA1 — device attributes */
-        if (prefix == 0 && p1 <= 0)
+        if (p1 <= 0)
             send_response(t, "\x1b[?1;2c", 7);
         break;
     default:  break;

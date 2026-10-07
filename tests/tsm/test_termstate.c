@@ -1661,6 +1661,80 @@ void test_sm_rm_list_sets_and_resets_irm_and_lnm(void)
     tsm_free(t);
 }
 
+/* Vim and Neovim send CSI > 4 ; 2 m (xterm modifyOtherKeys) at startup.
+ * Read as SGR it would underline and dim everything that follows. */
+void test_csi_modify_other_keys_is_not_sgr(void)
+{
+    tsm_t *t = tsm_new(10, 2, 0);
+    feed(t, "\x1b[>4;2m" "a" "\x1b[>4;m" "b" "\x1b[<1m" "c" "\x1b[=7m" "d");
+    for (int c = 0; c < 4; c++) {
+        TEST_ASSERT_EQUAL_UINT8(0, cell(t, c, 0).attrs);
+        TEST_ASSERT_EQUAL_HEX16(0, cell(t, c, 0).bg);
+    }
+    feed(t, "\x1b[4m" "e");
+    TEST_ASSERT_BITS(CELL_ATTR_UNDERLINE, CELL_ATTR_UNDERLINE,
+                     cell(t, 4, 0).attrs);
+    tsm_free(t);
+}
+
+/* XTSMTITLE reset (CSI > Ps T) shares its final byte with SD.
+ * The key-modifier reset (CSI > Ps n) shares one with DSR. */
+void test_csi_private_marker_forms_are_ignored(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "top\x1b[2;3H");
+    feed(t, "\x1b[>1T" "\x1b[>5n" "\x1b[>6n" "\x1b[>c" "\x1b[=c"
+            "\x1b[>2A" "\x1b[<3C" "\x1b[=2J" "\x1b[>4;20h");
+    TEST_ASSERT_EQUAL_HEX16('t', cp_at(t, 0, 0));   /* not scrolled, not erased */
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(2, cursor_col(t));
+    TEST_ASSERT_EQUAL_size_t(0, s_resp_len);
+    feed(t, "\x1b[1;1HX");
+    TEST_ASSERT_EQUAL_HEX16('o', cp_at(t, 1, 0));   /* IRM stayed off */
+    tsm_free(t);
+}
+
+/* DECCARA (CSI Pt;Pl;Pb;Pr;Ps $ r) is not DECSTBM. SR (CSI Ps SP A) is
+ * not CUU. SL (CSI Ps SP @) is not ICH. */
+void test_csi_intermediate_forms_are_ignored(void)
+{
+    tsm_t *t = tsm_new(10, 4, 0);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "abc\x1b[3;2H");
+    feed(t, "\x1b[1;1;2;5;7$r" "\x1b[2 A" "\x1b[5 n" "\x1b[!p" "\x1b[2 q");
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));
+    TEST_ASSERT_EQUAL_size_t(0, s_resp_len);
+    feed(t, "\x1b[1;1H\x1b[2 @");
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 0, 0));
+
+    /* The scroll region is still the full screen: LF on the last row
+     * scrolls row 0 away. */
+    feed(t, "\x1b[4;1H\n");
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
+    tsm_free(t);
+}
+
+/* The unmarked forms keep working next to their private lookalikes. */
+void test_csi_plain_forms_unaffected_by_marker_gate(void)
+{
+    tsm_t *t = tsm_new(10, 4, 0);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "\x1b[>c\x1b[c");
+    TEST_ASSERT_EQUAL_size_t(7, s_resp_len);
+    TEST_ASSERT_EQUAL_MEMORY("\x1b[?1;2c", s_resp_buf, 7);
+    feed(t, "\x1b[2;3r");
+    TEST_ASSERT_EQUAL_INT(0, cursor_row(t));        /* DECSTBM homes */
+    feed(t, "\x1b[3;4H\x1b[s\x1b[1;1H\x1b[>1u\x1b[u");
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    tsm_free(t);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1849,6 +1923,12 @@ int main(void)
     RUN_TEST(test_decset_list_counts_one_bsu);
     RUN_TEST(test_decset_list_sends_no_response);
     RUN_TEST(test_sm_rm_list_sets_and_resets_irm_and_lnm);
+
+    /* private-marker and intermediate CSI forms */
+    RUN_TEST(test_csi_modify_other_keys_is_not_sgr);
+    RUN_TEST(test_csi_private_marker_forms_are_ignored);
+    RUN_TEST(test_csi_intermediate_forms_are_ignored);
+    RUN_TEST(test_csi_plain_forms_unaffected_by_marker_gate);
 
     return UNITY_END();
 }
