@@ -95,7 +95,7 @@ struct tsm_s {
     int scroll_top;
     int scroll_bot;
 
-    /* Saved cursor (DECSC/DECRC and DEC alt-screen auto-save) */
+    /* DECSC/DECRC slots, one per screen. ?1049 saves into the primary one. */
     tsm_cursor_save_t saved;
     tsm_cursor_save_t alt_saved;
 

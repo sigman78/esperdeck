@@ -249,6 +249,22 @@ static void restore_cursor(tsm_t *t, const tsm_cursor_save_t *s)
     t->pending_wrap = false;
 }
 
+/* Each screen has its own DECSC slot, as in xterm. ?1049 keeps the shell's
+ * cursor in the primary slot for the whole alt session; an ESC 7 from the
+ * app must not replace it. */
+static inline tsm_cursor_save_t *cursor_slot(tsm_t *t)
+{
+    return t->mode.decalt ? &t->alt_saved : &t->saved;
+}
+
+/* DECRC with nothing saved goes home with default rendition. A zeroed slot
+ * is not that: fg 0 is black, on a black background. */
+static void reset_cursor_slot(tsm_cursor_save_t *s)
+{
+    *s = (tsm_cursor_save_t){ .fg = COLOR_DEFAULT_FG, .bg = COLOR_DEFAULT_BG,
+                              .g0 = CHARSET_ASCII, .g1 = CHARSET_ASCII };
+}
+
 /* The ring base is per-grid state. It must travel with the cells pointer in
  * every swap. Otherwise a rotated primary screen comes back scrambled on
  * alt exit. */
@@ -273,13 +289,15 @@ static void switch_to_alt(tsm_t *t)
     t->mode.decalt = true;
     erase_screen(t);
     t->base = 0;   /* freshly erased — mapping is free to reset */
-    restore_cursor(t, &t->alt_saved);
+    /* The rendition carries over, as in xterm. less prints its first page
+     * with no SGR after ?1049h, so it must not inherit a stale one. */
+    t->cx = 0; t->cy = 0;
+    t->pending_wrap = false;
 }
 
 static void switch_to_primary(tsm_t *t)
 {
     if (!t->mode.decalt) return;
-    save_cursor(t, &t->alt_saved);
     swap_grids(t);
     t->mode.decalt = false;
     restore_cursor(t, &t->saved);
@@ -401,8 +419,8 @@ static void set_private_mode(tsm_t *t, int32_t mode_n, bool set)
         else       switch_to_primary(t);
         break;
     case 1048:  /* cursor save/restore only — no screen switch  */
-        if (set)   save_cursor(t, &t->saved);
-        else       restore_cursor(t, &t->saved);
+        if (set)   save_cursor(t, cursor_slot(t));
+        else       restore_cursor(t, cursor_slot(t));
         break;
     case 1049:
         if (set)   switch_to_alt(t);
@@ -611,10 +629,10 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         break;
     }
     case 's': /* DECSC: save cursor. CSI s does the same thing. */
-        save_cursor(t, &t->saved);
+        save_cursor(t, cursor_slot(t));
         break;
     case 'u': /* DECRC: restore cursor. CSI u does the same thing. */
-        restore_cursor(t, &t->saved);
+        restore_cursor(t, cursor_slot(t));
         break;
     case 'h': /* SM — set mode */
     case 'l': /* RM — reset mode */
@@ -660,6 +678,8 @@ static void do_hard_reset(tsm_t *t)
     memset(&t->mode, 0, sizeof(t->mode));
     t->mode.decawm = true; t->mode.dectcem = true;
     t->pending_wrap = false;
+    reset_cursor_slot(&t->saved);
+    reset_cursor_slot(&t->alt_saved);
 }
 
 static void do_esc(tsm_t *t, uint8_t intermediate, uint8_t final)
@@ -670,8 +690,8 @@ static void do_esc(tsm_t *t, uint8_t intermediate, uint8_t final)
         t->g[1] = (final == '0') ? CHARSET_DEC_GFX : CHARSET_ASCII;
     } else if (intermediate == 0) {
         switch (final) {
-        case '7': save_cursor(t, &t->saved);    break; /* DECSC */
-        case '8': restore_cursor(t, &t->saved); break; /* DECRC */
+        case '7': save_cursor(t, cursor_slot(t));    break; /* DECSC */
+        case '8': restore_cursor(t, cursor_slot(t)); break; /* DECRC */
         case 'D': /* IND — index (like LF) */
             if (t->cy == t->scroll_bot) scroll_up(t, 1);
             else if (t->cy + 1 < t->rows) t->cy++;
@@ -935,6 +955,9 @@ tsm_t *tsm_new(int cols, int rows, int sb_lines)
     t->g[0] = CHARSET_ASCII;
     t->g[1] = CHARSET_ASCII;
     t->gl   = 0;
+
+    reset_cursor_slot(&t->saved);
+    reset_cursor_slot(&t->alt_saved);
 
     erase_screen(t);
     tsm_clear_dirty(t);

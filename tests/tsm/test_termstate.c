@@ -1735,6 +1735,113 @@ void test_csi_plain_forms_unaffected_by_marker_gate(void)
     tsm_free(t);
 }
 
+/* less prints its first page with no SGR after smcup. These are the bytes
+ * it sends for a plain file under TERM=xterm-256color. */
+void test_alt_entry_first_page_is_visible(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[?1049h\x1b[22;0;0t\x1b[?1h\x1b=\rhello");
+    TEST_ASSERT_EQUAL_HEX16('h', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 0, 0).bg);
+    tsm_free(t);
+}
+
+void test_alt_entry_keeps_current_rendition(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[1;31m\x1b[?1049hX");
+    TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, 0, 0).fg);
+    TEST_ASSERT_BITS_HIGH(CELL_ATTR_BOLD, cell(t, 0, 0).attrs);
+    tsm_free(t);
+}
+
+/* A second alt session starts clean; the first one's cursor and colors
+ * are gone. */
+void test_alt_reentry_does_not_resume_previous_session(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[?1049h\x1b[4;10H\x1b[32m\x1b[?1049l");
+    feed(t, "\x1b[?1049hY");
+    TEST_ASSERT_EQUAL_HEX16('Y', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+/* The shell's cursor, saved by ?1049h, must survive an app that uses
+ * DECSC/DECRC on the alt screen. */
+void test_alt_decsc_keeps_1049_cursor(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[5;10H\x1b[?1049h");
+    feed(t, "\x1b[2;2H\x1b""7\x1b[1;1H\x1b""8");
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));        /* DECRC works in alt */
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    feed(t, "\x1b[?1049l");
+    TEST_ASSERT_EQUAL_INT(9, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(4, cursor_row(t));
+    tsm_free(t);
+}
+
+void test_alt_csi_s_and_1048_keep_1049_cursor(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[5;10H\x1b[?1049h");
+    feed(t, "\x1b[2;2H\x1b[s\x1b[3;3H\x1b[?1048h\x1b[1;1H\x1b[?1048l");
+    TEST_ASSERT_EQUAL_INT(2, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    feed(t, "\x1b[?1049l");
+    TEST_ASSERT_EQUAL_INT(9, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(4, cursor_row(t));
+    tsm_free(t);
+}
+
+/* The primary slot is not reachable from the alt screen, and comes back
+ * unchanged for a DECRC after the session. */
+void test_primary_decsc_slot_survives_alt_47_session(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[3;4H\x1b[?47h\x1b[6;6H\x1b""7\x1b[?47l");
+    feed(t, "\x1b[1;1H\x1b""8");
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    tsm_free(t);
+}
+
+void test_decrc_without_decsc_homes_with_defaults(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[3;5H\x1b[31;44m\x1b""8X");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 0, 0).bg);
+    tsm_free(t);
+}
+
+void test_decrc_without_decsc_on_alt_screen(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[?1049h\x1b[3;5H\x1b[31m\x1b""8X");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+void test_ris_forgets_saved_cursor(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[4;7H\x1b[31m\x1b""7\x1b""c\x1b""8Z");
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+
+    feed(t, "\x1b[4;7H\x1b[31m\x1b""7");
+    tsm_reset(t);
+    feed(t, "\x1b""8Z");
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1929,6 +2036,17 @@ int main(void)
     RUN_TEST(test_csi_private_marker_forms_are_ignored);
     RUN_TEST(test_csi_intermediate_forms_are_ignored);
     RUN_TEST(test_csi_plain_forms_unaffected_by_marker_gate);
+
+    /* saved-cursor slots and alt-screen entry */
+    RUN_TEST(test_alt_entry_first_page_is_visible);
+    RUN_TEST(test_alt_entry_keeps_current_rendition);
+    RUN_TEST(test_alt_reentry_does_not_resume_previous_session);
+    RUN_TEST(test_alt_decsc_keeps_1049_cursor);
+    RUN_TEST(test_alt_csi_s_and_1048_keep_1049_cursor);
+    RUN_TEST(test_primary_decsc_slot_survives_alt_47_session);
+    RUN_TEST(test_decrc_without_decsc_homes_with_defaults);
+    RUN_TEST(test_decrc_without_decsc_on_alt_screen);
+    RUN_TEST(test_ris_forgets_saved_cursor);
 
     return UNITY_END();
 }
