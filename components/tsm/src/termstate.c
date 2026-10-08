@@ -13,6 +13,7 @@
  *   - Repeat (REP) and tab-stop motion (CHT/CBT, fixed 8-column stops)
  *   - Auto-wrap mode (DECAWM)
  *   - Origin mode (DECOM)
+ *   - Soft reset (DECSTR) and hard reset (RIS)
  *   - OSC 0/2 title (stored locally; no OS hook)
  *
  * Mouse reporting: stubs only; see TODO: MOUSE below.
@@ -435,6 +436,23 @@ static void set_private_mode(tsm_t *t, int32_t mode_n, bool set)
     }
 }
 
+/* DECSTR. The screen, the cursor position and the alt-screen state stay.
+ * Auto-wrap goes back ON, as in xterm; the DEC table turns it off, but
+ * terminfo is2 for xterm-256color sends no ?7h after CSI ! p. */
+static void do_soft_reset(tsm_t *t)
+{
+    t->attrs = 0; t->attrs2 = 0;
+    t->fg = COLOR_DEFAULT_FG; t->bg = COLOR_DEFAULT_BG;
+    t->g[0] = CHARSET_ASCII; t->g[1] = CHARSET_ASCII; t->gl = 0;
+    t->scroll_top = 0; t->scroll_bot = t->rows - 1;
+    t->mode.irm     = false;
+    t->mode.decom   = false;
+    t->mode.decckm  = false;
+    t->mode.decawm  = true;
+    t->mode.dectcem = true;
+    reset_cursor_slot(cursor_slot(t));
+}
+
 static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams)
 {
@@ -460,6 +478,11 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
          * CSI ? 12 ; 25 h. */
         for (int i = 0; i < nparams; i++)
             set_private_mode(t, params[i] < 0 ? 0 : params[i], set);
+        return;
+    }
+
+    if (prefix == 0 && intermediate == '!' && final == 'p') {
+        do_soft_reset(t);
         return;
     }
 

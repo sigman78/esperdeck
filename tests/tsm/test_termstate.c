@@ -1842,6 +1842,98 @@ void test_ris_forgets_saved_cursor(void)
     tsm_free(t);
 }
 
+/* terminfo is2/rs2 for xterm-256color: what `tput init` sends. */
+#define XTERM_IS2 "\x1b[!p\x1b[?3;4l\x1b[4l\x1b>"
+
+void test_decstr_resets_modes(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    /* IRM, DECOM, no auto-wrap, hidden cursor, application cursor keys */
+    feed(t, "\x1b[4h\x1b[?6;1h\x1b[?7;25l");
+    feed(t, XTERM_IS2);
+    TEST_ASSERT_TRUE(cursor_visible(t));
+    TEST_ASSERT_FALSE(tsm_app_cursor_keys(t));
+
+    feed(t, "\x1b[1;1Habc\x1b[1;1HX");             /* replace, not insert */
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 1, 0));
+
+    feed(t, "\x1b[1;9H123");                        /* auto-wrap is back */
+    TEST_ASSERT_EQUAL_HEX16('3', cp_at(t, 0, 1));
+    tsm_free(t);
+}
+
+void test_decstr_resets_scroll_region_and_origin(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    feed(t, "\x1b[2;3r\x1b[?6h");
+    feed(t, "\x1b[!p");
+    feed(t, "\x1b[1;1H");
+    TEST_ASSERT_EQUAL_INT(0, cursor_row(t));        /* DECOM is off */
+    feed(t, "\x1b[5;1HA\nB");                       /* LF on the last row */
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 3));   /* whole screen scrolled */
+    TEST_ASSERT_EQUAL_HEX16('B', cp_at(t, 1, 4));
+    tsm_free(t);
+}
+
+void test_decstr_resets_rendition_and_charset(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    feed(t, "\x1b[1;4;31;44m\x1b(0\x1b)0\x0e");
+    feed(t, "\x1b[!pq");
+    tsm_cell_t c = cell(t, 0, 0);
+    TEST_ASSERT_EQUAL_HEX16('q', c.cp);             /* not a line-drawing glyph */
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, c.fg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, c.bg);
+    TEST_ASSERT_EQUAL_HEX8(0, c.attrs);
+    tsm_free(t);
+}
+
+void test_decstr_forgets_saved_cursor(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    feed(t, "\x1b[3;4H\x1b[31m\x1b""7\x1b[!p\x1b""8X");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+/* A soft reset is not RIS: the page, the cursor, the alt screen and the
+ * history all stay. */
+void test_decstr_keeps_screen_cursor_and_history(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    int history = tsm_sb_len(t);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "\x1b[2;3HK");
+    feed(t, "\x1b[!p");
+    TEST_ASSERT_EQUAL_HEX16('K', cp_at(t, 2, 1));
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(history, tsm_sb_len(t));
+    TEST_ASSERT_EQUAL_size_t(0, s_resp_len);
+
+    feed(t, "\x1b[?1049h\x1b[2;3HA\x1b[!p");
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 2, 1));   /* still the alt page */
+    feed(t, "\x1b[?1049l");
+    TEST_ASSERT_EQUAL_HEX16('K', cp_at(t, 2, 1));
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));        /* the ?1049 cursor too */
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    tsm_free(t);
+}
+
+/* Only CSI ! p is DECSTR. The lookalikes change nothing. */
+void test_decstr_lookalikes_are_ignored(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    feed(t, "\x1b[?25l\x1b[31m");
+    feed(t, "\x1b[p\x1b[?!p\x1b[>!p\x1b[\"p\x1b[!qX");
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -2047,6 +2139,14 @@ int main(void)
     RUN_TEST(test_decrc_without_decsc_homes_with_defaults);
     RUN_TEST(test_decrc_without_decsc_on_alt_screen);
     RUN_TEST(test_ris_forgets_saved_cursor);
+
+    /* CSI ! p */
+    RUN_TEST(test_decstr_resets_modes);
+    RUN_TEST(test_decstr_resets_scroll_region_and_origin);
+    RUN_TEST(test_decstr_resets_rendition_and_charset);
+    RUN_TEST(test_decstr_forgets_saved_cursor);
+    RUN_TEST(test_decstr_keeps_screen_cursor_and_history);
+    RUN_TEST(test_decstr_lookalikes_are_ignored);
 
     return UNITY_END();
 }
