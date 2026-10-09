@@ -10,6 +10,7 @@
  *   - Scroll region (DECSTBM)
  *   - Character set designation (G0/G1: ASCII, DEC Special Graphics)
  *   - Insert / line / character erase operations
+ *   - Repeat (REP) and tab-stop motion (CHT/CBT, fixed 8-column stops)
  *   - Auto-wrap mode (DECAWM)
  *   - Origin mode (DECOM)
  *   - OSC 0/2 title (stored locally; no OS hook)
@@ -352,6 +353,36 @@ static void do_sgr(tsm_t *t, const int32_t *params, int nparams)
     }
 }
 
+/* Keep REP independent of cursor position, including a parked right margin. */
+static void do_rep(tsm_t *t, int32_t count)
+{
+    if (!t->last_glyph) return;
+
+    tsm_cell_t tmpl = { .cp = t->last_glyph,
+                        .fg = t->fg, .bg = t->bg,
+                        .attrs = t->attrs, .attrs2 = t->attrs2 };
+
+    int n = count < 1 ? 1 : count;
+    /* Once the viewport and history contain this glyph, whole further rows
+     * leave their contents unchanged. Retain the column remainder so cursor,
+     * pending wrap and the final partial row match literal printing. */
+    int64_t settle = ((int64_t)t->rows + t->sb_max + 1) * t->cols;
+    if (n > settle) n = (int)(settle + (n - settle) % t->cols);
+    if (!t->mode.decawm && n > t->cols) n = t->cols;
+    while (n-- > 0) {
+        if (t->pending_wrap) do_wrap(t);
+        if (t->mode.irm && t->cx + 1 < t->cols) {
+            memmove(cell_at(t, t->cx + 1, t->cy),
+                    cell_at(t, t->cx,     t->cy),
+                    (size_t)(t->cols - t->cx - 1) * sizeof(tsm_cell_t));
+            mark_dirty(t, t->cy, t->cx, t->cols - 1);
+        }
+        *cell_at(t, t->cx, t->cy) = tmpl;
+        mark_dirty(t, t->cy, t->cx, t->cx);
+        cursor_advance(t);
+    }
+}
+
 static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams)
 {
@@ -443,6 +474,24 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
     }
     case 'd': /* VPA — vertical position absolute */
         cursor_goto(t, t->cx, (int)(p1 < 1 ? 1 : p1) - 1);
+        break;
+    case 'I': /* CHT — forward n tab stops, 8 columns apart */
+    {
+        int n = clampi(p1, 1, t->cols);
+        t->cx = clampi((t->cx / 8 + n) * 8, 0, t->cols - 1);
+        t->pending_wrap = false;
+        break;
+    }
+    case 'Z': /* CBT — back n tab stops */
+    {
+        int n = clampi(p1, 1, t->cols);
+        t->cx = clampi(((t->cx + 7) / 8 - n) * 8, 0, t->cols - 1);
+        t->pending_wrap = false;
+        break;
+    }
+    case 'b': /* REP — repeat the preceding graphic character */
+        if (prefix == 0 && intermediate == 0)
+            do_rep(t, p1);
         break;
 
     case 'J': /* ED — erase display */
@@ -601,6 +650,7 @@ static void do_hard_reset(tsm_t *t)
     t->scroll_top = 0; t->scroll_bot = t->rows - 1;
     memset(&t->mode, 0, sizeof(t->mode));
     t->mode.decawm = true; t->mode.dectcem = true;
+    t->last_glyph = 0;
     t->pending_wrap = false;
 }
 
@@ -709,6 +759,7 @@ static void do_print_span_irm(tsm_t *t, const uint32_t *cps, int count)
         }
 
         tsm_cell_t *c = cell_at(t, t->cx, t->cy);
+        t->last_glyph = glyph;
         c->cp     = glyph;
         c->fg     = t->fg;
         c->bg     = t->bg;
@@ -762,6 +813,7 @@ static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
             if (t->mode.decawm) t->pending_wrap = true;
         }
     }
+    if (count > 0) t->last_glyph = tmpl.cp;
 }
 
 #ifdef CONFIG_VTERM_BENCH
@@ -781,12 +833,14 @@ static void on_print(const uint32_t *cps, int ncp, void *user)
 static void on_c0(uint8_t byte, void *user)
 {
     TSM_BENCH_T0();
+    ((tsm_t *)user)->last_glyph = 0;
     do_c0((tsm_t *)user, byte);
     TSM_BENCH_ADD(c0_cycles);
 }
 static void on_esc(uint8_t intermediate, uint8_t final, void *user)
 {
     TSM_BENCH_T0();
+    ((tsm_t *)user)->last_glyph = 0;
     do_esc((tsm_t *)user, intermediate, final);
     TSM_BENCH_ADD(other_cycles);
 }
@@ -794,12 +848,15 @@ static void on_csi(uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams, void *user)
 {
     TSM_BENCH_T0();
+    if (prefix || intermediate || (final != 'b' && final != 'm'))
+        ((tsm_t *)user)->last_glyph = 0;
     do_csi((tsm_t *)user, prefix, intermediate, final, params, nparams);
     TSM_BENCH_ADD(csi_cycles);
 }
 static void on_osc(const uint8_t *data, int len, void *user)
 {
     TSM_BENCH_T0();
+    ((tsm_t *)user)->last_glyph = 0;
     do_osc((tsm_t *)user, data, len);
     TSM_BENCH_ADD(other_cycles);
 }
@@ -807,7 +864,8 @@ static void on_dcs(uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams, void *user)
 {
     (void)prefix; (void)intermediate; (void)final;
-    (void)params; (void)nparams; (void)user;
+    (void)params; (void)nparams;
+    ((tsm_t *)user)->last_glyph = 0;
 }
 
 #undef TSM_BENCH_T0

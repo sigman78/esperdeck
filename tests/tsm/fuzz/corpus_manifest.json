@@ -235,7 +235,8 @@
       "test_termstate.c:1213 (C string)",
       "test_termstate.c:1225 (C string)",
       "test_termstate.c:1236 (C string)",
-      "test_termstate.c:1264 (C string)"
+      "test_termstate.c:1264 (C string)",
+      "test_termstate.c:1606 (C string)"
     ]
   },
   "dbe0c527c77ebd25198cefe7.vt": {
@@ -320,7 +321,8 @@
   "d1af0f92d5814568fcaa9cec.vt": {
     "bytes": 5,
     "sources": [
-      "test_termstate.c:646 (C string)"
+      "test_termstate.c:646 (C string)",
+      "test_termstate.c:1604 (C string)"
     ]
   },
   "4b196b5101eca51ba39fe7e3.vt": {
@@ -655,6 +657,194 @@
       "test_termstate.c:1355 (C string)"
     ]
   },
+  "911830fe35e8e3bbbd410f1b.vt": {
+    "bytes": 6,
+    "sources": [
+      "test_termstate.c:1379 (C string)"
+    ]
+  },
+  "8d326b0993c668b42caa02a1.vt": {
+    "bytes": 4,
+    "sources": [
+      "test_termstate.c:1390 (C string)"
+    ]
+  },
+  "91030249155d8963ed710c13.vt": {
+    "bytes": 4,
+    "sources": [
+      "test_termstate.c:1392 (C string)"
+    ]
+  },
+  "227a842b995c7b12c558b1a6.vt": {
+    "bytes": 10,
+    "sources": [
+      "test_termstate.c:1403 (C string)"
+    ]
+  },
+  "12779a5407c83a5057aa6bec.vt": {
+    "bytes": 11,
+    "sources": [
+      "test_termstate.c:1415 (C string)"
+    ]
+  },
+  "5ead40d78923405b54769235.vt": {
+    "bytes": 7,
+    "sources": [
+      "test_termstate.c:1424 (C string)"
+    ]
+  },
+  "1c7c8dd85a0b3b8cb2722719.vt": {
+    "bytes": 9,
+    "sources": [
+      "test_termstate.c:1435 (C string)"
+    ]
+  },
+  "42f7af147edf42701c4c6ac4.vt": {
+    "bytes": 12,
+    "sources": [
+      "test_termstate.c:1448 (C string)"
+    ]
+  },
+  "9c2f6587fdb2caca6995e514.vt": {
+    "bytes": 12,
+    "sources": [
+      "test_termstate.c:1461 (C string)"
+    ]
+  },
+  "136d3f69fd2392ae789d7338.vt": {
+    "bytes": 8,
+    "sources": [
+      "test_termstate.c:1473 (C string)"
+    ]
+  },
+  "d8353aa26706eff154922763.vt": {
+    "bytes": 18,
+    "sources": [
+      "test_termstate.c:1483 (C string)"
+    ]
+  },
+  "11b9189a3e2973e240ae40b0.vt": {
+    "bytes": 14,
+    "sources": [
+      "test_termstate.c:1497 (C string)"
+    ]
+  },
+  "bb81d7faa1e3ecf7749232c3.vt": {
+    "bytes": 4,
+    "sources": [
+      "test_termstate.c:1520 (C string)"
+    ]
+  },
+  "5dd313312d12a5e4347db570.vt": {
+    "bytes": 11,
+    "sources": [
+      "test_termstate.c:1531 (C string)"
+    ]
+  },
+  "7635f25d1d98bdfbffe2c03f.vt": {
+    "bytes": 10,
+    "sources": [
+      "test_termstate.c:1540 (C string)"
+    ]
+  },
+  "bf0c8c925bbea6007083d180.vt": {
+    "bytes": 3,
+    "sources": [
+      "test_termstate.c:1542 (C string)",
+      "test_termstate.c:1548 (C string)"
+    ]
+  },
+  "1a91ed247263e7b5529aa97b.vt": {
+    "bytes": 11,
+    "sources": [
+      "test_termstate.c:1544 (C string)"
+    ]
+  },
+  "2bab88e9c530eef7c8da63dd.vt": {
+    "bytes": 5,
+    "sources": [
+      "test_termstate.c:1546 (C string)"
+    ]
+  },
+  "397079358e986aba0ec85e98.vt": {
+    "bytes": 5,
+    "sources": [
+      "test_termstate.c:1556 (C string)"
+    ]
+  },
+  "814fc27fec1509841da68472.vt": {
+    "bytes": 4,
+    "sources": [
+      "test_termstate.c:1558 (C string)"
+    ]
+  },
+  "e9de846637514a955a7b48cc.vt": {
+    "bytes": 13,
+    "sources": [
+      "test_termstate.c:1560 (C string)"
+    ]
+  },
+  "ca7ec45207252a244a30e5ad.vt": {
+    "bytes": 14,
+    "sources": [
+      "test_termstate.c:1569 (C string)"
+    ]
+  },
+  "48762634baedf9b19af688c2.vt": {
+    "bytes": 18,
+    "sources": [
+      "test_termstate.c:1579 (C string)"
+    ]
+  },
+  "4bd412e405903884b9edd91c.vt": {
+    "bytes": 28,
+    "sources": [
+      "test_termstate.c:1603 (C string)"
+    ]
+  },
+  "fe114fafb25e437eea60a335.vt": {
+    "bytes": 5,
+    "sources": [
+      "test_termstate.c:1604 (C string)"
+    ]
+  },
+  "25f6098c6e4ab271d29c086f.vt": {
+    "bytes": 4,
+    "sources": [
+      "test_termstate.c:1605 (C string)"
+    ]
+  },
+  "9e81852e155a395cffe06f5e.vt": {
+    "bytes": 4,
+    "sources": [
+      "test_termstate.c:1605 (C string)"
+    ]
+  },
+  "221603a05dc17bd18e7a372a.vt": {
+    "bytes": 6,
+    "sources": [
+      "test_termstate.c:1607 (C string)"
+    ]
+  },
+  "30af0cf7d18c36a2952dcc41.vt": {
+    "bytes": 14,
+    "sources": [
+      "test_termstate.c:1608 (C string)"
+    ]
+  },
+  "1fb27c4806ded9012616e390.vt": {
+    "bytes": 5,
+    "sources": [
+      "test_termstate.c:1616 (C string)"
+    ]
+  },
+  "1641e0dec4ffae7c9dfe2087.vt": {
+    "bytes": 4,
+    "sources": [
+      "test_termstate.c:1633 (C string)",
+      "test_termstate.c:1633 (C string)"
+    ]
+  },
   "26ffd5886253906a36a7ea0f.vt": {
     "bytes": 3,
     "sources": [
@@ -901,6 +1091,24 @@
       "generated/numeric-0-m"
     ]
   },
+  "c7320a10d8dffbf3cf93f180.vt": {
+    "bytes": 10,
+    "sources": [
+      "generated/numeric-0-b"
+    ]
+  },
+  "c83091df57d1652e4c8fc29e.vt": {
+    "bytes": 10,
+    "sources": [
+      "generated/numeric-0-I"
+    ]
+  },
+  "3efcd989765e4b72ad08a319.vt": {
+    "bytes": 10,
+    "sources": [
+      "generated/numeric-0-Z"
+    ]
+  },
   "7a8aab8f520b7fbf8ef52c2b.vt": {
     "bytes": 10,
     "sources": [
@@ -979,6 +1187,24 @@
       "generated/numeric-1-m"
     ]
   },
+  "a9b16f67bd032408291671b8.vt": {
+    "bytes": 10,
+    "sources": [
+      "generated/numeric-1-b"
+    ]
+  },
+  "352040b9127a65edd87e62e4.vt": {
+    "bytes": 10,
+    "sources": [
+      "generated/numeric-1-I"
+    ]
+  },
+  "4f1064eb3e367d2be7561d0d.vt": {
+    "bytes": 10,
+    "sources": [
+      "generated/numeric-1-Z"
+    ]
+  },
   "3f666d092e30a08b4c6b9ab7.vt": {
     "bytes": 19,
     "sources": [
@@ -1049,6 +1275,24 @@
     "bytes": 19,
     "sources": [
       "generated/numeric-2147483647-m"
+    ]
+  },
+  "e45d39810412a174942d81a1.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-2147483647-b"
+    ]
+  },
+  "5ae2152c3967b5bf89f3072a.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-2147483647-I"
+    ]
+  },
+  "6f5292f149c584c146fd2972.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-2147483647-Z"
     ]
   },
   "56edd550fb58a55804d038fc.vt": {
@@ -1129,6 +1373,24 @@
       "generated/numeric-2147483648-m"
     ]
   },
+  "39ad5af674b72214e0919429.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-2147483648-b"
+    ]
+  },
+  "95b876a70d935f533552ebad.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-2147483648-I"
+    ]
+  },
+  "685effd14ecefee8de70ce11.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-2147483648-Z"
+    ]
+  },
   "1ea3a31af5d55308505f15c3.vt": {
     "bytes": 19,
     "sources": [
@@ -1207,6 +1469,24 @@
       "generated/numeric-4294967295-m"
     ]
   },
+  "f388de99cd8a63e869f9a810.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-4294967295-b"
+    ]
+  },
+  "48e6ae277ad3a532eca21453.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-4294967295-I"
+    ]
+  },
+  "d5fa1c71c007f46b3b2dc5b8.vt": {
+    "bytes": 19,
+    "sources": [
+      "generated/numeric-4294967295-Z"
+    ]
+  },
   "b7aa4765704ad4a1fcd65068.vt": {
     "bytes": 137,
     "sources": [
@@ -1283,6 +1563,24 @@
     "bytes": 137,
     "sources": [
       "generated/numeric-999999999999-m"
+    ]
+  },
+  "c473d0047341f78f36fb41f0.vt": {
+    "bytes": 137,
+    "sources": [
+      "generated/numeric-999999999999-b"
+    ]
+  },
+  "7a372bb24b640e82a8a3bc9f.vt": {
+    "bytes": 137,
+    "sources": [
+      "generated/numeric-999999999999-I"
+    ]
+  },
+  "87311831e75764215220adff.vt": {
+    "bytes": 137,
+    "sources": [
+      "generated/numeric-999999999999-Z"
     ]
   },
   "69928df94478a3ac697bfee6.vt": {

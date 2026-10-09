@@ -18,11 +18,19 @@ Supported features:
   bitmap-font subset and keeps a cell at 8 bytes
 - 16/256/truecolor foreground and background (quantized to RGB565)
 - Alt screen
+- REP (repeat the last rendered glyph in current SGR); CHT/CBT (fixed 8-column tabs)
 - Cursor save / restore
 - Terminal reporting (device attributes, cursor position)
 
 Tested by `tests/tsm` — host-compiled Unity suites for both parts; see
 `docs/DEVELOPMENT.md`.
+
+REP retains its source across SGR and consecutive REP commands. Other dispatched
+controls invalidate it; REP with no source does nothing. Large counts preserve
+cursor, grid and retained history by skipping whole rows only after repeated
+output has saturated them. Work is bounded by the viewport and history capacity,
+not the numeric parameter. Tests compare REP with literal output, including
+insertion, wrapping, margins, alternate screens and held scrollback views.
 
 Possible future work:
 - Mouse support

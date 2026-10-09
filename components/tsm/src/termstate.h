@@ -81,6 +81,8 @@ struct tsm_s {
     int  cy;            /* cursor row    (0-based) */
     bool pending_wrap;  /* next print triggers newline (auto-wrap pending) */
 
+    uint16_t last_glyph; /* REP source; zero when no graphic is available */
+
     /* Current SGR state */
     uint8_t  attrs;
     uint8_t  attrs2;
