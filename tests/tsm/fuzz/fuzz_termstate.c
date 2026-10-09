@@ -41,7 +41,7 @@ static void compare_terminal(const tsm_t *a, const tsm_t *b)
     check_terminal(a); check_terminal(b);
 #define FIELD(f) CHECK(a->f == b->f)
     FIELD(cols); FIELD(rows); FIELD(base); FIELD(alt_base);
-    FIELD(cx); FIELD(cy); FIELD(pending_wrap); FIELD(attrs); FIELD(attrs2); FIELD(fg); FIELD(bg);
+    FIELD(last_glyph); FIELD(cx); FIELD(cy); FIELD(pending_wrap); FIELD(attrs); FIELD(attrs2); FIELD(fg); FIELD(bg);
     FIELD(g[0]); FIELD(g[1]); FIELD(gl); FIELD(scroll_top); FIELD(scroll_bot);
     FIELD(sb_max); FIELD(sb_len); FIELD(sb_head); FIELD(sb_off);
     FIELD(mode.lnm); FIELD(mode.irm); FIELD(mode.decom); FIELD(mode.decawm);

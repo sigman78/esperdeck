@@ -3,6 +3,8 @@
  *
  * This is the device's only keyboard path, and a wrong entry in the usage-ID
  * table is invisible until someone presses that key on real hardware.
+ * Printables are translated here; special keys cross the queue as raw
+ * usages and vtkeys encodes them. The suite follows both halves.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -25,12 +27,25 @@
 void setUp(void) {}
 void tearDown(void) {}
 
-/* Translate and compare against a literal byte sequence. */
-static void expect(uint8_t keycode, uint8_t mods, bool app, const char *want)
+/* Translate a byte-owned key and compare against a literal byte sequence. */
+static void expect(uint8_t keycode, uint8_t mods, bool caps, const char *want)
 {
     uint8_t buf[VTKEYS_MAX_LEN];
-    uint8_t n = hid_keymap_translate(keycode, mods, app, buf);
+    uint8_t n = hid_keymap_translate(keycode, mods, caps, buf);
     TEST_ASSERT_EQUAL_UINT8(strlen(want), n);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY((const uint8_t *)want, buf, n);
+}
+
+/* A special key takes the device's two-step path. The translator declines
+ * it, as ble_keyboard.c relies on; the session screen then encodes the raw
+ * usage through vtkeys, as app_connect.c does. */
+static void expect_key(uint8_t usage, uint8_t mods, bool app, const char *want)
+{
+    uint8_t buf[VTKEYS_MAX_LEN];
+    TEST_ASSERT_EQUAL_UINT8(0, hid_keymap_translate(usage, mods, false, buf));
+    size_t n = vtkeys_encode(vtkeys_from_hid(usage), vtkeys_mods_from_hid(mods),
+                             app, buf, sizeof(buf));
+    TEST_ASSERT_EQUAL_size_t(strlen(want), n);
     TEST_ASSERT_EQUAL_UINT8_ARRAY((const uint8_t *)want, buf, n);
 }
 
@@ -71,6 +86,24 @@ void test_alt_prefixes_escape(void)
     expect(0x04, M_LALT | M_LCTRL, false, "\x1b\x01");
 }
 
+void test_caps_lock_inverts_shift_on_letters(void)
+{
+    expect(0x04, 0,        true, "A");
+    expect(0x04, M_LSHIFT, true, "a");
+    expect(0x1D, 0,        true, "Z");
+    expect(0x04, M_LALT,   true, "\x1b" "A");
+}
+
+void test_caps_lock_leaves_other_keys_alone(void)
+{
+    expect(0x1E, 0,        true, "1");
+    expect(0x1E, M_LSHIFT, true, "!");
+    expect(0x2D, 0,        true, "-");
+    expect(0x33, 0,        true, ";");
+    expect(0x04, M_LCTRL,  true, "\x01");
+    expect(0x28, 0,        true, "\r");
+}
+
 /* HID usage IDs: 0x28 Enter, 0x29 Escape, 0x2A Backspace, 0x2B Tab, 0x58 Numpad Enter. */
 void test_control_characters(void)
 {
@@ -86,69 +119,69 @@ void test_control_characters(void)
 /* Usage IDs are adjacent and easy to transpose; pin each one. */
 void test_arrow_usage_ids(void)
 {
-    expect(0x4F, 0, false, "\x1b[C");
-    expect(0x50, 0, false, "\x1b[D");
-    expect(0x51, 0, false, "\x1b[B");
-    expect(0x52, 0, false, "\x1b[A");
+    expect_key(0x4F, 0, false, "\x1b[C");
+    expect_key(0x50, 0, false, "\x1b[D");
+    expect_key(0x51, 0, false, "\x1b[B");
+    expect_key(0x52, 0, false, "\x1b[A");
 }
 
 /* Usage IDs 0x49-0x4E are consecutive and easy to transpose; pin each one. */
 void test_nav_cluster_usage_ids(void)
 {
-    expect(0x49, 0, false, "\x1b[2~");
-    expect(0x4A, 0, false, "\x1b[H");
-    expect(0x4B, 0, false, "\x1b[5~");
-    expect(0x4C, 0, false, "\x1b[3~");
-    expect(0x4D, 0, false, "\x1b[F");
-    expect(0x4E, 0, false, "\x1b[6~");
+    expect_key(0x49, 0, false, "\x1b[2~");
+    expect_key(0x4A, 0, false, "\x1b[H");
+    expect_key(0x4B, 0, false, "\x1b[5~");
+    expect_key(0x4C, 0, false, "\x1b[3~");
+    expect_key(0x4D, 0, false, "\x1b[F");
+    expect_key(0x4E, 0, false, "\x1b[6~");
 }
 
 /* F1-F4 use SS3; F5 and up use CSI ~. This checks both sides of that split. */
 void test_function_key_usage_ids(void)
 {
-    expect(0x3A, 0, false, "\x1bOP");
-    expect(0x3D, 0, false, "\x1bOS");
-    expect(0x3E, 0, false, "\x1b[15~");
-    expect(0x45, 0, false, "\x1b[24~");
+    expect_key(0x3A, 0, false, "\x1bOP");
+    expect_key(0x3D, 0, false, "\x1bOS");
+    expect_key(0x3E, 0, false, "\x1b[15~");
+    expect_key(0x45, 0, false, "\x1b[24~");
 }
 
 void test_arrows_follow_application_cursor_mode(void)
 {
-    expect(0x52, 0, true, "\x1bOA");
-    expect(0x50, 0, true, "\x1bOD");
+    expect_key(0x52, 0, true, "\x1bOA");
+    expect_key(0x50, 0, true, "\x1bOD");
 }
 
 /* ── Modifiers on special keys ───────────────────────────────────────────── */
 
 void test_ctrl_arrows_encode_modifier(void)
 {
-    expect(0x50, M_LCTRL, false, "\x1b[1;5D");
-    expect(0x4F, M_LCTRL, false, "\x1b[1;5C");
+    expect_key(0x50, M_LCTRL, false, "\x1b[1;5D");
+    expect_key(0x4F, M_LCTRL, false, "\x1b[1;5C");
 }
 
 /* The binding the deck reserves for its own scrollback. */
 void test_shift_pageup_pagedown(void)
 {
-    expect(0x4B, M_LSHIFT, false, "\x1b[5;2~");
-    expect(0x4E, M_LSHIFT, false, "\x1b[6;2~");
+    expect_key(0x4B, M_LSHIFT, false, "\x1b[5;2~");
+    expect_key(0x4E, M_LSHIFT, false, "\x1b[6;2~");
 }
 
 void test_modifier_beats_application_cursor(void)
 {
-    expect(0x50, M_LCTRL, true, "\x1b[1;5D");
+    expect_key(0x50, M_LCTRL, true, "\x1b[1;5D");
 }
 
 /* A held Windows key must not corrupt the modifier parameter. */
 void test_gui_modifier_ignored_on_special_keys(void)
 {
-    expect(0x50, M_LCTRL | M_LGUI, false, "\x1b[1;5D");
+    expect_key(0x50, M_LCTRL | M_LGUI, false, "\x1b[1;5D");
 }
 
 void test_right_hand_modifiers_on_special_keys(void)
 {
-    expect(0x50, M_RCTRL,  false, "\x1b[1;5D");
-    expect(0x4B, M_RSHIFT, false, "\x1b[5;2~");
-    expect(0x52, M_RALT,   false, "\x1b[1;3A");
+    expect_key(0x50, M_RCTRL,  false, "\x1b[1;5D");
+    expect_key(0x4B, M_RSHIFT, false, "\x1b[5;2~");
+    expect_key(0x52, M_RALT,   false, "\x1b[1;3A");
 }
 
 void test_unknown_keycode_returns_zero(void)
@@ -167,6 +200,8 @@ int main(void)
     RUN_TEST(test_ctrl_letters);
     RUN_TEST(test_ctrl_two_is_nul);
     RUN_TEST(test_alt_prefixes_escape);
+    RUN_TEST(test_caps_lock_inverts_shift_on_letters);
+    RUN_TEST(test_caps_lock_leaves_other_keys_alone);
     RUN_TEST(test_control_characters);
     RUN_TEST(test_arrow_usage_ids);
     RUN_TEST(test_nav_cluster_usage_ids);

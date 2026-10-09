@@ -1358,9 +1358,701 @@ void test_large_erase_count_clamps_before_addition(void)
     tsm_free(t);
 }
 
+static int cursor_col(tsm_t *t)
+{
+    int col, row; bool vis;
+    tsm_cursor(t, &col, &row, &vis);
+    return col;
+}
+
+static int cursor_row(tsm_t *t)
+{
+    int col, row; bool vis;
+    tsm_cursor(t, &col, &row, &vis);
+    return row;
+}
+
+/* The exact shape ncurses emits for xterm-256color `rep`: char, CSI n-1 b. */
+void test_csi_rep_repeats_last_char(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "-\x1b[4b|");
+    for (int c = 0; c < 5; c++)
+        TEST_ASSERT_EQUAL_HEX16('-', cp_at(t, c, 0));
+    TEST_ASSERT_EQUAL_HEX16('|', cp_at(t, 5, 0));
+    TEST_ASSERT_EQUAL_INT(6, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_default_and_zero_mean_one(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "a\x1b[b");
+    TEST_ASSERT_EQUAL_INT(2, cursor_col(t));
+    feed(t, "\x1b[0b");
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 2, 0));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 3, 0));
+    tsm_free(t);
+}
+
+/* Repeats take the SGR in force at the REP, as a retyped character would. */
+void test_csi_rep_uses_current_sgr(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "x\x1b[31m\x1b[2b");
+    TEST_ASSERT_EQUAL_HEX16('x', cp_at(t, 2, 0));
+    TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, 1, 0).fg);
+    TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, 2, 0).fg);
+    TEST_ASSERT_NOT_EQUAL(color_ansi(1), cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+/* ncurses draws box edges this way: a line-drawing glyph, then REP. */
+void test_csi_rep_repeats_dec_graphics_glyph(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "\x1b(0q\x1b[3b\x1b(B");
+    for (int c = 0; c < 4; c++)
+        TEST_ASSERT_EQUAL_HEX16(0x2500, cp_at(t, c, 0));
+    tsm_free(t);
+}
+
+void test_csi_rep_repeats_utf8_char(void)
+{
+    tsm_t *t = tsm_new(20, 4, 0);
+    feed(t, "\xe2\x96\x88\x1b[2b");          /* U+2588 full block */
+    for (int c = 0; c < 3; c++)
+        TEST_ASSERT_EQUAL_HEX16(0x2588, cp_at(t, c, 0));
+    tsm_free(t);
+}
+
+/* A char in the last column leaves the wrap pending; REP continues on the
+ * next row with that char, not the one left of it. */
+void test_csi_rep_wraps_from_last_column(void)
+{
+    tsm_t *t = tsm_new(5, 3, 0);
+    feed(t, "abcd#\x1b[3b");
+    TEST_ASSERT_EQUAL_HEX16('#', cp_at(t, 4, 0));
+    for (int c = 0; c < 3; c++)
+        TEST_ASSERT_EQUAL_HEX16('#', cp_at(t, c, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 3, 1));
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_scrolls_at_bottom(void)
+{
+    tsm_t *t = tsm_new(4, 2, 0);
+    feed(t, "\x1b[2;1Hab\x1b[4b");         /* 6 cells from the bottom row */
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 1, 0));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 3, 0));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 1, 1));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 2, 1));
+    tsm_free(t);
+}
+
+void test_csi_rep_without_autowrap_stops_at_margin(void)
+{
+    tsm_t *t = tsm_new(5, 2, 0);
+    feed(t, "\x1b[?7lab\x1b[20b");
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 0, 0));
+    for (int c = 1; c < 5; c++)
+        TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, c, 0));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 1));
+    TEST_ASSERT_EQUAL_INT(0, cursor_row(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_at_line_start_is_noop(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "ab\r\n\x1b[5b");
+    for (int c = 0; c < 10; c++)
+        TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, c, 1));
+    TEST_ASSERT_EQUAL_INT(0, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_insert_mode_shifts_line(void)
+{
+    tsm_t *t = tsm_new(10, 2, 0);
+    feed(t, "XYZ\x1b[1;1H\x1b[4ha\x1b[2b");
+    /* cursor sits after 'a'; two more 'a' push XYZ right */
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 1, 0));
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 2, 0));
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 3, 0));
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 5, 0));
+    tsm_free(t);
+}
+
+/* 2^31 total glyphs fill whole rows on an eight-column screen. */
+void test_csi_rep_huge_count_is_bounded(void)
+{
+    tsm_t *t = tsm_new(8, 3, 8);
+    feed(t, "z\x1b[2147483647b");
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 8; c++)
+            TEST_ASSERT_EQUAL_HEX16('z', cp_at(t, c, r));
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(7, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(8, tsm_sb_len(t));
+    tsm_sb_scroll(t, 8);
+    for (int r = 0; r < 3; r++)
+        for (int c = 0; c < 8; c++)
+            TEST_ASSERT_EQUAL_HEX16('z', cp_at(t, c, r));
+    tsm_sb_reset(t);
+    feed(t, "X");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 2));
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_marks_rows_dirty(void)
+{
+    tsm_t *t = tsm_new(5, 3, 0);
+    feed(t, "abcd#");
+    tsm_clear_dirty(t);
+    feed(t, "\x1b[2b");
+    const tsm_row_dirty_t *d = tsm_dirty(t);
+    TEST_ASSERT_EQUAL_UINT8(0, d[1].l);
+    TEST_ASSERT_EQUAL_UINT8(1, d[1].r);
+    tsm_free(t);
+}
+
+/* Private-marker or intermediate forms are other sequences, not REP. */
+void test_csi_rep_ignores_prefixed_forms(void)
+{
+    tsm_t *t = tsm_new(10, 2, 0);
+    feed(t, "a\x1b[>3b\x1b[3 b");
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 1, 0));
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_cbt_moves_to_previous_tab_stop(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "\x1b[1;20H\x1b[Z");            /* col 19 -> 16 */
+    TEST_ASSERT_EQUAL_INT(16, cursor_col(t));
+    feed(t, "\x1b[Z");                       /* on a stop -> the one before */
+    TEST_ASSERT_EQUAL_INT(8, cursor_col(t));
+    feed(t, "\x1b[1;20H\x1b[2Z");           /* 19 -> 16 -> 8 */
+    TEST_ASSERT_EQUAL_INT(8, cursor_col(t));
+    feed(t, "\x1b[99Z");                     /* clamps at the left margin */
+    TEST_ASSERT_EQUAL_INT(0, cursor_col(t));
+    feed(t, "\x1b[Z");
+    TEST_ASSERT_EQUAL_INT(0, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_csi_cht_moves_to_next_tab_stop(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "ab\x1b[I");
+    TEST_ASSERT_EQUAL_INT(8, cursor_col(t));
+    feed(t, "\x1b[3I");
+    TEST_ASSERT_EQUAL_INT(32, cursor_col(t));
+    feed(t, "\x1b[2147483647I");             /* clamps at the right margin */
+    TEST_ASSERT_EQUAL_INT(79, cursor_col(t));
+    tsm_free(t);
+}
+
+/* Tab motion cancels a pending wrap, as HT and the cursor moves do. */
+void test_csi_cbt_clears_pending_wrap(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "0123456789\x1b[ZX");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 8, 0));
+    TEST_ASSERT_EQUAL_INT(0, cursor_row(t));
+    tsm_free(t);
+}
+
+void test_csi_rep_at_nowrap_right_edge_uses_last_print(void)
+{
+    for (int cols = 1; cols <= 5; cols += 4) {
+        tsm_t *t = tsm_new(cols, 2, 0);
+        feed(t, "\x1b[?7labcd#\x1b[31m\x1b[b");
+        TEST_ASSERT_EQUAL_HEX16('#', cp_at(t, cols - 1, 0));
+        TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, cols - 1, 0).fg);
+        tsm_free(t);
+    }
+}
+
+static void assert_same_rep_view(tsm_t *a, tsm_t *b)
+{
+    for (int row = 0; row < tsm_rows(a); row++)
+        TEST_ASSERT_EQUAL_MEMORY(tsm_row(a, row), tsm_row(b, row),
+                                 (size_t)tsm_cols(a) * sizeof(tsm_cell_t));
+}
+
+void test_csi_rep_matches_literal_printing(void)
+{
+    const int counts[] = {1, 11, 120, 511};
+    for (int cols = 1; cols <= 5; cols += 4)
+    for (int rows = 1; rows <= 4; rows += 3)
+    for (int flags = 0; flags < 32; flags++)
+    for (size_t i = 0; i < sizeof(counts) / sizeof(counts[0]); i++) {
+        tsm_t *a = tsm_new(cols, rows, 3);
+        tsm_t *b = tsm_new(cols, rows, 3);
+        const char *setup[] = {
+            "abc\r\ndef\r\nghi\r\njkl\r\nmno\r\npqr",
+            flags & 1 ? "\x1b[?7l" : "\x1b[?7h",
+            flags & 2 ? "\x1b[4h" : "\x1b[4l",
+            flags & 4 ? "\x1b[?1049h" : "",
+            flags & 8 && rows > 1 ? "\x1b[2;3r" : "",
+            "\x1b[2;3H\x1b[1;31m#"
+        };
+        for (size_t j = 0; j < sizeof(setup) / sizeof(setup[0]); j++) {
+            feed(a, setup[j]); feed(b, setup[j]);
+        }
+        if (flags & 16) { tsm_sb_scroll(a, 1); tsm_sb_scroll(b, 1); }
+        tsm_clear_dirty(a); tsm_clear_dirty(b);
+        char seq[32];
+        snprintf(seq, sizeof(seq), "\x1b[%db", counts[i]);
+        feed(a, seq);
+        for (int j = 0; j < counts[i]; j++) feed(b, "#");
+        TEST_ASSERT_EQUAL_INT(cursor_col(b), cursor_col(a));
+        TEST_ASSERT_EQUAL_INT(cursor_row(b), cursor_row(a));
+        TEST_ASSERT_EQUAL_INT(tsm_sb_len(b), tsm_sb_len(a));
+        TEST_ASSERT_EQUAL_INT(tsm_sb_offset(b), tsm_sb_offset(a));
+        TEST_ASSERT_EQUAL_MEMORY(tsm_dirty(b), tsm_dirty(a),
+                                 (size_t)rows * sizeof(tsm_row_dirty_t));
+        assert_same_rep_view(a, b);
+        tsm_sb_reset(a); tsm_sb_reset(b);
+        assert_same_rep_view(a, b);
+        for (int j = 0; j < tsm_sb_len(a); j++) {
+            tsm_sb_scroll(a, 1); tsm_sb_scroll(b, 1);
+            assert_same_rep_view(a, b);
+        }
+        tsm_sb_reset(a); tsm_sb_reset(b);
+        feed(a, "X\r\nY"); feed(b, "X\r\nY");
+        assert_same_rep_view(a, b);
+        TEST_ASSERT_EQUAL_INT(cursor_col(b), cursor_col(a));
+        TEST_ASSERT_EQUAL_INT(cursor_row(b), cursor_row(a));
+        tsm_free(a); tsm_free(b);
+    }
+}
+
+static bool cursor_visible(tsm_t *t)
+{
+    bool vis;
+    tsm_cursor(t, NULL, NULL, &vis);
+    return vis;
+}
+
+/* terminfo cvvis for xterm-256color is CSI ? 12 ; 25 h, and ncurses
+ * curs_set(2) sends it on its own. */
+void test_decset_list_cvvis_shows_cursor(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "\x1b[?25l");
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    feed(t, "\x1b[?12;25h");
+    TEST_ASSERT_TRUE(cursor_visible(t));
+    tsm_free(t);
+}
+
+void test_decrst_list_resets_every_mode(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "\x1b[?1h");
+    TEST_ASSERT_TRUE(tsm_app_cursor_keys(t));
+    feed(t, "\x1b[?1;25l");
+    TEST_ASSERT_FALSE(tsm_app_cursor_keys(t));
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    tsm_free(t);
+}
+
+void test_decset_list_applies_in_order(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "P\x1b[?1;1049;25h");
+    TEST_ASSERT_TRUE(tsm_app_cursor_keys(t));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));   /* alt screen is blank */
+    feed(t, "\x1b[?25;1049l");
+    TEST_ASSERT_EQUAL_HEX16('P', cp_at(t, 0, 0));
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    tsm_free(t);
+}
+
+void test_decset_list_skips_empty_and_unknown_slots(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    feed(t, "\x1b[?;9999;25l");
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    feed(t, "\x1b[?25;h");
+    TEST_ASSERT_TRUE(cursor_visible(t));
+    tsm_free(t);
+}
+
+void test_decset_list_counts_one_bsu(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    uint32_t bsu, esu;
+    feed(t, "\x1b[?25;2026h");
+    TEST_ASSERT_TRUE(tsm_sync_update(t));
+    feed(t, "\x1b[?2026;25l");
+    TEST_ASSERT_FALSE(tsm_sync_update(t));
+    tsm_sync_counts(t, &bsu, &esu);
+    TEST_ASSERT_EQUAL_UINT32(1, bsu);
+    TEST_ASSERT_EQUAL_UINT32(1, esu);
+    tsm_free(t);
+}
+
+/* A mode list is not a DECRQM query: only the $ p form replies. */
+void test_decset_list_sends_no_response(void)
+{
+    tsm_t *t = tsm_new(80, 24, 0);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "\x1b[?2026;25h\x1b[?25;2026l");
+    TEST_ASSERT_EQUAL_size_t(0, s_resp_len);
+    tsm_free(t);
+}
+
+void test_sm_rm_list_sets_and_resets_irm_and_lnm(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "\x1b[4;20h" "abc\x1b[1;1HX");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));   /* IRM: inserted */
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 1, 0));
+    feed(t, "\n");
+    TEST_ASSERT_EQUAL_INT(0, cursor_col(t));        /* LNM: LF returns */
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+
+    feed(t, "\x1b[20;4l" "abc\x1b[2;1HX");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 1));   /* overwrites, no shift */
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 1, 1));
+    feed(t, "\n");
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));
+    tsm_free(t);
+}
+
+/* Vim and Neovim send CSI > 4 ; 2 m (xterm modifyOtherKeys) at startup.
+ * Read as SGR it would underline and dim everything that follows. */
+void test_csi_modify_other_keys_is_not_sgr(void)
+{
+    tsm_t *t = tsm_new(10, 2, 0);
+    feed(t, "\x1b[>4;2m" "a" "\x1b[>4;m" "b" "\x1b[<1m" "c" "\x1b[=7m" "d");
+    for (int c = 0; c < 4; c++) {
+        TEST_ASSERT_EQUAL_UINT8(0, cell(t, c, 0).attrs);
+        TEST_ASSERT_EQUAL_HEX16(0, cell(t, c, 0).bg);
+    }
+    feed(t, "\x1b[4m" "e");
+    TEST_ASSERT_BITS(CELL_ATTR_UNDERLINE, CELL_ATTR_UNDERLINE,
+                     cell(t, 4, 0).attrs);
+    tsm_free(t);
+}
+
+/* XTSMTITLE reset (CSI > Ps T) shares its final byte with SD.
+ * The key-modifier reset (CSI > Ps n) shares one with DSR. */
+void test_csi_private_marker_forms_are_ignored(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "top\x1b[2;3H");
+    feed(t, "\x1b[>1T" "\x1b[>5n" "\x1b[>6n" "\x1b[>c" "\x1b[=c"
+            "\x1b[>2A" "\x1b[<3C" "\x1b[=2J" "\x1b[>4;20h");
+    TEST_ASSERT_EQUAL_HEX16('t', cp_at(t, 0, 0));   /* not scrolled, not erased */
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(2, cursor_col(t));
+    TEST_ASSERT_EQUAL_size_t(0, s_resp_len);
+    feed(t, "\x1b[1;1HX");
+    TEST_ASSERT_EQUAL_HEX16('o', cp_at(t, 1, 0));   /* IRM stayed off */
+    tsm_free(t);
+}
+
+/* DECCARA (CSI Pt;Pl;Pb;Pr;Ps $ r) is not DECSTBM. SR (CSI Ps SP A) is
+ * not CUU. SL (CSI Ps SP @) is not ICH. */
+void test_csi_intermediate_forms_are_ignored(void)
+{
+    tsm_t *t = tsm_new(10, 4, 0);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "abc\x1b[3;2H");
+    feed(t, "\x1b[1;1;2;5;7$r" "\x1b[2 A" "\x1b[5 n" "\x1b[2 q");
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));
+    TEST_ASSERT_EQUAL_size_t(0, s_resp_len);
+    feed(t, "\x1b[1;1H\x1b[2 @");
+    TEST_ASSERT_EQUAL_HEX16('a', cp_at(t, 0, 0));
+
+    /* The scroll region is still the full screen: LF on the last row
+     * scrolls row 0 away. */
+    feed(t, "\x1b[4;1H\n");
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
+    tsm_free(t);
+}
+
+/* The unmarked forms keep working next to their private lookalikes. */
+void test_csi_plain_forms_unaffected_by_marker_gate(void)
+{
+    tsm_t *t = tsm_new(10, 4, 0);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "\x1b[>c\x1b[c");
+    TEST_ASSERT_EQUAL_size_t(7, s_resp_len);
+    TEST_ASSERT_EQUAL_MEMORY("\x1b[?1;2c", s_resp_buf, 7);
+    feed(t, "\x1b[2;3r");
+    TEST_ASSERT_EQUAL_INT(0, cursor_row(t));        /* DECSTBM homes */
+    feed(t, "\x1b[3;4H\x1b[s\x1b[1;1H\x1b[>1u\x1b[u");
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    tsm_free(t);
+}
+
+void test_private_mode_intermediates_cannot_change_modes(void)
+{
+    tsm_t *t = tsm_new(10, 3, 0);
+    feed(t, "\x1b[?25l\x1b[?1;25$h");
+    TEST_ASSERT_FALSE(tsm_app_cursor_keys(t));
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    feed(t, "\x1b[?1;25h\x1b[?1;25!l");
+    TEST_ASSERT_TRUE(tsm_app_cursor_keys(t));
+    TEST_ASSERT_TRUE(cursor_visible(t));
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "\x1b[?2026$p");
+    TEST_ASSERT_EQUAL_size_t(sizeof("\x1b[?2026;2$y") - 1, s_resp_len);
+    TEST_ASSERT_EQUAL_MEMORY("\x1b[?2026;2$y", s_resp_buf, sizeof("\x1b[?2026;2$y") - 1);
+    tsm_free(t);
+}
+
+/* less prints its first page with no SGR after smcup. These are the bytes
+ * it sends for a plain file under TERM=xterm-256color. */
+void test_alt_entry_first_page_is_visible(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[?1049h\x1b[22;0;0t\x1b[?1h\x1b=\rhello");
+    TEST_ASSERT_EQUAL_HEX16('h', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 0, 0).bg);
+    tsm_free(t);
+}
+
+void test_alt_entry_keeps_current_rendition(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[1;31m\x1b[?1049hX");
+    TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, 0, 0).fg);
+    TEST_ASSERT_BITS_HIGH(CELL_ATTR_BOLD, cell(t, 0, 0).attrs);
+    tsm_free(t);
+}
+
+/* A second alt session starts clean; the first one's cursor and colors
+ * are gone. */
+void test_alt_reentry_does_not_resume_previous_session(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[?1049h\x1b[4;10H\x1b[32m\x1b[?1049l");
+    feed(t, "\x1b[?1049hY");
+    TEST_ASSERT_EQUAL_HEX16('Y', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+/* The shell's cursor, saved by ?1049h, must survive an app that uses
+ * DECSC/DECRC on the alt screen. */
+void test_alt_decsc_keeps_1049_cursor(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[5;10H\x1b[?1049h");
+    feed(t, "\x1b[2;2H\x1b""7\x1b[1;1H\x1b""8");
+    TEST_ASSERT_EQUAL_INT(1, cursor_col(t));        /* DECRC works in alt */
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    feed(t, "\x1b[?1049l");
+    TEST_ASSERT_EQUAL_INT(9, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(4, cursor_row(t));
+    tsm_free(t);
+}
+
+void test_alt_csi_s_and_1048_keep_1049_cursor(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[5;10H\x1b[?1049h");
+    feed(t, "\x1b[2;2H\x1b[s\x1b[3;3H\x1b[?1048h\x1b[1;1H\x1b[?1048l");
+    TEST_ASSERT_EQUAL_INT(2, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    feed(t, "\x1b[?1049l");
+    TEST_ASSERT_EQUAL_INT(9, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(4, cursor_row(t));
+    tsm_free(t);
+}
+
+/* The primary slot is not reachable from the alt screen, and comes back
+ * unchanged for a DECRC after the session. */
+void test_primary_decsc_slot_survives_alt_47_session(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[3;4H\x1b[?47h\x1b[6;6H\x1b""7\x1b[?47l");
+    feed(t, "\x1b[1;1H\x1b""8");
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(2, cursor_row(t));
+    tsm_free(t);
+}
+
+void test_decrc_without_decsc_homes_with_defaults(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[3;5H\x1b[31;44m\x1b""8X");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, cell(t, 0, 0).bg);
+    tsm_free(t);
+}
+
+void test_decrc_without_decsc_on_alt_screen(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[?1049h\x1b[3;5H\x1b[31m\x1b""8X");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+void test_ris_forgets_saved_cursor(void)
+{
+    tsm_t *t = tsm_new(20, 6, 0);
+    feed(t, "\x1b[4;7H\x1b[31m\x1b""7\x1b""c\x1b""8Z");
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+
+    feed(t, "\x1b[4;7H\x1b[31m\x1b""7");
+    tsm_reset(t);
+    feed(t, "\x1b""8Z");
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+/* terminfo is2/rs2 for xterm-256color: what `tput init` sends. */
+#define XTERM_IS2 "\x1b[!p\x1b[?3;4l\x1b[4l\x1b>"
+
+void test_decstr_resets_modes(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    /* IRM, DECOM, no auto-wrap, hidden cursor, application cursor keys */
+    feed(t, "\x1b[4h\x1b[?6;1h\x1b[?7;25l");
+    feed(t, XTERM_IS2);
+    TEST_ASSERT_TRUE(cursor_visible(t));
+    TEST_ASSERT_FALSE(tsm_app_cursor_keys(t));
+
+    feed(t, "\x1b[1;1Habc\x1b[1;1HX");             /* replace, not insert */
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('b', cp_at(t, 1, 0));
+
+    feed(t, "\x1b[1;9H123");                        /* auto-wrap is back */
+    TEST_ASSERT_EQUAL_HEX16('3', cp_at(t, 0, 1));
+    tsm_free(t);
+}
+
+void test_decstr_resets_scroll_region_and_origin(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    feed(t, "\x1b[2;3r\x1b[?6h");
+    feed(t, "\x1b[!p");
+    feed(t, "\x1b[1;1H");
+    TEST_ASSERT_EQUAL_INT(0, cursor_row(t));        /* DECOM is off */
+    feed(t, "\x1b[5;1HA\nB");                       /* LF on the last row */
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 0, 3));   /* whole screen scrolled */
+    TEST_ASSERT_EQUAL_HEX16('B', cp_at(t, 1, 4));
+    tsm_free(t);
+}
+
+void test_decstr_resets_rendition_and_charset(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    feed(t, "\x1b[1;4;31;44m\x1b(0\x1b)0\x0e");
+    feed(t, "\x1b[!pq");
+    tsm_cell_t c = cell(t, 0, 0);
+    TEST_ASSERT_EQUAL_HEX16('q', c.cp);             /* not a line-drawing glyph */
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, c.fg);
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_BG, c.bg);
+    TEST_ASSERT_EQUAL_HEX8(0, c.attrs);
+    tsm_free(t);
+}
+
+void test_decstr_forgets_saved_cursor(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    feed(t, "\x1b[3;4H\x1b[31m\x1b""7\x1b[!p\x1b""8X");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+/* A soft reset is not RIS: the page, the cursor, the alt screen and the
+ * history all stay. */
+void test_decstr_keeps_screen_cursor_and_history(void)
+{
+    tsm_t *t = sb_term(100, 6);
+    int history = tsm_sb_len(t);
+    clear_response();
+    tsm_set_response_cb(t, capture_response, NULL);
+    feed(t, "\x1b[2;3HK");
+    feed(t, "\x1b[!p");
+    TEST_ASSERT_EQUAL_HEX16('K', cp_at(t, 2, 1));
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    TEST_ASSERT_EQUAL_INT(history, tsm_sb_len(t));
+    TEST_ASSERT_EQUAL_size_t(0, s_resp_len);
+
+    feed(t, "\x1b[?1049h\x1b[2;3HA\x1b[!p");
+    TEST_ASSERT_EQUAL_HEX16('A', cp_at(t, 2, 1));   /* still the alt page */
+    feed(t, "\x1b[?1049l");
+    TEST_ASSERT_EQUAL_HEX16('K', cp_at(t, 2, 1));
+    TEST_ASSERT_EQUAL_INT(3, cursor_col(t));        /* the ?1049 cursor too */
+    TEST_ASSERT_EQUAL_INT(1, cursor_row(t));
+    tsm_free(t);
+}
+
+/* Only CSI ! p is DECSTR. The lookalikes change nothing. */
+void test_decstr_lookalikes_are_ignored(void)
+{
+    tsm_t *t = tsm_new(10, 5, 0);
+    feed(t, "\x1b[?25l\x1b[31m");
+    feed(t, "\x1b[p\x1b[?!p\x1b[>!p\x1b[\"p\x1b[!q\x1b[!\"pX");
+    TEST_ASSERT_FALSE(cursor_visible(t));
+    TEST_ASSERT_EQUAL_HEX16(color_ansi(1), cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+void test_alt_entry_keeps_active_charset_and_ris_clears_alt_slot(void)
+{
+    tsm_t *t = tsm_new(10, 4, 0);
+    feed(t, "\x1b)0\x0e\x1b[?1049hq");
+    TEST_ASSERT_EQUAL_HEX16(0x2500, cp_at(t, 0, 0));
+    feed(t, "\x1b[3;4H\x1b[31m\x1b" "7\x1b" "c");
+    feed(t, "\x1b[?1049h\x1b" "8q");
+    TEST_ASSERT_EQUAL_HEX16('q', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(COLOR_DEFAULT_FG, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+void test_decstr_preserves_pending_wrap_and_lnm(void)
+{
+    tsm_t *t = tsm_new(4, 3, 0);
+    feed(t, "\x1b[20habcd\x1b[!pX");
+    TEST_ASSERT_EQUAL_HEX16('X', cp_at(t, 0, 1));
+    feed(t, "\nY");
+    TEST_ASSERT_EQUAL_HEX16('Y', cp_at(t, 0, 2));
+    tsm_free(t);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_alt_entry_keeps_active_charset_and_ris_clears_alt_slot);
+    RUN_TEST(test_decstr_preserves_pending_wrap_and_lnm);
+    RUN_TEST(test_private_mode_intermediates_cannot_change_modes);
+    RUN_TEST(test_csi_rep_matches_literal_printing);
+    RUN_TEST(test_csi_rep_at_nowrap_right_edge_uses_last_print);
     RUN_TEST(test_large_cursor_movement_clamps_before_addition);
     RUN_TEST(test_large_origin_position_clamps_before_addition);
     RUN_TEST(test_large_erase_count_clamps_before_addition);
@@ -1521,6 +2213,56 @@ int main(void)
     RUN_TEST(test_sb_hard_reset_clears_history);
     RUN_TEST(test_sb_partial_region_scroll_is_not_history);
     RUN_TEST(test_sb_ring_wraps_in_order);
+    RUN_TEST(test_csi_rep_repeats_last_char);
+    RUN_TEST(test_csi_rep_default_and_zero_mean_one);
+    RUN_TEST(test_csi_rep_uses_current_sgr);
+    RUN_TEST(test_csi_rep_repeats_dec_graphics_glyph);
+    RUN_TEST(test_csi_rep_repeats_utf8_char);
+    RUN_TEST(test_csi_rep_wraps_from_last_column);
+    RUN_TEST(test_csi_rep_scrolls_at_bottom);
+    RUN_TEST(test_csi_rep_without_autowrap_stops_at_margin);
+    RUN_TEST(test_csi_rep_at_line_start_is_noop);
+    RUN_TEST(test_csi_rep_insert_mode_shifts_line);
+    RUN_TEST(test_csi_rep_huge_count_is_bounded);
+    RUN_TEST(test_csi_rep_marks_rows_dirty);
+    RUN_TEST(test_csi_rep_ignores_prefixed_forms);
+    RUN_TEST(test_csi_cbt_moves_to_previous_tab_stop);
+    RUN_TEST(test_csi_cht_moves_to_next_tab_stop);
+    RUN_TEST(test_csi_cbt_clears_pending_wrap);
+
+    /* mode lists */
+    RUN_TEST(test_decset_list_cvvis_shows_cursor);
+    RUN_TEST(test_decrst_list_resets_every_mode);
+    RUN_TEST(test_decset_list_applies_in_order);
+    RUN_TEST(test_decset_list_skips_empty_and_unknown_slots);
+    RUN_TEST(test_decset_list_counts_one_bsu);
+    RUN_TEST(test_decset_list_sends_no_response);
+    RUN_TEST(test_sm_rm_list_sets_and_resets_irm_and_lnm);
+
+    /* private-marker and intermediate CSI forms */
+    RUN_TEST(test_csi_modify_other_keys_is_not_sgr);
+    RUN_TEST(test_csi_private_marker_forms_are_ignored);
+    RUN_TEST(test_csi_intermediate_forms_are_ignored);
+    RUN_TEST(test_csi_plain_forms_unaffected_by_marker_gate);
+
+    /* saved-cursor slots and alt-screen entry */
+    RUN_TEST(test_alt_entry_first_page_is_visible);
+    RUN_TEST(test_alt_entry_keeps_current_rendition);
+    RUN_TEST(test_alt_reentry_does_not_resume_previous_session);
+    RUN_TEST(test_alt_decsc_keeps_1049_cursor);
+    RUN_TEST(test_alt_csi_s_and_1048_keep_1049_cursor);
+    RUN_TEST(test_primary_decsc_slot_survives_alt_47_session);
+    RUN_TEST(test_decrc_without_decsc_homes_with_defaults);
+    RUN_TEST(test_decrc_without_decsc_on_alt_screen);
+    RUN_TEST(test_ris_forgets_saved_cursor);
+
+    /* CSI ! p */
+    RUN_TEST(test_decstr_resets_modes);
+    RUN_TEST(test_decstr_resets_scroll_region_and_origin);
+    RUN_TEST(test_decstr_resets_rendition_and_charset);
+    RUN_TEST(test_decstr_forgets_saved_cursor);
+    RUN_TEST(test_decstr_keeps_screen_cursor_and_history);
+    RUN_TEST(test_decstr_lookalikes_are_ignored);
 
     return UNITY_END();
 }

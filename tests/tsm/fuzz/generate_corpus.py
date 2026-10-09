@@ -78,7 +78,7 @@ def main():
     for n in (0, 1, 15, 16, 17, 32):
         add(esc + b'[' + b'1;' * n + b'31mX', f'generated/params-{n}')
     for value in (b'0', b'1', b'2147483647', b'2147483648', b'4294967295', b'9' * 128):
-        for final in (b'A', b'B', b'C', b'D', b'E', b'F', b'H', b'X', b'S', b'T', b'@', b'P', b'm'):
+        for final in (b'A', b'B', b'C', b'D', b'E', b'F', b'H', b'X', b'S', b'T', b'@', b'P', b'm', b'b', b'I', b'Z'):
             add(esc + b'[2;3H' + esc + b'[' + value + final, f'generated/numeric-{value[:12].decode()}-{final.decode()}')
     for prefix in (b'[', b']2;', b'P1;2q', b'X', b'^', b'_'):
         for ending in (b'', b'\x18X', b'\x1aX', b'\x07X', b'\x9cX', esc + b'\\X', esc + b'[H'):
@@ -101,7 +101,7 @@ def main():
             (corpus / name).unlink(missing_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     tokens = [esc + x for x in (b'[', b']', b'P', b'\\', b'[?1049h', b'[?1049l',
-              b'[38;2;', b'[48;5;', b'[?6h', b'[2;3r', b'[6n', b'[?2026h', b'[?2026l', b'c')]
+              b'[!p', b'[!\"p', b'[?12;25h', b'[b', b'[I', b'[Z', b'[38;2;', b'[48;5;', b'[?6h', b'[2;3r', b'[6n', b'[?2026h', b'[?2026l', b'c')]
     tokens += [b'2147483647', b'2147483648', b';', b':', b'\x18', b'\x1a', b'\xc2', b'\xe2\x82\xac']
     (ROOT / 'vt.dict').write_text(''.join('"' + ''.join(f'\\x{b:02x}' for b in t) + '"\n' for t in tokens), encoding='ascii')
     print(f'{len(manifest)} seeds, {sum(item["bytes"] for item in manifest.values())} bytes')

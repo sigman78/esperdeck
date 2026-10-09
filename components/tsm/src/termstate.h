@@ -81,6 +81,8 @@ struct tsm_s {
     int  cy;            /* cursor row    (0-based) */
     bool pending_wrap;  /* next print triggers newline (auto-wrap pending) */
 
+    uint16_t last_glyph; /* REP source; zero when no graphic is available */
+
     /* Current SGR state */
     uint8_t  attrs;
     uint8_t  attrs2;
@@ -95,7 +97,7 @@ struct tsm_s {
     int scroll_top;
     int scroll_bot;
 
-    /* Saved cursor (DECSC/DECRC and DEC alt-screen auto-save) */
+    /* DECSC/DECRC slots, one per screen. ?1049 saves into the primary one. */
     tsm_cursor_save_t saved;
     tsm_cursor_save_t alt_saved;
 

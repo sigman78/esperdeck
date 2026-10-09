@@ -10,8 +10,10 @@
  *   - Scroll region (DECSTBM)
  *   - Character set designation (G0/G1: ASCII, DEC Special Graphics)
  *   - Insert / line / character erase operations
+ *   - Repeat (REP) and tab-stop motion (CHT/CBT, fixed 8-column stops)
  *   - Auto-wrap mode (DECAWM)
  *   - Origin mode (DECOM)
+ *   - Soft reset (DECSTR) and hard reset (RIS)
  *   - OSC 0/2 title (stored locally; no OS hook)
  *
  * Mouse reporting: stubs only; see TODO: MOUSE below.
@@ -248,6 +250,22 @@ static void restore_cursor(tsm_t *t, const tsm_cursor_save_t *s)
     t->pending_wrap = false;
 }
 
+/* Each screen has its own DECSC slot, as in xterm. ?1049 keeps the shell's
+ * cursor in the primary slot for the whole alt session; an ESC 7 from the
+ * app must not replace it. */
+static inline tsm_cursor_save_t *cursor_slot(tsm_t *t)
+{
+    return t->mode.decalt ? &t->alt_saved : &t->saved;
+}
+
+/* DECRC with nothing saved goes home with default rendition. A zeroed slot
+ * is not that: fg 0 is black, on a black background. */
+static void reset_cursor_slot(tsm_cursor_save_t *s)
+{
+    *s = (tsm_cursor_save_t){ .fg = COLOR_DEFAULT_FG, .bg = COLOR_DEFAULT_BG,
+                              .g0 = CHARSET_ASCII, .g1 = CHARSET_ASCII };
+}
+
 /* The ring base is per-grid state. It must travel with the cells pointer in
  * every swap. Otherwise a rotated primary screen comes back scrambled on
  * alt exit. */
@@ -272,13 +290,15 @@ static void switch_to_alt(tsm_t *t)
     t->mode.decalt = true;
     erase_screen(t);
     t->base = 0;   /* freshly erased — mapping is free to reset */
-    restore_cursor(t, &t->alt_saved);
+    /* The rendition carries over, as in xterm. less prints its first page
+     * with no SGR after ?1049h, so it must not inherit a stale one. */
+    t->cx = 0; t->cy = 0;
+    t->pending_wrap = false;
 }
 
 static void switch_to_primary(tsm_t *t)
 {
     if (!t->mode.decalt) return;
-    save_cursor(t, &t->alt_saved);
     swap_grids(t);
     t->mode.decalt = false;
     restore_cursor(t, &t->saved);
@@ -352,6 +372,88 @@ static void do_sgr(tsm_t *t, const int32_t *params, int nparams)
     }
 }
 
+/* Keep REP independent of cursor position, including a parked right margin. */
+static void do_rep(tsm_t *t, int32_t count)
+{
+    if (!t->last_glyph) return;
+
+    tsm_cell_t tmpl = { .cp = t->last_glyph,
+                        .fg = t->fg, .bg = t->bg,
+                        .attrs = t->attrs, .attrs2 = t->attrs2 };
+
+    int n = count < 1 ? 1 : count;
+    /* Once the viewport and history contain this glyph, whole further rows
+     * leave their contents unchanged. Retain the column remainder so cursor,
+     * pending wrap and the final partial row match literal printing. */
+    int64_t settle = ((int64_t)t->rows + t->sb_max + 1) * t->cols;
+    if (n > settle) n = (int)(settle + (n - settle) % t->cols);
+    if (!t->mode.decawm && n > t->cols) n = t->cols;
+    while (n-- > 0) {
+        if (t->pending_wrap) do_wrap(t);
+        if (t->mode.irm && t->cx + 1 < t->cols) {
+            memmove(cell_at(t, t->cx + 1, t->cy),
+                    cell_at(t, t->cx,     t->cy),
+                    (size_t)(t->cols - t->cx - 1) * sizeof(tsm_cell_t));
+            mark_dirty(t, t->cy, t->cx, t->cols - 1);
+        }
+        *cell_at(t, t->cx, t->cy) = tmpl;
+        mark_dirty(t, t->cy, t->cx, t->cx);
+        cursor_advance(t);
+    }
+}
+
+/* DECSET / DECRST for one private mode number. */
+static void set_private_mode(tsm_t *t, int32_t mode_n, bool set)
+{
+    switch (mode_n) {
+    case    1: t->mode.decckm   = set;                        break; /* DECCKM */
+    case    3: /* DECCOLM 80/132 — ignored */                 break;
+    case    5: /* DECSCNM reverse screen — ignored */         break;
+    case    6: t->mode.decom    = set;                        break;
+    case    7: t->mode.decawm   = set;                        break;
+    case   12: /* cursor blink — ignored */                   break;
+    case   25: t->mode.dectcem  = set;                        break;
+    case 1000: t->mode.mouse_btn = set; /* TODO: MOUSE */     break;
+    case 1006: /* SGR mouse encoding — stub */                break;
+    case   47:  /* alt screen — no cursor save (original xterm) */
+    case 1047:  /* alt screen — no cursor save (xterm variant)  */
+        if (set)   switch_to_alt(t);
+        else       switch_to_primary(t);
+        break;
+    case 1048:  /* cursor save/restore only — no screen switch  */
+        if (set)   save_cursor(t, cursor_slot(t));
+        else       restore_cursor(t, cursor_slot(t));
+        break;
+    case 1049:
+        if (set)   switch_to_alt(t);
+        else       switch_to_primary(t);
+        break;
+    case 2004: t->mode.bracketed = set; /* TODO: BRACKETED */ break;
+    case 2026: /* BSU/ESU */
+        t->mode.sync_update = set;
+        if (set) t->sync_bsu++; else t->sync_esu++;
+        break;
+    default: break;
+    }
+}
+
+/* DECSTR. The screen, the cursor position and the alt-screen state stay.
+ * Auto-wrap goes back ON, as in xterm; the DEC table turns it off, but
+ * terminfo is2 for xterm-256color sends no ?7h after CSI ! p. */
+static void do_soft_reset(tsm_t *t)
+{
+    t->attrs = 0; t->attrs2 = 0;
+    t->fg = COLOR_DEFAULT_FG; t->bg = COLOR_DEFAULT_BG;
+    t->g[0] = CHARSET_ASCII; t->g[1] = CHARSET_ASCII; t->gl = 0;
+    t->scroll_top = 0; t->scroll_bot = t->rows - 1;
+    t->mode.irm     = false;
+    t->mode.decom   = false;
+    t->mode.decckm  = false;
+    t->mode.decawm  = true;
+    t->mode.dectcem = true;
+    reset_cursor_slot(cursor_slot(t));
+}
+
 static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams)
 {
@@ -372,41 +474,25 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
                 send_response(t, buf, (size_t)n);
             return;
         }
-        if (!set && !reset) return;
-        switch (mode_n) {
-        case    1: t->mode.decckm   = set;                        break; /* DECCKM */
-        case    3: /* DECCOLM 80/132 — ignored */                 break;
-        case    5: /* DECSCNM reverse screen — ignored */         break;
-        case    6: t->mode.decom    = set;                        break;
-        case    7: t->mode.decawm   = set;                        break;
-        case   12: /* cursor blink — ignored */                   break;
-        case   25: t->mode.dectcem  = set;                        break;
-        case 1000: t->mode.mouse_btn = set; /* TODO: MOUSE */     break;
-        case 1006: /* SGR mouse encoding — stub */                break;
-        case   47:  /* alt screen — no cursor save (original xterm) */
-        case 1047:  /* alt screen — no cursor save (xterm variant)  */
-            if (set)   switch_to_alt(t);
-            else       switch_to_primary(t);
-            break;
-        case 1048:  /* cursor save/restore only — no screen switch  */
-            if (set)   save_cursor(t, &t->saved);
-            else       restore_cursor(t, &t->saved);
-            break;
-        case 1049:
-            if (set)   switch_to_alt(t);
-            else       switch_to_primary(t);
-            break;
-        case 2004: t->mode.bracketed = set; /* TODO: BRACKETED */ break;
-        case 2026: /* BSU/ESU */
-            t->mode.sync_update = set;
-            if (set) t->sync_bsu++; else t->sync_esu++;
-            break;
-        default: break;
-        }
+        if ((!set && !reset) || intermediate != 0) return;
+        /* One sequence may carry a list of modes: terminfo cvvis is
+         * CSI ? 12 ; 25 h. */
+        for (int i = 0; i < nparams; i++)
+            set_private_mode(t, params[i] < 0 ? 0 : params[i], set);
         return;
     }
 
-    /* Standard CSI sequences */
+    if (prefix == 0 && intermediate == '!' && final == 'p') {
+        do_soft_reset(t);
+        return;
+    }
+
+    /* Every case below is the unmarked form. A '<' '=' '>' marker or an
+     * intermediate byte turns the same final into another function. tsm has
+     * none of those. Vim sends CSI > 4 ; 2 m (xterm modifyOtherKeys) at
+     * startup; that is not SGR underline + dim. */
+    if (prefix != 0 || intermediate != 0) return;
+
     switch (final) {
 
     case 'A': /* CUU — cursor up */
@@ -443,6 +529,23 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
     }
     case 'd': /* VPA — vertical position absolute */
         cursor_goto(t, t->cx, (int)(p1 < 1 ? 1 : p1) - 1);
+        break;
+    case 'I': /* CHT — forward n tab stops, 8 columns apart */
+    {
+        int n = clampi(p1, 1, t->cols);
+        t->cx = clampi((t->cx / 8 + n) * 8, 0, t->cols - 1);
+        t->pending_wrap = false;
+        break;
+    }
+    case 'Z': /* CBT — back n tab stops */
+    {
+        int n = clampi(p1, 1, t->cols);
+        t->cx = clampi(((t->cx + 7) / 8 - n) * 8, 0, t->cols - 1);
+        t->pending_wrap = false;
+        break;
+    }
+    case 'b': /* REP — repeat the preceding graphic character */
+        do_rep(t, p1);
         break;
 
     case 'J': /* ED — erase display */
@@ -550,20 +653,17 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         break;
     }
     case 's': /* DECSC: save cursor. CSI s does the same thing. */
-        if (intermediate == 0 && prefix == 0)
-            save_cursor(t, &t->saved);
+        save_cursor(t, cursor_slot(t));
         break;
     case 'u': /* DECRC: restore cursor. CSI u does the same thing. */
-        if (intermediate == 0 && prefix == 0)
-            restore_cursor(t, &t->saved);
+        restore_cursor(t, cursor_slot(t));
         break;
     case 'h': /* SM — set mode */
-        if (p1 == 4)  t->mode.irm = true;   /* IRM */
-        if (p1 == 20) t->mode.lnm = true;   /* LNM */
-        break;
     case 'l': /* RM — reset mode */
-        if (p1 == 4)  t->mode.irm = false;
-        if (p1 == 20) t->mode.lnm = false;
+        for (int i = 0; i < nparams; i++) {
+            if (params[i] == 4)  t->mode.irm = (final == 'h');   /* IRM */
+            if (params[i] == 20) t->mode.lnm = (final == 'h');   /* LNM */
+        }
         break;
     case 'n': /* DSR — device status report */
         if (p1 == 5) {
@@ -577,7 +677,7 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         }
         break;
     case 'c': /* DA1 — device attributes */
-        if (prefix == 0 && p1 <= 0)
+        if (p1 <= 0)
             send_response(t, "\x1b[?1;2c", 7);
         break;
     default:  break;
@@ -601,7 +701,10 @@ static void do_hard_reset(tsm_t *t)
     t->scroll_top = 0; t->scroll_bot = t->rows - 1;
     memset(&t->mode, 0, sizeof(t->mode));
     t->mode.decawm = true; t->mode.dectcem = true;
+    t->last_glyph = 0;
     t->pending_wrap = false;
+    reset_cursor_slot(&t->saved);
+    reset_cursor_slot(&t->alt_saved);
 }
 
 static void do_esc(tsm_t *t, uint8_t intermediate, uint8_t final)
@@ -612,8 +715,8 @@ static void do_esc(tsm_t *t, uint8_t intermediate, uint8_t final)
         t->g[1] = (final == '0') ? CHARSET_DEC_GFX : CHARSET_ASCII;
     } else if (intermediate == 0) {
         switch (final) {
-        case '7': save_cursor(t, &t->saved);    break; /* DECSC */
-        case '8': restore_cursor(t, &t->saved); break; /* DECRC */
+        case '7': save_cursor(t, cursor_slot(t));    break; /* DECSC */
+        case '8': restore_cursor(t, cursor_slot(t)); break; /* DECRC */
         case 'D': /* IND — index (like LF) */
             if (t->cy == t->scroll_bot) scroll_up(t, 1);
             else if (t->cy + 1 < t->rows) t->cy++;
@@ -709,6 +812,7 @@ static void do_print_span_irm(tsm_t *t, const uint32_t *cps, int count)
         }
 
         tsm_cell_t *c = cell_at(t, t->cx, t->cy);
+        t->last_glyph = glyph;
         c->cp     = glyph;
         c->fg     = t->fg;
         c->bg     = t->bg;
@@ -762,6 +866,7 @@ static inline void do_print_span(tsm_t *t, const uint32_t *cps, int count)
             if (t->mode.decawm) t->pending_wrap = true;
         }
     }
+    if (count > 0) t->last_glyph = tmpl.cp;
 }
 
 #ifdef CONFIG_VTERM_BENCH
@@ -781,12 +886,14 @@ static void on_print(const uint32_t *cps, int ncp, void *user)
 static void on_c0(uint8_t byte, void *user)
 {
     TSM_BENCH_T0();
+    ((tsm_t *)user)->last_glyph = 0;
     do_c0((tsm_t *)user, byte);
     TSM_BENCH_ADD(c0_cycles);
 }
 static void on_esc(uint8_t intermediate, uint8_t final, void *user)
 {
     TSM_BENCH_T0();
+    ((tsm_t *)user)->last_glyph = 0;
     do_esc((tsm_t *)user, intermediate, final);
     TSM_BENCH_ADD(other_cycles);
 }
@@ -794,12 +901,15 @@ static void on_csi(uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams, void *user)
 {
     TSM_BENCH_T0();
+    if (prefix || intermediate || (final != 'b' && final != 'm'))
+        ((tsm_t *)user)->last_glyph = 0;
     do_csi((tsm_t *)user, prefix, intermediate, final, params, nparams);
     TSM_BENCH_ADD(csi_cycles);
 }
 static void on_osc(const uint8_t *data, int len, void *user)
 {
     TSM_BENCH_T0();
+    ((tsm_t *)user)->last_glyph = 0;
     do_osc((tsm_t *)user, data, len);
     TSM_BENCH_ADD(other_cycles);
 }
@@ -807,7 +917,8 @@ static void on_dcs(uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams, void *user)
 {
     (void)prefix; (void)intermediate; (void)final;
-    (void)params; (void)nparams; (void)user;
+    (void)params; (void)nparams;
+    ((tsm_t *)user)->last_glyph = 0;
 }
 
 #undef TSM_BENCH_T0
@@ -877,6 +988,9 @@ tsm_t *tsm_new(int cols, int rows, int sb_lines)
     t->g[0] = CHARSET_ASCII;
     t->g[1] = CHARSET_ASCII;
     t->gl   = 0;
+
+    reset_cursor_slot(&t->saved);
+    reset_cursor_slot(&t->alt_saved);
 
     erase_screen(t);
     tsm_clear_dirty(t);
