@@ -263,7 +263,8 @@ static inline void st_csi_param(vtparse_t *p, uint8_t b)
 static inline void st_csi_int(vtparse_t *p, uint8_t b)
 {
     if (b >= 0x20 && b <= 0x2F) {
-        do_collect(p, b);
+        /* Unsupported multi-intermediate functions must not alias one-byte forms. */
+        p->state = VTP_ST_CSI_IGNORE;
     } else if (b >= 0x30 && b <= 0x3F) {
         /* Parameter byte after intermediate → malformed → ignore. */
         p->state = VTP_ST_CSI_IGNORE;

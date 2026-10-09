@@ -848,9 +848,27 @@ void test_numeric_parameter_saturates(void)
     TEST_ASSERT_EQUAL_INT32(INT32_MAX, g_events[0].as_csi.params[1]);
 }
 
+void test_csi_extra_intermediates_are_ignored_across_feeds(void)
+{
+    const char seq[] = "\x1b[!\"p\x1b[!pX";
+    for (size_t split = 0; split < sizeof(seq); split++) {
+        setUp();
+        vtparse_feed(&g_parser, (const uint8_t *)seq, split);
+        vtparse_feed(&g_parser, (const uint8_t *)seq + split,
+                     sizeof(seq) - 1 - split);
+        TEST_ASSERT_EQUAL_INT(2, g_event_count);
+        TEST_ASSERT_EQUAL_INT(VT_EV_CSI, g_events[0].type);
+        TEST_ASSERT_EQUAL_UINT8('!', g_events[0].as_csi.intermediate);
+        TEST_ASSERT_EQUAL_UINT8('p', g_events[0].as_csi.final);
+        TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[1].type);
+        TEST_ASSERT_EQUAL_UINT32('X', g_events[1].as_print.cps[0]);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_csi_extra_intermediates_are_ignored_across_feeds);
     RUN_TEST(test_numeric_parameter_saturates);
 
     /* C0 controls */
