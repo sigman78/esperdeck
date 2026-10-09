@@ -383,6 +383,41 @@ static void do_rep(tsm_t *t, int32_t count)
     }
 }
 
+/* DECSET / DECRST for one private mode number. */
+static void set_private_mode(tsm_t *t, int32_t mode_n, bool set)
+{
+    switch (mode_n) {
+    case    1: t->mode.decckm   = set;                        break; /* DECCKM */
+    case    3: /* DECCOLM 80/132 — ignored */                 break;
+    case    5: /* DECSCNM reverse screen — ignored */         break;
+    case    6: t->mode.decom    = set;                        break;
+    case    7: t->mode.decawm   = set;                        break;
+    case   12: /* cursor blink — ignored */                   break;
+    case   25: t->mode.dectcem  = set;                        break;
+    case 1000: t->mode.mouse_btn = set; /* TODO: MOUSE */     break;
+    case 1006: /* SGR mouse encoding — stub */                break;
+    case   47:  /* alt screen — no cursor save (original xterm) */
+    case 1047:  /* alt screen — no cursor save (xterm variant)  */
+        if (set)   switch_to_alt(t);
+        else       switch_to_primary(t);
+        break;
+    case 1048:  /* cursor save/restore only — no screen switch  */
+        if (set)   save_cursor(t, &t->saved);
+        else       restore_cursor(t, &t->saved);
+        break;
+    case 1049:
+        if (set)   switch_to_alt(t);
+        else       switch_to_primary(t);
+        break;
+    case 2004: t->mode.bracketed = set; /* TODO: BRACKETED */ break;
+    case 2026: /* BSU/ESU */
+        t->mode.sync_update = set;
+        if (set) t->sync_bsu++; else t->sync_esu++;
+        break;
+    default: break;
+    }
+}
+
 static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final,
                    const int32_t *params, int nparams)
 {
@@ -403,41 +438,20 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
                 send_response(t, buf, (size_t)n);
             return;
         }
-        if (!set && !reset) return;
-        switch (mode_n) {
-        case    1: t->mode.decckm   = set;                        break; /* DECCKM */
-        case    3: /* DECCOLM 80/132 — ignored */                 break;
-        case    5: /* DECSCNM reverse screen — ignored */         break;
-        case    6: t->mode.decom    = set;                        break;
-        case    7: t->mode.decawm   = set;                        break;
-        case   12: /* cursor blink — ignored */                   break;
-        case   25: t->mode.dectcem  = set;                        break;
-        case 1000: t->mode.mouse_btn = set; /* TODO: MOUSE */     break;
-        case 1006: /* SGR mouse encoding — stub */                break;
-        case   47:  /* alt screen — no cursor save (original xterm) */
-        case 1047:  /* alt screen — no cursor save (xterm variant)  */
-            if (set)   switch_to_alt(t);
-            else       switch_to_primary(t);
-            break;
-        case 1048:  /* cursor save/restore only — no screen switch  */
-            if (set)   save_cursor(t, &t->saved);
-            else       restore_cursor(t, &t->saved);
-            break;
-        case 1049:
-            if (set)   switch_to_alt(t);
-            else       switch_to_primary(t);
-            break;
-        case 2004: t->mode.bracketed = set; /* TODO: BRACKETED */ break;
-        case 2026: /* BSU/ESU */
-            t->mode.sync_update = set;
-            if (set) t->sync_bsu++; else t->sync_esu++;
-            break;
-        default: break;
-        }
+        if ((!set && !reset) || intermediate != 0) return;
+        /* One sequence may carry a list of modes: terminfo cvvis is
+         * CSI ? 12 ; 25 h. */
+        for (int i = 0; i < nparams; i++)
+            set_private_mode(t, params[i] < 0 ? 0 : params[i], set);
         return;
     }
 
-    /* Standard CSI sequences */
+    /* Every case below is the unmarked form. A '<' '=' '>' marker or an
+     * intermediate byte turns the same final into another function. tsm has
+     * none of those. Vim sends CSI > 4 ; 2 m (xterm modifyOtherKeys) at
+     * startup; that is not SGR underline + dim. */
+    if (prefix != 0 || intermediate != 0) return;
+
     switch (final) {
 
     case 'A': /* CUU — cursor up */
@@ -490,8 +504,7 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         break;
     }
     case 'b': /* REP — repeat the preceding graphic character */
-        if (prefix == 0 && intermediate == 0)
-            do_rep(t, p1);
+        do_rep(t, p1);
         break;
 
     case 'J': /* ED — erase display */
@@ -599,20 +612,17 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         break;
     }
     case 's': /* DECSC: save cursor. CSI s does the same thing. */
-        if (intermediate == 0 && prefix == 0)
-            save_cursor(t, &t->saved);
+        save_cursor(t, &t->saved);
         break;
     case 'u': /* DECRC: restore cursor. CSI u does the same thing. */
-        if (intermediate == 0 && prefix == 0)
-            restore_cursor(t, &t->saved);
+        restore_cursor(t, &t->saved);
         break;
     case 'h': /* SM — set mode */
-        if (p1 == 4)  t->mode.irm = true;   /* IRM */
-        if (p1 == 20) t->mode.lnm = true;   /* LNM */
-        break;
     case 'l': /* RM — reset mode */
-        if (p1 == 4)  t->mode.irm = false;
-        if (p1 == 20) t->mode.lnm = false;
+        for (int i = 0; i < nparams; i++) {
+            if (params[i] == 4)  t->mode.irm = (final == 'h');   /* IRM */
+            if (params[i] == 20) t->mode.lnm = (final == 'h');   /* LNM */
+        }
         break;
     case 'n': /* DSR — device status report */
         if (p1 == 5) {
@@ -626,7 +636,7 @@ static void do_csi(tsm_t *t, uint8_t prefix, uint8_t intermediate, uint8_t final
         }
         break;
     case 'c': /* DA1 — device attributes */
-        if (prefix == 0 && p1 <= 0)
+        if (p1 <= 0)
             send_response(t, "\x1b[?1;2c", 7);
         break;
     default:  break;
