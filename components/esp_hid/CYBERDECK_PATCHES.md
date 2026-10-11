@@ -1,8 +1,8 @@
 # Vendored esp_hid (from ESP-IDF v5.5.2) — why this copy exists
 
 This is a copy of IDF v5.5.2's `components/esp_hid` (test_apps removed),
-with patches to `src/nimble_hidh.c` and one line in `src/esp_hidh.c`. All
-patches are marked `CYBERDECK PATCH A..I` in the source. A project component with the same name shadows
+with patches to `src/nimble_hidh.c`, `src/esp_hid_common.c` and `src/esp_hidh.c`. All
+patches are marked `CYBERDECK PATCH A..J` in the source. A project component with the same name shadows
 the IDF one at build time. (HID = Human Interface Device, the Bluetooth
 keyboard/mouse protocol; NimBLE is the Bluetooth Low Energy host stack
 this backend runs on.)
@@ -29,8 +29,9 @@ or aborted the firmware.
 | G | **Don't free the in-flight device under its opener.** `BLE_GAP_EVENT_DISCONNECT` posted `CLOSE_EVENT` (whose handler frees the dev) while the opener task was still discovering services on it. This caused a use-after-free, plus a CLOSE for a device the app had never seen OPEN. Now the dev being opened just gets its link marked dead and the opener released; it unwinds and frees on its own. Report subscription also moved *before* `OPEN_EVENT`, so the app only ever sees an OPEN for a fully live device. |
 | H | `assert(status == 0)` after each discovery step used to abort the whole firmware whenever a peer disconnected mid-discovery. This is now logged and unwound instead. Also fixed: no more `malloc(0)` when the peer has no HID service. |
 | I | **Open-failure path hardening** (2026-10-11, after a boot-loop on a late keyboard). `esp_hidh_dev_resources_free` indexed a NULL `report_maps` when discovery timed out after the service count was taken (the panic). Discovery callbacks wrote through `arg` into the opener's stack arrays with no bounds check, even after a timeout had unwound that frame; they now carry a generation token (`disc_begin`/`disc_end`) and the arrays are bounded (`HIDH_SVC_MAX`/`CHR_MAX`/`DSC_MAX`). `read_char`/`read_descr` left `*out` stale on failure, so the unconditional `free(rdata)` after a failed PnP read freed the device name a second time. `protocol_mode` and several empty read results leaked per open. A connect that completes after the opener gave up is now terminated instead of orphaned. `conn_id` starts at -1 (calloc's 0 is a live handle). |
+| J | **Report-map parser hardening** (`src/esp_hid_common.c`, host-tested in `tests/esp_hid`). The parser keeps file-static state; a failed parse left the step, collection depth and temp map behind, so the next descriptor started mid-collection, and a descriptor that completed no report (empty or truncated) dereferenced a NULL temp map. State now resets on entry and every exit, and bit counts saturate instead of overflowing `int`. Also: `esp_hidh_dev_version_get` had its existence check inverted, and `esp_ble_hidh_dev_report_read` leaked the read buffer. |
 
-E–I have no upstream equivalent. They must be re-applied on top of
+E–J have no upstream equivalent. They must be re-applied on top of
 whatever upstream ships, unless it has already fixed the same paths. The
 component CMakeLists hard-fails on any IDF version other than v5.5.2, so
 an SDK update can't silently keep using stale vendored sources.

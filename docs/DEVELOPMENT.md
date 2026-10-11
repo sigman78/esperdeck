@@ -116,6 +116,8 @@ Five host-compiled Unity suites (no ESP-IDF required) live under
   keyboard path)
 - **`vtkeys`** — the shared key-sequence encoder (cursor modes, xterm
   modifiers)
+- **`esp_hid`** — the HID report-map parser (descriptor bytes straight
+  from the BLE peer: truncated, oversized and malformed input)
 
 Each suite builds the same way:
 

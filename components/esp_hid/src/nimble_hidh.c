@@ -1061,6 +1061,7 @@ static esp_err_t esp_ble_hidh_dev_report_read(esp_hidh_dev_t *dev, size_t map_in
         }
         *value_len = len;
         memcpy(value, v, len);
+        free(v);   /* PATCH I: read_char hands over a malloc'd buffer */
         return ESP_OK;
     }
     ESP_LOGE(TAG, "%s report %d read failed: 0x%x", esp_hid_report_type_str(report_type), report_id, s);

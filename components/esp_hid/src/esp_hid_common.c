@@ -6,6 +6,7 @@
 
 #include <string.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_hid_common.h"
@@ -53,6 +54,29 @@ static uint16_t s_report_count = 0;
 
 static bool s_new_map = false;
 static temp_hid_report_map_t *s_temp_hid_report_map;
+
+/* CYBERDECK PATCH J: the parser is file-static state. A failed parse used to
+ * leave the step, depth and temp map behind, so the next descriptor (next
+ * device, or the second HID service of one) started mid-collection and
+ * either failed or crashed on a NULL temp map. Reset on entry and on exit. */
+static void parse_reset(void)
+{
+    s_parse_step = PARSE_WAIT_USAGE_PAGE;
+    s_collection_depth = 0;
+    memset(&s_report_params, 0, sizeof(s_report_params));
+    s_report_size = 0;
+    s_report_count = 0;
+    s_new_map = true;
+    free(s_temp_hid_report_map);
+    s_temp_hid_report_map = NULL;
+}
+
+/* Add size*count bits to a report length without int overflow; saturate. */
+static inline void add_bits(uint16_t *len, uint32_t size, uint32_t count)
+{
+    uint32_t bits = (uint32_t)*len + size * count;
+    *len = bits > 0xFFFFu ? 0xFFFFu : (uint16_t)bits;
+}
 
 static int add_report(temp_hid_report_map_t *map, esp_hid_report_item_t *item)
 {
@@ -294,11 +318,11 @@ static int handle_cmd(hid_report_cmd_t *cmd)
         } else if (cmd->cmd == HID_RM_REPORT_COUNT) {
             s_report_count = cmd->value;
         } else if (cmd->cmd == HID_RM_INPUT) {
-            s_report_params.input_len += (s_report_size * s_report_count);
+            add_bits(&s_report_params.input_len, s_report_size, s_report_count);
         } else if (cmd->cmd == HID_RM_OUTPUT) {
-            s_report_params.output_len += (s_report_size * s_report_count);
+            add_bits(&s_report_params.output_len, s_report_size, s_report_count);
         } else if (cmd->cmd == HID_RM_FEATURE) {
-            s_report_params.feature_len += (s_report_size * s_report_count);
+            add_bits(&s_report_params.feature_len, s_report_size, s_report_count);
         } else if (cmd->cmd == HID_RM_COLLECTION) {
             s_collection_depth += 1;
         } else if (cmd->cmd == HID_RM_END_COLLECTION) {
@@ -336,39 +360,46 @@ esp_hid_report_map_t *esp_hid_parse_report_map(const uint8_t *hid_rm, size_t hid
 {
     size_t index = 0;
     int res;
-    s_new_map = true;
+    parse_reset();   /* PATCH J */
 
     while (index < hid_rm_len) {
         hid_report_cmd_t *cmd;
         res = parse_cmd(hid_rm, hid_rm_len, index, &cmd);
         if (res < 0) {
             ESP_LOGE(TAG, "Failed parsing the descriptor at index: %u", index);
+            parse_reset();
             return NULL;
         }
         index += res;
         res = handle_cmd(cmd);
         free(cmd);
         if (res != 0) {
+            parse_reset();
             return NULL;
         }
+    }
+
+    temp_hid_report_map_t *map = s_temp_hid_report_map;
+    if (map == NULL || s_parse_step != PARSE_WAIT_USAGE_PAGE) {
+        /* PATCH J: no report was completed (empty or truncated descriptor);
+         * map was NULL here and got dereferenced below. */
+        ESP_LOGE(TAG, "descriptor ended without a complete report map");
+        parse_reset();
+        return NULL;
     }
 
     esp_hid_report_map_t *out = (esp_hid_report_map_t *)calloc(1, sizeof(esp_hid_report_map_t));
     if (out == NULL) {
         ESP_LOGE(TAG, "hid_report_map malloc failed");
-        free(s_temp_hid_report_map);
-        s_temp_hid_report_map = NULL;
+        parse_reset();
         return NULL;
     }
-
-    temp_hid_report_map_t *map = s_temp_hid_report_map;
 
     esp_hid_report_item_t *reports = (esp_hid_report_item_t *)calloc(1, map->reports_len * sizeof(esp_hid_report_item_t));
     if (reports == NULL) {
         ESP_LOGE(TAG, "hid_report_items malloc failed! %u maps", map->reports_len);
         free(out);
-        free(s_temp_hid_report_map);
-        s_temp_hid_report_map = NULL;
+        parse_reset();
         return NULL;
     }
 
@@ -394,8 +425,7 @@ esp_hid_report_map_t *esp_hid_parse_report_map(const uint8_t *hid_rm, size_t hid
     out->reports_len = map->reports_len;
     memcpy(reports, map->reports, map->reports_len * sizeof(esp_hid_report_item_t));
     out->reports = reports;
-    free(s_temp_hid_report_map);
-    s_temp_hid_report_map = NULL;
+    parse_reset();
 
     return out;
 }
