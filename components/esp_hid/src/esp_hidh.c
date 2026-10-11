@@ -457,7 +457,7 @@ uint16_t esp_hidh_dev_product_id_get(esp_hidh_dev_t *dev)
 uint16_t esp_hidh_dev_version_get(esp_hidh_dev_t *dev)
 {
     uint16_t ret = 0;
-    if (!esp_hidh_dev_exists(dev)) {
+    if (esp_hidh_dev_exists(dev)) {   /* upstream had the test inverted */
         esp_hidh_dev_lock(dev);
         ret = dev->config.version;
         esp_hidh_dev_unlock(dev);
