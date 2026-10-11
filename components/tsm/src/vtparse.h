@@ -7,11 +7,9 @@
  * Based on the Paul Williams DEC/ANSI state diagram:
  *   https://vt100.net/emu/dec_ansi_parser
  *
- * UTF-8 note: This parser operates in UTF-8 mode.  Multi-byte UTF-8
- * sequences are decoded only in the GROUND state (printable output).
- * All VT control sequences use 7-bit ASCII bytes exclusively.
- * 8-bit C1 shortcuts (0x80–0x9F) are not used; only 0x9C (ST) is
- * recognised in string states for termination.
+ * UTF-8 is decoded in GROUND and tracked but discarded in string states.
+ * A continuation byte of 0x9C cannot terminate a string; standalone 0x9C
+ * retains its ST behavior. Other C1 shortcuts are unsupported.
  *
  * SPDX-License-Identifier: MIT
  */

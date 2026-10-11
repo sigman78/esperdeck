@@ -45,6 +45,12 @@ void tsm_set_response_cb(tsm_t *t, tsm_response_fn_t cb, void *user)
     t->response_user = user;
 }
 
+void tsm_set_bell_cb(tsm_t *t, tsm_bell_fn_t cb, void *user)
+{
+    t->bell_cb = cb;
+    t->bell_user = user;
+}
+
 /* Resolve a CSI parameter; return def if the slot is -1 (omitted). */
 static inline int32_t param(const int32_t *params, int nparams, int i, int32_t def)
 {
@@ -758,6 +764,9 @@ static void do_osc(tsm_t *t, const uint8_t *data, int len)
 static void do_c0(tsm_t *t, uint8_t byte)
 {
     switch (byte) {
+    case 0x07: /* BEL */
+        if (t->bell_cb) t->bell_cb(t->bell_user);
+        break;
     case 0x08: /* BS */
         if (t->cx > 0) { t->cx--; t->pending_wrap = false; }
         break;

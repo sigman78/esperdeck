@@ -153,6 +153,23 @@ static inline void enter_esc(vtparse_t *p)
     p->state = VTP_ST_ESC;
 }
 
+/* Track UTF-8 in strings so continuation bytes cannot act as ST. */
+static inline bool st_is_string(const vtparse_t *p)
+{
+    switch (p->state) {
+        case VTP_ST_OSC_STRING:
+        case VTP_ST_DCS_ENTRY:
+        case VTP_ST_DCS_PARAM:
+        case VTP_ST_DCS_INT:
+        case VTP_ST_DCS_PASS:
+        case VTP_ST_DCS_IGNORE:
+        case VTP_ST_SOS_PM_APC:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static inline void st_ground(vtparse_t *p, uint8_t b)
 {
     if (b <= 0x1F) {
@@ -480,7 +497,7 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
         }
 
         if (b >= 0x80u) {
-            /* 0x9C: 8-bit String Terminator — terminates OSC/DCS. */
+            /* Pending UTF-8 consumed continuation bytes above; only bare ST remains. */
             if (b == 0x9Cu) {
                 flush_print(p);
                 if (p->state == VTP_ST_OSC_STRING)
@@ -491,14 +508,16 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
                 enter_ground(p);
                 continue;
             }
-            /* UTF-8 lead bytes are valid only in GROUND state. */
-            if (p->state == VTP_ST_GROUND) {
+            /* Discard string codepoints without storing or printing them. */
+            if (p->state == VTP_ST_GROUND || st_is_string(p)) {
                 if (b >= 0xC2u && b <= 0xF4u) {
                     if (utf8_start(p, b))
                         continue;
                 }
-                /* Invalid lead or out-of-range → replacement character. */
-                append_print(p, 0xFFFDu);
+                if (p->state == VTP_ST_GROUND) {
+                    /* Invalid lead or out-of-range → replacement character. */
+                    append_print(p, 0xFFFDu);
+                }
             }
             /* In non-GROUND states, the parser discards unexpected high bytes. */
             continue;
