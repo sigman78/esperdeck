@@ -185,7 +185,7 @@ flat. The boot copy of the selected size is what lives in internal DRAM.
 The tables are **committed generated sources**
 (`components/font/terminusWxH.c`), emitted by `tools/gen_terminus.py`. The
 tool downloads the pinned upstream Terminus BDF release (cached under
-`tools/.cache/`) and merges the 17 original, size-specific TUI drawings
+`tools/.cache/`) and merges the 15 original, size-specific TUI drawings
 from `components/font/tui_symbols.json` before encoding. It verifies that
 every codepoint decodes pixel-exact against its source cells, and writes
 each file with size stats in its header. The format and runtime decoder
