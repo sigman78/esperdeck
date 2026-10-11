@@ -19,8 +19,36 @@ CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 # shell's main task allocates its stack from internal DRAM explicitly.
 CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
 CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
-# Deliberately NOT setting CONFIG_SPIRAM_USE_MALLOC: plain malloc() must
-# stay internal-DRAM — the display ISR reads app buffers allocated with it.
+# Plain malloc() must stay internal-DRAM — the display ISR reads app buffers
+# allocated with it while the flash cache is off. IDF's own default for this
+# choice is SPIRAM_USE_MALLOC, so it has to be pinned here; a config
+# regenerated without it routes large mallocs to PSRAM.
+CONFIG_SPIRAM_USE_CAPS_ALLOC=y
+
+# ---- internal-DRAM diet ---------------------------------------------------
+# ~60 KB of internal DRAM is free after display+vterm. Everything below was
+# measured on the deck; a config regenerated without it boot-loops with
+# "no DRAM for 100x30 overlay" (int heap ~9 KB after SSH init vs ~74 KB).
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=6144
+# Wi-Fi: small static pools, dynamic RX, no IRAM copies of the driver hot
+# path (IRAM is as scarce as DRAM here), no enterprise/TLS-client support.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=3
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=5
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_RX_BA_WIN=3
+CONFIG_ESP_WIFI_TX_BA_WIN=3
+CONFIG_ESP_WIFI_DYNAMIC_RX_MGMT_BUFFER=y
+CONFIG_ESP_WIFI_RX_MGMT_BUF_NUM_DEF=3
+CONFIG_ESP_WIFI_IRAM_OPT=n
+CONFIG_ESP_WIFI_RX_IRAM_OPT=n
+CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n
+CONFIG_ESP_WIFI_MBEDTLS_TLS_CLIENT=n
+# mbedTLS (libssh2's crypto) allocates from PSRAM; bound out-of-order TCP
+# segments so a lossy link cannot eat the pbuf pool.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
 
 # ---- display ------------------------------------------------------------
 # Keep the RGB bounce-buffer ISR alive during flash writes (NVS bond
