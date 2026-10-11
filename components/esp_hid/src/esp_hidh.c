@@ -703,6 +703,7 @@ static void esp_hidh_dev_resources_free(esp_hidh_dev_t *dev)
         dev->reports = dev->reports->next;
         free(r);
     }
+    free(dev->protocol_mode);   /* the NimBLE backend allocates it; nothing freed it */
     esp_hidh_dev_unlock(dev);
     if (dev->mutex) {
         vSemaphoreDelete(dev->mutex);
