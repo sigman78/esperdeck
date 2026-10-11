@@ -7,9 +7,11 @@
  * Based on the Paul Williams DEC/ANSI state diagram:
  *   https://vt100.net/emu/dec_ansi_parser
  *
- * UTF-8 is decoded in GROUND and tracked but discarded in string states.
- * A continuation byte of 0x9C cannot terminate a string; standalone 0x9C
- * retains its ST behavior. Other C1 shortcuts are unsupported.
+ * UTF-8 is decoded below the state machine: printed in GROUND, discarded in
+ * every other state. A continuation byte of 0x9C therefore never acts as ST;
+ * a standalone 0x9C keeps its ST behavior. Other C1 shortcuts are unsupported.
+ * C0 controls inside ESC/CSI/DCS parameter states execute (per the diagram);
+ * string states ignore them, except BEL ending an OSC.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -76,6 +78,7 @@ typedef struct {
 
     /* UTF-8 decoder */
     uint32_t       utf8_cp;         /* accumulator                           */
+    uint32_t       utf8_min;        /* lowest cp this length may encode      */
     int            utf8_remain;     /* continuation bytes still expected     */
 
     /* Sequence parameters */

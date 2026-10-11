@@ -47,7 +47,7 @@ static void compare_parser(const vtparse_t *a, const vtparse_t *b)
     check_parser(a);
     check_parser(b);
 #define FIELD(f) CHECK(a->f == b->f)
-    FIELD(state); FIELD(prev_string); FIELD(utf8_remain); FIELD(utf8_cp);
+    FIELD(state); FIELD(prev_string); FIELD(utf8_remain); FIELD(utf8_cp); FIELD(utf8_min);
     FIELD(intermediate); FIELD(prefix); FIELD(nparams); FIELD(param_cur); FIELD(osc_len);
 #undef FIELD
     CHECK(memcmp(a->params, b->params, (size_t)a->nparams * sizeof(a->params[0])) == 0);

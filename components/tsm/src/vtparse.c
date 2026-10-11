@@ -153,21 +153,40 @@ static inline void enter_esc(vtparse_t *p)
     p->state = VTP_ST_ESC;
 }
 
-/* Track UTF-8 in strings so continuation bytes cannot act as ST. */
-static inline bool st_is_string(const vtparse_t *p)
+/* States in which the diagram executes C0 controls mid-sequence. String
+ * states ignore them (BEL ends an OSC; DCS passthrough has no data sink). */
+static inline bool executes_c0(const vtparse_t *p)
 {
     switch (p->state) {
-        case VTP_ST_OSC_STRING:
+        case VTP_ST_ESC:
+        case VTP_ST_ESC_INT:
+        case VTP_ST_CSI_ENTRY:
+        case VTP_ST_CSI_PARAM:
+        case VTP_ST_CSI_INT:
+        case VTP_ST_CSI_IGNORE:
         case VTP_ST_DCS_ENTRY:
         case VTP_ST_DCS_PARAM:
         case VTP_ST_DCS_INT:
-        case VTP_ST_DCS_PASS:
-        case VTP_ST_DCS_IGNORE:
-        case VTP_ST_SOS_PM_APC:
             return true;
         default:
             return false;
     }
+}
+
+/* ESC final byte: ESC \ (ST) closes an interrupted string, anything else is
+ * a plain ESC sequence. Shared by the ESC and ESC-intermediate states. */
+static inline void esc_final(vtparse_t *p, uint8_t b)
+{
+    if (b == 0x5C && p->prev_string != VTP_STR_NONE) {
+        if (p->prev_string == VTP_STR_OSC)
+            emit_osc(p);
+        else if (p->prev_string == VTP_STR_DCS)
+            emit_dcs(p, b);
+        /* SOS/PM/APC content is fully ignored; consume ST silently. */
+    } else {
+        emit_esc(p, b);
+    }
+    enter_ground(p);
 }
 
 static inline void st_ground(vtparse_t *p, uint8_t b)
@@ -204,21 +223,7 @@ static inline void st_esc(vtparse_t *p, uint8_t b)
         p->prev_string = VTP_STR_NONE;
         p->state       = VTP_ST_SOS_PM_APC;
     } else if (b >= 0x30 && b <= 0x7E) {
-        /* Standard ESC final byte.  Check for ST = ESC \ (0x5C). */
-        if (b == 0x5C) {
-            if (p->prev_string == VTP_STR_OSC) {
-                emit_osc(p);
-            } else if (p->prev_string == VTP_STR_DCS) {
-                emit_dcs(p, b);
-            } else if (p->prev_string == VTP_STR_SOS) {
-                /* SOS/PM/APC content is fully ignored; consume ST silently. */
-            } else {
-                emit_esc(p, b);
-            }
-        } else {
-            emit_esc(p, b);
-        }
-        enter_ground(p);
+        esc_final(p, b);
     }
     /* 0x7F → ignore */
 }
@@ -228,13 +233,7 @@ static inline void st_esc_int(vtparse_t *p, uint8_t b)
     if (b >= 0x20 && b <= 0x2F) {
         do_collect(p, b);       /* additional intermediate (unusual) */
     } else if (b >= 0x30 && b <= 0x7E) {
-        /* ESC \ while we came from OSC: treat as string terminator */
-        if (b == 0x5C && p->prev_string == VTP_STR_OSC) {
-            emit_osc(p);
-        } else {
-            emit_esc(p, b);
-        }
-        enter_ground(p);
+        esc_final(p, b);
     }
     /* 0x7F → ignore */
 }
@@ -393,12 +392,15 @@ static inline bool utf8_start(vtparse_t *p, uint8_t b)
     if (b >= 0xF0) {
         p->utf8_cp     = b & 0x07u;
         p->utf8_remain = 3;
+        p->utf8_min    = 0x10000u;
     } else if (b >= 0xE0) {
         p->utf8_cp     = b & 0x0Fu;
         p->utf8_remain = 2;
+        p->utf8_min    = 0x800u;
     } else if (b >= 0xC2) {
         p->utf8_cp     = b & 0x1Fu;
         p->utf8_remain = 1;
+        p->utf8_min    = 0x80u;
     } else {
         return false;       /* 0xC0, 0xC1: overlong encoding */
     }
@@ -426,8 +428,9 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
                 p->utf8_cp = (p->utf8_cp << 6) | (b & 0x3Fu);
                 if (--p->utf8_remain == 0) {
                     uint32_t cp = p->utf8_cp;
-                    /* Reject surrogates and out-of-BMP (unsupported font). */
-                    if (unlikely(cp > 0x10FFFFu ||
+                    /* Reject overlong forms, surrogates and out-of-BMP
+                     * (unsupported font). */
+                    if (unlikely(cp < p->utf8_min ||
                         (cp >= 0xD800u && cp <= 0xDFFFu) ||
                         cp > 0xFFFFu)) {
                         cp = 0xFFFDu;
@@ -508,18 +511,19 @@ void vtparse_feed(vtparse_t *p, const uint8_t *data, size_t len)
                 enter_ground(p);
                 continue;
             }
-            /* Discard string codepoints without storing or printing them. */
-            if (p->state == VTP_ST_GROUND || st_is_string(p)) {
-                if (b >= 0xC2u && b <= 0xF4u) {
-                    if (utf8_start(p, b))
-                        continue;
-                }
-                if (p->state == VTP_ST_GROUND) {
-                    /* Invalid lead or out-of-range → replacement character. */
-                    append_print(p, 0xFFFDu);
-                }
-            }
-            /* In non-GROUND states, the parser discards unexpected high bytes. */
+            /* Decode UTF-8 in every state so no continuation byte can reach
+             * the ST test above; the codepoint prints only in GROUND. */
+            if (b >= 0xC2u && b <= 0xF4u && utf8_start(p, b))
+                continue;
+            /* Invalid lead or out-of-range: U+FFFD in GROUND, dropped elsewhere. */
+            if (p->state == VTP_ST_GROUND)
+                append_print(p, 0xFFFDu);
+            continue;
+        }
+
+        /* C0 inside ESC/CSI/DCS parameters executes and the sequence goes on. */
+        if (b <= 0x1F && executes_c0(p)) {
+            emit_c0(p, b);
             continue;
         }
 

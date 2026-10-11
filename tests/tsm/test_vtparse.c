@@ -493,6 +493,93 @@ void test_osc_utf8_then_standalone_0x9c_still_terminates(void)
     TEST_ASSERT_EQUAL_UINT16(2, g_events[0].as_osc.osc_len);  /* "2;" */
 }
 
+void test_utf8_inside_csi_cannot_terminate_or_leak(void)
+{
+    /* U+2713 inside a CSI: its 0x9C must not act as ST; the CSI completes. */
+    uint8_t bs[] = { 0x1B, '[', '3', 0xE2, 0x9C, 0x93, 'm' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_CSI, g_events[0].type);
+    TEST_ASSERT_EQUAL_UINT8('m', g_events[0].as_csi.final);
+    TEST_ASSERT_EQUAL_INT(1, g_events[0].as_csi.nparams);
+    TEST_ASSERT_EQUAL_INT32(3, g_events[0].as_csi.params[0]);
+}
+
+void test_utf8_inside_esc_is_discarded(void)
+{
+    uint8_t bs[] = { 0x1B, 0xE2, 0x9C, 0x93, '[', '3', 'm' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_CSI, g_events[0].type);
+    TEST_ASSERT_EQUAL_INT32(3, g_events[0].as_csi.params[0]);
+}
+
+void test_utf8_overlong_3byte_and_4byte_replaced(void)
+{
+    /* E0 80 9B would decode to 0x1B and F0 80 80 87 to 0x07: both overlong,
+     * both U+FFFD. The shortest valid 3-byte form E0 A0 80 still decodes. */
+    uint8_t bs[] = { 0xE0, 0x80, 0x9B, 0xF0, 0x80, 0x80, 0x87, 0xE0, 0xA0, 0x80 };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[0].type);
+    TEST_ASSERT_EQUAL_INT(3, g_events[0].as_print.ncp);
+    TEST_ASSERT_EQUAL_HEX32(0xFFFD, g_events[0].as_print.cps[0]);
+    TEST_ASSERT_EQUAL_HEX32(0xFFFD, g_events[0].as_print.cps[1]);
+    TEST_ASSERT_EQUAL_HEX32(0x0800, g_events[0].as_print.cps[2]);
+}
+
+void test_c0_executes_inside_csi(void)
+{
+    /* LF mid-CSI executes and the sequence continues (dec_ansi_parser). */
+    uint8_t bs[] = { 0x1B, '[', '3', 0x0A, '1', 'm' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(2, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_C0, g_events[0].type);
+    TEST_ASSERT_EQUAL_UINT8(0x0A, g_events[0].as_c0.byte);
+    TEST_ASSERT_EQUAL_INT(VT_EV_CSI, g_events[1].type);
+    TEST_ASSERT_EQUAL_INT32(31, g_events[1].as_csi.params[0]);
+}
+
+void test_c0_executes_inside_esc(void)
+{
+    uint8_t bs[] = { 0x1B, 0x0D, '(', '0' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(2, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_C0, g_events[0].type);
+    TEST_ASSERT_EQUAL_UINT8(0x0D, g_events[0].as_c0.byte);
+    TEST_ASSERT_EQUAL_INT(VT_EV_ESC, g_events[1].type);
+    TEST_ASSERT_EQUAL_UINT8('(', g_events[1].as_esc.intermediate);
+    TEST_ASSERT_EQUAL_UINT8('0', g_events[1].as_esc.final);
+}
+
+void test_c0_ignored_inside_strings(void)
+{
+    /* OSC and DCS passthrough swallow C0 (BEL ends the OSC); no C0 events. */
+    uint8_t bs[] = { 0x1B, ']', '2', ';', 'a', 0x0A, 'b', 0x07,
+                     0x1B, 'P', 'q', 0x0D, 'x', 0x1B, '\\' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(3, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_OSC, g_events[0].type);
+    TEST_ASSERT_EQUAL_STRING("2;ab", (const char *)g_events[0].as_osc.osc);
+    TEST_ASSERT_EQUAL_INT(VT_EV_DCS, g_events[1].type);
+    TEST_ASSERT_EQUAL_INT(VT_EV_DCS, g_events[2].type);
+}
+
+void test_esc_intermediate_st_closes_dcs_and_sos(void)
+{
+    /* ESC SP \ after DCS unhooks it; after SOS the parser drops it silently. */
+    uint8_t bs[] = { 0x1B, 'P', 'q', 'x', 0x1B, ' ', 0x5C,
+                     0x1B, 'X', 'x', 0x1B, ' ', 0x5C, 'Z' };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(3, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_DCS, g_events[0].type);
+    TEST_ASSERT_EQUAL_UINT8('q', g_events[0].as_dcs.final);
+    TEST_ASSERT_EQUAL_INT(VT_EV_DCS, g_events[1].type);
+    TEST_ASSERT_EQUAL_UINT8(0x5C, g_events[1].as_dcs.final);
+    TEST_ASSERT_EQUAL_INT(VT_EV_PRINT, g_events[2].type);
+    TEST_ASSERT_EQUAL_HEX32('Z', g_events[2].as_print.cps[0]);
+}
+
 void test_dcs_hook_emitted(void)
 {
     /* ESC P q … ESC \ — tmux-style passthrough shell */
@@ -933,6 +1020,13 @@ int main(void)
     RUN_TEST(test_osc_8bit_st);
     RUN_TEST(test_osc_utf8_0x9c_continuation_is_not_st);
     RUN_TEST(test_osc_utf8_then_standalone_0x9c_still_terminates);
+    RUN_TEST(test_utf8_inside_csi_cannot_terminate_or_leak);
+    RUN_TEST(test_utf8_inside_esc_is_discarded);
+    RUN_TEST(test_utf8_overlong_3byte_and_4byte_replaced);
+    RUN_TEST(test_c0_executes_inside_csi);
+    RUN_TEST(test_c0_executes_inside_esc);
+    RUN_TEST(test_c0_ignored_inside_strings);
+    RUN_TEST(test_esc_intermediate_st_closes_dcs_and_sos);
 
     /* DCS */
     RUN_TEST(test_dcs_hook_emitted);

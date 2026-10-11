@@ -2185,10 +2185,48 @@ void test_bel_inside_ignored_strings_does_not_ring_or_terminate(void)
     }
 }
 
+void test_utf8_inside_csi_keeps_grid_clean(void)
+{
+    /* U+2713 inside SGR 31: no U+FFFD, no leaked 'm', the colour applies. */
+    tsm_t *t = tsm_new(20, 3, 0);
+    feed(t, "\x1b[31\xe2\x9c\x93mZ");
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 1, 0));
+    TEST_ASSERT_NOT_EQUAL(cell(t, 1, 0).fg, cell(t, 0, 0).fg);
+    tsm_free(t);
+}
+
+void test_overlong_utf8_never_writes_control_codepoints(void)
+{
+    tsm_t *t = tsm_new(20, 3, 0);
+    feed(t, "\xe0\x80\x9b\xf0\x80\x80\x87Z");
+    TEST_ASSERT_EQUAL_HEX16(0xFFFD, cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(0xFFFD, cp_at(t, 1, 0));
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 2, 0));
+    tsm_free(t);
+}
+
+void test_c0_inside_csi_executes_and_rings(void)
+{
+    /* LF and BEL inside a CSI execute; the SGR still completes. */
+    tsm_t *t = tsm_new(20, 3, 0);
+    int hits = 0;
+    tsm_set_bell_cb(t, count_bell, &hits);
+    feed(t, "\x1b[3\n\a1mZ");
+    TEST_ASSERT_EQUAL_INT(1, hits);
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 1));
+    TEST_ASSERT_NOT_EQUAL(cell(t, 1, 1).fg, cell(t, 0, 1).fg);
+    tsm_free(t);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_utf8_strings_preserve_grid_at_every_feed_split);
+    RUN_TEST(test_utf8_inside_csi_keeps_grid_clean);
+    RUN_TEST(test_overlong_utf8_never_writes_control_codepoints);
+    RUN_TEST(test_c0_inside_csi_executes_and_rings);
     RUN_TEST(test_incomplete_utf8_strings_recover_on_controls);
     RUN_TEST(test_bell_callback_registration_and_reset);
     RUN_TEST(test_bel_inside_ignored_strings_does_not_ring_or_terminate);
