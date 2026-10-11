@@ -66,8 +66,6 @@ symbol drawings as CRC32 values over decoded rows (one byte per row at
 independent of the compressor and are not rewritten by regeneration.
 Review pixels before updating a symbol's reference.
 
-The Python tests check source coverage, rejected malformed drawings,
-compression round trips, and stable output when source order changes.
 The C tests also check that the chevrons and left/right circle phases mirror each other.
 Generator self-verification checks every merged range, including its
 question-mark fallback gaps, against the source cells.
