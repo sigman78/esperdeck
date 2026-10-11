@@ -463,12 +463,34 @@ void test_osc_truncation(void)
 
 void test_osc_8bit_st(void)
 {
-    /* OSC terminated by 8-bit ST (0x9C) */
+    /* OSC terminated by a STANDALONE 8-bit ST (0x9C) */
     uint8_t bs[] = { 0x1B, ']', '0', ';', 'Z', 0x9C };
     feed_bytes(bs, sizeof(bs));
     TEST_ASSERT_EQUAL_INT(1, g_event_count);
     TEST_ASSERT_EQUAL_INT(VT_EV_OSC, g_events[0].type);
     TEST_ASSERT_EQUAL_UINT16(3, g_events[0].as_osc.osc_len);  /* "0;Z" */
+}
+
+void test_osc_utf8_0x9c_continuation_is_not_st(void)
+{
+    /* U+2713 contains 0x9C as a continuation byte. */
+    uint8_t bs[] = { 0x1B, ']', '2', ';', 0xE2, 0x9C, 0x93, 'A', 0x07 };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_OSC, g_events[0].type);
+    /* High bytes are not stored (7-bit payload) → "2;A" = 3 bytes. */
+    TEST_ASSERT_EQUAL_UINT16(3, g_events[0].as_osc.osc_len);
+    TEST_ASSERT_EQUAL_UINT8('A', g_events[0].as_osc.osc[2]);
+}
+
+void test_osc_utf8_then_standalone_0x9c_still_terminates(void)
+{
+    /* A standalone 0x9C after a COMPLETE UTF-8 sequence is still an ST. */
+    uint8_t bs[] = { 0x1B, ']', '2', ';', 0xE2, 0x9C, 0x93, 0x9C };
+    feed_bytes(bs, sizeof(bs));
+    TEST_ASSERT_EQUAL_INT(1, g_event_count);
+    TEST_ASSERT_EQUAL_INT(VT_EV_OSC, g_events[0].type);
+    TEST_ASSERT_EQUAL_UINT16(2, g_events[0].as_osc.osc_len);  /* "2;" */
 }
 
 void test_dcs_hook_emitted(void)
@@ -909,6 +931,8 @@ int main(void)
     RUN_TEST(test_osc_null_terminated);
     RUN_TEST(test_osc_truncation);
     RUN_TEST(test_osc_8bit_st);
+    RUN_TEST(test_osc_utf8_0x9c_continuation_is_not_st);
+    RUN_TEST(test_osc_utf8_then_standalone_0x9c_still_terminates);
 
     /* DCS */
     RUN_TEST(test_dcs_hook_emitted);

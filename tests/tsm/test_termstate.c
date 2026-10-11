@@ -2045,9 +2045,153 @@ void test_decstr_preserves_pending_wrap_and_lnm(void)
     tsm_free(t);
 }
 
+static int s_bell_hits;
+static void count_bell(void *user) { (*(int *)user)++; }
+
+void test_bell_cb_fires_for_data_stream_bel(void)
+{
+    tsm_t *t = tsm_new(20, 3, 0);
+    s_bell_hits = 0;
+    tsm_set_bell_cb(t, count_bell, &s_bell_hits);
+    feed(t, "a\ab");
+    TEST_ASSERT_EQUAL_INT(1, s_bell_hits);
+    tsm_free(t);
+}
+
+void test_bell_cb_ignores_osc_terminator(void)
+{
+    tsm_t *t = tsm_new(20, 3, 0);
+    s_bell_hits = 0;
+    tsm_set_bell_cb(t, count_bell, &s_bell_hits);
+    feed(t, "\x1b]2;title\x07");          /* BEL terminates the OSC */
+    TEST_ASSERT_EQUAL_INT(0, s_bell_hits);
+    tsm_free(t);
+}
+
+void test_bell_cb_ignores_utf8_title_terminator(void)
+{
+    /* The reported case: OSC 2 "<U+2713> model - path" rewritten per frame. */
+    tsm_t *t = tsm_new(40, 3, 0);
+    s_bell_hits = 0;
+    tsm_set_bell_cb(t, count_bell, &s_bell_hits);
+    feed(t, "\x1b]2;\xe2\x9c\x93 model\x07");
+    TEST_ASSERT_EQUAL_INT(0, s_bell_hits);
+    tsm_free(t);
+}
+
+void test_osc_utf8_title_does_not_reach_grid(void)
+{
+    tsm_t *t = tsm_new(40, 3, 0);
+    feed(t, "\x1b]2;\xe2\x9c\x93 model\x07");
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 0, 0));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 1, 0));
+    TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 10, 0));
+    tsm_free(t);
+}
+
+void test_utf8_strings_preserve_grid_at_every_feed_split(void)
+{
+    const char *prefixes[] = {
+        "\x1b]2;", "\x1bP", "\x1bP1;", "\x1bP ", "\x1bPq",
+        "\x1bP:", "\x1bX", "\x1b^", "\x1b_"
+    };
+    const char *payloads[] = {
+        "\xc2\x9c", "\xe2\x9c\x93", "\xe2\x80\x9c", "\xf0\x9f\x9c\x80"
+    };
+    const char *ends[] = { "\x1b\\", "\x9c", "\a" };
+    char stream[80];
+    for (size_t p = 0; p < sizeof(prefixes) / sizeof(prefixes[0]); p++) {
+        for (size_t u = 0; u < sizeof(payloads) / sizeof(payloads[0]); u++) {
+            /* BEL terminates OSC only. */
+            for (size_t e = 0; e < (p == 0 ? 3u : 2u); e++) {
+                snprintf(stream, sizeof(stream), "%s%s hidden%sZ\a",
+                         prefixes[p], payloads[u], ends[e]);
+                size_t len = strlen(stream);
+                for (size_t split = 0; split <= len; split++) {
+                    tsm_t *t = tsm_new(100, 30, 0);
+                    TEST_ASSERT_NOT_NULL(t);
+                    feed(t, "\x1b[30;1H> ");
+                    int hits = 0;
+                    tsm_set_bell_cb(t, count_bell, &hits);
+                    tsm_feed(t, (const uint8_t *)stream, split);
+                    tsm_feed(t, (const uint8_t *)stream + split, len - split);
+                    TEST_ASSERT_EQUAL_INT(1, hits);
+                    TEST_ASSERT_EQUAL_HEX16('>', cp_at(t, 0, 29));
+                    TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 2, 29));
+                    for (int x = 3; x < 100; x++)
+                        TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, x, 29));
+                    int x, y; bool visible;
+                    tsm_cursor(t, &x, &y, &visible);
+                    TEST_ASSERT_EQUAL_INT(3, x);
+                    TEST_ASSERT_EQUAL_INT(29, y);
+                    tsm_free(t);
+                }
+            }
+        }
+    }
+}
+
+void test_incomplete_utf8_strings_recover_on_controls(void)
+{
+    const char *streams[] = {
+        "\x1b]2;\xe2\aZ", "\x1b]2;\xe2\x9c\x1b\\Z",
+        "\x1b]2;\xe2\x18Z", "\x1bPq\xf0\x9c\x1aZ",
+        "\x1b_\xe2\x1b\\Z", "\x1b]2;\xe2 title\aZ"
+    };
+    for (size_t i = 0; i < sizeof(streams) / sizeof(streams[0]); i++) {
+        tsm_t *t = tsm_new(20, 3, 0);
+        int hits = 0;
+        tsm_set_bell_cb(t, count_bell, &hits);
+        for (size_t j = 0; j < strlen(streams[i]); j++)
+            tsm_feed(t, (const uint8_t *)streams[i] + j, 1);
+        TEST_ASSERT_EQUAL_INT(0, hits);
+        TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+        TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 1, 0));
+        tsm_free(t);
+    }
+}
+
+void test_bell_callback_registration_and_reset(void)
+{
+    tsm_t *t = tsm_new(20, 3, 0);
+    feed(t, "\a");
+    int first = 0, second = 0;
+    tsm_set_bell_cb(t, count_bell, &first);
+    feed(t, "\a\a");
+    TEST_ASSERT_EQUAL_INT(2, first);
+    tsm_set_bell_cb(t, count_bell, &second);
+    feed(t, "\x1b" "c\a\x1b[!p\a");
+    TEST_ASSERT_EQUAL_INT(2, first);
+    TEST_ASSERT_EQUAL_INT(2, second);
+    tsm_set_bell_cb(t, NULL, NULL);
+    feed(t, "\a");
+    TEST_ASSERT_EQUAL_INT(2, second);
+    tsm_free(t);
+}
+
+void test_bel_inside_ignored_strings_does_not_ring_or_terminate(void)
+{
+    const char *prefixes[] = { "\x1bPq", "\x1bP:", "\x1bX", "\x1b^", "\x1b_" };
+    for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+        tsm_t *t = tsm_new(20, 3, 0);
+        int hits = 0;
+        tsm_set_bell_cb(t, count_bell, &hits);
+        feed(t, prefixes[i]);
+        feed(t, "\a hidden\x1b\\Z\a");
+        TEST_ASSERT_EQUAL_INT(1, hits);
+        TEST_ASSERT_EQUAL_HEX16('Z', cp_at(t, 0, 0));
+        TEST_ASSERT_EQUAL_HEX16(' ', cp_at(t, 1, 0));
+        tsm_free(t);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_utf8_strings_preserve_grid_at_every_feed_split);
+    RUN_TEST(test_incomplete_utf8_strings_recover_on_controls);
+    RUN_TEST(test_bell_callback_registration_and_reset);
+    RUN_TEST(test_bel_inside_ignored_strings_does_not_ring_or_terminate);
     RUN_TEST(test_alt_entry_keeps_active_charset_and_ris_clears_alt_slot);
     RUN_TEST(test_decstr_preserves_pending_wrap_and_lnm);
     RUN_TEST(test_private_mode_intermediates_cannot_change_modes);
@@ -2101,6 +2245,11 @@ int main(void)
     RUN_TEST(test_c0_bs_moves_left);
     RUN_TEST(test_c0_ht_tab_stop);
     RUN_TEST(test_c0_lf_scrolls_at_bottom);
+
+    RUN_TEST(test_bell_cb_fires_for_data_stream_bel);
+    RUN_TEST(test_bell_cb_ignores_osc_terminator);
+    RUN_TEST(test_bell_cb_ignores_utf8_title_terminator);
+    RUN_TEST(test_osc_utf8_title_does_not_reach_grid);
 
     /* cursor movement */
     RUN_TEST(test_csi_cup_moves_cursor);

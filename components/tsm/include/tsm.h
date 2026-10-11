@@ -161,6 +161,15 @@ typedef void (*tsm_response_fn_t)(const char *data, size_t len, void *user);
 /* Register (or clear, if cb==NULL) the response callback. */
 void tsm_set_response_cb(tsm_t *tsm, tsm_response_fn_t cb, void *user);
 
+/* Bell callback */
+
+/* Called synchronously for each BEL dispatched as C0. OSC terminators and
+ * ignored string payloads do not ring. The callback must not re-enter tsm. */
+typedef void (*tsm_bell_fn_t)(void *user);
+
+/* Register (or clear, if cb==NULL) the bell callback. */
+void tsm_set_bell_cb(tsm_t *tsm, tsm_bell_fn_t cb, void *user);
+
 /* Performance instrumentation (CONFIG_VTERM_BENCH) */
 
 /* Parse-vs-state cycle split: cycles spent inside each vtable shim

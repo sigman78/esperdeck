@@ -113,6 +113,10 @@ struct tsm_s {
     /* Response callback (DA1, DSR, CPR) */
     tsm_response_fn_t response_cb;
     void             *response_user;
+
+    /* Bell callback */
+    tsm_bell_fn_t     bell_cb;
+    void             *bell_user;
 };
 
 /* ── Internal helpers (used only within termstate.c) ─────────────────────── */
