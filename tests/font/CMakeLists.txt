@@ -43,3 +43,7 @@ enable_testing()
 add_font_test(8x16  8X16)
 add_font_test(10x20 10X20)
 add_font_test(12x24 12X24)
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME font_generator_tests
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_generator.py)
