@@ -10,8 +10,9 @@ emits one .c translation unit per size into components/font/. Developers
 commit the emitted files to the repo; the build performs no generation
 step.
 
-Coverage: the regular face carries the full Terminus repertoire (about
-1356 glyphs). The script merges adjacent codepoint ranges whose gap is 3
+Coverage: the regular face carries the full Terminus repertoire (1356
+glyphs) plus eight original Esperdeck symbols from components/font/tui_symbols.json.
+The script merges adjacent codepoint ranges whose gap is 3
 codepoints or less. The gap codepoints then point at the '?' record.
 
 The bold face covers BOLD_SUBSET only. The script synthesizes matching
@@ -27,6 +28,7 @@ Usage:
 """
 
 import argparse
+import json
 import struct
 import sys
 import tarfile
@@ -41,6 +43,7 @@ TERMINUS_URL = ("https://sourceforge.net/projects/terminus-font/files/"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = REPO_ROOT / "components" / "font"
 CACHE_DIR = Path(__file__).resolve().parent / ".cache"
+SYMBOLS_PATH = DEFAULT_OUT / "tui_symbols.json"
 
 #           WxH:   (normal BDF,     bold BDF)
 SIZES = {(8, 16):  ("ter-u16n.bdf", "ter-u16b.bdf"),
@@ -113,6 +116,23 @@ def fetch_bdfs(src):
     if not bdf_dir_ok(out):
         sys.exit(f"{tarball}: does not contain all of {', '.join(wanted)}")
     return out
+
+
+def add_tui_symbols(normal, width, height, path=SYMBOLS_PATH):
+    """Merge full-cell symbol drawings without replacing upstream glyphs."""
+    size = f"{width}x{height}"
+    glyphs = json.loads(Path(path).read_text(encoding="utf-8"))["glyphs"]
+    merged = dict(normal)
+    for key, glyph in glyphs.items():
+        cp = int(key, 16)
+        if not 0 <= cp <= 0xFFFF or cp in merged:
+            raise ValueError(f"{path}: invalid or duplicate codepoint U+{cp:04X}")
+        rows = glyph.get(size, [])
+        if len(rows) != height or any(
+                len(row) != width or set(row) - {".", "#"} for row in rows):
+            raise ValueError(f"{path}: U+{cp:04X} needs {height} rows of {width} pixels")
+        merged[cp] = [int(row.replace(".", "0").replace("#", "1"), 2) for row in rows]
+    return merged
 
 
 def parse_bdf(path):
@@ -547,10 +567,12 @@ def build_stats(data, real_bold_differs):
 
 C_HEADER = """\
 /*
- * {w}x{h} Terminus glyph tables — compressed format v1 (spec in
+ * {w}x{h} Esperdeck glyph tables — compressed format v1 (spec in
  * terminus_font.h, encoder in tools/gen_terminus.py).
  *
  * Derived from the Terminus Font {ver} ({nsrc} + {bsrc}).
+ * Includes original Esperdeck symbols from tui_symbols.json under the same license.
+ * Original symbols copyright (c) 2026 Esperdeck contributors.
  * Copyright (c) 2020 Dimitar Zhekov <dimitar.zhekov@gmail.com>,
  * with Reserved Font Name "Terminus Font".
  * Licensed under the SIL Open Font License, Version 1.1 — full text in
@@ -670,6 +692,7 @@ def main():
             sys.exit(f"{nsrc}/{bsrc}: size mismatch (normal {nw}x{nh}, "
                      f"bold {bw}x{bh}, expected {w}x{h})")
 
+        normal = add_tui_symbols(normal, w, h)
         data = build_font_data(w, h, normal, bold)
         want_exc = EXPECTED_BOLD_EXCEPTIONS[w]
         if data["exception_count"] != want_exc:

@@ -15,6 +15,7 @@
 #include <string.h>
 #include "unity.h"
 #include "font.h"
+#include "tui_symbols_golden.h"
 
 #if FONT_RT_12X24
 #include "golden_12x24.h"
@@ -225,11 +226,29 @@ static void test_cache_hit_and_refill(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, bad, "glyph cache hit/refill disagrees");
 }
 
+static void test_tui_symbols_have_distinct_bitmaps(void)
+{
+    uint8_t glyphs[sizeof(symbol_golden) / sizeof(symbol_golden[0])][GB];
+    uint8_t bold[GB], question[GB], blank[GB] = {0};
+    font_decode_glyph('?', false, question);
+    for (size_t i = 0; i < sizeof(symbol_golden) / sizeof(symbol_golden[0]); i++) {
+        font_decode_glyph(symbol_golden[i].cp, false, glyphs[i]);
+        TEST_ASSERT_EQUAL_HEX32(symbol_golden[i].crc, crc32z(glyphs[i], GB));
+        TEST_ASSERT_TRUE_MESSAGE(memcmp(question, glyphs[i], GB) != 0, "symbol falls back to '?'");
+        TEST_ASSERT_TRUE_MESSAGE(memcmp(blank, glyphs[i], GB) != 0, "symbol is blank");
+        font_decode_glyph(symbol_golden[i].cp, true, bold);
+        TEST_ASSERT_EQUAL_MEMORY(glyphs[i], bold, GB);
+        for (size_t j = 0; j < i; j++)
+            TEST_ASSERT_TRUE_MESSAGE(memcmp(glyphs[j], glyphs[i], GB) != 0, "symbols must differ");
+    }
+}
+
 int main(void)
 {
     font_init(TEST_SIZE);
     UNITY_BEGIN();
     RUN_TEST(test_geometry);
+    RUN_TEST(test_tui_symbols_have_distinct_bitmaps);
     RUN_TEST(test_spot_rows);
     RUN_TEST(test_all_regular);
     RUN_TEST(test_all_bold);
