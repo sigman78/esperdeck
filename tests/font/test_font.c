@@ -243,12 +243,35 @@ static void test_tui_symbols_have_distinct_bitmaps(void)
     }
 }
 
+static void test_related_symbols_mirror(void)
+{
+    const uint16_t pairs[][2] = {{0x276F, 0x276E}, {0x25D0, 0x25D1}};
+    uint8_t left[GB], right[GB];
+    for (size_t i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++) {
+        font_decode_glyph(pairs[i][0], false, left);
+        font_decode_glyph(pairs[i][1], false, right);
+        for (int y = 0; y < TEST_H; y++) {
+            size_t offset = y * FONT_ROW_BYTES(TEST_W);
+            uint16_t row = left[offset], expected = right[offset];
+            if (FONT_ROW_BYTES(TEST_W) == 2) {
+                row |= (uint16_t)left[offset + 1] << 8;
+                expected |= (uint16_t)right[offset + 1] << 8;
+            }
+            uint16_t mirrored = 0;
+            for (int x = 0; x < TEST_W; x++)
+                mirrored |= ((row >> x) & 1u) << (TEST_W - x - 1);
+            TEST_ASSERT_EQUAL_HEX16(expected, mirrored);
+        }
+    }
+}
+
 int main(void)
 {
     font_init(TEST_SIZE);
     UNITY_BEGIN();
     RUN_TEST(test_geometry);
     RUN_TEST(test_tui_symbols_have_distinct_bitmaps);
+    RUN_TEST(test_related_symbols_mirror);
     RUN_TEST(test_spot_rows);
     RUN_TEST(test_all_regular);
     RUN_TEST(test_all_bold);
