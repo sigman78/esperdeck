@@ -21,6 +21,8 @@ Supported features:
 - REP (repeat the last rendered glyph in current SGR); CHT/CBT (fixed 8-column tabs)
 - Cursor save / restore; DECSTR soft reset and RIS hard reset
 - Terminal reporting (device attributes, cursor position)
+- Bell reporting (`tsm_set_bell_cb`) — C0 BELs only; OSC terminators and
+  ignored string payloads do not ring
 
 Tested by `tests/tsm` — host-compiled Unity suites for both parts; see
 `docs/DEVELOPMENT.md`.

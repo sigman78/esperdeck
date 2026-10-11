@@ -81,6 +81,14 @@ static void tsm_response_forward(const char *data, size_t len, void *user)
         s_response_cb(data, len, s_response_user);
 }
 
+/* OSC terminators never reach this callback. */
+static void vterm_bell_cb(void *user)
+{
+    (void)user;
+    display_bell();
+    display_fx_static_brief();
+}
+
 /* Copy one full row of the current view into the display buffer. */
 static inline void copy_row(int row, int l, int r)
 {
@@ -213,6 +221,7 @@ esp_err_t vterm_init(int cols, int rows)
         return ESP_ERR_NO_MEM;
     }
     tsm_set_response_cb(s_tsm, tsm_response_forward, NULL);
+    tsm_set_bell_cb(s_tsm, vterm_bell_cb, NULL);
 
     display_set_text_buffer(s_buffer, cols, rows);
     display_set_cursor(0, 0, CURSOR_BLOCK);
@@ -224,14 +233,6 @@ esp_err_t vterm_init(int cols, int rows)
 void vterm_feed(const char *data, size_t len)
 {
     if (!s_initialized) return;
-
-    /* Visual bell: tsm swallows BEL (0x07) silently, so trigger the alert
-     * here — the red BEL tag plus a half-length static burst (a no-op when
-     * disabled in the fx config). A bare BEL in the stream is the terminal
-     * bell; the rare 0x07 inside an escape sequence just gives a harmless
-     * extra flash. */
-    for (size_t i = 0; i < len; i++)
-        if (data[i] == 0x07) { display_bell(); display_fx_static_brief(); break; }
 
 #ifdef CONFIG_VTERM_BENCH
     uint32_t t0 = esp_cpu_get_cycle_count();
