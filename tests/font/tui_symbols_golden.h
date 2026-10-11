@@ -5,8 +5,6 @@ typedef struct { uint16_t cp; uint32_t crc; } symbol_golden_t;
 
 #if FONT_RT_8X16
 static const symbol_golden_t symbol_golden[] = {
-    {0x2295, 0x2FFAD8E3u},
-    {0x2296, 0xDA19ACEBu},
     {0x2297, 0x7A042EA1u},
     {0x2298, 0xA7C84F25u},
     {0x2299, 0x317DBE58u},
@@ -25,8 +23,6 @@ static const symbol_golden_t symbol_golden[] = {
 };
 #elif FONT_RT_10X20
 static const symbol_golden_t symbol_golden[] = {
-    {0x2295, 0xB7D36C6Au},
-    {0x2296, 0xB7D5693Au},
     {0x2297, 0x1613483Du},
     {0x2298, 0x7B85FFB8u},
     {0x2299, 0x56293F75u},
@@ -45,8 +41,6 @@ static const symbol_golden_t symbol_golden[] = {
 };
 #elif FONT_RT_12X24
 static const symbol_golden_t symbol_golden[] = {
-    {0x2295, 0xC049434Bu},
-    {0x2296, 0x8F20560Eu},
     {0x2297, 0xDEF00F7Cu},
     {0x2298, 0x2F81FAE6u},
     {0x2299, 0x66272CA0u},

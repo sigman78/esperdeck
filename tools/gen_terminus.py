@@ -11,7 +11,7 @@ commit the emitted files to the repo; the build performs no generation
 step.
 
 Coverage: the regular face carries the full Terminus repertoire (1356
-glyphs) plus 17 original Esperdeck symbols from components/font/tui_symbols.json.
+glyphs) plus 15 original Esperdeck symbols from components/font/tui_symbols.json.
 The script merges adjacent codepoint ranges whose gap is 3
 codepoints or less. The gap codepoints then point at the '?' record.
 

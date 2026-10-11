@@ -265,6 +265,18 @@ static void test_related_symbols_mirror(void)
     }
 }
 
+static void test_removed_circled_operators_fall_back(void)
+{
+    uint8_t question[GB], out[GB];
+    font_decode_glyph('?', false, question);
+    for (uint16_t cp = 0x2295; cp <= 0x2296; cp++) {
+        font_decode_glyph(cp, false, out);
+        TEST_ASSERT_EQUAL_MEMORY(question, out, GB);
+        font_decode_glyph(cp, true, out);
+        TEST_ASSERT_EQUAL_MEMORY(question, out, GB);
+    }
+}
+
 int main(void)
 {
     font_init(TEST_SIZE);
@@ -272,6 +284,7 @@ int main(void)
     RUN_TEST(test_geometry);
     RUN_TEST(test_tui_symbols_have_distinct_bitmaps);
     RUN_TEST(test_related_symbols_mirror);
+    RUN_TEST(test_removed_circled_operators_fall_back);
     RUN_TEST(test_spot_rows);
     RUN_TEST(test_all_regular);
     RUN_TEST(test_all_bold);

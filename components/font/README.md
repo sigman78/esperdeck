@@ -2,13 +2,11 @@
 
 `terminus8x16.c`, `terminus10x20.c`, and `terminus12x24.c` are committed
 generated Esperdeck font tables. They combine pinned Terminus Font 4.49.1
-BDFs with 17 original symbols from `tui_symbols.json`, all under the
+BDFs with 15 original symbols from `tui_symbols.json`, all under the
 [SIL Open Font License 1.1](LICENSE).
 
 | Codepoint | Symbol | Meaning |
 |---|---|---|
-| U+2295 | ⊕ | Circled plus |
-| U+2296 | ⊖ | Circled minus |
 | U+2297 | ⊗ | Circled times |
 | U+2298 | ⊘ | Circled division slash |
 | U+2299 | ⊙ | Circled dot operator |
@@ -48,9 +46,9 @@ steps handle the drawings. Do not edit the generated C arrays. Palette
 changes can rewrite existing records even when their decoded pixels stay
 identical. There is no new runtime format or decoder path.
 
-The 17 symbols add 262 / 352 / 398 bytes of table data for 8×16 /
+The 15 symbols add 234 / 316 / 358 bytes of table data for 8×16 /
 10×20 / 12×24, including range directories. Only the selected size's
-tables occupy DRAM on the device; the three sizes add 1,012 bytes in total
+tables occupy DRAM on the device; the three sizes add 908 bytes in total
 before linker alignment. Bold exception counts remain 150 / 67 / 56.
 
 Run the offline tests in a host compiler environment:
