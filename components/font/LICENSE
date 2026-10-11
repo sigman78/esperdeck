@@ -1,12 +1,12 @@
-The 8x16 bitmap glyph data in this directory (terminus8x16.c / terminus8x16.h)
-is derived from the Terminus Font and is licensed under the SIL Open Font
-License, Version 1.1. It is NOT covered by the repository's MIT license.
+The Esperdeck bitmap glyph tables in this directory (terminus8x16.c,
+terminus10x20.c, terminus12x24.c) derive from the Terminus Font, with original
+supplemental drawings in tui_symbols.json. All this glyph data is licensed
+under the SIL Open Font License, Version 1.1, not the repository's MIT license.
 
 Copyright (c) 2020 Dimitar Zhekov <dimitar.zhekov@gmail.com>,
 with Reserved Font Name "Terminus Font".
 
-(Set the copyright year to match the Terminus Font release the glyphs were
-extracted from; the upstream OFL header carries the release year.)
+Original supplemental drawings copyright (c) 2026 Esperdeck contributors.
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:

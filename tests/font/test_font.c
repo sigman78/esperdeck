@@ -15,6 +15,7 @@
 #include <string.h>
 #include "unity.h"
 #include "font.h"
+#include "tui_symbols_golden.h"
 
 #if FONT_RT_12X24
 #include "golden_12x24.h"
@@ -225,11 +226,65 @@ static void test_cache_hit_and_refill(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, bad, "glyph cache hit/refill disagrees");
 }
 
+static void test_tui_symbols_have_distinct_bitmaps(void)
+{
+    uint8_t glyphs[sizeof(symbol_golden) / sizeof(symbol_golden[0])][GB];
+    uint8_t bold[GB], question[GB], blank[GB] = {0};
+    font_decode_glyph('?', false, question);
+    for (size_t i = 0; i < sizeof(symbol_golden) / sizeof(symbol_golden[0]); i++) {
+        font_decode_glyph(symbol_golden[i].cp, false, glyphs[i]);
+        TEST_ASSERT_EQUAL_HEX32(symbol_golden[i].crc, crc32z(glyphs[i], GB));
+        TEST_ASSERT_TRUE_MESSAGE(memcmp(question, glyphs[i], GB) != 0, "symbol falls back to '?'");
+        TEST_ASSERT_TRUE_MESSAGE(memcmp(blank, glyphs[i], GB) != 0, "symbol is blank");
+        font_decode_glyph(symbol_golden[i].cp, true, bold);
+        TEST_ASSERT_EQUAL_MEMORY(glyphs[i], bold, GB);
+        for (size_t j = 0; j < i; j++)
+            TEST_ASSERT_TRUE_MESSAGE(memcmp(glyphs[j], glyphs[i], GB) != 0, "symbols must differ");
+    }
+}
+
+static void test_related_symbols_mirror(void)
+{
+    const uint16_t pairs[][2] = {{0x276F, 0x276E}, {0x25D0, 0x25D1}};
+    uint8_t left[GB], right[GB];
+    for (size_t i = 0; i < sizeof(pairs) / sizeof(pairs[0]); i++) {
+        font_decode_glyph(pairs[i][0], false, left);
+        font_decode_glyph(pairs[i][1], false, right);
+        for (int y = 0; y < TEST_H; y++) {
+            size_t offset = y * FONT_ROW_BYTES(TEST_W);
+            uint16_t row = left[offset], expected = right[offset];
+            if (FONT_ROW_BYTES(TEST_W) == 2) {
+                row |= (uint16_t)left[offset + 1] << 8;
+                expected |= (uint16_t)right[offset + 1] << 8;
+            }
+            uint16_t mirrored = 0;
+            for (int x = 0; x < TEST_W; x++)
+                mirrored |= ((row >> x) & 1u) << (TEST_W - x - 1);
+            TEST_ASSERT_EQUAL_HEX16(expected, mirrored);
+        }
+    }
+}
+
+static void test_removed_circled_operators_fall_back(void)
+{
+    uint8_t question[GB], out[GB];
+    font_decode_glyph('?', false, question);
+    for (uint16_t cp = 0x2295; cp <= 0x2296; cp++) {
+        font_decode_glyph(cp, false, out);
+        TEST_ASSERT_EQUAL_MEMORY(question, out, GB);
+        font_decode_glyph(cp, true, out);
+        TEST_ASSERT_EQUAL_MEMORY(question, out, GB);
+    }
+}
+
 int main(void)
 {
     font_init(TEST_SIZE);
     UNITY_BEGIN();
     RUN_TEST(test_geometry);
+    RUN_TEST(test_tui_symbols_have_distinct_bitmaps);
+    RUN_TEST(test_related_symbols_mirror);
+    RUN_TEST(test_removed_circled_operators_fall_back);
     RUN_TEST(test_spot_rows);
     RUN_TEST(test_all_regular);
     RUN_TEST(test_all_bold);
