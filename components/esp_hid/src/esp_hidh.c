@@ -685,19 +685,25 @@ static void esp_hidh_dev_resources_free(esp_hidh_dev_t *dev)
     free((void *)dev->config.device_name);
     free((void *)dev->config.manufacturer_name);
     free((void *)dev->config.serial_number);
-    for (uint8_t d = 0; d < dev->config.report_maps_len; d++) {
-        /* data of report map maybe is NULL */
-        if (dev->config.report_maps[d].data) {
-            free((void *)dev->config.report_maps[d].data);
+    /* report_maps_len counts services as discovery finds them; the array is
+     * allocated only after discovery completes. A discovery timeout frees a
+     * dev with len > 0 and maps == NULL. */
+    if (dev->config.report_maps) {
+        for (uint8_t d = 0; d < dev->config.report_maps_len; d++) {
+            /* data of report map maybe is NULL */
+            if (dev->config.report_maps[d].data) {
+                free((void *)dev->config.report_maps[d].data);
+            }
         }
+        free((void *)dev->config.report_maps);
     }
-    free((void *)dev->config.report_maps);
     esp_hidh_dev_report_t *r;
     while (dev->reports) {
         r = dev->reports;
         dev->reports = dev->reports->next;
         free(r);
     }
+    free(dev->protocol_mode);   /* the NimBLE backend allocates it; nothing freed it */
     esp_hidh_dev_unlock(dev);
     if (dev->mutex) {
         vSemaphoreDelete(dev->mutex);

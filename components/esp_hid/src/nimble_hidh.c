@@ -52,6 +52,41 @@ static int chrs_discovered;
 static int dscs_discovered;
 static int status = 0;
 
+/* CYBERDECK PATCH I: discovery callbacks used to write through `arg`, a
+ * pointer into read_device_services()'s stack frame, with no bounds check.
+ * After a WAIT_CB timeout that frame is gone (the opener task exits), but
+ * NimBLE's own ATT timeout is 30 s, so a late callback could still land and
+ * corrupt whatever reused the stack. Callbacks now carry a generation token
+ * and resolve the destination through s_disc_dst; a token mismatch aborts
+ * the procedure without touching memory. The arrays are bounded too. */
+#define HIDH_SVC_MAX 10
+#define HIDH_CHR_MAX 20
+#define HIDH_DSC_MAX 20
+static volatile uintptr_t s_disc_gen;   /* opener task <-> host task */
+static void * volatile    s_disc_dst;
+
+static void *disc_begin(void *dst)
+{
+    s_disc_dst = dst;
+    return (void *)(++s_disc_gen);
+}
+
+static void disc_end(void)
+{
+    s_disc_dst = NULL;
+    ++s_disc_gen;
+}
+
+/* Keep a read result as a string field, or drop an empty one. */
+static void keep_or_free(const char **field, uint8_t *data, uint16_t len)
+{
+    if (len) {
+        *field = (const char *)data;
+    } else {
+        free(data);
+    }
+}
+
 /* CYBERDECK PATCH E: every wait below used to be portMAX_DELAY. A GATT
  * request that fails synchronously (link dropped -> BLE_HS_ENOTCONN) never
  * produces a callback, so the opener task blocked here FOREVER: the app's
@@ -146,7 +181,9 @@ nimble_on_read(uint16_t conn_handle,
         print_mbuf(attr->om);
         return 0;
     case BLE_HS_EDONE:
-        s_read_data_val[s_read_data_len] = 0; // to insure strings are ended with \0 */
+        if (s_read_data_val) {   /* PATCH I: EDONE with no data chunk */
+            s_read_data_val[s_read_data_len] = 0; // to insure strings are ended with \0 */
+        }
         s_read_status = 0;
         SEND_CB();
         return 0;
@@ -156,6 +193,9 @@ nimble_on_read(uint16_t conn_handle,
          * returned WITHOUT SEND_CB, leaving the opener blocked on WAIT_CB
          * forever — the app then sat in BLE_CONNECTING until reboot.
          * s_read_status already carries the error for the caller. */
+        free(s_read_data_val);   /* PATCH I: partial chunks of a failed read */
+        s_read_data_val = NULL;
+        s_read_data_len = 0;
         SEND_CB();
         return 0;
     }
@@ -166,6 +206,10 @@ static int read_char(uint16_t conn_handle, uint16_t handle, uint8_t **out, uint1
 {
     s_read_data_val = NULL;
     s_read_data_len = 0;
+    /* PATCH I: callers free *out after a failed read too; a stale pointer
+     * from the previous read (already owned by dev) was a double free. */
+    *out = NULL;
+    *out_len = 0;
     int rc;
 
     /* read long because the server may not support the large enough mtu */
@@ -187,9 +231,10 @@ static int read_char(uint16_t conn_handle, uint16_t handle, uint8_t **out, uint1
 static int read_descr(uint16_t conn_handle, uint16_t handle, uint8_t **out, uint16_t *out_len)
 {
     int rc;
-
     s_read_data_val = NULL;
     s_read_data_len = 0;
+    *out = NULL;      /* PATCH I: see read_char() */
+    *out_len = 0;
 
     rc = ble_gattc_read_long(conn_handle, handle, 0, nimble_on_read, NULL);
     if (rc != 0) {
@@ -215,11 +260,18 @@ svc_disced(uint16_t conn_handle, const struct ble_gatt_error *error,
     uint16_t uuid16;
     esp_hidh_dev_t *dev;
 
-    service_result = arg;
+    if ((uintptr_t)arg != s_disc_gen) {
+        return 1;   /* PATCH I: stale callback, the opener gave up; abort */
+    }
+    service_result = s_disc_dst;
     rc = 0;
     status = error->status;
     switch (error->status) {
     case 0:
+        if (services_discovered >= HIDH_SVC_MAX) {
+            ESP_LOGW(TAG, "more than %d services; ignoring the rest", HIDH_SVC_MAX);
+            break;
+        }
         memcpy(service_result + services_discovered, service, sizeof(struct ble_gatt_svc));
         services_discovered++;
         uuid16 = ble_uuid_u16(&service->uuid.u);
@@ -263,13 +315,19 @@ chr_disced(uint16_t conn_handle, const struct ble_gatt_error *error,
     struct ble_gatt_chr *chrs;
     int rc;
     rc = 0;
-    chrs = arg;
-
+    if ((uintptr_t)arg != s_disc_gen) {
+        return 1;   /* PATCH I: stale callback */
+    }
+    chrs = s_disc_dst;
     status = error->status;
     switch (error->status) {
     case 0:
         ESP_LOGD(TAG, "Char discovered : def handle : %04x, val_handle : %04x, properties : %02x\n, uuid : %04x",
                  chr->def_handle, chr->val_handle, chr->properties, ble_uuid_u16(&chr->uuid.u));
+        if (chrs_discovered >= HIDH_CHR_MAX) {
+            ESP_LOGW(TAG, "more than %d characteristics; ignoring the rest", HIDH_CHR_MAX);
+            break;
+        }
         memcpy(chrs + chrs_discovered, chr, sizeof(struct ble_gatt_chr));
         chrs_discovered++;
         break;
@@ -301,14 +359,20 @@ desc_disced(uint16_t conn_handle, const struct ble_gatt_error *error,
 {
     int rc;
     struct ble_gatt_dsc *dscr;
-    dscr = arg;
-
+    if ((uintptr_t)arg != s_disc_gen) {
+        return 1;   /* PATCH I: stale callback */
+    }
+    dscr = s_disc_dst;
     rc = 0;
     status = error->status;
     switch (error->status) {
     case 0:
         ESP_LOGD(TAG, "DISC discovered : handle : %04x, uuid : %04x",
                  dsc->handle, ble_uuid_u16(&dsc->uuid.u));
+        if (dscs_discovered >= HIDH_DSC_MAX) {
+            ESP_LOGW(TAG, "more than %d descriptors; ignoring the rest", HIDH_DSC_MAX);
+            break;
+        }
         memcpy(dscr + dscs_discovered, dsc, sizeof(struct ble_gatt_dsc));
         dscs_discovered++;
         break;
@@ -342,7 +406,7 @@ desc_disced(uint16_t conn_handle, const struct ble_gatt_error *error,
 ** CYBERDECK PATCH E/H: returns false when the peer went away mid-discovery
 ** (or never had a HID service) instead of hanging on a callback that will
 ** never come / aborting the whole firmware through assert(). */
-static bool read_device_services(esp_hidh_dev_t *dev)
+static bool read_device_services_inner(esp_hidh_dev_t *dev)
 {
     uint16_t suuid, cuuid, duuid;
     uint16_t chandle, dhandle;
@@ -352,8 +416,8 @@ static bool read_device_services(esp_hidh_dev_t *dev)
     esp_hid_report_item_t *r;
     esp_hid_report_map_t *map;
 
-    struct ble_gatt_svc service_result[10];
-    uint16_t dcount = 10;
+    struct ble_gatt_svc service_result[HIDH_SVC_MAX];
+    uint16_t dcount = HIDH_SVC_MAX;
     uint8_t hidindex = 0;
     int rc;
 
@@ -366,7 +430,7 @@ static bool read_device_services(esp_hidh_dev_t *dev)
     dscs_discovered     = 0;   /* set — the next open would parse garbage.   */
     status = 0;
 
-    rc = ble_gattc_disc_all_svcs(dev->ble.conn_id, svc_disced, service_result);
+    rc = ble_gattc_disc_all_svcs(dev->ble.conn_id, svc_disced, disc_begin(service_result));
     if (rc != 0) {
         /* PATCH E: the stock code logged, then ran the useless assert(rc != 0)
          * and fell through into WAIT_CB() — a permanent block, because a
@@ -419,10 +483,10 @@ static bool read_device_services(esp_hidh_dev_t *dev)
                 continue;
             }
 
-            struct ble_gatt_chr char_result[20];
-            uint16_t ccount = 20;
+            struct ble_gatt_chr char_result[HIDH_CHR_MAX];
+            uint16_t ccount = HIDH_CHR_MAX;
             rc = ble_gattc_disc_all_chrs(dev->ble.conn_id, service_result[s].start_handle,
-                                         service_result[s].end_handle, chr_disced, char_result);
+                                         service_result[s].end_handle, chr_disced, disc_begin(char_result));
             if (rc != 0) {
                 ESP_LOGE(TAG, "char discovery start failed for service %d: %d", s, rc);
                 goto fail;   /* PATCH E: no request went out, no callback comes */
@@ -446,8 +510,8 @@ static bool read_device_services(esp_hidh_dev_t *dev)
                     if (suuid == BLE_SVC_GAP_UUID16) {
                         if (dev->config.device_name == NULL && cuuid == BLE_SVC_GAP_CHR_UUID16_DEVICE_NAME
                                 && (char_result[c].properties & BLE_GATT_CHR_PROP_READ) != 0) {
-                            if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0 && rlen) {
-                                dev->config.device_name = (const char *)rdata;
+                            if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0) {
+                                keep_or_free(&dev->config.device_name, rdata, rlen);
                             }
                         } else {
                             continue;
@@ -469,12 +533,12 @@ static bool read_device_services(esp_hidh_dev_t *dev)
                                 }
                                 free(rdata);
                             } else if (cuuid == BLE_SVC_DIS_CHR_UUID16_MANUFACTURER_NAME) {
-                                if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0 && rlen) {
-                                    dev->config.manufacturer_name = (const char *)rdata;
+                                if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0) {
+                                    keep_or_free(&dev->config.manufacturer_name, rdata, rlen);
                                 }
                             } else if (cuuid == BLE_SVC_DIS_CHR_UUID16_SERIAL_NUMBER) {
-                                if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0 && rlen) {
-                                    dev->config.serial_number = (const char *)rdata;
+                                if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0) {
+                                    keep_or_free(&dev->config.serial_number, rdata, rlen);
                                 }
                             }
                         }
@@ -482,17 +546,24 @@ static bool read_device_services(esp_hidh_dev_t *dev)
                     } else {
                         if (cuuid == BLE_SVC_HID_CHR_UUID16_PROTOCOL_MODE) {
                             if (char_result[c].properties & BLE_GATT_CHR_PROP_READ) {
-                                if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0 && rlen) {
-                                    dev->protocol_mode[hidindex] = *((uint8_t *)rdata);
+                                if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0) {
+                                    if (rlen) {
+                                        dev->protocol_mode[hidindex] = *((uint8_t *)rdata);
+                                    }
+                                    free(rdata);   /* PATCH I: was leaked per open */
                                 }
                             }
                             continue;
                         }
                         if (cuuid == BLE_SVC_HID_CHR_UUID16_REPORT_MAP) {
                             if (char_result[c].properties & BLE_GATT_CHR_PROP_READ) {
-                                if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0 && rlen) {
-                                    dev->config.report_maps[hidindex].data = (const uint8_t *)rdata;
-                                    dev->config.report_maps[hidindex].len = rlen;
+                                if (read_char(dev->ble.conn_id, chandle, &rdata, &rlen) == 0) {
+                                    if (rlen) {
+                                        dev->config.report_maps[hidindex].data = (const uint8_t *)rdata;
+                                        dev->config.report_maps[hidindex].len = rlen;
+                                    } else {
+                                        free(rdata);
+                                    }
                                 }
                             }
                             continue;
@@ -534,8 +605,8 @@ static bool read_device_services(esp_hidh_dev_t *dev)
                             continue;
                         }
                     }
-                    struct ble_gatt_dsc descr_result[20];
-                    uint16_t dcount = 20;
+                    struct ble_gatt_dsc descr_result[HIDH_DSC_MAX];
+                    uint16_t dcount = HIDH_DSC_MAX;
                     uint16_t chr_end_handle;
                     if (c + 1 < ccount) {
                         chr_end_handle = char_result[c + 1].def_handle;
@@ -543,7 +614,7 @@ static bool read_device_services(esp_hidh_dev_t *dev)
                         chr_end_handle = service_result[s].end_handle;
                     }
                     rc = ble_gattc_disc_all_dscs(dev->ble.conn_id, char_result[c].val_handle,
-                                                 chr_end_handle, desc_disced, descr_result);
+                                                 chr_end_handle, desc_disced, disc_begin(descr_result));
                     if (rc != 0) {
                         ESP_LOGE(TAG, "dsc discovery start failed for char %d: %d", c, rc);
                         goto fail;   /* PATCH E */
@@ -572,9 +643,11 @@ static bool read_device_services(esp_hidh_dev_t *dev)
                                 if (duuid == BLE_GATT_DSC_CLT_CFG_UUID16 && (report->permissions & BLE_GATT_CHR_PROP_NOTIFY) != 0) {
                                     report->ccc_handle = dhandle;
                                 } else if (duuid == BLE_SVC_HID_DSC_UUID16_RPT_REF) {
-                                    if (read_descr(dev->ble.conn_id, dhandle, &rdata, &rlen) == 0 && rlen) {
-                                        report->report_id = rdata[0];
-                                        report->report_type = rdata[1];
+                                    if (read_descr(dev->ble.conn_id, dhandle, &rdata, &rlen) == 0) {
+                                        if (rlen >= 2) {
+                                            report->report_id = rdata[0];
+                                            report->report_type = rdata[1];
+                                        }
                                         free(rdata);
                                     }
                                 }
@@ -641,6 +714,15 @@ fail:
         free(report);
     }
     return false;
+}
+
+/* PATCH I: invalidate the discovery token on every exit so a callback that
+ * lands after a timeout can no longer reach the arrays above. */
+static bool read_device_services(esp_hidh_dev_t *dev)
+{
+    bool ok = read_device_services_inner(dev);
+    disc_end();
+    return ok;
 }
 
 static int
@@ -766,6 +848,9 @@ esp_hidh_gattc_event_handler(struct ble_gap_event *event, void *arg)
                  * in-flight opener so its WAIT_CB is still released. */
                 dev = s_opening_dev;
                 if (!dev) {
+                    /* PATCH I: the opener timed out and freed its dev; do
+                     * not leave an orphan link up that blocks the next open. */
+                    ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
                     return 0;
                 }
             }
@@ -1061,6 +1146,7 @@ esp_hidh_dev_t *esp_ble_hidh_dev_open(uint8_t *bda, uint8_t address_type)
     }
 
     dev->in_use = true;
+    dev->ble.conn_id = -1;   /* PATCH I: calloc's 0 is a valid conn handle */
     dev->transport = ESP_HID_TRANSPORT_BLE;
     memcpy(dev->addr.bda, bda, sizeof(dev->addr.bda));
     dev->ble.address_type = address_type;
