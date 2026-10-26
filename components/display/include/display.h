@@ -10,13 +10,12 @@
 #include "esp_err.h"
 #include "esp_attr.h"
 #include "font.h"
+#include "board_display.h"
 #ifndef BUILD_SIMULATOR
 #include "esp_lcd_panel_ops.h"
 #endif
 
-// Display dimensions
-#define DISPLAY_WIDTH   800
-#define DISPLAY_HEIGHT  480
+/* Display dimensions come from the board's panel constants. */
 
 /*
  * Bounce band: one character row at 8x16, HALF a row for taller fonts —

@@ -84,6 +84,7 @@ bool render_cache_has_cells(void);
 
 /* render_scan.c */
 void render_scan_band(const scan_ctx_t *cx);        /* HOT per-size loop  */
+void render_scan_band_scalar(const scan_ctx_t *cx); /* fallback/reference */
 void render_underline_pass(const scan_ctx_t *cx);
 #if OVERLAY_DIM_DITHER
 void render_dim_pass(const scan_ctx_t *cx);

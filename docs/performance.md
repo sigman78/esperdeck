@@ -542,7 +542,17 @@ identical disassembly md5**; the objects differ by exactly 4 bytes,
 which is the recorded command-line string (`-Os ` = 4 chars), not code.
 `set_source_files_properties(... COMPILE_OPTIONS "-O2")` is safe.
 
-### 4. SIMD — real, but only legal in task context
+### 4. SIMD — original task-context investigation
+
+> Update 2026-10-26: the task-only conclusion below was too categorical.
+> A benchmark-only ISR kernel with explicit vector/CPENABLE preservation
+> and 16-byte-aligned bounce buffers measured 30-35% average savings in
+> the real 8x16 render pipeline. A subsequent experiment adds fixed-offset
+> SIMD wobble and 10x20/12x24 kernels. See the
+> [all-font measurements and integration limits](../tests/render_simd/VARIANTS_RESULTS.md).
+> The following discussion records the earlier investigation.
+> The [production integration](#two-pass-simd-integration-2026-10-26) below
+> records the implemented path and its native-buffer limitations.
 
 ESP32-S3 has a 128-bit SIMD (single-instruction, multiple-data) unit —
 Xtensa **PIE** (Processor Instruction Extensions), the one `esp-dsp`
@@ -1150,3 +1160,184 @@ within 1 us of each other, and `bold` is statistically tied with
 `dense`/`bars` instead of clearly worst — the historical "bold is the
 one to watch" ranking (first measurement above) deserves a re-check
 next time someone benches for its own sake.
+
+## Two-pass SIMD integration (2026-10-26)
+
+The ESP32-S3 renderer now tries `render_simd_scan()` before the retained
+`render_scan_band_scalar()` path. `render_scan.inc` is unchanged and remains
+both the fallback and the golden reference. `CONFIG_DISPLAY_SIMD` defaults
+on for the S3; turning it off restores the C path. Simulator rendering
+continues to use C.
+
+The implementation expands glyphs cell-major, reusing the normal/dimmed
+palettes across a full band. A second pass shifts only displaced scanlines
+with the fixed-offset SIMD functions. It supports 8x16, 10x20 and 12x24;
+the wider fonts retain two/four scalar tail pixels per glyph. Underline,
+cursor and other post-passes retain their existing ordering.
+
+### Geometry and alignment
+
+Panel dimensions remain **driver constants**, shared in
+`components/board/include/board_display.h`; there are no new width/height
+Kconfig settings. `DISPLAY_WIDTH`/`DISPLAY_HEIGHT` feed column/row limits,
+glyph-cache sizes and the existing LCD configuration. The assembly receives
+the column count, byte stride and vector count rather than embedding 800,
+100, 80, or 66. The font cache uses the maximum size over the linked fonts;
+which font needs the largest cache can change with the panel width.
+
+The SIMD fast path accepts widths divisible by eight, full 16/10/12-line
+bands, valid half-row origins and word-aligned output. Margins are computed
+from the grid width and cleared before shifting. Other supported C-renderer
+geometry, such as an 802-pixel panel, falls back before modifying output.
+
+IDF 5.5.2's native DMA bounce allocation does **not** guarantee 16-byte
+alignment. Expansion handles all four word alignments using 128-bit,
+two 64-bit, or four 32-bit output stores. The shift pass requires aligned
+lines: a displaced unaligned band instead uses the original direct-offset
+C scan. An attempted C copy pass on unaligned output raised the 8x16 effects
+peak from about 285 to 522 us and was rejected. No global allocation hook
+or extra band buffer is used.
+
+Consequently, performance depends on allocation alignment. The earlier
+forced-alignment numbers are not claims about every production heap layout.
+On unaligned buffers, the effects peak remains near the scalar peak, with
+a small dispatch cost. The final integration pairs the renderer with the
+small IDF allocation patch below, while keeping these fallbacks intact.
+
+### IDF bounce-buffer alignment patch
+
+For ESP-IDF 5.5.2, apply
+[`esp-idf-5.5.2-rgb-bounce-align.patch`](../patches/esp-idf-5.5.2-rgb-bounce-align.patch).
+It changes only the bounce allocation in `esp_lcd_panel_rgb.c` to request
+`MAX(rgb_panel->int_mem_align, (size_t)16)` instead of the DMA minimum alone.
+Both buffers are allocated through that loop before descriptor setup.
+Buffer sizes, descriptor requirements, ownership and cleanup are unchanged.
+The allocator may need a little more alignment padding; no extra pixel
+buffer or per-frame copy is added. This is independent of panel dimensions.
+
+The existing `sram_trans_align` config field is deprecated and ignored by
+this allocation path. `dma_burst_size` does not impose 16-byte internal
+buffer alignment on the S3 TX channel either. Merely setting either field
+in `lcd_driver.c` would not solve the measured issue.
+
+From the project root (substitute the installed IDF path):
+
+```sh
+git -C /path/to/esp-idf apply --check /absolute/path/to/cyberdeck/patches/esp-idf-5.5.2-rgb-bounce-align.patch
+git -C /path/to/esp-idf apply /absolute/path/to/cyberdeck/patches/esp-idf-5.5.2-rgb-bounce-align.patch
+```
+
+This intentionally changes one file in the installed SDK. A reverse
+`git apply --reverse --check` verifies that the patch is already present.
+Reapply on a fresh SDK checkout and review the allocation site when upgrading
+IDF; the filename records the tested version, not a promise about other
+versions. Without the patch, the renderer remains correct but can use
+slower stores and scalar wobble fallbacks. Benchmark runs with the patched
+driver keep `BENCH_ALIGN_LCD=OFF`, so no test allocator wrapper supplies
+the alignment guarantee.
+
+### ISR contract
+
+Every assembly entry saves CPENABLE, enables CP3, saves q0..q5 and SAR_BYTE,
+and restores them before returning. q6/q7 and accumulators remain untouched.
+Each call uses 144 bytes of stack. The 4 KB mask table and shift dispatch
+table live in internal DRAM; the kernels and C dispatcher are in IRAM.
+`tools/check_iram.py` now audits these symbols as well as the scalar fallback.
+The production dispatcher contains no benchmark comparisons or logging.
+
+Host tests exercise the actual C dispatcher with portable substitutes only
+at the assembly boundary. They also compare the integrated renderer with
+the original C scan at panel widths 24, 320, 792, 802 and 1024, including
+scanline palettes, half rows, offsets, margins and unaligned destinations.
+The 802-pixel case exercises geometry fallback. The device tests run the
+actual assembly at ten widths from 16 through 1024 and all word alignments.
+
+Full pipeline tests reuse the existing font/text benchmark's 16 workloads,
+compare output before LCD startup, then time scalar/SIMD/SIMD/scalar under
+the live LCD interrupt. Register canaries run across actual ISR preemption.
+These tests do not include sustained SSH/BLE traffic or deliberate nested
+interrupt injection. The isolated SIMD branch builds the complete ESP-IDF
+application from the repository defaults and passes the IRAM and component
+boundary audits. All nine renderer host tests, three font suites and the
+theme suite pass with the shared board header.
+
+### Research record
+
+- [Original microkernel](../tests/render_simd/README.md): 2.02x faster
+  expansion at 8x16; this excluded the rest of the ISR pipeline.
+- [Initial live ISR experiment](../tests/render_simd/PIPELINE_RESULTS.md):
+  30-35% average savings with explicitly aligned buffers; wobble fell back.
+- [All fonts and two-pass wobble](../tests/render_simd/VARIANTS_RESULTS.md):
+  with forced alignment, average reductions of 30-35%, 14-15%, and 21-23%
+  for 8x16/10x20/12x24. Effects peaks improved to 200/176/173 us respectively.
+- [Fused expansion experiment](../tests/render_simd/FUSED_RESULTS.md): the
+  scanline-major fused implementation lost palette reuse and was 6-7%
+  slower in the displaced-band kernel. Live effects peak rose 200 -> 213 us.
+  It remains an isolated experiment, not a production path.
+- Render-ahead was considered separately: a copy-only 8x16 callback cost
+  66.8 us, but producer rendering, queueing and synchronization still cost
+  CPU time. It is a latency-isolation design, not a demonstrated free gain.
+
+To reproduce the integrated comparison in an activated IDF environment:
+
+```sh
+idf.py -C tests/render_simd/pipeline-idf -B build/render-pipeline-idf -D IDF_TARGET=esp32s3 -D BENCH_PRODUCTION=ON -D BENCH_FUSED=OFF -D BENCH_ALIGN_LCD=OFF -D BENCH_FONT=0 build
+```
+
+Use font indices 0/1/2 for 8x16/10x20/12x24. The benchmark fixture remains
+the physical 800x480 test panel; the separate geometry tests exercise other
+widths. Install with `app-flash` only after preserving the existing app.
+All device testing for this change preserves storage and restores the
+original application afterward. Raw local captures live in
+`build/render-pipeline-idf/`; summarized cycles are kept alongside
+the research tests. Pipeline timing is the render body inside the LCD
+callback, not interrupt entry/exit, and maxima are observations rather
+than execution-time bounds.
+
+### Integrated measurements before the IDF alignment patch
+
+Measured on the same 240 MHz S3 and 800x480 test panel, with the driver
+unmodified and its native allocation. Means average the two ABBA samples;
+maxima take the larger observed peak. Alignment lists buffer addresses
+modulo 16. These numbers include the integrated dispatcher and fallbacks.
+
+| Font | Buffer alignment | Workload | Scalar avg us | SIMD avg us | Reduction | Scalar max us | SIMD max us |
+|---|---|---|---:|---:|---:|---:|---:|
+| 8x16 | 8/12 | off | 244.57 | 201.62 | 17.6% | 249.97 | 226.09 |
+| 8x16 | 8/12 | fx:app | 247.40 | 207.00 | 16.3% | 284.69 | 285.48 |
+| 10x20 | 4/8 | off | 133.20 | 114.36 | 14.1% | 173.84 | 155.00 |
+| 10x20 | 4/8 | fx:app | 134.64 | 116.68 | 13.3% | 190.65 | 191.21 |
+| 12x24 | 8/12 | off | 143.87 | 122.51 | 14.8% | 180.54 | 164.71 |
+| 12x24 | 8/12 | fx:app | 145.29 | 124.96 | 14.0% | 195.35 | 196.02 |
+
+All 16 phases and repeat samples are in
+[production-native-results.csv](../tests/render_simd/production-native-results.csv).
+The legacy prototype fast/fallback counters are inactive in production
+comparison mode and are deliberately omitted from this CSV.
+
+### Integrated measurements with the IDF alignment patch
+
+Both bounce buffers were verified 16-byte aligned in every run. After all
+tests, the original 3 MB application was restored byte-for-byte and rebooted;
+its MD5 and the storage, NVS and partition-table MD5s matched the pre-test
+values. The installed IDF retains the documented one-line alignment patch.
+
+Measured on the same 240 MHz S3 and 800x480 test panel, with the driver
+patched to allocate 16-byte-aligned bounce buffers, without a benchmark
+allocator wrapper. Means average the two ABBA samples;
+maxima take the larger observed peak. Alignment lists buffer addresses
+modulo 16. These numbers include the integrated dispatcher and fallbacks.
+
+| Font | Buffer alignment | Workload | Scalar avg us | SIMD avg us | Reduction | Scalar max us | SIMD max us |
+|---|---|---|---:|---:|---:|---:|---:|
+| 8x16 | 0 | off | 244.56 | 173.50 | 29.1% | 250.02 | 178.65 |
+| 8x16 | 0 | fx:app | 247.40 | 175.18 | 29.2% | 284.71 | 208.18 |
+| 10x20 | 0 | off | 133.20 | 114.36 | 14.1% | 173.84 | 155.00 |
+| 10x20 | 0 | fx:app | 134.64 | 115.54 | 14.2% | 190.67 | 175.34 |
+| 12x24 | 0 | off | 143.87 | 111.85 | 22.3% | 180.54 | 148.50 |
+| 12x24 | 0 | fx:app | 145.28 | 113.12 | 22.1% | 195.35 | 172.58 |
+
+All 16 phases and repeat samples are in
+[production-results.csv](../tests/render_simd/production-results.csv).
+The legacy prototype fast/fallback counters are inactive in production
+comparison mode and are deliberately omitted from this CSV.

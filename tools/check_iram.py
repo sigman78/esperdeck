@@ -44,6 +44,8 @@ FUNC_PATTERNS = [
     r"render_(cache|underline|dim|cursor|fx)_",
     r"render_chunk_body",
     r"scan_band_",
+    r"render_scan_band_scalar$",
+    r"render_simd_",
     r"build_row_cache",
     r"resolve_(overlay|terminal)_cell",
     r"fx_(mono|dim)565",
@@ -64,6 +66,7 @@ DATA_PATTERNS = [
     r"s_cursor$", r"s_bell$", r"s_fx_noise$", r"g_rs$", r"g_fx_snap$",
     r"g_fx_cfg", r"g_fx_frame$", r"g_fx_wobble_lut$", r"g_fx_glow_acc$",
     r"g_fx_row_stamp$", r"g_fx_(wipe|collapse|static)_", r"wob_env",
+    r"s_simd_(masks|shifts)$",
 ]
 
 FUNC_RE = re.compile("^(" + "|".join(FUNC_PATTERNS) + ")")

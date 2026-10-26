@@ -31,6 +31,7 @@ target_include_directories(test_theme PRIVATE
     ${APP_DIR}/include
     ${DISPLAY_DIR}/include
     ${FONT_DIR}/include
+    ${FONT_DIR}/../board/include
     ${IDFSIM}
     ${unity_SOURCE_DIR}/src
 )

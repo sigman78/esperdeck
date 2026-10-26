@@ -1,0 +1,12 @@
+diff --git a/components/esp_lcd/rgb/esp_lcd_panel_rgb.c b/components/esp_lcd/rgb/esp_lcd_panel_rgb.c
+--- a/components/esp_lcd/rgb/esp_lcd_panel_rgb.c
++++ b/components/esp_lcd/rgb/esp_lcd_panel_rgb.c
+@@ -185,7 +185,7 @@ static esp_err_t lcd_rgb_panel_alloc_frame_buffers(esp_rgb_panel_t *rgb_panel)
+     if (rgb_panel->bb_size) {
+         for (int i = 0; i < RGB_LCD_PANEL_BOUNCE_BUF_NUM; i++) {
+             // bounce buffer must be allocated from internal memory for performance
+-            rgb_panel->bounce_buffer[i] = heap_caps_aligned_calloc(rgb_panel->int_mem_align, 1, rgb_panel->bb_size,
++            rgb_panel->bounce_buffer[i] = heap_caps_aligned_calloc(MAX(rgb_panel->int_mem_align, (size_t)16), 1, rgb_panel->bb_size,
+                                                                    MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
+             ESP_RETURN_ON_FALSE(rgb_panel->bounce_buffer[i], ESP_ERR_NO_MEM, TAG, "no mem for bounce buffer");
+             if (int_mem_cache_line_size > 0) {

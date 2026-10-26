@@ -459,6 +459,7 @@ header, or a stale table entry. No debt edges remain as of item 7
 |------|-----------------|---------|
 | `vterm → tsm`, `vterm → display` | the render data plane: cells, cursor, bell, two fx nudges | fused by design |
 | `display → font` | glyph decode, active cell size | sound |
+| `display → board`, `font → board` | panel constants; render geometry and font-cache bounds derive from them | sound — header-only board definition |
 | `ssh → vterm` | the session controller (`ssh_session.c`) wires the terminal; the transport is sink-only | sound |
 | `ssh → storage` | the controller resolves keys, secrets, and known hosts | sound |
 | `cyberdeck_app → storage ssh wifi display vterm font` | full consumer of every service API | sound |
@@ -467,7 +468,8 @@ header, or a stale table entry. No debt edges remain as of item 7
 | `input → display` | the `DISPLAY_WIDTH` constant (touch edge strip) | tolerable |
 | `storage → monocypher` | keystore crypto (Argon2id, AEAD, wipe) | sound — pinned component |
 
-The sound edges, in one breath: `tsm` and `font` depend on nothing;
+The sound edges, in one breath: `tsm` and `board` depend on nothing;
+`font → board` supplies only panel constants for cache bounds;
 `vterm → tsm/display` is the deliberate data-plane fusion — the render
 ISR reads the very cells `tsm` produces, byte-compatible by static
 assert, and an abstraction here would cost per-cell translation at 39 Hz.

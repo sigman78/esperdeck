@@ -28,6 +28,7 @@ function(add_font_test SIZE UPPER)
     )
     target_include_directories(${tgt} PRIVATE
         ${FONT_DIR}/include
+        ${FONT_DIR}/../board/include
         ${FONT_DIR}
         ${unity_SOURCE_DIR}/src
     )
