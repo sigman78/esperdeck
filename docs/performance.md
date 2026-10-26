@@ -549,7 +549,7 @@ which is the recorded command-line string (`-Os ` = 4 chars), not code.
 > and 16-byte-aligned bounce buffers measured 30-35% average savings in
 > the real 8x16 render pipeline. A subsequent experiment adds fixed-offset
 > SIMD wobble and 10x20/12x24 kernels. See the
-> [all-font measurements and integration limits](../tests/render_simd/VARIANTS_RESULTS.md).
+> [all-font measurements and integration limits](#two-pass-simd-integration-2026-10-26).
 > The following discussion records the earlier investigation.
 > The [production integration](#two-pass-simd-integration-2026-10-26) below
 > records the implemented path and its native-buffer limitations.
@@ -1233,7 +1233,7 @@ Reapply on a fresh SDK checkout and review the allocation site when upgrading
 IDF; the filename records the tested version, not a promise about other
 versions. Without the patch, the renderer remains correct but can use
 slower stores and scalar wobble fallbacks. Benchmark runs with the patched
-driver keep `BENCH_ALIGN_LCD=OFF`, so no test allocator wrapper supplies
+driver used its own allocation, so no test allocator wrapper supplied
 the alignment guarantee.
 
 ### ISR contract
@@ -1249,50 +1249,54 @@ Host tests exercise the actual C dispatcher with portable substitutes only
 at the assembly boundary. They also compare the integrated renderer with
 the original C scan at panel widths 24, 320, 792, 802 and 1024, including
 scanline palettes, half rows, offsets, margins and unaligned destinations.
-The 802-pixel case exercises geometry fallback. The device tests run the
-actual assembly at ten widths from 16 through 1024 and all word alignments.
+The 802-pixel case exercises geometry fallback. During integration, device
+tests also ran the actual assembly at ten widths from 16 through 1024 and
+all word alignments.
 
-Full pipeline tests reuse the existing font/text benchmark's 16 workloads,
-compare output before LCD startup, then time scalar/SIMD/SIMD/scalar under
-the live LCD interrupt. Register canaries run across actual ISR preemption.
-These tests do not include sustained SSH/BLE traffic or deliberate nested
+The temporary pipeline harness reused the existing font/text benchmark's
+16 workloads, compared output before LCD startup, then timed
+scalar/SIMD/SIMD/scalar under the live LCD interrupt. Register canaries
+passed across actual ISR preemption. These measurements did not include
+sustained SSH/BLE traffic or deliberate nested
 interrupt injection. The isolated SIMD branch builds the complete ESP-IDF
 application from the repository defaults and passes the IRAM and component
-boundary audits. All nine renderer host tests, three font suites and the
+boundary audits. The six retained renderer host tests, three font suites and the
 theme suite pass with the shared board header.
 
 ### Research record
 
-- [Original microkernel](../tests/render_simd/README.md): 2.02x faster
+- Original microkernel: 2.02x faster
   expansion at 8x16; this excluded the rest of the ISR pipeline.
-- [Initial live ISR experiment](../tests/render_simd/PIPELINE_RESULTS.md):
+- Initial live ISR experiment:
   30-35% average savings with explicitly aligned buffers; wobble fell back.
-- [All fonts and two-pass wobble](../tests/render_simd/VARIANTS_RESULTS.md):
+- All fonts and two-pass wobble:
   with forced alignment, average reductions of 30-35%, 14-15%, and 21-23%
   for 8x16/10x20/12x24. Effects peaks improved to 200/176/173 us respectively.
-- [Fused expansion experiment](../tests/render_simd/FUSED_RESULTS.md): the
+- Fused expansion experiment: the
   scanline-major fused implementation lost palette reuse and was 6-7%
   slower in the displaced-band kernel. Live effects peak rose 200 -> 213 us.
-  It remains an isolated experiment, not a production path.
+  It was rejected for production.
 - Render-ahead was considered separately: a copy-only 8x16 callback cost
   66.8 us, but producer rendering, queueing and synchronization still cost
   CPU time. It is a latency-isolation design, not a demonstrated free gain.
 
-To reproduce the integrated comparison in an activated IDF environment:
+The experimental kernels, device harness and raw CSVs were removed after
+the investigation. The maintained tests cover production dispatch, pixel
+output, bounds and fallback behavior, using portable substitutes at the
+assembly boundary. They do not execute S3 instructions on the host:
 
 ```sh
-idf.py -C tests/render_simd/pipeline-idf -B build/render-pipeline-idf -D IDF_TARGET=esp32s3 -D BENCH_PRODUCTION=ON -D BENCH_FUSED=OFF -D BENCH_ALIGN_LCD=OFF -D BENCH_FONT=0 build
+cmake -S tests/render_simd -B build/render-simd-tests -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Release
+cmake --build build/render-simd-tests
+ctest --test-dir build/render-simd-tests --output-on-failure
 ```
 
-Use font indices 0/1/2 for 8x16/10x20/12x24. The benchmark fixture remains
-the physical 800x480 test panel; the separate geometry tests exercise other
-widths. Install with `app-flash` only after preserving the existing app.
-All device testing for this change preserves storage and restores the
-original application afterward. Raw local captures live in
-`build/render-pipeline-idf/`; summarized cycles are kept alongside
-the research tests. Pipeline timing is the render body inside the LCD
-callback, not interrupt entry/exit, and maxima are observations rather
-than execution-time bounds.
+The recorded device measurements used an 800x480 panel, ESP-IDF 5.5.2 and
+Espressif GCC 14.2.0 at 240 MHz. Each sample had three settling and twelve
+measured feed+100 ms iterations; the effects frame counter reset per sample.
+Pipeline timing covers the render body inside the LCD callback, not
+interrupt entry/exit. Maxima are observations rather than execution-time
+bounds. Device testing used app-only flashing and restored the original app.
 
 ### Integrated measurements before the IDF alignment patch
 
@@ -1309,11 +1313,6 @@ modulo 16. These numbers include the integrated dispatcher and fallbacks.
 | 10x20 | 4/8 | fx:app | 134.64 | 116.68 | 13.3% | 190.65 | 191.21 |
 | 12x24 | 8/12 | off | 143.87 | 122.51 | 14.8% | 180.54 | 164.71 |
 | 12x24 | 8/12 | fx:app | 145.29 | 124.96 | 14.0% | 195.35 | 196.02 |
-
-All 16 phases and repeat samples are in
-[production-native-results.csv](../tests/render_simd/production-native-results.csv).
-The legacy prototype fast/fallback counters are inactive in production
-comparison mode and are deliberately omitted from this CSV.
 
 ### Integrated measurements with the IDF alignment patch
 
@@ -1336,8 +1335,3 @@ modulo 16. These numbers include the integrated dispatcher and fallbacks.
 | 10x20 | 0 | fx:app | 134.64 | 115.54 | 14.2% | 190.67 | 175.34 |
 | 12x24 | 0 | off | 143.87 | 111.85 | 22.3% | 180.54 | 148.50 |
 | 12x24 | 0 | fx:app | 145.28 | 113.12 | 22.1% | 195.35 | 172.58 |
-
-All 16 phases and repeat samples are in
-[production-results.csv](../tests/render_simd/production-results.csv).
-The legacy prototype fast/fallback counters are inactive in production
-comparison mode and are deliberately omitted from this CSV.

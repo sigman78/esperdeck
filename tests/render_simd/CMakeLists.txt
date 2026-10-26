@@ -1,17 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
-project(render_simd_prototype C)
+project(render_simd_tests C)
 set(CMAKE_C_STANDARD 11)
-add_executable(test_render_simd test_render_simd.c scan8.c)
-target_compile_options(test_render_simd PRIVATE -Wall -Wextra -Werror
-    -fno-strict-aliasing)
 enable_testing()
-add_test(NAME render_simd_model COMMAND test_render_simd)
-add_executable(test_scan_variants test_scan_variants.c scan_variants_model.c scan8.c)
-target_compile_options(test_scan_variants PRIVATE -Wall -Wextra -Werror -fno-strict-aliasing)
-add_test(NAME render_simd_variants COMMAND test_scan_variants)
-add_executable(test_scan8_fused test_scan8_fused.c scan8_fused_model.c scan8.c)
-target_compile_options(test_scan8_fused PRIVATE -Wall -Wextra -Werror -fno-strict-aliasing)
-add_test(NAME render_simd_fused COMMAND test_scan8_fused)
 add_executable(test_production_scan test_production_scan.c production_asm_model.c
     ../../components/display/render_simd.c)
 target_include_directories(test_production_scan PRIVATE ../../components/display ../../idfsim)

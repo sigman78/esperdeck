@@ -2,20 +2,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef ESP_PLATFORM
-#include "esp_heap_caps.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#endif
 
 int production_scan_test(void)
 {
     const unsigned widths[] = {16, 24, 32, 320, 480, 640, 792, 800, 808, 1024};
-#ifdef ESP_PLATFORM
-    uint16_t *allocation = heap_caps_aligned_alloc(16, (1024 * 16 + 32) * 2, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-#else
     uint16_t *allocation = malloc((1024 * 16 + 32) * 2);
-#endif
     uint8_t *rows = malloc(128 * 48);
     uint32_t (*pal[2])[4] = {malloc(128 * 16), malloc(128 * 16)};
     if (!allocation || !rows || !pal[0] || !pal[1]) abort();
@@ -23,11 +14,7 @@ int production_scan_test(void)
         unsigned band = w == 8 ? 16 : w, rowbytes = w == 8 ? 1 : 2;
         for (unsigned wi = 0; wi < sizeof widths / sizeof *widths; wi++) {
             unsigned pixels = widths[wi], cols = pixels / w;
-#ifdef ESP_PLATFORM
-            const unsigned seeds = 2;
-#else
             const unsigned seeds = 16;
-#endif
             for (unsigned seed = 0; seed < seeds; seed++) {
                 for (unsigned c = 0; c < cols; c++) {
                     for (unsigned p = 0; p < 2; p++) {
@@ -81,9 +68,6 @@ int production_scan_test(void)
                     for (unsigned i = 0; i < start; i++) if (allocation[i] != 0xa5a5) return 3;
                     for (unsigned i = end; i < 1024 * 16 + 32; i++) if (allocation[i] != 0xa5a5) return 4;
                 }
-#ifdef ESP_PLATFORM
-                vTaskDelay(1);
-#endif
             }
         }
         printf("PASS production SIMD width=%u: variable panel widths, palettes, offsets, alignment, guards\n", w);
@@ -100,6 +84,4 @@ int production_scan_test(void)
     free(pal[1]); free(pal[0]); free(rows); free(allocation);
     return 0;
 }
-#ifndef ESP_PLATFORM
 int main(void) { return production_scan_test(); }
-#endif

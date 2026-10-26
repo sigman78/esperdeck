@@ -281,7 +281,7 @@ assumptions inside assembly. Non-vector-multiple panel widths use scalar.
 
 Fusing expansion and shifting was measured, not assumed to help: the first
 scanline-major implementation lost palette reuse and was slower than two
-passes. See [the three-way comparison](../tests/render_simd/FUSED_RESULTS.md).
+passes. See [the research summary](performance.md#research-record).
 
 Reference implementation worth reading:
 `esp-bsp/components/esp_lvgl_port/src/lvgl9/simd/` — 11 hand-written `.S`
