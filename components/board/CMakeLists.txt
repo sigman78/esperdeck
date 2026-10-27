@@ -1,0 +1,6 @@
+if(BUILD_SIMULATOR)
+    add_library(board INTERFACE)
+    target_include_directories(board INTERFACE include)
+else()
+    idf_component_register(INCLUDE_DIRS include)
+endif()

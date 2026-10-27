@@ -44,6 +44,7 @@ CPMAddPackage(
 # diagram in docs/ARCHITECTURE.md. New components slot in after their
 # last dependency.
 add_subdirectory(${ROOT}/idfsim                    idfsim)
+add_subdirectory(${ROOT}/components/board          board)
 add_subdirectory(${ROOT}/components/font           font)
 add_subdirectory(${ROOT}/components/display        display)
 add_subdirectory(${ROOT}/components/tsm            tsm)

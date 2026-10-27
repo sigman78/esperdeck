@@ -22,7 +22,8 @@ from pathlib import Path
 # libssh2_esp -> monocypher (the fork's mbedtls.c does the include).
 ALLOWED = {
     "vterm":         {"tsm", "display"},   # render data plane, fused by design
-    "display":       {"font"},
+    "display":       {"font", "board"},
+    "font":          {"board"},
     "ssh":           {"vterm",             # session controller drives the terminal
                       "storage"},          # controller resolves keys/known hosts
     "cyberdeck_app": {"storage", "ssh", "wifi", "display", "vterm", "font"},

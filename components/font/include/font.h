@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "esp_attr.h"
+#include "board_display.h"
 
 /*
  * Font size selection.
@@ -64,8 +65,8 @@ typedef enum {
  * ISR's static column caches and bound the DMA bounce band. They must
  * cover the widest grid (8x16 -> 100 cols) and the tallest band (16).
  */
-#define FONT_MAX_COLS   100   /* 800 / 8  */
-#define FONT_MAX_ROWS   30    /* 480 / 16 */
+#define FONT_MAX_COLS   (DISPLAY_WIDTH / 8)
+#define FONT_MAX_ROWS   (DISPLAY_HEIGHT / 16)
 #define FONT_MAX_BAND   16    /* 8x16 renders full-row bands; taller ones half */
 
 /* Bytes per glyph row / per whole (decoded) glyph, for a given cell size. */
@@ -78,13 +79,24 @@ typedef enum {
  * column's glyph into this cache once per character row; the band scan loop
  * reads decoded rows with plain indexing.
  */
-#if FONT_RT_10X20
-#define FONT_MAX_CACHE_BYTES  3200
-#elif FONT_RT_12X24
-#define FONT_MAX_CACHE_BYTES  3168
+#define FONT_CACHE_MAX(a, b) ((a) > (b) ? (a) : (b))
+/* Keep bounds valid when panel widths change or leave partial cells. */
+#if FONT_RT_8X16
+#define FONT_CACHE_8 ((DISPLAY_WIDTH / 8) * 16)
 #else
-#define FONT_MAX_CACHE_BYTES  1600
+#define FONT_CACHE_8 0
 #endif
+#if FONT_RT_10X20
+#define FONT_CACHE_10 ((DISPLAY_WIDTH / 10) * 40)
+#else
+#define FONT_CACHE_10 0
+#endif
+#if FONT_RT_12X24
+#define FONT_CACHE_12 ((DISPLAY_WIDTH / 12) * 48)
+#else
+#define FONT_CACHE_12 0
+#endif
+#define FONT_MAX_CACHE_BYTES FONT_CACHE_MAX(FONT_CACHE_8, FONT_CACHE_MAX(FONT_CACHE_10, FONT_CACHE_12))
 
 /* Largest decoded glyph any ENABLED size produces — sizes static sprite
  * slot storage. */

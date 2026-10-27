@@ -143,9 +143,8 @@ static IRAM_ATTR void render_chunk_body(color_t *dst, int pos_px, int n_bytes)
         return;
     }
 
-    /* The scan applies wobble as a per-scanline destination offset, so
-     * pixels land already displaced instead of shifting afterward. NULL
-     * xoff keeps the untouched fast path when nothing in the band moves. */
+    /* The scalar scan writes displaced pixels directly; SIMD expands then
+     * shifts the affected lines. Both consume the same word offsets. */
     int8_t wob[FONT_MAX_BAND];
     const bool wobbled = render_fx_wobble_offsets(start_scan, num_scans, wob);
 

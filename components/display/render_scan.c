@@ -5,6 +5,9 @@
  */
 
 #include "render_internal.h"
+#if CONFIG_DISPLAY_SIMD
+#include "render_simd.h"
+#endif
 
 /*
  * Reference definition of the pixel-pair packing, kept for documentation
@@ -60,7 +63,7 @@ RENDER_FORCE_INLINE uint32_t scan_gpair(unsigned row, int w, int p,
 #undef SCAN_FN
 #endif
 
-IRAM_ATTR void render_scan_band(const scan_ctx_t *cx)
+IRAM_ATTR void render_scan_band_scalar(const scan_ctx_t *cx)
 {
     switch (g_rs.fw) {
 #if FONT_RT_8X16
@@ -74,6 +77,21 @@ IRAM_ATTR void render_scan_band(const scan_ctx_t *cx)
 #endif
     default: break;   /* font_init guarantees a linked size */
     }
+}
+
+IRAM_ATTR void render_scan_band(const scan_ctx_t *cx)
+{
+#if CONFIG_DISPLAY_SIMD
+    const render_simd_ctx_t simd = {
+        .dst = cx->dst, .rows = cx->rows,
+        .pairs = {cx->pr[0], cx->pr[cx->scan_on ? 1 : 0]},
+        .offsets = cx->xoff, .width = DISPLAY_WIDTH, .font_width = (unsigned)g_rs.fw,
+        .cols = (unsigned)cx->ncols, .num_scans = (unsigned)cx->num_scans,
+        .row0 = (unsigned)cx->glyph_row0
+    };
+    if (render_simd_scan(&simd)) return;
+#endif
+    render_scan_band_scalar(cx);
 }
 
 /* Both post-passes below write at absolute cell positions, so they take the

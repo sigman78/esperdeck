@@ -249,6 +249,10 @@ the band bench reproduces to ±1–3 cycles across runs, so anything above
 
 ## 7. If you reach for SIMD
 
+The two-pass production path is in `render_simd.c` and its assembly files.
+Keep `render_scan.inc` as the scalar reference and fallback. See the
+[integration and measurements](performance.md#two-pass-simd-integration-2026-10-26).
+
 The 128-bit PIE unit exists, and the toolchain assembles it with no extra
 flags (`ee.vld.128.ip`, `ee.andq`, `ee.xorq`, `ee.movi.32.q`, …). The
 scan's `px = bg ^ (xf & mask)` is four instructions per **eight** pixels,
@@ -262,9 +266,24 @@ whichever task owns CP3. `esp_lvgl_port`'s SIMD assembly has no
 save/restore at all — it "assumes the coprocessor is already enabled by
 the caller", which is true because **LVGL renders in a task**.
 
-So SIMD is legal in task context, not in the bounce ISR. The
-prebuild-task design is therefore the enabler, not merely a latency
-measure. Reference implementation worth reading first:
+Ordinary task-oriented SIMD functions cannot simply be called from the
+bounce ISR. Our assembly explicitly saves CPENABLE, enables CP3, preserves
+q0..q5 and SAR_BYTE, then restores all of them. It touches neither q6/q7 nor
+the accumulators. This guard costs 144 bytes of stack per call; measured
+times include it. The IRAM audit covers the kernels, dispatch and tables.
+Task vector canaries have been checked across actual LCD ISR preemption.
+
+Destination alignment matters independently of font width. Glyph expansion
+supports word-aligned output; the SIMD shift requires 16-byte alignment.
+Displaced unaligned bands use the original scalar scan, avoiding a slower
+scalar copy pass. Geometry comes from the driver constants, not 800-pixel
+assumptions inside assembly. Non-vector-multiple panel widths use scalar.
+
+Fusing expansion and shifting was measured, not assumed to help: the first
+scanline-major implementation lost palette reuse and was slower than two
+passes. See [the research summary](performance.md#research-record).
+
+Reference implementation worth reading:
 `esp-bsp/components/esp_lvgl_port/src/lvgl9/simd/` — 11 hand-written `.S`
 files, three alignment paths each, validated bit-exact against a retained
 ANSI reference.

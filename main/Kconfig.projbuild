@@ -1,5 +1,14 @@
 menu "Cyberdeck Configuration"
 
+    config DISPLAY_SIMD
+        bool "ESP32-S3 two-pass SIMD text rendering"
+        depends on IDF_TARGET_ESP32S3
+        default y
+        help
+            Expand glyphs with guarded PIE instructions, then shift displaced
+            lines. Supports 8x16, 10x20 and 12x24 fonts. Unsupported geometry
+            retains the scalar renderer. Costs a 4 KB internal mask table.
+
     config CYBERDECK_KEYSTORE
         bool "Secure store (PIN vault, device lock, secrets bundle)"
         default y
