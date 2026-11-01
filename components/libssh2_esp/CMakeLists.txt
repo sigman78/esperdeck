@@ -97,7 +97,8 @@ if(BUILD_SIMULATOR)
 
     add_library(libssh2_esp STATIC ${_srcs})
     target_compile_definitions(libssh2_esp PRIVATE
-        LIBSSH2_MBEDTLS)  # no HAVE_CONFIG_H → libssh2_setup.h uses its _WIN32 branch
+        LIBSSH2_MBEDTLS   # no HAVE_CONFIG_H → libssh2_setup.h uses its _WIN32 branch
+        LIBSSH2_NO_AES_GCM)  # same cipher list as the device (see below)
     target_include_directories(libssh2_esp PUBLIC
         ${LIBSSH2_DIR}/src
         ${LIBSSH2_DIR}/include
@@ -126,7 +127,8 @@ idf_component_register(SRCS ${_srcs}
 # The ESP hardware AES driver cannot carry a partial block between GCM
 # updates and libssh2 feeds the 4-byte packet length first, so aes-gcm would
 # produce wrong tags (fork docs/MBEDTLS-PSA.md). chacha20-poly1305 and
-# aes-ctr remain.
+# aes-ctr remain. The simulator drops it too, so both builds offer the same
+# cipher list and negotiate the same transport path.
 target_compile_definitions(${COMPONENT_LIB} PRIVATE LIBSSH2_NO_AES_GCM)
 
 # libssh2 reads its build config from the vendored libssh2_config.h (on INCLUDE_DIRS ".").

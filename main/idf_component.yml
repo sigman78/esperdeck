@@ -1,6 +1,8 @@
 ## IDF Component Manager Manifest File
 dependencies:
-  ## Required IDF version
+  ## Required IDF version. The exact patch level is pinned in one place,
+  ## components/esp_hid/CMakeLists.txt (vendored copy of the SDK component);
+  ## an IDF bump re-derives that copy, not these manifests.
   idf:
     version: ">=6.0.0"
   ## QR-code encoder for WiFi provisioning onboarding (SoftAP QR)

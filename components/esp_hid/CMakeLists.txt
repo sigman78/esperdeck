@@ -4,14 +4,14 @@ idf_build_get_property(target IDF_TARGET)
 # HID host fixes (see CYBERDECK_PATCHES.md) — it deliberately SHADOWS the
 # SDK component via the documented project-component override. Pin it to
 # the IDF version it was copied from so an SDK bump can't silently reuse
-# these 5.5.2-era sources against newer IDF internals.
+# these 6.0.1-era sources against newer IDF internals.
 #
 # Read the version straight from the SDK header — the source of truth the
 # compiler uses. IDF_VER (git describe) is unreliable on trees with a broken
 # submodule git config, and the IDF_VERSION_* build properties are not exposed
 # in this IDF (they come back empty). Parse the three macros and pin the EXACT
-# patch level: v5.5.3 already ships fix A, so it must force a re-derive, not be
-# silently accepted. If the header can't be found, skip the check (fail-open —
+# patch level: v6.0.2 ships fixes B, C and D, so it must force a re-derive,
+# not be silently accepted. If the header can't be found, skip the check (fail-open —
 # this is a maintenance reminder, not a security control).
 idf_build_get_property(idf_path IDF_PATH)
 set(_verh "${idf_path}/components/esp_common/include/esp_idf_version.h")
@@ -26,9 +26,9 @@ if(EXISTS "${_verh}")
         message(FATAL_ERROR
             "components/esp_hid was vendored from IDF v6.0.1 but this build uses "
             "IDF ${_vmaj}.${_vmin}.${_vpat}. Re-derive it per "
-            "components/esp_hid/CYBERDECK_PATCHES.md (on >= v5.5.3 re-copy from "
-            "the SDK and re-apply only the still-missing patches; on the release "
-            "containing all of them, delete this component entirely).")
+            "components/esp_hid/CYBERDECK_PATCHES.md (on >= v6.0.2 re-copy from "
+            "the SDK and re-apply only the still-missing patches E through J; on "
+            "the release containing all of them, delete this component entirely).")
     endif()
 endif()
 
