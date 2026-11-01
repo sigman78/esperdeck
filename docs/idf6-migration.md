@@ -67,20 +67,21 @@ Alternatives weighed before the port (bundle Mbed TLS 3.6, wolfSSL backend,
 wolfSSH, libssh) and the decision triggers are in
 [ssh-stack-options.md](ssh-stack-options.md).
 
-## Build and flash on this machine
+## Build and flash
 
-```powershell
-$env:IDF_PATH='D:\esp\v6.0.1\esp-idf'; $env:IDF_TOOLS_PATH='D:\esp\v6.0.1\tools'
-. D:\esp\v6.0.1\esp-idf\export.ps1 *> $null
-idf.py build            # picks the 'default' preset -> build/
-cd build; python -m esptool --chip esp32s3 -p COM6 -b 921600 write-flash `
-  --flash-mode dio --flash-freq 80m --flash-size 16MB 0x10000 cyberdeck.bin
+With the IDF 6 environment exported (`export.sh` or `export.ps1` from the
+IDF checkout):
+
+```sh
+idf.py build                  # picks the 'default' preset -> build/
+idf.py -p <port> app-flash    # app partition only
 ```
 
-Unlike the 5.5.2 EIM install, this `export.ps1` works as-is (standard
-`idf_tools.py` layout under `D:\esp\v6.0.1\tools`). esptool is v5: verbs and
-flags use dashes. App-only flashing keeps the LittleFS storage and the
-5.5-era bootloader; the 6.0 app boots on it.
+App-only flashing keeps the LittleFS storage and a 5.5-era bootloader; the
+6.0 app boots on it. A full `idf.py flash` also writes the bootloader and
+partition table, and `flash_args` includes the storage image, which wipes
+the deck's profiles and keystore. esptool is v5 under IDF 6: verbs and flags
+use dashes (`write-flash`, `--flash-mode`).
 
 ## Validation so far
 

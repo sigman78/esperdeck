@@ -77,6 +77,9 @@ Arrows + Enter or mouse-as-touch; **F12** opens the in-session menu.
   render pipeline, data flow, threading, memory rules.
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — building, flashing, tests,
   simulator details, third-party licenses.
+- [`docs/crypto-stack.md`](docs/crypto-stack.md) — what the SSH client and
+  the keystore need from crypto, and what is vendored, fetched and patched
+  to deliver it.
 - [`docs/idf6-migration.md`](docs/idf6-migration.md) — the ESP-IDF 6 move and
   libssh2 on Mbed TLS 4 (PSA port); [`docs/ssh-stack-options.md`](docs/ssh-stack-options.md)
   weighs the alternatives (wolfSSH, libssh, PSA port) and when to switch.

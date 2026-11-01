@@ -198,10 +198,11 @@ cmake --build build-sim
   example) if the default clang cannot find the Windows SDK headers.
 
 **Crypto.** The sim's `libssh2` uses the same mbedTLS backend as the
-device (mbedTLS 3.6 LTS via CPM, plus the fork's Monocypher ed25519).
-Key exchange, host-key algorithms, and known-hosts pins therefore match
-between sim and device — a fingerprint accepted in the sim is valid on
-the deck.
+device (Mbed TLS 4.0.0 via CPM, the fork's PSA port, the same Monocypher
+ed25519). Key exchange, host-key algorithms, cipher list and known-hosts
+pins therefore match between sim and device — a fingerprint accepted in
+the sim is valid on the deck. What the deck needs from crypto and where
+each piece comes from: [`crypto-stack.md`](crypto-stack.md).
 
 ### Simulator storage isolation tests
 

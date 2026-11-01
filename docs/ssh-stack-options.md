@@ -3,7 +3,7 @@
 Survey date 2026-10-31. Question asked: now that IDF 6 ships Mbed TLS 4 and
 libssh2 only built through private headers (patch 0002 at the time, see
 [idf6-migration.md](idf6-migration.md); background map in
-[crypto-landscape.md](crypto-landscape.md)), is there an SSH stack with less
+[crypto-stack.md](crypto-stack.md)), is there an SSH stack with less
 hand-maintenance that still gives ed25519 and builds for both the device and
 the PC simulator?
 
