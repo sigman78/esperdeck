@@ -1,21 +1,21 @@
 diff --git i/src/keepalive.c w/src/keepalive.c
-index 9dcc2a1a..7e2c85d5 100644
+index 061e1d91..ea1e49dd 100644
 --- i/src/keepalive.c
 +++ w/src/keepalive.c
-@@ -44,6 +44,11 @@ void libssh2_keepalive_config(LIBSSH2_SESSION *session,
+@@ -47,6 +47,11 @@ void libssh2_keepalive_config(LIBSSH2_SESSION *session,
      else
-         session->keepalive_interval = interval;
+         session->keepalive_interval = ssh2_sec_to_timediff(interval_s);
      session->keepalive_want_reply = want_reply ? 1 : 0;
 +    /* Start the clock now. The session is calloc'd, so leaving this at 0 makes
 +       the very first libssh2_keepalive_send() fire immediately instead of
-+       after `interval` — which can push a GLOBAL_REQUEST out at a point in the
++       after `interval` - which can push a GLOBAL_REQUEST out at a point in the
 +       protocol where it is not yet legal. */
-+    session->keepalive_last_sent = time(NULL);
++    session->keepalive_last_sent = ssh2_now();
  }
  
  int libssh2_keepalive_send(LIBSSH2_SESSION *session, int *seconds_to_next)
 diff --git i/src/libssh2_priv.h w/src/libssh2_priv.h
-index f1d6d606..0bc5f8a1 100644
+index 457afe07..f38e85a7 100644
 --- i/src/libssh2_priv.h
 +++ w/src/libssh2_priv.h
 @@ -609,6 +609,12 @@ struct endpoint_data {
@@ -40,7 +40,7 @@ index f1d6d606..0bc5f8a1 100644
  
      ssize_t ototal_num;     /* size of outbuf in number of bytes */
      const unsigned char *odata; /* original pointer to the data */
-@@ -804,7 +810,7 @@ struct _LIBSSH2_SESSION {
+@@ -811,7 +817,7 @@ struct _LIBSSH2_SESSION {
      /* State variables used in session_banner_receive(),
         session_banner_send() */
      ssh2_NB_states banner_TxRx_state;
@@ -49,48 +49,17 @@ index f1d6d606..0bc5f8a1 100644
      ssize_t banner_TxRx_total_send;
  
      /* State variables used in kexinit() */
-diff --git i/src/mbedtls.c w/src/mbedtls.c
-index 37585255..88a39e07 100644
---- i/src/mbedtls.c
-+++ w/src/mbedtls.c
-@@ -743,11 +743,21 @@ int ssh2_pub_priv_keyfilememory(LIBSSH2_SESSION *session,
-         mbedtls_pk_free(&pkey);
- #if LIBSSH2_ED25519
-         /* mbedTLS cannot parse OpenSSH-format keys; try ed25519 */
--        if(mbed_ed25519_pub_priv_mem(session, method, method_len,
--                                     pubkeydata, pubkeydata_len,
--                                     privatekeydata, privatekeydata_len,
--                                     passphrase) == 0)
--            return 0;
-+        {
-+            int ed_rc = mbed_ed25519_pub_priv_mem(session, method, method_len,
-+                                                  pubkeydata, pubkeydata_len,
-+                                                  privatekeydata,
-+                                                  privatekeydata_len,
-+                                                  passphrase);
-+            if(ed_rc == 0)
-+                return 0;
-+            /* An OpenSSH-format blob was never mbedTLS's to parse: report the
-+               ed25519 parser's own error instead of masking it with mbedTLS's
-+               generic "invalid key format". */
-+            if(privatekeydata_len >= 18 &&
-+               memcmp(privatekeydata, "-----BEGIN OPENSSH", 18) == 0)
-+                return ed_rc;
-+        }
- #endif
-         mbedtls_strerror(ret, (char *)buf, sizeof(buf));
-         return ssh2_err_flags(session, LIBSSH2_ERROR_FILE, buf,
 diff --git i/src/pem.c w/src/pem.c
-index 271a05fa..d49fd06e 100644
+index 18c091b5..c67b1eb5 100644
 --- i/src/pem.c
 +++ w/src/pem.c
-@@ -466,8 +466,11 @@ static int pem_parse_data_openssh(LIBSSH2_SESSION *session,
+@@ -459,8 +459,11 @@ static int pem_parse_data_openssh(LIBSSH2_SESSION *session,
  
-     if((!passphrase || strlen((const char *)passphrase) == 0) &&
-        strcmp((const char *)ciphername, "none")) {
+     if((!passphrase || strlen(passphrase) == 0) &&
+        !SSH2_IS_LITERAL(ciphername, ciphername_len, "none")) {
 -        /* passphrase required */
 -        ret = LIBSSH2_ERROR_KEYFILE_AUTH_FAILED;
-+        /* passphrase required — say so, otherwise the caller reports a
++        /* passphrase required - say so, otherwise the caller reports a
 +           blank error and the user cannot tell this apart from a corrupt
 +           key file. */
 +        ret = ssh2_err(session, LIBSSH2_ERROR_KEYFILE_AUTH_FAILED,
@@ -99,10 +68,10 @@ index 271a05fa..d49fd06e 100644
      }
  
 diff --git i/src/transport.c w/src/transport.c
-index bd0f273f..589d3732 100644
+index c7c42c3a..5e3d3e6f 100644
 --- i/src/transport.c
 +++ w/src/transport.c
-@@ -1051,7 +1051,7 @@ int ssh2_transport_send(LIBSSH2_SESSION *session,
+@@ -1079,7 +1079,7 @@ int ssh2_transport_send(LIBSSH2_SESSION *session,
          /* the idea here is that these function must fail if the output gets
             larger than what fits in the assigned buffer so thus they do not
             check the input size as we do not know how much it compresses */
@@ -111,7 +80,7 @@ index bd0f273f..589d3732 100644
          size_t dest2_len = dest_len;
  
          /* compress directly to the target buffer */
-@@ -1081,7 +1081,7 @@ int ssh2_transport_send(LIBSSH2_SESSION *session,
+@@ -1109,7 +1109,7 @@ int ssh2_transport_send(LIBSSH2_SESSION *session,
          data_len = dest_len + dest2_len; /* use the combined length */
      }
      else {
@@ -121,10 +90,10 @@ index bd0f273f..589d3732 100644
                 function split it up and send multiple SSH packets */
              return LIBSSH2_ERROR_INVAL;
 diff --git i/src/userauth.c w/src/userauth.c
-index 3554895e..00de0f34 100644
+index 17095668..10a78821 100644
 --- i/src/userauth.c
 +++ w/src/userauth.c
-@@ -1652,11 +1652,17 @@ retry_auth:
+@@ -1526,11 +1526,17 @@ retry_auth:
          if(rc == LIBSSH2_ERROR_EAGAIN)
              return ssh2_err(session, LIBSSH2_ERROR_EAGAIN, "Would block");
          else if(rc || session->userauth_pblc_data_len < 1) {

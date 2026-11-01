@@ -12,8 +12,8 @@
 #include "esp_event.h"
 #include "esp_log.h"
 
-#include "wifi_provisioning/manager.h"
-#include "wifi_provisioning/scheme_softap.h"
+#include "network_provisioning/manager.h"
+#include "network_provisioning/scheme_softap.h"
 #include "qrcode.h"
 
 #include <string.h>
@@ -105,12 +105,12 @@ static void save_creds(void)
 static void prov_event_handler(void *arg, esp_event_base_t base,
                                int32_t id, void *data)
 {
-    if (base != WIFI_PROV_EVENT) return;
+    if (base != NETWORK_PROV_EVENT) return;
     switch (id) {
-    case WIFI_PROV_START:
+    case NETWORK_PROV_START:
         s_state = WIFI_PROV_ST_ACTIVE;
         break;
-    case WIFI_PROV_CRED_RECV: {
+    case NETWORK_PROV_WIFI_CRED_RECV: {
         const wifi_sta_config_t *c = (const wifi_sta_config_t *)data;
         snprintf(s_got_ssid, sizeof(s_got_ssid), "%s", (const char *)c->ssid);
         snprintf(s_got_pass, sizeof(s_got_pass), "%s", (const char *)c->password);
@@ -118,15 +118,15 @@ static void prov_event_handler(void *arg, esp_event_base_t base,
         ESP_LOGI(TAG, "Credentials received for '%s'", s_got_ssid);
         break;
     }
-    case WIFI_PROV_CRED_FAIL:
+    case NETWORK_PROV_WIFI_CRED_FAIL:
         ESP_LOGW(TAG, "Provisioning failed (bad password or AP not found)");
         s_state = WIFI_PROV_ST_FAILED;
         break;
-    case WIFI_PROV_CRED_SUCCESS:
+    case NETWORK_PROV_WIFI_CRED_SUCCESS:
         save_creds();
         s_state = WIFI_PROV_ST_SUCCESS;
         break;
-    case WIFI_PROV_END:
+    case NETWORK_PROV_END:
         ESP_LOGI(TAG, "Provisioning service ended");
         break;
     default:
@@ -147,17 +147,17 @@ esp_err_t wifi_provision_start(void)
     if (!s_ap_netif) s_ap_netif = esp_netif_create_default_wifi_ap();
 
     if (!s_handler) {
-        esp_err_t e = esp_event_handler_register(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID,
+        esp_err_t e = esp_event_handler_register(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID,
                                                  &prov_event_handler, NULL);
         if (e != ESP_OK) return e;
         s_handler = true;
     }
 
-    wifi_prov_mgr_config_t config = {
-        .scheme               = wifi_prov_scheme_softap,
-        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE,
+    network_prov_mgr_config_t config = {
+        .scheme               = network_prov_scheme_softap,
+        .scheme_event_handler = NETWORK_PROV_EVENT_HANDLER_NONE,
     };
-    esp_err_t err = wifi_prov_mgr_init(config);
+    esp_err_t err = network_prov_mgr_init(config);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "prov_mgr_init: %s", esp_err_to_name(err));
         return err;
@@ -171,11 +171,11 @@ esp_err_t wifi_provision_start(void)
     s_got_ssid[0] = '\0';
 
     s_state = WIFI_PROV_ST_ACTIVE;   /* publish before the async START event */
-    err = wifi_prov_mgr_start_provisioning(WIFI_PROV_SECURITY_1, s_pop,
+    err = network_prov_mgr_start_provisioning(NETWORK_PROV_SECURITY_1, s_pop,
                                            s_service, NULL);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "start_provisioning: %s", esp_err_to_name(err));
-        wifi_prov_mgr_deinit();
+        network_prov_mgr_deinit();
         s_state = WIFI_PROV_ST_IDLE;
         return err;
     }
@@ -194,9 +194,9 @@ void wifi_provision_stop(void)
 
     /* deinit stops the service if still running, and frees the httpd/protocomm
      * buffers — the internal RAM we care about. */
-    wifi_prov_mgr_deinit();
+    network_prov_mgr_deinit();
     if (s_handler) {
-        esp_event_handler_unregister(WIFI_PROV_EVENT, ESP_EVENT_ANY_ID,
+        esp_event_handler_unregister(NETWORK_PROV_EVENT, ESP_EVENT_ANY_ID,
                                      &prov_event_handler);
         s_handler = false;
     }

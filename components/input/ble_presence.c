@@ -43,7 +43,7 @@
  * stays connected needs a second concurrent connection. With only one
  * connection, enrollment still works whenever the keyboard link is down. */
 #if defined(CONFIG_BT_NIMBLE_MAX_CONNECTIONS) && CONFIG_BT_NIMBLE_MAX_CONNECTIONS < 2
-#warning "ble_presence: set BT_NIMBLE_MAX_CONNECTIONS >= 2 to enroll a phone while the keyboard is connected"
+#pragma message("ble_presence: set BT_NIMBLE_MAX_CONNECTIONS >= 2 to enroll a phone while the keyboard is connected")
 #endif
 
 #include <stdio.h>
@@ -57,7 +57,7 @@
 #include "host/ble_store.h"
 #include "services/gap/ble_svc_gap.h"
 
-#include "mbedtls/aes.h"
+#include "psa/crypto.h"
 
 #include "ble_keyboard.h"
 #include "storage.h"
@@ -86,6 +86,7 @@ typedef struct {
 
 static phone_rec_t s_phone;
 static bool        s_have_phone;
+static psa_key_id_t s_irk_key;     /* s_phone.irk imported once, 0 = none */
 
 static volatile int64_t s_last_seen_us = -1;
 static volatile int     s_rssi_ema;          /* x1, coarse */
@@ -116,6 +117,39 @@ static void phone_save(void)
     fclose(f);
 }
 
+/* Import the stored IRK as the AES-128 key the resolver uses, once per
+ * load or enrollment. Importing per advert would cost a key-store mutex,
+ * a slot and a heap context on the NimBLE host task. Every unresolved
+ * RPA in radio range would pay it. */
+static void irk_key_load(void)
+{
+    uint8_t key[16];
+    for (int i = 0; i < 16; i++)
+        key[i] = s_phone.irk[15 - i];   /* SMP little-endian to MSB-first */
+
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attr, 128);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT);
+    psa_set_key_algorithm(&attr, PSA_ALG_ECB_NO_PADDING);
+    psa_status_t st = psa_crypto_init();
+    if (st == PSA_SUCCESS)
+        st = psa_import_key(&attr, key, sizeof(key), &s_irk_key);
+    memset(key, 0, sizeof(key));
+    if (st != PSA_SUCCESS) {
+        s_irk_key = 0;
+        ESP_LOGE(TAG, "IRK import failed (psa %d): software RPA resolve off",
+                 (int)st);
+    }
+}
+
+static void irk_key_drop(void)
+{
+    if (s_irk_key)
+        psa_destroy_key(s_irk_key);
+    s_irk_key = 0;
+}
+
 static void phone_load(void)
 {
     char p[128];
@@ -127,6 +161,7 @@ static void phone_load(void)
     if (fread(&r, sizeof(r), 1, f) == 1 && r.magic == PHONE_MAGIC) {
         s_phone = r;
         s_have_phone = true;
+        irk_key_load();
         ESP_LOGI(TAG, "phone enrolled: ident %02X:..:%02X",
                  r.ident[5], r.ident[0]);
     }
@@ -144,19 +179,28 @@ static void phone_load(void)
  * while phone.bin survives. */
 static bool rpa_matches(const uint8_t val[6])
 {
-    uint8_t key[16], pt[16] = { 0 }, ct[16];
-    for (int i = 0; i < 16; i++)
-        key[i] = s_phone.irk[15 - i];
+    static bool s_fail_logged;
+    uint8_t pt[16] = { 0 }, ct[16];
+    size_t olen = 0;
+
+    if (!s_irk_key)
+        return false;
     /* prand: top bits 01 (already checked by the caller) */
     pt[13] = val[5];
     pt[14] = val[4];
     pt[15] = val[3];
 
-    mbedtls_aes_context aes;
-    mbedtls_aes_init(&aes);
-    mbedtls_aes_setkey_enc(&aes, key, 128);
-    mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, pt, ct);
-    mbedtls_aes_free(&aes);
+    /* One AES-128 block through PSA (mbedTLS 4 has no public legacy AES). */
+    psa_status_t st = psa_cipher_encrypt(s_irk_key, PSA_ALG_ECB_NO_PADDING,
+                                         pt, 16, ct, sizeof(ct), &olen);
+    if (st != PSA_SUCCESS || olen != 16) {
+        /* A miss here reads as "phone absent"; say why, once. */
+        if (!s_fail_logged)
+            ESP_LOGE(TAG, "RPA resolve failed (psa %d, len %u)",
+                     (int)st, (unsigned)olen);
+        s_fail_logged = true;
+        return false;
+    }
 
     return ct[13] == val[2] && ct[14] == val[1] && ct[15] == val[0];
 }
@@ -238,6 +282,7 @@ void ble_presence_forget(void)
     }
 
     s_have_phone = false;
+    irk_key_drop();
     s_last_rpa_valid = false;
     s_last_seen_us = -1;
     s_rssi_ema = 0;
@@ -330,6 +375,8 @@ static int enroll_gap_cb(struct ble_gap_event *ev, void *arg)
             memcpy(s_phone.ident, d.peer_id_addr.val, 6);
             memcpy(s_phone.irk, v.irk, 16);
             s_have_phone = true;
+            irk_key_drop();
+            irk_key_load();
             s_last_rpa_valid = false;
             phone_save();
             s_enroll = BLE_PRESENCE_ENROLLED_NOW;

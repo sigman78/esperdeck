@@ -6,5 +6,5 @@ cyberdeck_component_register(
     INCLUDE_DIRS include
     REQUIRES     storage
     REQUIRES_DEV esp_wifi esp_netif nvs_flash esp_timer esp_http_server
-                 esp_hw_support wifi_provisioning espressif__qrcode
+                 esp_hw_support espressif__network_provisioning espressif__qrcode
 )

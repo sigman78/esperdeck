@@ -15,6 +15,7 @@ idf_component_register(
         esp_hid
         nvs_flash
         driver
+        esp_driver_usb_serial_jtag
         esp_lcd
         esp_timer
         freertos

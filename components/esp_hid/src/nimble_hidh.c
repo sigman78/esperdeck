@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2017-2024 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2017-2025 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -176,7 +176,15 @@ nimble_on_read(uint16_t conn_handle,
         MODLOG_DFLT(DEBUG, " attr_handle=%d value=", attr->handle);
         old_offset = s_read_data_len;
         s_read_data_len += OS_MBUF_PKTLEN(attr->om);
-        s_read_data_val = realloc(s_read_data_val, s_read_data_len + 1); // 1 extra byte to store null char
+        uint8_t *tmp = realloc(s_read_data_val, s_read_data_len + 1);
+        if (tmp == NULL) {
+            ESP_LOGE(TAG, "Failed to allocate memory for read data");
+            free(s_read_data_val);
+            s_read_data_val = NULL;
+            s_read_data_len = 0;
+            return -1;
+        }
+        s_read_data_val = tmp;
         ble_hs_mbuf_to_flat(attr->om, s_read_data_val + old_offset, OS_MBUF_PKTLEN(attr->om), NULL);
         print_mbuf(attr->om);
         return 0;
@@ -400,7 +408,7 @@ desc_disced(uint16_t conn_handle, const struct ble_gatt_error *error,
 }
 
 /* this api does the following things :
-** does service, characteristic and discriptor discovery and
+** does service, characteristic and descriptor discovery and
 ** fills the hid device information accordingly in dev
 **
 ** CYBERDECK PATCH E/H: returns false when the peer went away mid-discovery
@@ -624,7 +632,7 @@ static bool read_device_services_inner(esp_hidh_dev_t *dev)
                     }
                     if (status != 0) {
                         /* PATCH H: was assert() */
-                        ESP_LOGE(TAG, "failed to find discriptors for characteristic : %d (status=%d)", c, status);
+                        ESP_LOGE(TAG, "failed to find descriptors for characteristic : %d (status=%d)", c, status);
                         goto fail;
                     }
                     dcount = dscs_discovered;

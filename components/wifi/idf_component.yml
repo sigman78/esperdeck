@@ -1,0 +1,6 @@
+dependencies:
+  idf:
+    version: '>=6.0.0'
+  # wifi_provisioning left the SDK in IDF 6.0; its successor lives on the registry.
+  espressif/network_provisioning:
+    version: '^1.1.0'

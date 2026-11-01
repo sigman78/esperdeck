@@ -48,7 +48,7 @@ typedef struct {
     int band;    /* bounce band height, in scanlines      */
     int gb;      /* glyph stride in the row cache, bytes  */
 } render_geom_t;
-extern DRAM_ATTR render_geom_t g_rs;
+extern render_geom_t g_rs;
 
 /* Per-band scan context — filled by the chunk skeleton + cache resolve,
  * consumed by the scan and its output passes. */
@@ -105,7 +105,7 @@ typedef struct {
 /* Per-frame snapshot of g_fx_cfg, refreshed at the frame tick. Per-row and
  * per-band paths read THIS snapshot, never the live config, so an fx
  * change lands on a frame boundary. */
-extern DRAM_ATTR display_fx_cfg_t g_fx_snap;
+extern display_fx_cfg_t g_fx_snap;
 void render_fx_snapshot(void);
 
 void render_fx_frame_tick(void);                    /* counters + bell    */

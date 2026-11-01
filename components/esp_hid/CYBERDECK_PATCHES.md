@@ -1,8 +1,14 @@
-# Vendored esp_hid (from ESP-IDF v5.5.2) — why this copy exists
+# Vendored esp_hid (from ESP-IDF v6.0.1) — why this copy exists
 
-This is a copy of IDF v5.5.2's `components/esp_hid` (test_apps removed),
+This is a copy of IDF v6.0.1's `components/esp_hid` (test_apps removed),
 with patches to `src/nimble_hidh.c`, `src/esp_hid_common.c` and `src/esp_hidh.c`. All
-patches are marked `CYBERDECK PATCH A..J` in the source. A project component with the same name shadows
+patches are marked `CYBERDECK PATCH A..J` in the source.
+
+Re-derived 2026-10-31 for the IDF 6.0.1 migration (docs/idf6-migration.md):
+the 5.5.2 to 6.0.1 upstream delta was tiny. `nimble_hidd.c` (unpatched by
+us) was taken from 6.0.1 as-is; `nimble_hidh.c` gained upstream's realloc
+NULL check and typo fixes on top of our A through J; headers were identical.
+6.0.1 still lacks B, C and D (they ship in 6.0.2), so all of A through J stay. A project component with the same name shadows
 the IDF one at build time. (HID = Human Interface Device, the Bluetooth
 keyboard/mouse protocol; NimBLE is the Bluetooth Low Energy host stack
 this backend runs on.)
@@ -82,7 +88,7 @@ Sources: [github.com/espressif/esp-idf/releases](https://github.com/espressif/es
 [SUPPORT_POLICY.md](https://github.com/espressif/esp-idf/blob/master/SUPPORT_POLICY.md),
 raw `components/esp_hid/src/nimble_hidh.c` at tags v5.5.3/v5.5.4/v6.0/v6.0.1/v6.0.2.
 
-## Upgrade / retirement plan (researched 2026-07-13, NOT yet implemented — repo still on v5.5.2)
+## Upgrade / retirement plan (researched 2026-07-13; step 1 superseded by the 6.0.1 move on 2026-10-31)
 
 1. **Bump IDF to v5.5.4** (wanted independently, for its NimBLE
    connection-loss regression fix; skip 5.5.3 entirely). Re-copy

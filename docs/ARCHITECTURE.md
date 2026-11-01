@@ -80,7 +80,7 @@ components/
   storage/           INI profiles, known-hosts, BLE registry, key blobs,
                      PIN-unlocked keystore (see storage_auth.md)
   input/             BLE HID keyboard, GT911 touch, USB-serial, phone-presence
-  esp_hid/           vendored IDF v5.5.2 BLE HID host with local patches
+  esp_hid/           vendored IDF v6.0.1 BLE HID host with local patches
                      (CYBERDECK_PATCHES.md in that directory is the ledger)
   libssh2_esp/       vendored wrapper; libssh2 cloned+patched by CMake at
                      configure time (mbedTLS backend on device and in the sim)

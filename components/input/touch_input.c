@@ -19,6 +19,8 @@
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_lcd_io_i2c.h"
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_gt911.h"
@@ -304,9 +306,9 @@ esp_err_t touch_input_backend_init(void)
         .scl_speed_hz        = 400000,
         .flags.disable_control_phase = 1,
     };
-    ret = esp_lcd_new_panel_io_i2c_v2(bus_handle, &io_cfg, &io_handle);
+    ret = esp_lcd_new_panel_io_i2c(bus_handle, &io_cfg, &io_handle);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_lcd_new_panel_io_i2c_v2 failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "esp_lcd_new_panel_io_i2c failed: %s", esp_err_to_name(ret));
         i2c_del_master_bus(bus_handle);
         return ret;
     }

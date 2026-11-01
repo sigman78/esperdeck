@@ -2,19 +2,21 @@
 # (simulator), both on the mbedTLS backend. Vendored wrapper — originally
 # skuodi/libssh2_esp.
 #
-# libssh2 itself is CLONED by CMake at configure time and patched (RAM diet +
-# private-key error reporting: upstream masks the OpenSSH-format parser's error
-# with mbedTLS's generic one, and reports "passphrase required" with no message
-# at all — between them an encrypted key with no passphrase is indistinguishable
-# from a corrupt key file). There are no git submodules and no manual patch
-# step. See cmake/apply_patch.cmake
-# and patches/. To bump libssh2, change GIT_TAG below and regenerate the patch
-# (exclude src/monocypher* — this file deletes those from the fetched tree):
-#   git -C <fetched-src> diff -- . ':!src/monocypher*' > patches/libssh2-ram-diet.patch
+# libssh2 itself is CLONED by CMake at configure time and patched from
+# patches/*.patch, applied in name order (see cmake/apply_patch.cmake):
+#   0001 RAM diet (4 KB send buffer, 512 B banner) + error messages for an
+#        encrypted key without a passphrase and for a failed publickey
+#        round-trip, plus a keepalive clock that starts at config time.
+# There are no git submodules and no manual patch step. To bump libssh2,
+# change GIT_TAG below and regenerate each patch against the tree with its
+# predecessors applied (exclude src/monocypher* — this file deletes those):
+#   git -C <fetched-src> diff -- . ':!src/monocypher*' > patches/000N-....patch
 #
-# We build from the sigman78/libssh2 fork (feature/mbedtls-ed25519): upstream
-# master + vendored Monocypher 4.0.2 giving the mbedTLS backend ed25519
-# hostkey/auth and curve25519-sha256 KEX.
+# We build from the sigman78/libssh2 fork (feature/mbedtls-psa): upstream
+# master with the mbedTLS backend ported to the PSA Crypto API (builds on
+# Mbed TLS 3.6 and 4.x, so ESP-IDF 6 needs no private headers) + vendored
+# Monocypher 4.0.2 giving it ed25519 hostkey/auth and curve25519-sha256 KEX.
+# Design record: docs/MBEDTLS-PSA.md in the fork.
 
 # ESP-IDF processes each component's CMakeLists twice: once in a restricted
 # "early expansion" (script) pass to collect REQUIRES, then in the real
@@ -30,11 +32,11 @@ include(FetchContent)
 
 FetchContent_Declare(libssh2_src
     GIT_REPOSITORY https://github.com/sigman78/libssh2.git
-    GIT_TAG        e26a46862e432704904732a6c274bed1709d29c5  # feature/mbedtls-ed25519 head; the patch matches this SHA
+    GIT_TAG        199d5423599bb77fdee6ef7e1233243e9ca51ac3  # feature/mbedtls-psa head; the patch matches this SHA
     GIT_PROGRESS   TRUE
     PATCH_COMMAND  ${CMAKE_COMMAND}
                    -DREPO=<SOURCE_DIR>
-                   -DPATCH=${CMAKE_CURRENT_LIST_DIR}/patches/libssh2-ram-diet.patch
+                   -DPATCH_DIR=${CMAKE_CURRENT_LIST_DIR}/patches
                    -P ${CMAKE_CURRENT_LIST_DIR}/cmake/apply_patch.cmake
     # Populate ONLY: do not let libssh2's own CMakeLists run (it would build its
     # own target and fight our registration). Pointing SOURCE_SUBDIR at a
@@ -78,12 +80,14 @@ set(_libssh2_units
 # hostkey types, same key support, same known_hosts pins as the device.
 if(BUILD_SIMULATOR)
     include(${PROJECT_DIR}/cmake/get_cpm.cmake)
+    # Same major as ESP-IDF 6 (Mbed TLS 4.0.0), so the host exercises the 4.x
+    # branch of the backend. The release tarball bundles TF-PSA-Crypto and the
+    # generated sources; a git checkout would need Python jinja2/jsonschema.
     CPMAddPackage(
         NAME       mbedtls
-        GITHUB_REPOSITORY Mbed-TLS/mbedtls
-        GIT_TAG    v3.6.7   # 3.6 LTS — same major/minor line as ESP-IDF 5.5
+        URL        https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.0.0/mbedtls-4.0.0.tar.bz2
         OPTIONS "ENABLE_PROGRAMS OFF" "ENABLE_TESTING OFF"
-                "MBEDTLS_FATAL_WARNINGS OFF"
+                "MBEDTLS_FATAL_WARNINGS OFF" "GEN_FILES OFF"
     )
 
     set(_srcs "")
@@ -93,12 +97,15 @@ if(BUILD_SIMULATOR)
 
     add_library(libssh2_esp STATIC ${_srcs})
     target_compile_definitions(libssh2_esp PRIVATE
-        LIBSSH2_MBEDTLS)  # no HAVE_CONFIG_H → libssh2_setup.h uses its _WIN32 branch
+        LIBSSH2_MBEDTLS   # no HAVE_CONFIG_H → libssh2_setup.h uses its _WIN32 branch
+        LIBSSH2_NO_AES_GCM)  # same cipher list as the device (see below)
     target_include_directories(libssh2_esp PUBLIC
         ${LIBSSH2_DIR}/src
         ${LIBSSH2_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(libssh2_esp PRIVATE idfsim mbedcrypto ws2_32
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${mbedtls_SOURCE_DIR}/include)
+    # tfpsacrypto = the 4.x crypto library; the backend needs nothing from TLS.
+    target_link_libraries(libssh2_esp PRIVATE idfsim tfpsacrypto ws2_32
         monocypher)   # crypto_* units come from components/monocypher
     if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(libssh2_esp PRIVATE
@@ -116,6 +123,13 @@ endforeach()
 idf_component_register(SRCS ${_srcs}
                        INCLUDE_DIRS ${LIBSSH2_DIR}/src ${LIBSSH2_DIR}/include .
                        REQUIRES mbedtls esp_netif monocypher)
+
+# The ESP hardware AES driver cannot carry a partial block between GCM
+# updates and libssh2 feeds the 4-byte packet length first, so aes-gcm would
+# produce wrong tags (fork docs/MBEDTLS-PSA.md). chacha20-poly1305 and
+# aes-ctr remain. The simulator drops it too, so both builds offer the same
+# cipher list and negotiate the same transport path.
+target_compile_definitions(${COMPONENT_LIB} PRIVATE LIBSSH2_NO_AES_GCM)
 
 # libssh2 reads its build config from the vendored libssh2_config.h (on INCLUDE_DIRS ".").
 add_definitions("-DHAVE_CONFIG_H")
