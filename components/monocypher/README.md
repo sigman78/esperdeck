@@ -10,7 +10,7 @@ XChaCha20-Poly1305, wipe) and libssh2's ed25519 backend.
 
 To bump — both sides move together, the identity check enforces it:
 1. Update the fork's vendored copy (`sigman78/libssh2`,
-   `feature/mbedtls-ed25519`) and point `libssh2_esp` `GIT_TAG` at the
+   `feature/mbedtls-psa`) and point `libssh2_esp` `GIT_TAG` at the
    new SHA.
 2. Replace the four files here with the same bytes (license text is
    embedded in the sources).
