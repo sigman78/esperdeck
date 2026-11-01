@@ -1,6 +1,6 @@
 idf_build_get_property(target IDF_TARGET)
 
-# CYBERDECK: this is a vendored copy of IDF v5.5.2's esp_hid with four BLE
+# CYBERDECK: this is a vendored copy of IDF v6.0.1's esp_hid with BLE
 # HID host fixes (see CYBERDECK_PATCHES.md) — it deliberately SHADOWS the
 # SDK component via the documented project-component override. Pin it to
 # the IDF version it was copied from so an SDK bump can't silently reuse
@@ -22,9 +22,9 @@ if(EXISTS "${_verh}")
     string(REGEX REPLACE ".*MAJOR +([0-9]+).*" "\\1" _vmaj "${_vmaj}")
     string(REGEX REPLACE ".*MINOR +([0-9]+).*" "\\1" _vmin "${_vmin}")
     string(REGEX REPLACE ".*PATCH +([0-9]+).*" "\\1" _vpat "${_vpat}")
-    if(NOT (_vmaj STREQUAL "5" AND _vmin STREQUAL "5" AND _vpat STREQUAL "2"))
+    if(NOT (_vmaj STREQUAL "6" AND _vmin STREQUAL "0" AND _vpat STREQUAL "1"))
         message(FATAL_ERROR
-            "components/esp_hid was vendored from IDF v5.5.2 but this build uses "
+            "components/esp_hid was vendored from IDF v6.0.1 but this build uses "
             "IDF ${_vmaj}.${_vmin}.${_vpat}. Re-derive it per "
             "components/esp_hid/CYBERDECK_PATCHES.md (on >= v5.5.3 re-copy from "
             "the SDK and re-apply only the still-missing patches; on the release "
