@@ -17,7 +17,6 @@ CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 # Task stacks may live in PSRAM — but NOT for tasks doing flash I/O; the
 # shell's main task allocates its stack from internal DRAM explicitly.
-CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y
 CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
 # Plain malloc() must stay internal-DRAM — the display ISR reads app buffers
 # allocated with it while the flash cache is off. IDF's own default for this
@@ -110,3 +109,7 @@ CONFIG_LCD_RGB_ISR_IRAM_SAFE=y
 
 # Boot splash: option defaults to off; keep it on for now.
 CONFIG_CYBERDECK_BOOT_SPLASH=y
+
+# IDF 6.0 turned protocomm security 1 (Curve25519 + AES-CTR) off by default;
+# SoftAP provisioning here uses it.
+CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=y

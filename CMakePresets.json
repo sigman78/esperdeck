@@ -1,12 +1,21 @@
 {
   "version": 3,
-  "cmakeMinimumRequired": { "major": 3, "minor": 20, "patch": 0 },
+  "cmakeMinimumRequired": { "major": 3, "minor": 22, "patch": 0 },
   "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Firmware (ESP-IDF, esp32s3)",
+      "generator": "Ninja",
+      "binaryDir": "build",
+      "cacheVariables": {
+        "BUILD_SIMULATOR": "OFF"
+      }
+    },
     {
       "name": "sim-windows",
       "displayName": "Simulator (Windows / SDL2)",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build-sim",
+      "binaryDir": "build-sim",
       "cacheVariables": {
         "BUILD_SIMULATOR": "ON"
       }

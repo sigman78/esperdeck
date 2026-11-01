@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.22)
 
 if(DEFINED ENV{IDF_PATH} AND NOT BUILD_SIMULATOR)
     # -----------------------------------------------------------------------
