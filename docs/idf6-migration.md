@@ -89,10 +89,12 @@ use dashes (`write-flash`, `--flash-mode`).
   DRAM objects) and `check_boundaries` pass.
 - Static: IRAM text 91.9 KB (was 102.7 KB), DRAM bss 48.7 KB (was 56.9 KB),
   app image 1,494,816 B (was 1,496,176 B).
-- Device: boots, LittleFS mounts with the existing 8 profiles and 2 Wi-Fi
-  profiles, NimBLE syncs and scans for the paired keyboard, GT911 touch comes
-  up, Wi-Fi driver starts. Not exercised: keystore unlock, Wi-Fi join, SSH
-  session, BLE keyboard reconnect, settings save under RGB scanout.
+- Device (app-flashed with the PR head, 5.5-era bootloader): boots,
+  LittleFS mounts with the existing 8 profiles and 2 Wi-Fi profiles, GT911
+  touch comes up, keystore PIN unlock, Wi-Fi join and NTP sync, an SSH
+  session on the PSA backend, BLE keyboard reconnect. Not exercised:
+  key-auth login, settings save under RGB scanout, phone-presence RPA
+  resolution (no phone enrolled on this deck).
 - Internal heap, same deck, same day, 5.5.2 image then 6.0.1 image
   (`int=` free bytes at the boot milestones; largest block 31,744 in both at
   the end):
@@ -122,8 +124,8 @@ use dashes (`write-flash`, `--flash-mode`).
 
 - Move to IDF 6.0.2+ when installed: esp_hid patches B, C, D become
   upstream; drop ours and keep E through J.
-- Device SSH session on the new backend: Wi-Fi, keystore unlock and a
-  key-auth login are not yet exercised on hardware after the repin.
+- Key-auth login from the device on the new backend is not yet exercised
+  on hardware after the repin.
 - Upstream: offer the `feature/mbedtls-psa-upstream` series to libssh2
   (PR #2284 is the open attempt it replaces).
 - If an Mbed TLS bump breaks the port, re-read
