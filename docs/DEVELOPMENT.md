@@ -22,15 +22,17 @@ Contents:
   KDF — key derivation function) and curve25519 key exchange via
   Monocypher.
 
-  **Why:** mbedTLS has no ed25519, and its 3.6 LTS line will never
-  get it (new crypto lands only in the PSA-based successor). So the
-  project patches libssh2's mbedTLS backend and vendors Monocypher for
-  the ed25519 math, instead of forking mbedTLS. The fork lives at
-  [sigman78/libssh2](https://github.com/sigman78/libssh2/tree/feature/mbedtls-ed25519),
-  branch `feature/mbedtls-ed25519`; the header comment in
-  `components/libssh2_esp/CMakeLists.txt` describes the as-built setup.
-  Still open: upstreaming the patch, and a fresh look when mbedTLS 3.6
-  LTS reaches end of life (March 2027).
+  **Why:** Mbed TLS has no ed25519 (TF-PSA-Crypto 1.0 declares the
+  algorithm but ships no implementation). So the project vendors
+  Monocypher for the ed25519 math inside libssh2's mbedTLS backend,
+  instead of forking Mbed TLS. That backend is also ported to the PSA
+  Crypto API so it builds on Mbed TLS 3.6 and 4.x (ESP-IDF 6). The fork
+  lives at
+  [sigman78/libssh2](https://github.com/sigman78/libssh2/tree/feature/mbedtls-psa),
+  branch `feature/mbedtls-psa`; the header comment in
+  `components/libssh2_esp/CMakeLists.txt` describes the as-built setup
+  and [`idf6-migration.md`](idf6-migration.md) the port. Still open:
+  offering the PSA series upstream.
 - **`esp_littlefs`** (`joltwallet/littlefs`), **`esp_lcd_touch_gt911`**,
   **`qrcode`** — pulled by the ESP-IDF component manager (device build
   only).

@@ -46,7 +46,7 @@ fill in yours:
 cp -r sim_storage.example sim_storage   # gitignored — edit profiles.ini, wifi.ini, keys/
 ```
 
-**Device build** — needs ESP-IDF v5.1 or newer (developed on v5.5.2). On
+**Device build** — needs ESP-IDF v6.0.1 (the branch migrated off v5.5.2; see docs/idf6-migration.md). On
 Windows, run `idf.py` from the ESP-IDF prompt:
 
 ```bash
@@ -77,6 +77,9 @@ Arrows + Enter or mouse-as-touch; **F12** opens the in-session menu.
   render pipeline, data flow, threading, memory rules.
 - [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — building, flashing, tests,
   simulator details, third-party licenses.
+- [`docs/idf6-migration.md`](docs/idf6-migration.md) — the ESP-IDF 6 move and
+  libssh2 on Mbed TLS 4 (PSA port); [`docs/ssh-stack-options.md`](docs/ssh-stack-options.md)
+  weighs the alternatives (wolfSSH, libssh, PSA port) and when to switch.
 
 ## License
 
