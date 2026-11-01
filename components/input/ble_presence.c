@@ -43,7 +43,7 @@
  * stays connected needs a second concurrent connection. With only one
  * connection, enrollment still works whenever the keyboard link is down. */
 #if defined(CONFIG_BT_NIMBLE_MAX_CONNECTIONS) && CONFIG_BT_NIMBLE_MAX_CONNECTIONS < 2
-#warning "ble_presence: set BT_NIMBLE_MAX_CONNECTIONS >= 2 to enroll a phone while the keyboard is connected"
+#pragma message("ble_presence: set BT_NIMBLE_MAX_CONNECTIONS >= 2 to enroll a phone while the keyboard is connected")
 #endif
 
 #include <stdio.h>
@@ -57,7 +57,7 @@
 #include "host/ble_store.h"
 #include "services/gap/ble_svc_gap.h"
 
-#include "mbedtls/aes.h"
+#include "psa/crypto.h"
 
 #include "ble_keyboard.h"
 #include "storage.h"
@@ -152,11 +152,22 @@ static bool rpa_matches(const uint8_t val[6])
     pt[14] = val[4];
     pt[15] = val[3];
 
-    mbedtls_aes_context aes;
-    mbedtls_aes_init(&aes);
-    mbedtls_aes_setkey_enc(&aes, key, 128);
-    mbedtls_aes_crypt_ecb(&aes, MBEDTLS_AES_ENCRYPT, pt, ct);
-    mbedtls_aes_free(&aes);
+    /* One AES-128 block through PSA (mbedTLS 4 has no public legacy AES). */
+    psa_key_attributes_t attr = PSA_KEY_ATTRIBUTES_INIT;
+    psa_key_id_t kid = 0;
+    size_t olen = 0;
+    psa_set_key_type(&attr, PSA_KEY_TYPE_AES);
+    psa_set_key_bits(&attr, 128);
+    psa_set_key_usage_flags(&attr, PSA_KEY_USAGE_ENCRYPT);
+    psa_set_key_algorithm(&attr, PSA_ALG_ECB_NO_PADDING);
+    if (psa_crypto_init() != PSA_SUCCESS ||
+        psa_import_key(&attr, key, 16, &kid) != PSA_SUCCESS)
+        return false;
+    psa_status_t st = psa_cipher_encrypt(kid, PSA_ALG_ECB_NO_PADDING, pt, 16,
+                                         ct, sizeof(ct), &olen);
+    psa_destroy_key(kid);
+    if (st != PSA_SUCCESS || olen != 16)
+        return false;
 
     return ct[13] == val[2] && ct[14] == val[1] && ct[15] == val[0];
 }

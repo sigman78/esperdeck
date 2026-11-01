@@ -63,7 +63,6 @@ static esp_err_t panel_bringup(void)
             .flags.pclk_active_neg = 1,
         },
         .data_width          = 16,
-        .bits_per_pixel      = 16,
         .num_fbs             = 0,
         .flags.no_fb         = 1,
         .bounce_buffer_size_px = display_bounce_px(),
