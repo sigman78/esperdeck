@@ -41,15 +41,11 @@ Contents:
 
 ## Device build — `app-flash` for iteration, full `flash` wipes storage
 
-Before the first build, apply the SDK patch that aligns the RGB bounce
-buffers (the SIMD renderer needs it for full speed; see
-[`performance.md`](performance.md#idf-bounce-buffer-alignment-patch)):
-
-```
-git -C <esp-idf> apply <project>/patches/esp-idf-6.0.1-rgb-bounce-align.patch
-```
-
-Configure warns if the SDK is unpatched; the build still works.
+The build needs a stock ESP-IDF 6.0.1; nothing in the SDK is patched. Two
+SDK components are vendored with local patches and override the SDK copies:
+`components/esp_hid` and `components/esp_lcd`. Each pins the exact IDF
+version and fails configure on another one (the ledger is
+`CYBERDECK_PATCHES.md` in each directory).
 
 `sdkconfig.defaults` pins the load-bearing settings (S3 target, 16 MB
 flash, octal PSRAM (external RAM), NimBLE, custom partition table).
@@ -165,7 +161,7 @@ scheduling.
 Comment policy (short version: comments say WHY, docs carry the essays) is
 enforced by [unwaffle](https://github.com/sigman78/unwaffle), run from PyPI
 via `uvx` pinned to a known-good version — nothing is vendored. `tools/check_comments.py` owns the
-scope: first-party sources only (vendored `esp_hid`, `monocypher`,
+scope: first-party sources only (vendored `esp_hid`, `esp_lcd`, `monocypher`,
 `libssh2_esp`, dead `terminal`, and all build trees are excluded). Rule
 tuning lives in `unwaffle.toml`; everything runs at tool defaults, including
 the STE (Simplified Technical English) wording rules at advisory (info) tier.

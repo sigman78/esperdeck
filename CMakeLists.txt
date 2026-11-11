@@ -7,20 +7,6 @@ if(DEFINED ENV{IDF_PATH} AND NOT BUILD_SIMULATOR)
     include($ENV{IDF_PATH}/tools/cmake/project.cmake)
     project(cyberdeck)
 
-    # The SIMD text renderer needs 16-byte-aligned RGB bounce buffers, which
-    # stock IDF does not guarantee. Warn (never fail) when the SDK lacks the
-    # patch; the renderer stays correct on its slower fallback paths.
-    set(_rgb_src $ENV{IDF_PATH}/components/esp_lcd/rgb/esp_lcd_panel_rgb.c)
-    if(EXISTS ${_rgb_src})
-        file(READ ${_rgb_src} _rgb_text)
-        string(FIND "${_rgb_text}" "MAX(rgb_panel->int_mem_align, (size_t)16)" _rgb_patched)
-        if(_rgb_patched EQUAL -1)
-            message(WARNING "ESP-IDF lacks patches/esp-idf-6.0.1-rgb-bounce-align.patch: "
-                    "RGB bounce buffers may not be 16-byte aligned, so the SIMD "
-                    "renderer runs on its slower fallback paths. See docs/performance.md.")
-        endif()
-    endif()
-
     # Post-build guard: with LCD_RGB_ISR_IRAM_SAFE the bounce ISR renders
     # while the flash cache is disabled — every ISR-path symbol must be
     # IRAM/DRAM-resident or a settings save becomes a Cache exception.

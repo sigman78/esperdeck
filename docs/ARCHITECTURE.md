@@ -83,6 +83,8 @@ components/
   input/             BLE HID keyboard, GT911 touch, USB-serial, phone-presence
   esp_hid/           vendored IDF v6.0.1 BLE HID host with local patches
                      (CYBERDECK_PATCHES.md in that directory is the ledger)
+  esp_lcd/           vendored IDF v6.0.1 LCD driver; one patch aligns the
+                     RGB bounce buffers for the SIMD renderer (same ledger name)
   libssh2_esp/       vendored wrapper; libssh2 cloned+patched by CMake at
                      configure time (mbedTLS backend on device and in the sim)
   monocypher/        vendored Monocypher 4.0.2 — keystore crypto +
@@ -512,6 +514,8 @@ header, or a stale table entry. No debt edges remain as of item 7
 | `input → storage` | the BLE bond registry (`storage_ble_*`) | sound |
 | `input → display` | the `DISPLAY_WIDTH` constant (touch edge strip) | tolerable |
 | `storage → monocypher` | keystore crypto (Argon2id, AEAD, wipe) | sound — pinned component |
+| `input → esp_hid` | the BLE HID host API | sound — vendored SDK component |
+| `display → esp_lcd`, `input → esp_lcd` | the SDK driver API: RGB panel, touch panel IO over I2C | sound — vendored SDK component |
 
 The sound edges, in one breath: `tsm` and `board` depend on nothing;
 `font → board` supplies only panel constants for cache bounds;

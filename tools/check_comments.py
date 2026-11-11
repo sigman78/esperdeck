@@ -27,7 +27,7 @@ UNWAFFLE = ["uvx", "unwaffle@0.15.0"]
 # Hook-only filter. A file named explicitly on the CLI always scans.
 # Naming is intent, so the config excludes cannot cover the per-file hook
 # path. This mirrors unwaffle.toml's exclude list plus build/fetched trees.
-VENDORED = {"esp_hid", "monocypher", "libssh2_esp", "terminal"}
+VENDORED = {"esp_hid", "esp_lcd", "monocypher", "libssh2_esp", "terminal"}
 SKIP_DIRS = {"_deps", "__pycache__", "managed_components", ".git", ".cache"}
 EXTS = {".c", ".h", ".cpp", ".hpp", ".py"}
 

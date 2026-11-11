@@ -22,7 +22,7 @@ patch set (esp_hid, libssh2). 6.0 is the line that gets fixes.
 | libc | PicolibC is the default libc (`CONFIG_LIBC_PICOLIBC=y`, Newlib-compat on). | Accepted the default; the regenerated sdkconfig is what boots. |
 | Kconfig | `SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY` renamed to `FREERTOS_TASK_CREATE_ALLOW_EXT_MEM` (we already set the new name). | Removed the old name from `sdkconfig.defaults`. |
 | Build | CMake >= 3.22. `idf.py` now reads `CMakePresets.json` and, with no `--preset`, takes the `default` preset or else the FIRST one. Ours had only `sim-windows`, so `idf.py` configured the simulator with clang. `${sourceDir}` in `binaryDir` is not expanded by `idf.py`. | `cmake_minimum_required(3.22)`; added a `default` preset (`build`, `BUILD_SIMULATOR=OFF`) and made both `binaryDir`s relative. |
-| esp_lcd bounce buffers | 6.0.1 still allocates them with the DMA minimum alignment, not 16 bytes. | `patches/esp-idf-5.5.2-rgb-bounce-align.patch` regenerated as `esp-idf-6.0.1-rgb-bounce-align.patch` (same one-line change, new hunk offset); applied to the SDK by hand; configure warns when missing, boot logs the measured alignment. |
+| esp_lcd bounce buffers | 6.0.1 still allocates them with the DMA minimum alignment, not 16 bytes. | The SDK patch from the 5.5.2 era became a vendored component: `components/esp_lcd` is a copy of 6.0.1's `esp_lcd` with the same one-line change (ledger in `components/esp_lcd/CYBERDECK_PATCHES.md`). The installed SDK stays stock; the boot log reports the measured alignment. |
 | esp_hid | 6.0.1 still lacks patches B, C, D (they ship in 6.0.2). Upstream 6.0.1 only adds a realloc NULL check and patch A to `nimble_hidh.c`, plus deinit calls in `nimble_hidd.c`. | Re-derived: took 6.0.1's `nimble_hidd.c`, folded the realloc check into our `nimble_hidh.c`, moved the version pin to 6.0.1. Ledger in `components/esp_hid/CYBERDECK_PATCHES.md`. |
 
 Managed components: `esp_lcd_touch_gt911`, `qrcode` and `littlefs` 1.22.2 all
@@ -136,7 +136,8 @@ use dashes (`write-flash`, `--flash-mode`).
 ## Follow-ups
 
 - Move to IDF 6.0.2+ when installed: esp_hid patches B, C, D become
-  upstream; drop ours and keep E through K.
+  upstream; drop ours and keep E through K. `components/esp_lcd` is
+  pinned to 6.0.1 too: re-copy it and re-apply its patch A.
 - Key-auth login from the device on the new backend is not yet exercised
   on hardware after the repin.
 - Upstream: offer the `feature/mbedtls-psa-upstream` series to libssh2

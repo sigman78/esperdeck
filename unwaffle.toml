@@ -8,6 +8,7 @@
 # output; "build*" is a belt for checkouts without git.
 exclude = [
     "esp_hid",       # vendored Espressif HID stack
+    "esp_lcd",       # vendored Espressif LCD driver
     "monocypher",    # vendored crypto library
     "libssh2_esp",   # vendored libssh2 port layer
     "terminal",      # dead component, slated for removal

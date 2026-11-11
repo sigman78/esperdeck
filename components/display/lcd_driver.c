@@ -141,8 +141,8 @@ esp_err_t display_init(void)
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     if (ctx.result == ESP_OK) {
-        /* SIMD renderer speed needs 16-byte bounce buffers (IDF patch,
-         * patches/esp-idf-6.0.1-rgb-bounce-align.patch); say if it is missing. */
+        /* SIMD renderer speed needs 16-byte bounce buffers (patch A in the
+         * vendored components/esp_lcd); report what the panel got. */
         vTaskDelay(pdMS_TO_TICKS(100));
         uint32_t seen = s_bounce_seen;
         if (seen & 0x100u)
