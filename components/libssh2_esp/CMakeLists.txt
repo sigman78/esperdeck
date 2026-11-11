@@ -132,23 +132,23 @@ idf_component_register(SRCS ${_srcs}
 target_compile_definitions(${COMPONENT_LIB} PRIVATE LIBSSH2_NO_AES_GCM)
 
 # libssh2 reads its build config from the vendored libssh2_config.h (on INCLUDE_DIRS ".").
-add_definitions("-DHAVE_CONFIG_H")
+# Everything below is PRIVATE: libssh2.h (all that consumers include) needs none of it.
+target_compile_definitions(${COMPONENT_LIB} PRIVATE HAVE_CONFIG_H)
 
-# Platform data-type size differences produce printf-format warnings; don't -Werror them.
-idf_build_set_property(COMPILE_OPTIONS "-Wno-error=format" APPEND)
-idf_build_set_property(COMPILE_OPTIONS "-Wno-format" APPEND)
-idf_build_set_property(COMPILE_OPTIONS "-Wno-error=maybe-uninitialized" APPEND)
-idf_build_set_property(COMPILE_OPTIONS "-Wno-error=uninitialized" APPEND)
-idf_build_set_property(COMPILE_OPTIONS "-Wno-error=narrowing" APPEND)
+# Platform data-type size differences produce printf-format warnings inside
+# libssh2; keep them non-fatal here only, so the other components stay checked.
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -Wno-format -Wno-error=format -Wno-error=maybe-uninitialized
+    -Wno-error=uninitialized -Wno-error=narrowing)
 
 # Crypto engine (Kconfig; only mbedTLS is supported).
 idf_build_get_property(crypto_mbedtls CONFIG_LIBSSH2_CRYPTO_ENGINE_MBEDTLS)
 if(crypto_mbedtls)
-    idf_build_set_property(COMPILE_DEFINITIONS "-DLIBSSH2_MBEDTLS" APPEND)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE LIBSSH2_MBEDTLS)
 endif()
 
 # Optional debug logging (Kconfig; must be compiled in to be enabled at runtime).
 idf_build_get_property(libssh2_debug CONFIG_LIBSSH2_DEBUG_ENABLE)
 if(libssh2_debug)
-    add_definitions("-DLIBSSH2DEBUG")
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE LIBSSH2DEBUG)
 endif()
