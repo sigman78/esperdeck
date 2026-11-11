@@ -86,6 +86,7 @@ if(BUILD_SIMULATOR)
     CPMAddPackage(
         NAME       mbedtls
         URL        https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-4.0.0/mbedtls-4.0.0.tar.bz2
+        URL_HASH   SHA256=2f3a47f7b3a541ddef450e4867eeecb7ce2ef7776093f3a11d6d43ead6bf2827
         OPTIONS "ENABLE_PROGRAMS OFF" "ENABLE_TESTING OFF"
                 "MBEDTLS_FATAL_WARNINGS OFF" "GEN_FILES OFF"
     )

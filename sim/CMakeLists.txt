@@ -31,7 +31,7 @@ include(${ROOT}/cmake/get_cpm.cmake)
 CPMAddPackage(
     NAME       SDL2
     GITHUB_REPOSITORY libsdl-org/SDL
-    GIT_TAG    release-2.30.11
+    GIT_TAG    fa24d868ac2f8fd558e4e914c9863411245db8fd  # release-2.30.11
     GIT_SHALLOW TRUE
     OPTIONS "SDL_SHARED OFF" "SDL_STATIC ON" "SDL_TEST OFF"
 )
