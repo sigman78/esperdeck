@@ -113,8 +113,8 @@ void ssh_client_queue_reply(const uint8_t *data, size_t len);
 esp_err_t ssh_client_disconnect(void);
 
 /**
- * Send data to SSH server. Never blocks: the bytes go into the shared TX
- * buffer, one write is attempted, and the read task finishes the rest.
+ * Send data to SSH server. Never blocks. The bytes go into the shared TX
+ * buffer. The call tries one write, and the read task sends the rest.
  *
  * @param data Data to send
  * @param len Data length
@@ -125,10 +125,10 @@ int ssh_client_send(const uint8_t *data, size_t len);
 /**
  * Ask the remote foreground program to repaint, after a local terminal
  * reset. Requests a pty-size change one column narrower and then the real
- * size again, so sshd raises SIGWINCH twice. Never blocks; the read task
+ * size again, so sshd raises SIGWINCH twice. Never blocks. The read task
  * completes the pair if the link is busy.
  *
- * @return 0 when the requests are queued, -1 when not connected
+ * @return 0 when the redraw is pending, -1 when not connected
  */
 int ssh_client_request_redraw(void);
 

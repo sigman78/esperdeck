@@ -329,6 +329,47 @@ diagram traces both pipes; the bullets below it restate each one in words.
   every key byte goes straight to `ssh_client_send()`. The exceptions are
   the menu hotkey (F12) and touch long-press, which open the overlay menu.
 
+### SSH uplink and liveness — one TX buffer, one silence clock
+
+These rules live in `components/ssh/ssh_client.c`.
+
+- **One TX buffer.** Keystrokes (`ssh_client_send()`, UI task) and
+  terminal replies (`ssh_client_queue_reply()`, read task) go into one
+  ordered 1 KB FIFO (`ssh_txbuf`). libssh2 keeps a half-sent write inside
+  the channel. On the retry it credits the byte count of the first try.
+  So each retry must present the same head bytes, and two writers with
+  their own buffers break that. Both tasks flush the FIFO under
+  `s_session_lock`. The reply path only appends. It runs in the read task
+  with the lock held, and a blocking write there could park that task.
+  A full FIFO drops the tail: the uplink is jammed and the session is
+  about to end.
+- **No call is abandoned on EAGAIN.** A libssh2 call that returns EAGAIN
+  stays pending. The read task repeats the same call until it completes.
+  The redraw request is such a pending step. It is two pty-size requests,
+  one column narrower and then the real size, because sshd raises
+  SIGWINCH only on a size change. A redraw in flight is not restarted.
+- **Keepalive starts after auth.** A keepalive is an
+  `SSH_MSG_GLOBAL_REQUEST`, which the protocol allows only after user
+  authentication. OpenSSH answers a stray one with `REQUEST_FAILURE`. A
+  Go `x/crypto/ssh` server reads it as a userauth request and drops the
+  connection (seen as `LIBSSH2_ERROR_SOCKET_RECV` from the publickey
+  probe). The pinned libssh2 starts the keepalive clock inside the
+  config call, so the first keepalive leaves one full interval after auth.
+- **Dead-server detection.** Keepalives ask for a reply (`want_reply=1`),
+  and RFC 4254 (the SSH connection protocol) makes a live server answer.
+  libssh2 consumes the reply itself, so the read task records when the
+  socket was last readable. After three keepalive intervals plus 5 s
+  without a byte, the client reports "Server not responding" and drops
+  the session. The 5 s covers a reply that trails its request by one
+  round trip.
+- **Connect.** The TCP connect is non-blocking with a 10 s budget. The
+  client polls it in 200 ms slices, so Cancel takes effect within one
+  slice. Name resolution is not cancellable.
+- **Disconnect.** `ssh_cleanup()` puts the session in blocking mode with
+  a 1.5 s timeout, so the close handshake completes and libssh2 frees the
+  session. If the peer is gone, the client shuts the socket down and
+  frees the session anyway.
+
 ### Threading model (device) — render on core 1, network on core 0
 
 | Context | Core | Stack | Job |

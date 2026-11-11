@@ -136,7 +136,7 @@ use dashes (`write-flash`, `--flash-mode`).
 ## Follow-ups
 
 - Move to IDF 6.0.2+ when installed: esp_hid patches B, C, D become
-  upstream; drop ours and keep E through J.
+  upstream; drop ours and keep E through K.
 - Key-auth login from the device on the new backend is not yet exercised
   on hardware after the repin.
 - Upstream: offer the `feature/mbedtls-psa-upstream` series to libssh2

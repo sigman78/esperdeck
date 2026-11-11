@@ -142,16 +142,9 @@ static volatile esp_err_t s_connect_result = ESP_FAIL;
  */
 static SemaphoreHandle_t s_session_lock = NULL;
 
-/* The one ordered TX FIFO for everything that reaches libssh2_channel_write():
- * keystrokes (ssh_client_send, UI task) and terminal replies (DA1, cursor
- * reports that tsm emits while the sink parses a chunk). libssh2 keeps a
- * half-sent write in the channel and credits the retry with the FIRST
- * attempt's byte count, so every writer must present the same head bytes.
- * Both tasks flush this FIFO under s_session_lock, never their own buffer.
- * The reply path runs inside the read task with the lock held, so it only
- * appends: a blocking write there could park the read task, and a later
- * force-delete would orphan the mutex. Only code holding s_session_lock may
- * touch it. */
+/* The one ordered TX FIFO for keystrokes and terminal replies. Only code
+ * that holds s_session_lock may touch it. Rationale: docs/ARCHITECTURE.md,
+ * "SSH uplink and liveness". */
 static ssh_txbuf_t s_tx;
 
 /* A pending window-change pair (ssh_client_request_redraw): 0 idle, 1 narrow
@@ -163,11 +156,11 @@ static int s_redraw_step = 0;
  * immediately. */
 #define SSH_BLOCKING_TIMEOUT_MS 20000
 
-/* Slack on top of 3 silent keepalive intervals before the link is declared
- * lost (a reply can trail its request by a round trip plus one 10 ms wake). */
+/* Slack on top of 3 silent keepalive intervals. A reply can trail its
+ * request by one round trip. */
 #define SSH_SILENCE_MARGIN_S 5
 
-/* TCP connect budget, polled in slices so Cancel is noticed within one. */
+/* TCP connect budget. The poll slice bounds the Cancel latency. */
 #define SSH_CONNECT_TIMEOUT_MS 10000
 #define SSH_CONNECT_SLICE_MS   200
 static volatile bool s_connect_cancel = false;
@@ -239,8 +232,8 @@ static const ssh_sink_t *s_sink;
 void ssh_client_queue_reply(const uint8_t *data, size_t len)
 {
     if (!s_connected || len == 0) return;
-    /* Lock already held (sink data() contract): buffer only, see s_tx.
-     * Overflow drops the tail; the uplink is jammed and the session dying. */
+    /* The sink data() contract holds the lock here: append only, see s_tx.
+     * Overflow drops the tail. */
     ssh_txbuf_append(&s_tx, data, len);
 }
 
@@ -769,20 +762,10 @@ auth_done:
     ESP_LOGI(TAG, "Authenticated");
 
 #if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
-    /* Configure keepalive only after userauth completes. A keepalive is an
-     * SSH_MSG_GLOBAL_REQUEST (type 80), a connection-protocol message. The
-     * protocol allows it only after the user authenticates. The pinned
-     * libssh2 starts the keepalive clock inside this call, so the first one
-     * goes out a full interval after auth, never mid-auth. A stray request
-     * mid-auth is answered with REQUEST_FAILURE by OpenSSH, but a Go
-     * x/crypto/ssh server parses every packet during auth as a userauth
-     * request and drops the connection (LIBSSH2_ERROR_SOCKET_RECV from the
-     * publickey probe).
-     *
-     * want_reply=1: RFC 4254 makes a live server answer every keepalive.
-     * libssh2 consumes the reply internally, so the read task watches
-     * socket readability (s_last_rx_tick) to notice a silent peer. The
-     * reply needs a small libssh2 allocation (ssh_malloc, SPIRAM first). */
+    /* Keepalive starts only after userauth: some servers drop a global
+     * request that arrives mid-auth. want_reply=1 lets the read task
+     * detect a silent peer. See docs/ARCHITECTURE.md, "SSH uplink and
+     * liveness". */
     libssh2_keepalive_config(s_session, 1 /* want_reply */,
                              CONFIG_SSH_KEEPALIVE_INTERVAL);
     ESP_LOGI(TAG, "Keepalive every %d s", CONFIG_SSH_KEEPALIVE_INTERVAL);
@@ -974,11 +957,9 @@ int ssh_client_send(const uint8_t *data, size_t len)
 int ssh_client_request_redraw(void)
 {
     if (!s_connected || !s_channel) return -1;
-    /* sshd raises SIGWINCH only on a size change. A same-size request
-     * does nothing. So: one column narrower, then the real size. The two
-     * requests are queued; the read task finishes them if the link is
-     * busy. A redraw already in flight is not restarted (libssh2 would
-     * credit the resumed packet to the wrong step). */
+    /* sshd raises SIGWINCH only on a size change. So: one column narrower,
+     * then the real size. The read task completes both steps. A redraw in
+     * flight keeps its place. */
     xSemaphoreTake(s_session_lock, portMAX_DELAY);
     if (s_channel && s_redraw_step == 0) s_redraw_step = 1;
     redraw_pump();
