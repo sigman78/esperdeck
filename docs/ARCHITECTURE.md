@@ -64,6 +64,7 @@ the components.
 main/               device composition root (main.c, splash, Kconfig)
 sim/                 host composition root (SDL event loop)
 components/
+  board/             header-only panel constants (DISPLAY_WIDTH/HEIGHT)
   cyberdeck_app/     THE SHELL — boot→picker→session FSM (finite-state
                      machine) + overlay TUI (text UI), one module per
                      screen (app_home/menu/connect/unlock/saver/...)
@@ -87,8 +88,11 @@ components/
   monocypher/        vendored Monocypher 4.0.2 — keystore crypto +
                      libssh2's ed25519 (one copy image-wide)
 idfsim/              host-compilable ESP-IDF stubs (esp_err, heap_caps, ...)
-tests/               Unity suites: tsm, font, input, keystore, storage_kv,
-                     vtkeys
+tests/               host suites: tsm, font, input, keystore, storage_kv,
+                     vtkeys, theme, esp_hid (report-map parser), idfsim
+                     (compat-layer contract), render_simd (scan/dispatch),
+                     ssh_txbuf (SSH TX FIFO);
+                     tests/sim is a Python check of the sim storage dir
 cmake/               cyberdeck_component_register() — IDF/sim dual registration
 docs/                this and the other guides — see the doc index in README
 ```

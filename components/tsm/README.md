@@ -54,7 +54,7 @@ Validation of the integrated term-code fixes (2026-10-09):
   vtkeys, storage_kv and theme pass. REP includes 512 literal-output comparisons.
 - MSVC 19.51 with ASan/libFuzzer: both unit suites and 370 corpus seeds pass;
   seed 42, 60 seconds per target: 246,293 parser and 35,555 model runs, no failures.
-- ESP-IDF 5.5.2 / ESP32-S3 build passes, including IRAM and boundary checks.
+- ESP-IDF (5.5.2 at the time) / ESP32-S3 build passed, including IRAM and boundary checks.
   App size: 0x16dd30 bytes; 52% of the app partition remains free.
 - MSVC Release simulator build and headless HOME startup assertion pass, using
   an isolated storage directory and SDL's dummy/software drivers.
