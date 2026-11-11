@@ -14,6 +14,7 @@
  */
 
 #include "ssh_client.h"
+#include "ssh_txbuf.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -140,19 +141,21 @@ static volatile esp_err_t s_connect_result = ESP_FAIL;
  */
 static SemaphoreHandle_t s_session_lock = NULL;
 
-/* Pending terminal-response bytes: DA1 and cursor-position replies that tsm
- * emits while the sink parses a chunk. The reply path must
- * never write these to libssh2. The callback runs inside the read task
- * while the read task holds s_session_lock. A blocking write there could
- * park the read task while it still holds the lock. If disconnect() then
- * force-deletes the task, the deletion orphans the mutex and wedges all
- * future SSH I/O. Instead, the callback buffers the bytes, and the read
- * loop drains them non-blocking, still under the lock. Responses are a
- * handful of bytes, so 256 is plenty. Only code holding s_session_lock may
- * touch this buffer. */
-#define SSH_RESP_BUF 256
-static uint8_t s_resp_buf[SSH_RESP_BUF];
-static size_t  s_resp_len = 0;
+/* The one ordered TX FIFO for everything that reaches libssh2_channel_write():
+ * keystrokes (ssh_client_send, UI task) and terminal replies (DA1, cursor
+ * reports that tsm emits while the sink parses a chunk). libssh2 keeps a
+ * half-sent write in the channel and credits the retry with the FIRST
+ * attempt's byte count, so every writer must present the same head bytes.
+ * Both tasks flush this FIFO under s_session_lock, never their own buffer.
+ * The reply path runs inside the read task with the lock held, so it only
+ * appends: a blocking write there could park the read task, and a later
+ * force-delete would orphan the mutex. Only code holding s_session_lock may
+ * touch it. */
+static ssh_txbuf_t s_tx;
+
+/* A pending window-change pair (ssh_client_request_redraw): 0 idle, 1 narrow
+ * size next, 2 real size next. Advanced under s_session_lock by redraw_pump(). */
+static int s_redraw_step = 0;
 
 /* This bounds any blocking libssh2 call (handshake or auth). It does not
  * affect non-blocking calls in the read loop; they return EAGAIN
@@ -215,7 +218,8 @@ static void ssh_cleanup(void)
         s_sock = -1;
     }
     s_connected = false;
-    s_resp_len  = 0;
+    ssh_txbuf_reset(&s_tx);
+    s_redraw_step = 0;
     ESP_LOGI(TAG, "SSH cleanup done  — libssh2 heap: %zu B (expect 0)", s_alloc_bytes);
 }
 
@@ -225,32 +229,44 @@ static const ssh_sink_t *s_sink;
 void ssh_client_queue_reply(const uint8_t *data, size_t len)
 {
     if (!s_connected || len == 0) return;
-    /* Runs inside the read loop with s_session_lock held (the sink data()
-     * contract). It must only buffer here; see the s_resp_buf note for
-     * why it must never write to libssh2. It drops the overflow tail.
-     * The buffer only fills when the uplink jams, and in that case the
-     * session is about to drop anyway. */
-    size_t room = sizeof(s_resp_buf) - s_resp_len;
-    if (len > room) len = room;
-    if (len) {
-        memcpy(s_resp_buf + s_resp_len, data, len);
-        s_resp_len += len;
-    }
+    /* Lock already held (sink data() contract): buffer only, see s_tx.
+     * Overflow drops the tail; the uplink is jammed and the session dying. */
+    ssh_txbuf_append(&s_tx, data, len);
 }
 
-/* Flush buffered terminal responses with NON-blocking writes. Caller must hold
- * s_session_lock and the session must be in non-blocking mode. Anything not
- * sent (EAGAIN) stays buffered for the next read-loop iteration. */
-static void drain_responses(void)
+static ptrdiff_t tx_write(void *ctx, const uint8_t *data, size_t len)
 {
-    while (s_resp_len > 0 && s_channel) {
-        ssize_t rc = libssh2_channel_write(s_channel,
-                                           (const char *)s_resp_buf, s_resp_len);
-        if (rc == LIBSSH2_ERROR_EAGAIN) break;   /* retry next iteration */
-        if (rc < 0) { s_resp_len = 0; break; }   /* unrecoverable — drop */
-        if ((size_t)rc >= s_resp_len) { s_resp_len = 0; break; }
-        memmove(s_resp_buf, s_resp_buf + rc, s_resp_len - (size_t)rc);
-        s_resp_len -= (size_t)rc;
+    (void)ctx;
+    if (!s_channel) return LIBSSH2_ERROR_CHANNEL_CLOSED;
+    ssize_t rc = libssh2_channel_write(s_channel, (const char *)data, len);
+    return rc == LIBSSH2_ERROR_EAGAIN ? SSH_TXBUF_AGAIN : (ptrdiff_t)rc;
+}
+
+/* Non-blocking flush of s_tx. Caller must hold s_session_lock and the
+ * session must be in non-blocking mode. Bytes not sent (EAGAIN) stay at the
+ * head for the next caller on either task. */
+static void tx_flush(void)
+{
+    if (ssh_txbuf_flush(&s_tx, tx_write, NULL) < 0)
+        ESP_LOGW(TAG, "channel_write failed; TX buffer dropped");
+}
+
+/* Advance a pending window-change request. Same locking rules as tx_flush.
+ * libssh2 resumes a blocked request from channel state when called again. */
+static void redraw_pump(void)
+{
+    while (s_redraw_step && s_channel) {
+        const int cols = s_term_cols ? s_term_cols : 80;
+        const int rows = s_term_rows ? s_term_rows : 24;
+        int rc = libssh2_channel_request_pty_size(
+                     s_channel, s_redraw_step == 1 ? cols - 1 : cols, rows);
+        if (rc == LIBSSH2_ERROR_EAGAIN) return;
+        if (rc != 0) {
+            ESP_LOGW(TAG, "pty size request failed: %d", rc);
+            s_redraw_step = 0;
+            return;
+        }
+        s_redraw_step = (s_redraw_step == 1) ? 2 : 0;
     }
 }
 
@@ -357,9 +373,13 @@ static void ssh_read_task(void *arg)
                 s_connected = false;
             }
 
-            /* Push out any terminal responses tsm queued above (non-blocking,
-             * so this never parks the task while holding the lock). */
-            if (s_connected) drain_responses();
+            /* Push out queued TX bytes (terminal replies, keystrokes the
+             * UI task could not send) and any pending window-change.
+             * Non-blocking, so this never parks the task holding the lock. */
+            if (s_connected) {
+                tx_flush();
+                redraw_pump();
+            }
 
             if (s_connected && libssh2_channel_eof(s_channel)) {
                 ESP_LOGI(TAG, "ssh_read_task: channel EOF");
@@ -871,57 +891,28 @@ int ssh_client_send(const uint8_t *data, size_t len)
     if (!s_connected || !s_channel || len == 0)
         return -1;
 
-    ssize_t sent = 0;
-    while ((size_t)sent < len) {
-        if (!s_connected) return -1;   /* dropped while we were spinning */
+    /* UI task: append, try one immediate write, return. Whatever the link
+     * cannot take now stays queued and the read task flushes it. */
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    size_t took = s_channel ? ssh_txbuf_append(&s_tx, data, len) : 0;
+    if (took) tx_flush();
+    xSemaphoreGive(s_session_lock);
 
-        xSemaphoreTake(s_session_lock, portMAX_DELAY);
-        ssize_t rc = s_channel
-            ? libssh2_channel_write(s_channel,
-                                    (const char *)data + sent,
-                                    len - (size_t)sent)
-            : LIBSSH2_ERROR_CHANNEL_CLOSED;
-        xSemaphoreGive(s_session_lock);
-
-        if (rc == LIBSSH2_ERROR_EAGAIN) {
-            /* >= 1 tick even at 100 Hz — a 5 ms request would round to a
-             * busy-yield and trip the idle-task watchdog on a dead link. */
-            vTaskDelay(pdMS_TO_TICKS(10));
-            continue;
-        }
-        if (rc < 0) {
-            ESP_LOGW(TAG, "channel_write error: %d", (int)rc);
-            return -1;
-        }
-        sent += rc;
-    }
-    return (int)sent;
+    return took ? (int)took : -1;
 }
 
 int ssh_client_request_redraw(void)
 {
     if (!s_connected || !s_channel) return -1;
     /* sshd raises SIGWINCH only on a size change. A same-size request
-     * does nothing. So: one column narrower, then the real size. */
-    const int cols = s_term_cols ? s_term_cols : 80;
-    const int rows = s_term_rows ? s_term_rows : 24;
-    const int steps[2] = { cols - 1, cols };
-    for (int i = 0; i < 2; i++) {
-        int rc = LIBSSH2_ERROR_EAGAIN;
-        for (int tries = 0; rc == LIBSSH2_ERROR_EAGAIN && tries < 100; tries++) {
-            if (!s_connected) return -1;
-            xSemaphoreTake(s_session_lock, portMAX_DELAY);
-            rc = s_channel
-                ? libssh2_channel_request_pty_size(s_channel, steps[i], rows)
-                : LIBSSH2_ERROR_CHANNEL_CLOSED;
-            xSemaphoreGive(s_session_lock);
-            if (rc == LIBSSH2_ERROR_EAGAIN) vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        if (rc != 0) {
-            ESP_LOGW(TAG, "pty size request failed: %d", rc);
-            return -1;
-        }
-    }
+     * does nothing. So: one column narrower, then the real size. The two
+     * requests are queued; the read task finishes them if the link is
+     * busy. A redraw already in flight is not restarted (libssh2 would
+     * credit the resumed packet to the wrong step). */
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    if (s_channel && s_redraw_step == 0) s_redraw_step = 1;
+    redraw_pump();
+    xSemaphoreGive(s_session_lock);
     return 0;
 }
 

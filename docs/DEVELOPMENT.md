@@ -9,7 +9,7 @@ Contents:
 - [Dependencies — what's vendored, fetched, and why](#dependencies--whats-vendored-fetched-and-why)
 - [Device build — `app-flash` for iteration, full `flash` wipes storage](#device-build--app-flash-for-iteration-full-flash-wipes-storage)
   - [Your profiles and keys in the flash image](#your-profiles-and-keys-in-the-flash-image)
-- [Tests — five host-compiled Unity suites](#tests--five-host-compiled-unity-suites)
+- [Tests — host-compiled Unity suites](#tests--host-compiled-unity-suites)
 - [Simulator — build, drive, matching crypto](#simulator--build-drive-matching-crypto)
 - [Performance — see performance.md for the log](#performance--see-performancemd-for-the-log)
 - [Licenses — MIT code, OFL font](#licenses--mit-code-ofl-font)
@@ -112,9 +112,9 @@ from one source. Note the seeding is one-way: profiles created or edited
 `sim_storage/` by hand if they must survive a full reflash (`app-flash`
 never touches them).
 
-## Tests — five host-compiled Unity suites
+## Tests — host-compiled Unity suites
 
-Five host-compiled Unity suites (no ESP-IDF required) live under
+Host-compiled Unity suites (no ESP-IDF required) live under
 `tests/`:
 
 - **`tsm`** — the VT parser (`vtparse`) and terminal model (`termstate`),
@@ -130,6 +130,8 @@ Five host-compiled Unity suites (no ESP-IDF required) live under
   modifiers)
 - **`esp_hid`** — the HID report-map parser (descriptor bytes straight
   from the BLE peer: truncated, oversized and malformed input)
+- **`ssh_txbuf`** — the SSH TX FIFO (append, partial consume, EAGAIN keeps
+  the head bytes, overflow)
 
 Each suite builds the same way:
 
