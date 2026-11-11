@@ -2,7 +2,7 @@
 
 This is a copy of IDF v6.0.1's `components/esp_hid` (test_apps removed),
 with patches to `src/nimble_hidh.c`, `src/esp_hid_common.c` and `src/esp_hidh.c`. All
-patches are marked `CYBERDECK PATCH A..J` in the source.
+patches are marked `CYBERDECK PATCH A..K` in the source.
 
 Re-derived 2026-10-31 for the IDF 6.0.1 migration (docs/idf6-migration.md):
 the 5.5.2 to 6.0.1 upstream delta was tiny. `nimble_hidd.c` (unpatched by
@@ -36,6 +36,7 @@ or aborted the firmware.
 | H | `assert(status == 0)` after each discovery step used to abort the whole firmware whenever a peer disconnected mid-discovery. This is now logged and unwound instead. Also fixed: no more `malloc(0)` when the peer has no HID service. |
 | I | **Open-failure path hardening** (2026-10-11, after a boot-loop on a late keyboard). `esp_hidh_dev_resources_free` indexed a NULL `report_maps` when discovery timed out after the service count was taken (the panic). Discovery callbacks wrote through `arg` into the opener's stack arrays with no bounds check, even after a timeout had unwound that frame; they now carry a generation token (`disc_begin`/`disc_end`) and the arrays are bounded (`HIDH_SVC_MAX`/`CHR_MAX`/`DSC_MAX`). `read_char`/`read_descr` left `*out` stale on failure, so the unconditional `free(rdata)` after a failed PnP read freed the device name a second time. `protocol_mode` and several empty read results leaked per open. A connect that completes after the opener gave up is now terminated instead of orphaned. `conn_id` starts at -1 (calloc's 0 is a live handle). |
 | J | **Report-map parser hardening** (`src/esp_hid_common.c`, host-tested in `tests/esp_hid`). The parser keeps file-static state; a failed parse left the step, collection depth and temp map behind, so the next descriptor started mid-collection, and a descriptor that completed no report (empty or truncated) dereferenced a NULL temp map. State now resets on entry and every exit, and bit counts saturate instead of overflowing `int`. Also: `esp_hidh_dev_version_get` had its existence check inverted, and `esp_ble_hidh_dev_report_read` leaked the read buffer. |
+| K | **Read-chunk allocation failure wakes the opener** (`nimble_on_read`). When `realloc()` failed mid-read the callback freed the buffer and returned `-1` without setting a status or calling `SEND_CB()`, so `read_char`/`read_descr` waited out the full GATT timeout and then returned the stale `0` status with a NULL buffer. It now sets `s_read_status = BLE_HS_ENOMEM`, releases the waiter, and still returns `-1` to abort the long read. Not host-tested: `nimble_on_read` needs NimBLE types (`ble_gatt_error`, `os_mbuf`) and `tests/esp_hid` has no stub layer for them. |
 
 E–J have no upstream equivalent. They must be re-applied on top of
 whatever upstream ships, unless it has already fixed the same paths. The
