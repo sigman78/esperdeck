@@ -168,16 +168,46 @@ static void set_last_error(const char *msg)
     snprintf(s_last_error, sizeof(s_last_error), "%s", msg ? msg : "");
 }
 
+/* Bound on each blocking close/disconnect during teardown. Teardown runs on
+ * the UI task, so a dead peer may cost at most a few of these. */
+#define SSH_CLOSE_TIMEOUT_MS 1500
+
+static void kill_link(bool *done)
+{
+    if (!*done && s_sock >= 0) shutdown(s_sock, SHUT_RDWR);
+    *done = true;
+}
+
+/* The shell session is non-blocking: there, channel_close/free and
+ * session_free return EAGAIN without freeing anything. So teardown switches
+ * to blocking with a short timeout. libssh2 skips the close handshake only
+ * for a socket it already saw SSH_MSG_DISCONNECT on, never for a silent
+ * peer. So after any failed step shutdown() makes the next read fail
+ * immediately, which lets the free calls run to completion. */
 static void ssh_cleanup(void)
 {
+    bool shut = false;
+
+    if (s_session) {
+        libssh2_session_set_blocking(s_session, 1);
+        libssh2_session_set_timeout(s_session, SSH_CLOSE_TIMEOUT_MS);
+    }
     if (s_channel) {
-        libssh2_channel_close(s_channel);
-        libssh2_channel_free(s_channel);
+        if (libssh2_channel_close(s_channel) != 0) kill_link(&shut);
+        if (libssh2_channel_free(s_channel) != 0) {
+            kill_link(&shut);
+            if (libssh2_channel_free(s_channel) != 0)
+                ESP_LOGW(TAG, "channel_free failed; session_free will retry");
+        }
         s_channel = NULL;
     }
     if (s_session) {
-        libssh2_session_disconnect(s_session, "bye");
-        libssh2_session_free(s_session);
+        if (!shut && libssh2_session_disconnect(s_session, "bye") != 0) kill_link(&shut);
+        if (libssh2_session_free(s_session) != 0) {
+            kill_link(&shut);
+            if (libssh2_session_free(s_session) != 0)
+                ESP_LOGE(TAG, "session_free failed - leaking %zu B", s_alloc_bytes);
+        }
         s_session = NULL;
     }
     if (s_sock >= 0) {
