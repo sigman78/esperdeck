@@ -38,7 +38,20 @@ static inline int _sim_setsockopt(int s, int level, int oname, const void* oval,
     return setsockopt((SOCKET)s, level, oname, (const char*)oval, (int)olen);
 }
 
+static inline int _sim_getsockopt(int s, int level, int oname, void *oval, socklen_t *olen)
+{
+    return getsockopt((SOCKET)s, level, oname, (char *)oval, olen);
+}
+
+/* lwIP spelling: ioctl(s, FIONBIO, &int_on). */
+static inline int _sim_ioctl(int s, long cmd, void *arg)
+{
+    return ioctlsocket((SOCKET)s, cmd, (u_long *)arg);
+}
+
 #define socket(af, type, proto)       _sim_socket(af, type, proto)
 #define connect(s, addr, len)         _sim_connect(s, addr, (int)(len))
 #define close(s)                      closesocket((SOCKET)(s))
 #define setsockopt(s, level, oname, oval, olen)	_sim_setsockopt(s, level, oname, oval, olen)
+#define getsockopt(s, level, oname, oval, olen)	_sim_getsockopt(s, level, oname, oval, olen)
+#define ioctl(s, cmd, arg)            _sim_ioctl(s, cmd, arg)

@@ -167,6 +167,11 @@ static int s_redraw_step = 0;
  * lost (a reply can trail its request by a round trip plus one 10 ms wake). */
 #define SSH_SILENCE_MARGIN_S 5
 
+/* TCP connect budget, polled in slices so Cancel is noticed within one. */
+#define SSH_CONNECT_TIMEOUT_MS 10000
+#define SSH_CONNECT_SLICE_MS   200
+static volatile bool s_connect_cancel = false;
+
 /* Fingerprint of the most recent connect attempt + last error message. */
 static char s_fingerprint[65] = "";
 static char s_last_error[96]  = "";
@@ -519,6 +524,39 @@ esp_err_t ssh_client_init(void)
     return ESP_OK;
 }
 
+/* Non-blocking connect polled with select(). Does not read errno (Winsock
+ * leaves it unset): a non-zero connect() means "in progress" and the verdict
+ * comes from SO_ERROR. The socket stays non-blocking, which is what libssh2
+ * wants (it switches to non-blocking itself during the handshake). */
+static esp_err_t tcp_connect(int sock, const struct sockaddr *addr, socklen_t len)
+{
+    int on = 1;
+    ioctl(sock, FIONBIO, &on);
+    if (s_connect_cancel) return ESP_FAIL;
+    if (connect(sock, addr, len) == 0) return ESP_OK;
+
+    const TickType_t t0 = xTaskGetTickCount();
+    while (!s_connect_cancel) {
+        if ((TickType_t)(xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(SSH_CONNECT_TIMEOUT_MS))
+            return ESP_ERR_TIMEOUT;
+        fd_set wfds, efds;
+        struct timeval tv = { 0, SSH_CONNECT_SLICE_MS * 1000 };
+        FD_ZERO(&wfds);
+        FD_ZERO(&efds);
+        FD_SET(sock, &wfds);
+        FD_SET(sock, &efds);
+        int n = select(sock + 1, NULL, &wfds, &efds, &tv);
+        if (n < 0) return ESP_FAIL;
+        if (n == 0) continue;
+        int err = 0;
+        socklen_t elen = sizeof(err);
+        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &elen) != 0 || err != 0)
+            return ESP_FAIL;
+        return FD_ISSET(sock, &wfds) ? ESP_OK : ESP_FAIL;
+    }
+    return ESP_FAIL;   /* cancelled */
+}
+
 esp_err_t ssh_client_connect(const ssh_config_t *config)
 {
     if (!config || !config->host || !config->username ||
@@ -569,13 +607,17 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
     setsockopt(s_sock, IPPROTO_TCP, TCP_NODELAY, &tcpFlag, sizeof(int));
 
     ESP_LOGI(TAG, "Connecting TCP socket...");
-    if (connect(s_sock, res->ai_addr, res->ai_addrlen) != 0) {
-        ESP_LOGE(TAG, "TCP connect failed");
-        freeaddrinfo(res);
+    esp_err_t crc = tcp_connect(s_sock, res->ai_addr, (socklen_t)res->ai_addrlen);
+    freeaddrinfo(res);
+    if (crc != ESP_OK) {
+        ESP_LOGE(TAG, "TCP connect %s",
+                 crc == ESP_ERR_TIMEOUT ? "timed out" :
+                 s_connect_cancel ? "cancelled" : "failed");
+        set_last_error(crc == ESP_ERR_TIMEOUT ? "Connection timed out" :
+                       s_connect_cancel ? "Cancelled" : "TCP connect failed");
         ssh_cleanup();
         return ESP_FAIL;
     }
-    freeaddrinfo(res);
     ESP_LOGI(TAG, "TCP connected");
 
     /* ── 2. libssh2 init (once) ─────────────────────────────────────── */
@@ -844,6 +886,7 @@ esp_err_t ssh_client_connect_start(const ssh_config_t *config)
     if (!config) return ESP_ERR_INVALID_ARG;
     if (s_connect_phase == 1) return ESP_ERR_INVALID_STATE;
 
+    s_connect_cancel = false;       /* before the worker can see a Cancel */
     s_pending_cfg    = *config;     /* shallow: caller keeps the strings alive */
     s_connect_result = ESP_FAIL;
     s_connect_phase  = 1;
@@ -873,8 +916,9 @@ esp_err_t ssh_client_connect_take_result(void)
 
 void ssh_client_connect_cancel(void)
 {
-    /* Unblock a stalled socket read/write without closing the fd (the worker's
-     * ssh_cleanup() owns the close). No effect if still resolving DNS. */
+    /* The flag ends a pending TCP connect; shutdown() unblocks later phases
+     * (ssh_cleanup() owns the close). DNS resolution is not interruptible. */
+    s_connect_cancel = true;
     if (s_sock >= 0) shutdown(s_sock, SHUT_RDWR);
 }
 
