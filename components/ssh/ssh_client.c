@@ -97,6 +97,7 @@ static TaskHandle_t      s_read_task  = NULL;
 static volatile bool     s_connected  = false;
 static uint16_t          s_term_cols, s_term_rows;   /* pty size connect() sent */
 static volatile bool     s_clean_eof  = false;      /* remote closed channel (exit) */
+static TickType_t        s_last_rx_tick;            /* last inbound activity (read task) */
 static volatile bool     s_read_task_done = true;   /* read task has exited */
 static bool              s_libssh2_initialized = false;
 
@@ -161,6 +162,10 @@ static int s_redraw_step = 0;
  * affect non-blocking calls in the read loop; they return EAGAIN
  * immediately. */
 #define SSH_BLOCKING_TIMEOUT_MS 20000
+
+/* Slack on top of 3 silent keepalive intervals before the link is declared
+ * lost (a reply can trail its request by a round trip plus one 10 ms wake). */
+#define SSH_SILENCE_MARGIN_S 5
 
 /* Fingerprint of the most recent connect attempt + last error message. */
 static char s_fingerprint[65] = "";
@@ -332,11 +337,30 @@ static void ssh_read_task(void *arg)
      * in everything accumulated since boot. */
     net_bench_reset();
     s_nb_last_data_us = 0;
+    s_last_rx_tick = xTaskGetTickCount();
 
     while (s_connected) {
         size_t  drained = 0;
         int64_t wake_t0 = drain_now_us();
         int     n;
+
+        /* Inbound-activity probe. libssh2 swallows keepalive replies, so
+         * watch the socket itself before reading. Counts reads > 0 too. */
+        fd_set rfds;
+        struct timeval tv = { 0, 0 };
+        FD_ZERO(&rfds);
+        FD_SET(s_sock, &rfds);
+        if (select(s_sock + 1, &rfds, NULL, NULL, &tv) > 0)
+            s_last_rx_tick = xTaskGetTickCount();
+#if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
+        if ((TickType_t)(xTaskGetTickCount() - s_last_rx_tick) >
+            pdMS_TO_TICKS((3 * CONFIG_SSH_KEEPALIVE_INTERVAL + SSH_SILENCE_MARGIN_S) * 1000)) {
+            ESP_LOGE(TAG, "no data for 3 keepalive intervals; dropping");
+            set_last_error("Server not responding");
+            s_connected = false;
+            break;
+        }
+#endif
 
         do {
             xSemaphoreTake(s_session_lock, portMAX_DELAY);
@@ -347,6 +371,7 @@ static void ssh_read_task(void *arg)
             if (n > 0) {
                 s_sink->data(s_read_buf, (size_t)n, s_sink->user);
                 drained += (size_t)n;
+                s_last_rx_tick = xTaskGetTickCount();
             } else if (n == LIBSSH2_ERROR_EAGAIN) {
                 /* No data — good time to send a keepalive if one is due.
                  * NOTE: EAGAIN can also mean "data queued but the outbound
@@ -354,7 +379,11 @@ static void ssh_read_task(void *arg)
                  * the next wake, so treat EAGAIN strictly as end-of-wake. */
 #if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
                 int next_ka = 0;
-                libssh2_keepalive_send(s_session, &next_ka);
+                int ka = libssh2_keepalive_send(s_session, &next_ka);
+                if (ka < 0 && ka != LIBSSH2_ERROR_EAGAIN) {
+                    log_last_error("keepalive");
+                    s_connected = false;
+                }
 #endif
             } else if (n == 0) {
                 /* Zero-length read: orderly EOF if the channel says so
@@ -700,22 +729,19 @@ auth_done:
 #if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
     /* Configure keepalive only after userauth completes. A keepalive is an
      * SSH_MSG_GLOBAL_REQUEST (type 80), a connection-protocol message. The
-     * protocol allows it only after the user authenticates. libssh2 leaves
-     * keepalive_last_sent at 0. So the first blocking wait after this call
-     * sends one keepalive immediately, instead of waiting out the
-     * interval. If the code configures it earlier, that sends a stray
-     * request mid-auth. OpenSSH answers that stray request with
-     * REQUEST_FAILURE and continues. A Go x/crypto/ssh server instead
-     * parses every packet during auth as a userauth request, and drops
-     * the connection. That failure shows up as LIBSSH2_ERROR_SOCKET_RECV
-     * from the publickey probe.
+     * protocol allows it only after the user authenticates. The pinned
+     * libssh2 starts the keepalive clock inside this call, so the first one
+     * goes out a full interval after auth, never mid-auth. A stray request
+     * mid-auth is answered with REQUEST_FAILURE by OpenSSH, but a Go
+     * x/crypto/ssh server parses every packet during auth as a userauth
+     * request and drops the connection (LIBSSH2_ERROR_SOCKET_RECV from the
+     * publickey probe).
      *
-     * want_reply=0 sends traffic to keep NAT alive, without asking the
-     * server to respond. want_reply=1 makes the server send back
-     * SSH_MSG_REQUEST_SUCCESS. libssh2 must allocate a buffer for that
-     * reply. Under heap pressure, that allocation fails with
-     * LIBSSH2_ERROR_ALLOC and drops the channel. */
-    libssh2_keepalive_config(s_session, 0 /* want_reply */,
+     * want_reply=1: RFC 4254 makes a live server answer every keepalive.
+     * libssh2 consumes the reply internally, so the read task watches
+     * socket readability (s_last_rx_tick) to notice a silent peer. The
+     * reply needs a small libssh2 allocation (ssh_malloc, SPIRAM first). */
+    libssh2_keepalive_config(s_session, 1 /* want_reply */,
                              CONFIG_SSH_KEEPALIVE_INTERVAL);
     ESP_LOGI(TAG, "Keepalive every %d s", CONFIG_SSH_KEEPALIVE_INTERVAL);
 #endif
