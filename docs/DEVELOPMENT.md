@@ -41,6 +41,16 @@ Contents:
 
 ## Device build — `app-flash` for iteration, full `flash` wipes storage
 
+Before the first build, apply the SDK patch that aligns the RGB bounce
+buffers (the SIMD renderer needs it for full speed; see
+[`performance.md`](performance.md#idf-bounce-buffer-alignment-patch)):
+
+```
+git -C <esp-idf> apply <project>/patches/esp-idf-6.0.1-rgb-bounce-align.patch
+```
+
+Configure warns if the SDK is unpatched; the build still works.
+
 `sdkconfig.defaults` pins the load-bearing settings (S3 target, 16 MB
 flash, octal PSRAM (external RAM), NimBLE, custom partition table).
 Local overrides and credentials go in the gitignored `sdkconfig`.

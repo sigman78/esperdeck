@@ -1190,7 +1190,7 @@ bands, valid half-row origins and word-aligned output. Margins are computed
 from the grid width and cleared before shifting. Other supported C-renderer
 geometry, such as an 802-pixel panel, falls back before modifying output.
 
-IDF 5.5.2's native DMA bounce allocation does **not** guarantee 16-byte
+IDF's native DMA bounce allocation (5.5.2 and 6.0.1 alike) does **not** guarantee 16-byte
 alignment. Expansion handles all four word alignments using 128-bit,
 two 64-bit, or four 32-bit output stores. The shift pass requires aligned
 lines: a displaced unaligned band instead uses the original direct-offset
@@ -1206,8 +1206,8 @@ small IDF allocation patch below, while keeping these fallbacks intact.
 
 ### IDF bounce-buffer alignment patch
 
-For ESP-IDF 5.5.2, apply
-[`esp-idf-5.5.2-rgb-bounce-align.patch`](../patches/esp-idf-5.5.2-rgb-bounce-align.patch).
+For ESP-IDF 6.0.1, apply
+[`esp-idf-6.0.1-rgb-bounce-align.patch`](../patches/esp-idf-6.0.1-rgb-bounce-align.patch).
 It changes only the bounce allocation in `esp_lcd_panel_rgb.c` to request
 `MAX(rgb_panel->int_mem_align, (size_t)16)` instead of the DMA minimum alone.
 Both buffers are allocated through that loop before descriptor setup.
@@ -1223,8 +1223,8 @@ in `lcd_driver.c` would not solve the measured issue.
 From the project root (substitute the installed IDF path):
 
 ```sh
-git -C /path/to/esp-idf apply --check /absolute/path/to/cyberdeck/patches/esp-idf-5.5.2-rgb-bounce-align.patch
-git -C /path/to/esp-idf apply /absolute/path/to/cyberdeck/patches/esp-idf-5.5.2-rgb-bounce-align.patch
+git -C /path/to/esp-idf apply --check /absolute/path/to/cyberdeck/patches/esp-idf-6.0.1-rgb-bounce-align.patch
+git -C /path/to/esp-idf apply /absolute/path/to/cyberdeck/patches/esp-idf-6.0.1-rgb-bounce-align.patch
 ```
 
 This intentionally changes one file in the installed SDK. A reverse
@@ -1232,7 +1232,10 @@ This intentionally changes one file in the installed SDK. A reverse
 Reapply on a fresh SDK checkout and review the allocation site when upgrading
 IDF; the filename records the tested version, not a promise about other
 versions. Without the patch, the renderer remains correct but can use
-slower stores and scalar wobble fallbacks. Benchmark runs with the patched
+slower stores and scalar wobble fallbacks. A configure-time CMake warning
+flags an unpatched SDK, and the boot log prints
+`bounce buffers 16-byte aligned: yes/no` (the ISR ORs the low address bits
+of each buffer into one DRAM word; `display_init` logs it from task context). Benchmark runs with the patched
 driver used its own allocation, so no test allocator wrapper supplied
 the alignment guarantee.
 

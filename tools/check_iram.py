@@ -66,7 +66,7 @@ DATA_PATTERNS = [
     r"s_cursor$", r"s_bell$", r"s_fx_noise$", r"g_rs$", r"g_fx_snap$",
     r"g_fx_cfg", r"g_fx_frame$", r"g_fx_wobble_lut$", r"g_fx_glow_acc$",
     r"g_fx_row_stamp$", r"g_fx_(wipe|collapse|static)_", r"wob_env",
-    r"s_simd_(masks|shifts)$",
+    r"s_simd_(masks|shifts)$", r"s_bounce_seen$",
 ]
 
 FUNC_RE = re.compile("^(" + "|".join(FUNC_PATTERNS) + ")")
