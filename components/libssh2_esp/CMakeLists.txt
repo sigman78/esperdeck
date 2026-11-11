@@ -32,7 +32,7 @@ include(FetchContent)
 
 FetchContent_Declare(libssh2_src
     GIT_REPOSITORY https://github.com/sigman78/libssh2.git
-    GIT_TAG        199d5423599bb77fdee6ef7e1233243e9ca51ac3  # feature/mbedtls-psa head; the patch matches this SHA
+    GIT_TAG        41742fd1747a4879ace3dc6b4a0b9c324380501f  # fix/esp-audit head (feature/mbedtls-psa + audit fixes); the patch matches this SHA
     GIT_PROGRESS   TRUE
     PATCH_COMMAND  ${CMAKE_COMMAND}
                    -DREPO=<SOURCE_DIR>

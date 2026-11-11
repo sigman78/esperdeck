@@ -58,11 +58,14 @@ Device specifics:
   `aes*-gcm@openssh.com` would negotiate and then fail every tag. This was
   true of the legacy code too; chacha20-poly1305 came first in the
   preference list, so it never showed. aes-ctr and chacha20-poly1305 stay.
-- PSA key slots: every HMAC context takes a key slot. TF-PSA-Crypto's
-  dynamic key store (`MBEDTLS_PSA_KEY_STORE_DYNAMIC`) is on by default and
-  the IDF config does not turn it off, so there is no fixed slot limit; the
-  table grows on the heap. The backend destroys keys on every path; a leak
-  would show as internal heap shrinking after repeated reconnects.
+- PSA key slots: each MAC direction of a session holds one HMAC key for
+  the life of the session (imported on the first packet, destroyed on rekey
+  and session free); other HMAC uses import and destroy a key per call.
+  TF-PSA-Crypto's dynamic key store (`MBEDTLS_PSA_KEY_STORE_DYNAMIC`) is on
+  by default and the IDF config does not turn it off, so there is no fixed
+  slot limit; the table grows on the heap. The backend destroys keys on
+  every path; a leak would show as the heap shrinking after repeated
+  reconnects.
 - Patch 0001 was regenerated against the new pin. It now holds: the RAM
   diet (4 KB send buffer and 512 B banner in `libssh2_priv.h`, with the
   matching limits in `transport.c`), the keepalive clock start
