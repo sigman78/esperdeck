@@ -33,6 +33,14 @@
 
 static const char *TAG = "ssh_import";
 
+/* Bounded string copy: truncates silently, always NUL-terminates. */
+static void copy_str(char *dst, size_t dstsz, const char *src)
+{
+    size_t n = strnlen(src, dstsz - 1);
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
 /* Body cap. The private-key decode buffer takes its size from the actual
  * body length, not from this ceiling. Decoding only ever shrinks the data,
  * so the body length bounds every field decoded from it. That keeps a key
@@ -559,9 +567,9 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
     }
 
     conn_profile_t *pf = &sc->pf;
-    snprintf(pf->name, sizeof(pf->name), "%s", name);
-    snprintf(pf->host, sizeof(pf->host), "%s", host);
-    snprintf(pf->user, sizeof(pf->user), "%s", user);
+    copy_str(pf->name, sizeof(pf->name), name);
+    copy_str(pf->host, sizeof(pf->host), host);
+    copy_str(pf->user, sizeof(pf->user), user);
     pf->port = (uint16_t)portn;
 
     bool want_key = (strcmp(auth, "key") == 0);
@@ -569,7 +577,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
         pf->auth = STORAGE_AUTH_KEY;
         /* password field doubles as the key passphrase (see cyberdeck_app);
          * on a same-name update a blank passphrase keeps the stored one. */
-        snprintf(pf->password, sizeof(pf->password), "%s", sc->passphrase);
+        copy_str(pf->password, sizeof(pf->password), sc->passphrase);
         if (!pf->password[0] && sc->old.auth == STORAGE_AUTH_KEY)
             snprintf(pf->password, sizeof(pf->password), "%s",
                      sc->old.password);
@@ -666,7 +674,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
         }
     } else {
         pf->auth = STORAGE_AUTH_PASSWORD;
-        snprintf(pf->password, sizeof(pf->password), "%s", sc->password);
+        copy_str(pf->password, sizeof(pf->password), sc->password);
         /* Same-name update with a blank password keeps the stored one. */
         if (!pf->password[0] && sc->old.auth == STORAGE_AUTH_PASSWORD)
             snprintf(pf->password, sizeof(pf->password), "%s",
@@ -703,7 +711,7 @@ static esp_err_t handle_save(httpd_req_t *req, char *body, save_scratch_t *sc)
     s_count++;                                   /* publish only after setting s_last */
     ESP_LOGI(TAG, "imported profile '%s' (%s)", pf->name, want_key ? "key" : "password");
 
-    char sub[80];
+    char sub[128];
     snprintf(sub, sizeof(sub), "%s @ %s:%d saved to the deck.",
              pf->user, pf->host, portn);
     return ok_page(req, "&#10003; Saved", sub);
@@ -841,7 +849,7 @@ static esp_err_t post_delete(httpd_req_t *req)
     }
     if (s_lock) xSemaphoreTake(s_lock, portMAX_DELAY);
     s_err[0] = '\0';
-    snprintf(s_last, sizeof(s_last), "%s", name);
+    copy_str(s_last, sizeof(s_last), name);
     if (s_lock) xSemaphoreGive(s_lock);
     s_deleted++;                                 /* publish only after setting s_last */
     ESP_LOGI(TAG, "deleted profile '%s' via web", name);
