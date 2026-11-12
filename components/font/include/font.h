@@ -20,9 +20,9 @@
  * glyph copy are all fixed during init. esp_lcd captures the bounce
  * geometry once, when the panel comes up.
  *
- * The simulator and the unit tests stay SINGLE-size and compile-time
- * (cmake -DFONT_SIZE={8x16,10x20,12x24}) — neither has a settings store or a
- * reboot, and the tests want a fixed grid.
+ * The simulator links all three by default and picks one per run
+ * (`--font WxH`); cmake -DFONT_SIZE={8x16,10x20,12x24} pins a single-size
+ * build. The unit tests stay single-size: they want a fixed grid.
  *
  * The grid follows from the cell size on the 800x480 panel:
  *   8x16 -> 100x30    10x20 -> 80x24    12x24 -> 66x20 (8 px right margin)
@@ -37,7 +37,11 @@ typedef enum {
 /* Which sizes this build links in. An undefined FONT_RT_* evaluates to 0
  * in #if, so only the enabled ones need defining. */
 #ifdef BUILD_SIMULATOR
-  #if defined(CYBERDECK_FONT_12X24)
+  #if defined(CYBERDECK_FONT_ALL)
+    #define FONT_RT_8X16  1
+    #define FONT_RT_10X20 1
+    #define FONT_RT_12X24 1
+  #elif defined(CYBERDECK_FONT_12X24)
     #define FONT_RT_12X24 1
   #elif defined(CYBERDECK_FONT_10X20)
     #define FONT_RT_10X20 1

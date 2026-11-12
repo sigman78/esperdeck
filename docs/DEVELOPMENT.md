@@ -66,8 +66,9 @@ applied on reboot.
 Which sizes are *linked into the build* — and which one is the boot
 default — are Kconfig options (`CYBERDECK_FONT_RT_8X16` / `_10X20` /
 `_12X24`, plus the `CYBERDECK_FONT_DEFAULT` choice; the bold face is
-`CYBERDECK_FONT_BOLD`). The sim picks its font at configure time
-(`-DFONT_SIZE=8x16|10x20|12x24`).
+`CYBERDECK_FONT_BOLD`). The sim links all three and picks one per run
+(`--font 8x16|10x20|12x24`, default 8x16); `-DFONT_SIZE=<size>` at
+configure time pins a single-size build.
 
 The `tools/check_iram.py` audit proves the render ISR keeps running
 while the flash cache is disabled (`LCD_RGB_ISR_IRAM_SAFE`). If the
@@ -196,6 +197,8 @@ cmake --build build-sim
   already exist. Invalid paths fail instead of falling back to other storage.
   The root supports up to 767 bytes, subject to host OS path limits.
   Without the option, the existing `sim_storage/` discovery remains available.
+- **`--font 8x16|10x20|12x24`** selects the character grid for the run
+  (100x30, 80x24 or 66x20).
 - **Mouse emulates touch** faithfully (tap, drag, long-press =
   right-click).
 - **`--drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|..."`**

@@ -48,16 +48,19 @@ macro(cyberdeck_sim_features)
         )
     endif()
 
-    # [font] build variant: 8x16 (100x30), 10x20 (80x24) or 12x24 (66x20).
-    # The sim is compile-time single-size — one build dir per size.
-    set(FONT_SIZE "8x16" CACHE STRING "Terminal font size: 8x16, 10x20 or 12x24")
-    if(FONT_SIZE STREQUAL "10x20")
+    # [font] "all" links every size and the sim picks one per run with
+    # --font (8x16 = 100x30, 10x20 = 80x24, 12x24 = 66x20). A single
+    # size pins the build to it, like a device with one size enabled.
+    set(FONT_SIZE "all" CACHE STRING "Linked font sizes: all, 8x16, 10x20 or 12x24")
+    if(FONT_SIZE STREQUAL "all")
+        add_compile_definitions(CYBERDECK_FONT_ALL=1)
+    elseif(FONT_SIZE STREQUAL "10x20")
         add_compile_definitions(CYBERDECK_FONT_10X20=1)
     elseif(FONT_SIZE STREQUAL "12x24")
         add_compile_definitions(CYBERDECK_FONT_12X24=1)
     elseif(NOT FONT_SIZE STREQUAL "8x16")
         message(FATAL_ERROR
-            "FONT_SIZE must be 8x16, 10x20 or 12x24 (got '${FONT_SIZE}')")
+            "FONT_SIZE must be all, 8x16, 10x20 or 12x24 (got '${FONT_SIZE}')")
     endif()
 
     # [keystore] the CONFIG_ mirror stays in sim/CMakeLists.txt: it is

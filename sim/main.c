@@ -326,6 +326,24 @@ static int sim_main(int argc, char *argv[])
         i--;
     }
 
+    /* --font WxH picks the grid for this run (builds that link every
+     * size; a single-size build ignores it). */
+    font_size_t font = FONT_SIZE_8X16;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--font") != 0) continue;
+        const char *v = i + 1 < argc ? argv[i + 1] : "";
+        if      (!strcmp(v, "8x16"))  font = FONT_SIZE_8X16;
+        else if (!strcmp(v, "10x20")) font = FONT_SIZE_10X20;
+        else if (!strcmp(v, "12x24")) font = FONT_SIZE_12X24;
+        else {
+            fprintf(stderr, "--font requires 8x16, 10x20 or 12x24\n");
+            return 2;
+        }
+        memmove(&argv[i], &argv[i + 2], (size_t)(argc - i - 1) * sizeof(*argv));
+        argc -= 2;
+        i--;
+    }
+
     /* Keystore provisioning commands run headless and exit (see
      * keystore_cli.c); returns -1 when none is present. */
     int cli_rc = keystore_cli_main(argc, argv);
@@ -361,10 +379,9 @@ static int sim_main(int argc, char *argv[])
         return 1;
     }
 
-    /* The sim links exactly one size (cmake -DFONT_SIZE=...), so the request
-     * is irrelevant — font_init falls back to whichever one that is. The
-     * caller must still tell the renderer, or it keeps its 8x16 defaults. */
-    font_init(FONT_SIZE_8X16);
+    /* A single-size build falls back to the one it links. The caller
+     * must still tell the renderer, or it keeps its 8x16 defaults. */
+    font_init(font);
     display_render_set_font(font_width(), font_height());
     display_init();
     vterm_init(display_text_cols(), display_text_rows());
