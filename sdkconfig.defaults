@@ -25,9 +25,11 @@ CONFIG_FREERTOS_TASK_CREATE_ALLOW_EXT_MEM=y
 CONFIG_SPIRAM_USE_CAPS_ALLOC=y
 
 # ---- internal-DRAM diet ---------------------------------------------------
-# ~60 KB of internal DRAM is free after display+vterm. Everything below was
-# measured on the deck; a config regenerated without it boot-loops with
-# "no DRAM for 100x30 overlay" (int heap ~9 KB after SSH init vs ~74 KB).
+# Internal DRAM is the scarce pool; free figures per boot milestone are in
+# the heap table of docs/idf6-migration.md. Everything below was measured on
+# the deck; a config regenerated without it boot-loops with "no DRAM for
+# 100x30 overlay" (measured on 5.5.2: int heap ~9 KB after SSH init without
+# the diet vs ~74 KB with it).
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=6144
 # Wi-Fi: small static pools, dynamic RX, no IRAM copies of the driver hot

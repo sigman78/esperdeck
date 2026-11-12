@@ -102,7 +102,8 @@ void ssh_client_connect_cancel(void);
 /**
  * Queue terminal-response bytes (DA1, cursor reports) for the remote.
  * Call ONLY from inside the sink's data() callback — the read loop
- * drains the queue with non-blocking writes. Overflow drops the tail.
+ * flushes the shared TX buffer with non-blocking writes. Overflow drops
+ * the tail.
  */
 void ssh_client_queue_reply(const uint8_t *data, size_t len);
 
@@ -112,21 +113,22 @@ void ssh_client_queue_reply(const uint8_t *data, size_t len);
 esp_err_t ssh_client_disconnect(void);
 
 /**
- * Send data to SSH server
+ * Send data to SSH server. Never blocks. The bytes go into the shared TX
+ * buffer. The call tries one write, and the read task sends the rest.
  *
  * @param data Data to send
  * @param len Data length
- * @return Number of bytes sent, or -1 on error
+ * @return Number of bytes accepted (short when the buffer is full), or -1
  */
 int ssh_client_send(const uint8_t *data, size_t len);
 
 /**
  * Ask the remote foreground program to repaint, after a local terminal
- * reset. Sends a pty-size change one column narrower and then the real
- * size again, so sshd raises SIGWINCH twice. Blocks up to ~2 s on a
- * congested link.
+ * reset. Requests a pty-size change one column narrower and then the real
+ * size again, so sshd raises SIGWINCH twice. Never blocks. The read task
+ * completes the pair if the link is busy.
  *
- * @return 0 when both requests went out, -1 otherwise
+ * @return 0 when the redraw is pending, -1 when not connected
  */
 int ssh_client_request_redraw(void);
 

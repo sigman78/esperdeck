@@ -46,7 +46,7 @@ fill in yours:
 cp -r sim_storage.example sim_storage   # gitignored — edit profiles.ini, wifi.ini, keys/
 ```
 
-**Device build** — needs ESP-IDF v6.0.1 (the branch migrated off v5.5.2; see docs/idf6-migration.md). On
+**Device build** — needs ESP-IDF v6.0.1 (migrated from v5.5.2, which no longer builds; see docs/idf6-migration.md). On
 Windows, run `idf.py` from the ESP-IDF prompt:
 
 ```bash

@@ -9,7 +9,7 @@ Contents:
 - [Dependencies — what's vendored, fetched, and why](#dependencies--whats-vendored-fetched-and-why)
 - [Device build — `app-flash` for iteration, full `flash` wipes storage](#device-build--app-flash-for-iteration-full-flash-wipes-storage)
   - [Your profiles and keys in the flash image](#your-profiles-and-keys-in-the-flash-image)
-- [Tests — five host-compiled Unity suites](#tests--five-host-compiled-unity-suites)
+- [Tests — host-compiled Unity suites](#tests--host-compiled-unity-suites)
 - [Simulator — build, drive, matching crypto](#simulator--build-drive-matching-crypto)
 - [Performance — see performance.md for the log](#performance--see-performancemd-for-the-log)
 - [Licenses — MIT code, OFL font](#licenses--mit-code-ofl-font)
@@ -40,6 +40,12 @@ Contents:
   (sim and tests).
 
 ## Device build — `app-flash` for iteration, full `flash` wipes storage
+
+The build needs a stock ESP-IDF 6.0.1; nothing in the SDK is patched. Two
+SDK components are vendored with local patches and override the SDK copies:
+`components/esp_hid` and `components/esp_lcd`. Each pins the exact IDF
+version and fails configure on another one (the ledger is
+`CYBERDECK_PATCHES.md` in each directory).
 
 `sdkconfig.defaults` pins the load-bearing settings (S3 target, 16 MB
 flash, octal PSRAM (external RAM), NimBLE, custom partition table).
@@ -102,9 +108,9 @@ from one source. Note the seeding is one-way: profiles created or edited
 `sim_storage/` by hand if they must survive a full reflash (`app-flash`
 never touches them).
 
-## Tests — five host-compiled Unity suites
+## Tests — host-compiled Unity suites
 
-Five host-compiled Unity suites (no ESP-IDF required) live under
+Host-compiled Unity suites (no ESP-IDF required) live under
 `tests/`:
 
 - **`tsm`** — the VT parser (`vtparse`) and terminal model (`termstate`),
@@ -120,6 +126,8 @@ Five host-compiled Unity suites (no ESP-IDF required) live under
   modifiers)
 - **`esp_hid`** — the HID report-map parser (descriptor bytes straight
   from the BLE peer: truncated, oversized and malformed input)
+- **`ssh_txbuf`** — the SSH TX FIFO (append, partial consume, EAGAIN keeps
+  the head bytes, overflow)
 
 Each suite builds the same way:
 
@@ -153,7 +161,7 @@ scheduling.
 Comment policy (short version: comments say WHY, docs carry the essays) is
 enforced by [unwaffle](https://github.com/sigman78/unwaffle), run from PyPI
 via `uvx` pinned to a known-good version — nothing is vendored. `tools/check_comments.py` owns the
-scope: first-party sources only (vendored `esp_hid`, `monocypher`,
+scope: first-party sources only (vendored `esp_hid`, `esp_lcd`, `monocypher`,
 `libssh2_esp`, dead `terminal`, and all build trees are excluded). Rule
 tuning lives in `unwaffle.toml`; everything runs at tool defaults, including
 the STE (Simplified Technical English) wording rules at advisory (info) tier.

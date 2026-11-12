@@ -27,7 +27,7 @@ if(EXISTS "${_verh}")
             "components/esp_hid was vendored from IDF v6.0.1 but this build uses "
             "IDF ${_vmaj}.${_vmin}.${_vpat}. Re-derive it per "
             "components/esp_hid/CYBERDECK_PATCHES.md (on >= v6.0.2 re-copy from "
-            "the SDK and re-apply only the still-missing patches E through J; on "
+            "the SDK and re-apply only the still-missing patches E through K; on "
             "the release containing all of them, delete this component entirely).")
     endif()
 endif()

@@ -22,13 +22,15 @@ from pathlib import Path
 # libssh2_esp -> monocypher (the fork's mbedtls.c does the include).
 ALLOWED = {
     "vterm":         {"tsm", "display"},   # render data plane, fused by design
-    "display":       {"font", "board"},
+    "display":       {"font", "board",
+                      "esp_lcd"},          # vendored SDK driver (RGB panel)
     "font":          {"board"},
     "ssh":           {"vterm",             # session controller drives the terminal
                       "storage"},          # controller resolves keys/known hosts
     "cyberdeck_app": {"storage", "ssh", "wifi", "display", "vterm", "font"},
     "wifi":          {"storage"},
     "input":         {"storage", "esp_hid",
+                      "esp_lcd",           # vendored SDK driver (touch I2C panel IO)
                       "display"},          # tolerable: DISPLAY_WIDTH for the edge strip
     "storage":       {"monocypher"},
 }

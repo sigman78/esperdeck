@@ -182,7 +182,11 @@ nimble_on_read(uint16_t conn_handle,
             free(s_read_data_val);
             s_read_data_val = NULL;
             s_read_data_len = 0;
-            return -1;
+            /* PATCH K: report the failure and wake the opener (the bare
+             * return -1 left WAIT_CB blocked until its timeout). */
+            s_read_status = BLE_HS_ENOMEM;
+            SEND_CB();
+            return -1;   /* nonzero aborts the long read */
         }
         s_read_data_val = tmp;
         ble_hs_mbuf_to_flat(attr->om, s_read_data_val + old_offset, OS_MBUF_PKTLEN(attr->om), NULL);

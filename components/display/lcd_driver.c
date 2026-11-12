@@ -22,6 +22,10 @@ static const char *TAG = "lcd_driver";
 
 static esp_lcd_panel_handle_t panel_handle  = NULL;
 
+/* ISR-written: bit 8 = callback ran, low 4 bits = OR of (buf & 15). Must
+ * live in DRAM (the ISR runs with flash cache off); read from task context. */
+static DRAM_ATTR volatile uint32_t s_bounce_seen = 0;
+
 /* Bounce-buffer fill callback — ISR context. */
 static IRAM_ATTR bool on_bounce_empty(esp_lcd_panel_handle_t panel,
                                       void *buf,
@@ -30,6 +34,7 @@ static IRAM_ATTR bool on_bounce_empty(esp_lcd_panel_handle_t panel,
                                       void *user_ctx)
 {
     (void)panel; (void)user_ctx;
+    s_bounce_seen |= 0x100u | ((uint32_t)(uintptr_t)buf & 15u);
     display_render_chunk((color_t *)buf, pos_px, len_bytes);
     return false;
 }
@@ -135,6 +140,17 @@ esp_err_t display_init(void)
         return panel_bringup();
     }
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (ctx.result == ESP_OK) {
+        /* SIMD renderer speed needs 16-byte bounce buffers (patch A in the
+         * vendored components/esp_lcd); report what the panel got. */
+        vTaskDelay(pdMS_TO_TICKS(100));
+        uint32_t seen = s_bounce_seen;
+        if (seen & 0x100u)
+            ESP_LOGI(TAG, "bounce buffers 16-byte aligned: %s",
+                     (seen & 15u) ? "no" : "yes");
+        else
+            ESP_LOGW(TAG, "no bounce callbacks yet; alignment unknown");
+    }
     return ctx.result;
 }
 

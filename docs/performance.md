@@ -1190,7 +1190,7 @@ bands, valid half-row origins and word-aligned output. Margins are computed
 from the grid width and cleared before shifting. Other supported C-renderer
 geometry, such as an 802-pixel panel, falls back before modifying output.
 
-IDF 5.5.2's native DMA bounce allocation does **not** guarantee 16-byte
+IDF's native DMA bounce allocation (5.5.2 and 6.0.1 alike) does **not** guarantee 16-byte
 alignment. Expansion handles all four word alignments using 128-bit,
 two 64-bit, or four 32-bit output stores. The shift pass requires aligned
 lines: a displaced unaligned band instead uses the original direct-offset
@@ -1202,12 +1202,13 @@ Consequently, performance depends on allocation alignment. The earlier
 forced-alignment numbers are not claims about every production heap layout.
 On unaligned buffers, the effects peak remains near the scalar peak, with
 a small dispatch cost. The final integration pairs the renderer with the
-small IDF allocation patch below, while keeping these fallbacks intact.
+small allocation patch below, while keeping these fallbacks intact.
 
-### IDF bounce-buffer alignment patch
+### Bounce-buffer alignment
 
-For ESP-IDF 5.5.2, apply
-[`esp-idf-5.5.2-rgb-bounce-align.patch`](../patches/esp-idf-5.5.2-rgb-bounce-align.patch).
+The project carries a vendored copy of the SDK's `esp_lcd` component
+(`components/esp_lcd`, from ESP-IDF 6.0.1) with one change, patch A in
+[`CYBERDECK_PATCHES.md`](../components/esp_lcd/CYBERDECK_PATCHES.md).
 It changes only the bounce allocation in `esp_lcd_panel_rgb.c` to request
 `MAX(rgb_panel->int_mem_align, (size_t)16)` instead of the DMA minimum alone.
 Both buffers are allocated through that loop before descriptor setup.
@@ -1220,19 +1221,13 @@ this allocation path. `dma_burst_size` does not impose 16-byte internal
 buffer alignment on the S3 TX channel either. Merely setting either field
 in `lcd_driver.c` would not solve the measured issue.
 
-From the project root (substitute the installed IDF path):
-
-```sh
-git -C /path/to/esp-idf apply --check /absolute/path/to/cyberdeck/patches/esp-idf-5.5.2-rgb-bounce-align.patch
-git -C /path/to/esp-idf apply /absolute/path/to/cyberdeck/patches/esp-idf-5.5.2-rgb-bounce-align.patch
-```
-
-This intentionally changes one file in the installed SDK. A reverse
-`git apply --reverse --check` verifies that the patch is already present.
-Reapply on a fresh SDK checkout and review the allocation site when upgrading
-IDF; the filename records the tested version, not a promise about other
-versions. Without the patch, the renderer remains correct but can use
-slower stores and scalar wobble fallbacks. Benchmark runs with the patched
+The installed SDK stays unmodified: a project component named `esp_lcd`
+overrides the SDK one. The copy pins the exact IDF version and fails
+configure on another, so an SDK upgrade forces a fresh copy and a review
+of the allocation site. Without the change, the renderer remains correct
+but can use slower stores and scalar wobble fallbacks. The boot log prints
+`bounce buffers 16-byte aligned: yes/no` (the ISR ORs the low address bits
+of each buffer into one DRAM word; `display_init` logs it from task context). Benchmark runs with the patched
 driver used its own allocation, so no test allocator wrapper supplied
 the alignment guarantee.
 

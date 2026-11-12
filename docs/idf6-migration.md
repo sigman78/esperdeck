@@ -1,9 +1,10 @@
 # ESP-IDF 6.0.1 migration
 
-Status: compiled, flashed (app only) and booted on the deck 2026-10-31.
-Branch `feat/idf6-migration`. The 5.5.2 build is not kept alive on this
-branch; the vendored esp_hid pin, the removed `bits_per_pixel` field and the
-provisioning component rename all make it a one-way move.
+Status: done. Compiled, flashed (app only) and booted on the deck
+2026-10-31; merged to master as PR 55 on 2026-11-01. The project builds on
+6.0.1 only; the 5.5.2 build is not kept alive. The vendored esp_hid pin, the
+removed `bits_per_pixel` field and the provisioning component rename all
+make it a one-way move.
 
 Why now: IDF 5.5 left its service period in 2026-07, Mbed TLS 3.6 reaches
 end of life in 2027-03, and every SDK bump on 5.x re-opened the same
@@ -13,7 +14,7 @@ patch set (esp_hid, libssh2). 6.0 is the line that gets fixes.
 
 | Area | 6.0 change | What we did |
 |---|---|---|
-| Crypto | Mbed TLS 4.0.0 with TF-PSA-Crypto. The legacy RSA, ECDSA, bignum, cipher, entropy and CTR-DRBG APIs moved behind `mbedtls/private/` and lost their RNG arguments. `mbedtls/aes.h` is private too. | libssh2: patch 0002 (below). `ble_presence.c`: the one AES-128 block for RPA (Resolvable Private Address) resolution now goes through PSA (`psa_cipher_encrypt`, ECB, no padding). |
+| Crypto | Mbed TLS 4.0.0 with TF-PSA-Crypto. The legacy RSA, ECDSA, bignum, cipher, entropy and CTR-DRBG APIs moved behind `mbedtls/private/` and lost their RNG arguments. `mbedtls/aes.h` is private too. | libssh2: the `sigman78/libssh2` fork carries a PSA (Platform Security Architecture) Crypto port of the mbedTLS backend, see [libssh2 on Mbed TLS 4](#libssh2-on-mbed-tls-4). `ble_presence.c`: the one AES-128 block for RPA (Resolvable Private Address) resolution now goes through PSA (`psa_cipher_encrypt`, ECB, no padding). |
 | Provisioning | `wifi_provisioning` left the SDK; its successor `espressif/network_provisioning` is a registry component with `network_prov_*` names. Protocomm security 1 is now off by default. | `components/wifi/idf_component.yml` pulls it; `wifi_provision.c` renamed; `CONFIG_ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1=y` in defaults. |
 | esp_lcd | `esp_lcd_rgb_panel_config_t.bits_per_pixel` removed (format follows `data_width`); `esp_lcd_new_panel_io_i2c_v2` renamed to `esp_lcd_new_panel_io_i2c`. | `lcd_driver.c`, `touch_input.c`. |
 | Drivers | `driver/usb_serial_jtag.h` moved to `esp_driver_usb_serial_jtag`; driver headers no longer drag FreeRTOS headers in. | input REQUIRES; explicit `freertos/task.h` include. |
@@ -21,6 +22,7 @@ patch set (esp_hid, libssh2). 6.0 is the line that gets fixes.
 | libc | PicolibC is the default libc (`CONFIG_LIBC_PICOLIBC=y`, Newlib-compat on). | Accepted the default; the regenerated sdkconfig is what boots. |
 | Kconfig | `SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY` renamed to `FREERTOS_TASK_CREATE_ALLOW_EXT_MEM` (we already set the new name). | Removed the old name from `sdkconfig.defaults`. |
 | Build | CMake >= 3.22. `idf.py` now reads `CMakePresets.json` and, with no `--preset`, takes the `default` preset or else the FIRST one. Ours had only `sim-windows`, so `idf.py` configured the simulator with clang. `${sourceDir}` in `binaryDir` is not expanded by `idf.py`. | `cmake_minimum_required(3.22)`; added a `default` preset (`build`, `BUILD_SIMULATOR=OFF`) and made both `binaryDir`s relative. |
+| esp_lcd bounce buffers | 6.0.1 still allocates them with the DMA minimum alignment, not 16 bytes. | The SDK patch from the 5.5.2 era became a vendored component: `components/esp_lcd` is a copy of 6.0.1's `esp_lcd` with the same one-line change (ledger in `components/esp_lcd/CYBERDECK_PATCHES.md`). The installed SDK stays stock; the boot log reports the measured alignment. |
 | esp_hid | 6.0.1 still lacks patches B, C, D (they ship in 6.0.2). Upstream 6.0.1 only adds a realloc NULL check and patch A to `nimble_hidh.c`, plus deinit calls in `nimble_hidd.c`. | Re-derived: took 6.0.1's `nimble_hidd.c`, folded the realloc check into our `nimble_hidh.c`, moved the version pin to 6.0.1. Ledger in `components/esp_hid/CYBERDECK_PATCHES.md`. |
 
 Managed components: `esp_lcd_touch_gt911`, `qrcode` and `littlefs` 1.22.2 all
@@ -36,7 +38,7 @@ cipher call is still the legacy API, which 4.0 moved behind
 fails its own tests.
 
 The first cut of this migration kept the legacy API through the private
-headers (patch 0002, 47 insertions in `mbedtls.c`/`mbedtls.h`). It is gone.
+headers (a local patch, 0002). It is gone.
 The `sigman78/libssh2` fork now carries a PSA Crypto port of the mbedTLS
 backend on branch `feature/mbedtls-psa` (upstream master + RSA, ECDSA, ECDH,
 cipher and AES-GCM through `psa_*`, Mbed TLS 3.6 and 4.x, Monocypher for
@@ -56,12 +58,23 @@ Device specifics:
   `aes*-gcm@openssh.com` would negotiate and then fail every tag. This was
   true of the legacy code too; chacha20-poly1305 came first in the
   preference list, so it never showed. aes-ctr and chacha20-poly1305 stay.
-- PSA key slots: TF-PSA-Crypto defaults to 32 volatile slots and every HMAC
-  context takes one. The backend destroys keys on every path; a slot leak
-  would show as `PSA_ERROR_INSUFFICIENT_MEMORY` after repeated reconnects.
-- Patch 0001 (RAM diet, error messages, keepalive clock) was regenerated
-  against the new pin; its OpenSSH-key error hunk is gone because the fork
-  reports the envelope parser's own error now.
+- PSA key slots: each MAC direction of a session holds one HMAC key for
+  the life of the session (imported on the first packet, destroyed on rekey
+  and session free); other HMAC uses import and destroy a key per call.
+  TF-PSA-Crypto's dynamic key store (`MBEDTLS_PSA_KEY_STORE_DYNAMIC`) is on
+  by default and the IDF config does not turn it off, so there is no fixed
+  slot limit; the table grows on the heap. The backend destroys keys on
+  every path; a leak would show as the heap shrinking after repeated
+  reconnects.
+- Patch 0001 was regenerated against the new pin. It now holds: the RAM
+  diet (4 KB send buffer and 512 B banner in `libssh2_priv.h`, with the
+  matching limits in `transport.c`), the keepalive clock start
+  (`keepalive.c`), the "encrypted key requires a passphrase" error
+  (`pem.c`) and the "Waiting for USERAUTH response" error text with the
+  transport rc (`userauth.c`). The hunk dropped in the move was the one
+  that patched the fork's `mbedtls.c` to pass on the ed25519 parser's own
+  error for an OpenSSH-format key; the fork now does that itself. The
+  `pem.c` hunk stayed.
 
 Alternatives weighed before the port (bundle Mbed TLS 3.6, wolfSSL backend,
 wolfSSH, libssh) and the decision triggers are in
@@ -123,7 +136,8 @@ use dashes (`write-flash`, `--flash-mode`).
 ## Follow-ups
 
 - Move to IDF 6.0.2+ when installed: esp_hid patches B, C, D become
-  upstream; drop ours and keep E through J.
+  upstream; drop ours and keep E through K. `components/esp_lcd` is
+  pinned to 6.0.1 too: re-copy it and re-apply its patch A.
 - Key-auth login from the device on the new backend is not yet exercised
   on hardware after the repin.
 - Upstream: offer the `feature/mbedtls-psa-upstream` series to libssh2

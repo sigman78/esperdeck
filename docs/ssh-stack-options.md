@@ -87,7 +87,7 @@ candidates (server side, SFTP, PKI, all compiled unless carved out).
 
 ## Decision and trigger
 
-1. Keep patch 0002. It is 180 lines, version-guarded, no-op on Mbed TLS 3.x,
+1. Keep patch 0002. It is version-guarded, no-op on Mbed TLS 3.x,
    and the exposure is "re-check on each IDF bump", which the project already
    carries for esp_hid.
 2. Do not start the five-phase PSA port of the fork.

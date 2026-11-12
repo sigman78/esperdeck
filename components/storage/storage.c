@@ -72,6 +72,14 @@ static int parse_section(const char *line, char *dst, size_t dstsz)
     return 1;
 }
 
+/* Bounded string copy: truncates silently, always NUL-terminates. */
+static void copy_str(char *dst, size_t dstsz, const char *src)
+{
+    size_t n = strnlen(src, dstsz - 1);
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
 /* Split "key=value" line into key and val strings, truncating each to its
  * buffer size. Returns 1 on success, 0 if no '=' found. */
 static int parse_kv(const char *line, char *key, size_t keysz,
@@ -185,19 +193,19 @@ esp_err_t storage_load_profiles(conn_profile_t *out, int *count, int max)
         conn_profile_t *p = &out[cur_idx];
 
         if (strcmp(key, "host") == 0) {
-            snprintf(p->host, sizeof(p->host), "%s", val);
+            copy_str(p->host, sizeof(p->host), val);
         } else if (strcmp(key, "port") == 0) {
             int v = atoi(val);
             p->port = (v > 0 && v <= 65535) ? (uint16_t)v : 22;
         } else if (strcmp(key, "user") == 0) {
-            snprintf(p->user, sizeof(p->user), "%s", val);
+            copy_str(p->user, sizeof(p->user), val);
         } else if (strcmp(key, "auth") == 0) {
             p->auth = (strcmp(val, "key") == 0)
                       ? STORAGE_AUTH_KEY : STORAGE_AUTH_PASSWORD;
         } else if (strcmp(key, "password") == 0) {
-            snprintf(p->password, sizeof(p->password), "%s", val);
+            copy_str(p->password, sizeof(p->password), val);
         } else if (strcmp(key, "key_id") == 0) {
-            snprintf(p->key_id, sizeof(p->key_id), "%s", val);
+            copy_str(p->key_id, sizeof(p->key_id), val);
         }
         /* Unknown keys silently ignored for forward compatibility */
     }
@@ -359,9 +367,9 @@ esp_err_t storage_wifi_load(wifi_profile_t *out, int *count, int max)
         if (!parse_kv(line, key, sizeof(key), val, sizeof(val))) continue;
 
         if (strcmp(key, "ssid") == 0)
-            snprintf(out[cur].ssid, sizeof(out[cur].ssid), "%s", val);
+            copy_str(out[cur].ssid, sizeof(out[cur].ssid), val);
         else if (strcmp(key, "password") == 0)
-            snprintf(out[cur].password, sizeof(out[cur].password), "%s", val);
+            copy_str(out[cur].password, sizeof(out[cur].password), val);
     }
 
     fclose(f);
@@ -1137,7 +1145,8 @@ static void wipe_keys_dir(void)
     struct dirent *e;
     while ((e = readdir(d)) != NULL) {
         if (e->d_name[0] == '.') continue;                    /* skip . / .. */
-        snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+        if (snprintf(path, sizeof(path), "%s/%s", dir, e->d_name)
+            >= (int)sizeof(path)) continue;          /* never shred a cut path */
         storage_shred_file(path);            /* may hold plaintext keys */
     }
     closedir(d);

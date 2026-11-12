@@ -14,6 +14,7 @@
  */
 
 #include "ssh_client.h"
+#include "ssh_txbuf.h"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
@@ -96,6 +97,7 @@ static TaskHandle_t      s_read_task  = NULL;
 static volatile bool     s_connected  = false;
 static uint16_t          s_term_cols, s_term_rows;   /* pty size connect() sent */
 static volatile bool     s_clean_eof  = false;      /* remote closed channel (exit) */
+static TickType_t        s_last_rx_tick;            /* last inbound activity (read task) */
 static volatile bool     s_read_task_done = true;   /* read task has exited */
 static bool              s_libssh2_initialized = false;
 
@@ -140,24 +142,28 @@ static volatile esp_err_t s_connect_result = ESP_FAIL;
  */
 static SemaphoreHandle_t s_session_lock = NULL;
 
-/* Pending terminal-response bytes: DA1 and cursor-position replies that tsm
- * emits while the sink parses a chunk. The reply path must
- * never write these to libssh2. The callback runs inside the read task
- * while the read task holds s_session_lock. A blocking write there could
- * park the read task while it still holds the lock. If disconnect() then
- * force-deletes the task, the deletion orphans the mutex and wedges all
- * future SSH I/O. Instead, the callback buffers the bytes, and the read
- * loop drains them non-blocking, still under the lock. Responses are a
- * handful of bytes, so 256 is plenty. Only code holding s_session_lock may
- * touch this buffer. */
-#define SSH_RESP_BUF 256
-static uint8_t s_resp_buf[SSH_RESP_BUF];
-static size_t  s_resp_len = 0;
+/* The one ordered TX FIFO for keystrokes and terminal replies. Only code
+ * that holds s_session_lock may touch it. Rationale: docs/ARCHITECTURE.md,
+ * "SSH uplink and liveness". */
+static ssh_txbuf_t s_tx;
+
+/* A pending window-change pair (ssh_client_request_redraw): 0 idle, 1 narrow
+ * size next, 2 real size next. Advanced under s_session_lock by redraw_pump(). */
+static int s_redraw_step = 0;
 
 /* This bounds any blocking libssh2 call (handshake or auth). It does not
  * affect non-blocking calls in the read loop; they return EAGAIN
  * immediately. */
 #define SSH_BLOCKING_TIMEOUT_MS 20000
+
+/* Slack on top of 3 silent keepalive intervals. A reply can trail its
+ * request by one round trip. */
+#define SSH_SILENCE_MARGIN_S 5
+
+/* TCP connect budget. The poll slice bounds the Cancel latency. */
+#define SSH_CONNECT_TIMEOUT_MS 10000
+#define SSH_CONNECT_SLICE_MS   200
+static volatile bool s_connect_cancel = false;
 
 /* Fingerprint of the most recent connect attempt + last error message. */
 static char s_fingerprint[65] = "";
@@ -168,16 +174,46 @@ static void set_last_error(const char *msg)
     snprintf(s_last_error, sizeof(s_last_error), "%s", msg ? msg : "");
 }
 
+/* Bound on each blocking close/disconnect during teardown. Teardown runs on
+ * the UI task, so a dead peer may cost at most a few of these. */
+#define SSH_CLOSE_TIMEOUT_MS 1500
+
+static void kill_link(bool *done)
+{
+    if (!*done && s_sock >= 0) shutdown(s_sock, SHUT_RDWR);
+    *done = true;
+}
+
+/* The shell session is non-blocking: there, channel_close/free and
+ * session_free return EAGAIN without freeing anything. So teardown switches
+ * to blocking with a short timeout. libssh2 skips the close handshake only
+ * for a socket it already saw SSH_MSG_DISCONNECT on, never for a silent
+ * peer. So after any failed step shutdown() makes the next read fail
+ * immediately, which lets the free calls run to completion. */
 static void ssh_cleanup(void)
 {
+    bool shut = false;
+
+    if (s_session) {
+        libssh2_session_set_blocking(s_session, 1);
+        libssh2_session_set_timeout(s_session, SSH_CLOSE_TIMEOUT_MS);
+    }
     if (s_channel) {
-        libssh2_channel_close(s_channel);
-        libssh2_channel_free(s_channel);
+        if (libssh2_channel_close(s_channel) != 0) kill_link(&shut);
+        if (libssh2_channel_free(s_channel) != 0) {
+            kill_link(&shut);
+            if (libssh2_channel_free(s_channel) != 0)
+                ESP_LOGW(TAG, "channel_free failed; session_free will retry");
+        }
         s_channel = NULL;
     }
     if (s_session) {
-        libssh2_session_disconnect(s_session, "bye");
-        libssh2_session_free(s_session);
+        if (!shut && libssh2_session_disconnect(s_session, "bye") != 0) kill_link(&shut);
+        if (libssh2_session_free(s_session) != 0) {
+            kill_link(&shut);
+            if (libssh2_session_free(s_session) != 0)
+                ESP_LOGE(TAG, "session_free failed - leaking %zu B", s_alloc_bytes);
+        }
         s_session = NULL;
     }
     if (s_sock >= 0) {
@@ -185,7 +221,8 @@ static void ssh_cleanup(void)
         s_sock = -1;
     }
     s_connected = false;
-    s_resp_len  = 0;
+    ssh_txbuf_reset(&s_tx);
+    s_redraw_step = 0;
     ESP_LOGI(TAG, "SSH cleanup done  — libssh2 heap: %zu B (expect 0)", s_alloc_bytes);
 }
 
@@ -195,32 +232,44 @@ static const ssh_sink_t *s_sink;
 void ssh_client_queue_reply(const uint8_t *data, size_t len)
 {
     if (!s_connected || len == 0) return;
-    /* Runs inside the read loop with s_session_lock held (the sink data()
-     * contract). It must only buffer here; see the s_resp_buf note for
-     * why it must never write to libssh2. It drops the overflow tail.
-     * The buffer only fills when the uplink jams, and in that case the
-     * session is about to drop anyway. */
-    size_t room = sizeof(s_resp_buf) - s_resp_len;
-    if (len > room) len = room;
-    if (len) {
-        memcpy(s_resp_buf + s_resp_len, data, len);
-        s_resp_len += len;
-    }
+    /* The sink data() contract holds the lock here: append only, see s_tx.
+     * Overflow drops the tail. */
+    ssh_txbuf_append(&s_tx, data, len);
 }
 
-/* Flush buffered terminal responses with NON-blocking writes. Caller must hold
- * s_session_lock and the session must be in non-blocking mode. Anything not
- * sent (EAGAIN) stays buffered for the next read-loop iteration. */
-static void drain_responses(void)
+static ptrdiff_t tx_write(void *ctx, const uint8_t *data, size_t len)
 {
-    while (s_resp_len > 0 && s_channel) {
-        ssize_t rc = libssh2_channel_write(s_channel,
-                                           (const char *)s_resp_buf, s_resp_len);
-        if (rc == LIBSSH2_ERROR_EAGAIN) break;   /* retry next iteration */
-        if (rc < 0) { s_resp_len = 0; break; }   /* unrecoverable — drop */
-        if ((size_t)rc >= s_resp_len) { s_resp_len = 0; break; }
-        memmove(s_resp_buf, s_resp_buf + rc, s_resp_len - (size_t)rc);
-        s_resp_len -= (size_t)rc;
+    (void)ctx;
+    if (!s_channel) return LIBSSH2_ERROR_CHANNEL_CLOSED;
+    ssize_t rc = libssh2_channel_write(s_channel, (const char *)data, len);
+    return rc == LIBSSH2_ERROR_EAGAIN ? SSH_TXBUF_AGAIN : (ptrdiff_t)rc;
+}
+
+/* Non-blocking flush of s_tx. Caller must hold s_session_lock and the
+ * session must be in non-blocking mode. Bytes not sent (EAGAIN) stay at the
+ * head for the next caller on either task. */
+static void tx_flush(void)
+{
+    if (ssh_txbuf_flush(&s_tx, tx_write, NULL) < 0)
+        ESP_LOGW(TAG, "channel_write failed; TX buffer dropped");
+}
+
+/* Advance a pending window-change request. Same locking rules as tx_flush.
+ * libssh2 resumes a blocked request from channel state when called again. */
+static void redraw_pump(void)
+{
+    while (s_redraw_step && s_channel) {
+        const int cols = s_term_cols ? s_term_cols : 80;
+        const int rows = s_term_rows ? s_term_rows : 24;
+        int rc = libssh2_channel_request_pty_size(
+                     s_channel, s_redraw_step == 1 ? cols - 1 : cols, rows);
+        if (rc == LIBSSH2_ERROR_EAGAIN) return;
+        if (rc != 0) {
+            ESP_LOGW(TAG, "pty size request failed: %d", rc);
+            s_redraw_step = 0;
+            return;
+        }
+        s_redraw_step = (s_redraw_step == 1) ? 2 : 0;
     }
 }
 
@@ -286,11 +335,30 @@ static void ssh_read_task(void *arg)
      * in everything accumulated since boot. */
     net_bench_reset();
     s_nb_last_data_us = 0;
+    s_last_rx_tick = xTaskGetTickCount();
 
     while (s_connected) {
         size_t  drained = 0;
         int64_t wake_t0 = drain_now_us();
         int     n;
+
+        /* Inbound-activity probe. libssh2 swallows keepalive replies, so
+         * watch the socket itself before reading. Counts reads > 0 too. */
+        fd_set rfds;
+        struct timeval tv = { 0, 0 };
+        FD_ZERO(&rfds);
+        FD_SET(s_sock, &rfds);
+        if (select(s_sock + 1, &rfds, NULL, NULL, &tv) > 0)
+            s_last_rx_tick = xTaskGetTickCount();
+#if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
+        if ((TickType_t)(xTaskGetTickCount() - s_last_rx_tick) >
+            pdMS_TO_TICKS((3 * CONFIG_SSH_KEEPALIVE_INTERVAL + SSH_SILENCE_MARGIN_S) * 1000)) {
+            ESP_LOGE(TAG, "no data for 3 keepalive intervals; dropping");
+            set_last_error("Server not responding");
+            s_connected = false;
+            break;
+        }
+#endif
 
         do {
             xSemaphoreTake(s_session_lock, portMAX_DELAY);
@@ -301,6 +369,7 @@ static void ssh_read_task(void *arg)
             if (n > 0) {
                 s_sink->data(s_read_buf, (size_t)n, s_sink->user);
                 drained += (size_t)n;
+                s_last_rx_tick = xTaskGetTickCount();
             } else if (n == LIBSSH2_ERROR_EAGAIN) {
                 /* No data — good time to send a keepalive if one is due.
                  * NOTE: EAGAIN can also mean "data queued but the outbound
@@ -308,7 +377,11 @@ static void ssh_read_task(void *arg)
                  * the next wake, so treat EAGAIN strictly as end-of-wake. */
 #if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
                 int next_ka = 0;
-                libssh2_keepalive_send(s_session, &next_ka);
+                int ka = libssh2_keepalive_send(s_session, &next_ka);
+                if (ka < 0 && ka != LIBSSH2_ERROR_EAGAIN) {
+                    log_last_error("keepalive");
+                    s_connected = false;
+                }
 #endif
             } else if (n == 0) {
                 /* Zero-length read: orderly EOF if the channel says so
@@ -327,9 +400,13 @@ static void ssh_read_task(void *arg)
                 s_connected = false;
             }
 
-            /* Push out any terminal responses tsm queued above (non-blocking,
-             * so this never parks the task while holding the lock). */
-            if (s_connected) drain_responses();
+            /* Push out queued TX bytes (terminal replies, keystrokes the
+             * UI task could not send) and any pending window-change.
+             * Non-blocking, so this never parks the task holding the lock. */
+            if (s_connected) {
+                tx_flush();
+                redraw_pump();
+            }
 
             if (s_connected && libssh2_channel_eof(s_channel)) {
                 ESP_LOGI(TAG, "ssh_read_task: channel EOF");
@@ -440,6 +517,39 @@ esp_err_t ssh_client_init(void)
     return ESP_OK;
 }
 
+/* Non-blocking connect polled with select(). Does not read errno (Winsock
+ * leaves it unset): a non-zero connect() means "in progress" and the verdict
+ * comes from SO_ERROR. The socket stays non-blocking, which is what libssh2
+ * wants (it switches to non-blocking itself during the handshake). */
+static esp_err_t tcp_connect(int sock, const struct sockaddr *addr, socklen_t len)
+{
+    int on = 1;
+    ioctl(sock, FIONBIO, &on);
+    if (s_connect_cancel) return ESP_FAIL;
+    if (connect(sock, addr, len) == 0) return ESP_OK;
+
+    const TickType_t t0 = xTaskGetTickCount();
+    while (!s_connect_cancel) {
+        if ((TickType_t)(xTaskGetTickCount() - t0) >= pdMS_TO_TICKS(SSH_CONNECT_TIMEOUT_MS))
+            return ESP_ERR_TIMEOUT;
+        fd_set wfds, efds;
+        struct timeval tv = { 0, SSH_CONNECT_SLICE_MS * 1000 };
+        FD_ZERO(&wfds);
+        FD_ZERO(&efds);
+        FD_SET(sock, &wfds);
+        FD_SET(sock, &efds);
+        int n = select(sock + 1, NULL, &wfds, &efds, &tv);
+        if (n < 0) return ESP_FAIL;
+        if (n == 0) continue;
+        int err = 0;
+        socklen_t elen = sizeof(err);
+        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &err, &elen) != 0 || err != 0)
+            return ESP_FAIL;
+        return FD_ISSET(sock, &wfds) ? ESP_OK : ESP_FAIL;
+    }
+    return ESP_FAIL;   /* cancelled */
+}
+
 esp_err_t ssh_client_connect(const ssh_config_t *config)
 {
     if (!config || !config->host || !config->username ||
@@ -490,13 +600,17 @@ esp_err_t ssh_client_connect(const ssh_config_t *config)
     setsockopt(s_sock, IPPROTO_TCP, TCP_NODELAY, &tcpFlag, sizeof(int));
 
     ESP_LOGI(TAG, "Connecting TCP socket...");
-    if (connect(s_sock, res->ai_addr, res->ai_addrlen) != 0) {
-        ESP_LOGE(TAG, "TCP connect failed");
-        freeaddrinfo(res);
+    esp_err_t crc = tcp_connect(s_sock, res->ai_addr, (socklen_t)res->ai_addrlen);
+    freeaddrinfo(res);
+    if (crc != ESP_OK) {
+        ESP_LOGE(TAG, "TCP connect %s",
+                 crc == ESP_ERR_TIMEOUT ? "timed out" :
+                 s_connect_cancel ? "cancelled" : "failed");
+        set_last_error(crc == ESP_ERR_TIMEOUT ? "Connection timed out" :
+                       s_connect_cancel ? "Cancelled" : "TCP connect failed");
         ssh_cleanup();
         return ESP_FAIL;
     }
-    freeaddrinfo(res);
     ESP_LOGI(TAG, "TCP connected");
 
     /* ── 2. libssh2 init (once) ─────────────────────────────────────── */
@@ -648,24 +762,11 @@ auth_done:
     ESP_LOGI(TAG, "Authenticated");
 
 #if CONFIG_SSH_KEEPALIVE_INTERVAL > 0
-    /* Configure keepalive only after userauth completes. A keepalive is an
-     * SSH_MSG_GLOBAL_REQUEST (type 80), a connection-protocol message. The
-     * protocol allows it only after the user authenticates. libssh2 leaves
-     * keepalive_last_sent at 0. So the first blocking wait after this call
-     * sends one keepalive immediately, instead of waiting out the
-     * interval. If the code configures it earlier, that sends a stray
-     * request mid-auth. OpenSSH answers that stray request with
-     * REQUEST_FAILURE and continues. A Go x/crypto/ssh server instead
-     * parses every packet during auth as a userauth request, and drops
-     * the connection. That failure shows up as LIBSSH2_ERROR_SOCKET_RECV
-     * from the publickey probe.
-     *
-     * want_reply=0 sends traffic to keep NAT alive, without asking the
-     * server to respond. want_reply=1 makes the server send back
-     * SSH_MSG_REQUEST_SUCCESS. libssh2 must allocate a buffer for that
-     * reply. Under heap pressure, that allocation fails with
-     * LIBSSH2_ERROR_ALLOC and drops the channel. */
-    libssh2_keepalive_config(s_session, 0 /* want_reply */,
+    /* Keepalive starts only after userauth: some servers drop a global
+     * request that arrives mid-auth. want_reply=1 lets the read task
+     * detect a silent peer. See docs/ARCHITECTURE.md, "SSH uplink and
+     * liveness". */
+    libssh2_keepalive_config(s_session, 1 /* want_reply */,
                              CONFIG_SSH_KEEPALIVE_INTERVAL);
     ESP_LOGI(TAG, "Keepalive every %d s", CONFIG_SSH_KEEPALIVE_INTERVAL);
 #endif
@@ -768,6 +869,7 @@ esp_err_t ssh_client_connect_start(const ssh_config_t *config)
     if (!config) return ESP_ERR_INVALID_ARG;
     if (s_connect_phase == 1) return ESP_ERR_INVALID_STATE;
 
+    s_connect_cancel = false;       /* before the worker can see a Cancel */
     s_pending_cfg    = *config;     /* shallow: caller keeps the strings alive */
     s_connect_result = ESP_FAIL;
     s_connect_phase  = 1;
@@ -797,8 +899,9 @@ esp_err_t ssh_client_connect_take_result(void)
 
 void ssh_client_connect_cancel(void)
 {
-    /* Unblock a stalled socket read/write without closing the fd (the worker's
-     * ssh_cleanup() owns the close). No effect if still resolving DNS. */
+    /* The flag ends a pending TCP connect; shutdown() unblocks later phases
+     * (ssh_cleanup() owns the close). DNS resolution is not interruptible. */
+    s_connect_cancel = true;
     if (s_sock >= 0) shutdown(s_sock, SHUT_RDWR);
 }
 
@@ -841,57 +944,26 @@ int ssh_client_send(const uint8_t *data, size_t len)
     if (!s_connected || !s_channel || len == 0)
         return -1;
 
-    ssize_t sent = 0;
-    while ((size_t)sent < len) {
-        if (!s_connected) return -1;   /* dropped while we were spinning */
+    /* UI task: append, try one immediate write, return. Whatever the link
+     * cannot take now stays queued and the read task flushes it. */
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    size_t took = s_channel ? ssh_txbuf_append(&s_tx, data, len) : 0;
+    if (took) tx_flush();
+    xSemaphoreGive(s_session_lock);
 
-        xSemaphoreTake(s_session_lock, portMAX_DELAY);
-        ssize_t rc = s_channel
-            ? libssh2_channel_write(s_channel,
-                                    (const char *)data + sent,
-                                    len - (size_t)sent)
-            : LIBSSH2_ERROR_CHANNEL_CLOSED;
-        xSemaphoreGive(s_session_lock);
-
-        if (rc == LIBSSH2_ERROR_EAGAIN) {
-            /* >= 1 tick even at 100 Hz — a 5 ms request would round to a
-             * busy-yield and trip the idle-task watchdog on a dead link. */
-            vTaskDelay(pdMS_TO_TICKS(10));
-            continue;
-        }
-        if (rc < 0) {
-            ESP_LOGW(TAG, "channel_write error: %d", (int)rc);
-            return -1;
-        }
-        sent += rc;
-    }
-    return (int)sent;
+    return took ? (int)took : -1;
 }
 
 int ssh_client_request_redraw(void)
 {
     if (!s_connected || !s_channel) return -1;
-    /* sshd raises SIGWINCH only on a size change. A same-size request
-     * does nothing. So: one column narrower, then the real size. */
-    const int cols = s_term_cols ? s_term_cols : 80;
-    const int rows = s_term_rows ? s_term_rows : 24;
-    const int steps[2] = { cols - 1, cols };
-    for (int i = 0; i < 2; i++) {
-        int rc = LIBSSH2_ERROR_EAGAIN;
-        for (int tries = 0; rc == LIBSSH2_ERROR_EAGAIN && tries < 100; tries++) {
-            if (!s_connected) return -1;
-            xSemaphoreTake(s_session_lock, portMAX_DELAY);
-            rc = s_channel
-                ? libssh2_channel_request_pty_size(s_channel, steps[i], rows)
-                : LIBSSH2_ERROR_CHANNEL_CLOSED;
-            xSemaphoreGive(s_session_lock);
-            if (rc == LIBSSH2_ERROR_EAGAIN) vTaskDelay(pdMS_TO_TICKS(10));
-        }
-        if (rc != 0) {
-            ESP_LOGW(TAG, "pty size request failed: %d", rc);
-            return -1;
-        }
-    }
+    /* sshd raises SIGWINCH only on a size change. So: one column narrower,
+     * then the real size. The read task completes both steps. A redraw in
+     * flight keeps its place. */
+    xSemaphoreTake(s_session_lock, portMAX_DELAY);
+    if (s_channel && s_redraw_step == 0) s_redraw_step = 1;
+    redraw_pump();
+    xSemaphoreGive(s_session_lock);
     return 0;
 }
 

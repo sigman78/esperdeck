@@ -64,6 +64,7 @@ the components.
 main/               device composition root (main.c, splash, Kconfig)
 sim/                 host composition root (SDL event loop)
 components/
+  board/             header-only panel constants (DISPLAY_WIDTH/HEIGHT)
   cyberdeck_app/     THE SHELL — boot→picker→session FSM (finite-state
                      machine) + overlay TUI (text UI), one module per
                      screen (app_home/menu/connect/unlock/saver/...)
@@ -82,13 +83,18 @@ components/
   input/             BLE HID keyboard, GT911 touch, USB-serial, phone-presence
   esp_hid/           vendored IDF v6.0.1 BLE HID host with local patches
                      (CYBERDECK_PATCHES.md in that directory is the ledger)
+  esp_lcd/           vendored IDF v6.0.1 LCD driver; one patch aligns the
+                     RGB bounce buffers for the SIMD renderer (same ledger name)
   libssh2_esp/       vendored wrapper; libssh2 cloned+patched by CMake at
                      configure time (mbedTLS backend on device and in the sim)
   monocypher/        vendored Monocypher 4.0.2 — keystore crypto +
                      libssh2's ed25519 (one copy image-wide)
 idfsim/              host-compilable ESP-IDF stubs (esp_err, heap_caps, ...)
-tests/               Unity suites: tsm, font, input, keystore, storage_kv,
-                     vtkeys
+tests/               host suites: tsm, font, input, keystore, storage_kv,
+                     vtkeys, theme, esp_hid (report-map parser), idfsim
+                     (compat-layer contract), render_simd (scan/dispatch),
+                     ssh_txbuf (SSH TX FIFO);
+                     tests/sim is a Python check of the sim storage dir
 cmake/               cyberdeck_component_register() — IDF/sim dual registration
 docs/                this and the other guides — see the doc index in README
 ```
@@ -325,6 +331,47 @@ diagram traces both pipes; the bullets below it restate each one in words.
   every key byte goes straight to `ssh_client_send()`. The exceptions are
   the menu hotkey (F12) and touch long-press, which open the overlay menu.
 
+### SSH uplink and liveness — one TX buffer, one silence clock
+
+These rules live in `components/ssh/ssh_client.c`.
+
+- **One TX buffer.** Keystrokes (`ssh_client_send()`, UI task) and
+  terminal replies (`ssh_client_queue_reply()`, read task) go into one
+  ordered 1 KB FIFO (`ssh_txbuf`). libssh2 keeps a half-sent write inside
+  the channel. On the retry it credits the byte count of the first try.
+  So each retry must present the same head bytes, and two writers with
+  their own buffers break that. Both tasks flush the FIFO under
+  `s_session_lock`. The reply path only appends. It runs in the read task
+  with the lock held, and a blocking write there could park that task.
+  A full FIFO drops the tail: the uplink is jammed and the session is
+  about to end.
+- **No call is abandoned on EAGAIN.** A libssh2 call that returns EAGAIN
+  stays pending. The read task repeats the same call until it completes.
+  The redraw request is such a pending step. It is two pty-size requests,
+  one column narrower and then the real size, because sshd raises
+  SIGWINCH only on a size change. A redraw in flight is not restarted.
+- **Keepalive starts after auth.** A keepalive is an
+  `SSH_MSG_GLOBAL_REQUEST`, which the protocol allows only after user
+  authentication. OpenSSH answers a stray one with `REQUEST_FAILURE`. A
+  Go `x/crypto/ssh` server reads it as a userauth request and drops the
+  connection (seen as `LIBSSH2_ERROR_SOCKET_RECV` from the publickey
+  probe). The pinned libssh2 starts the keepalive clock inside the
+  config call, so the first keepalive leaves one full interval after auth.
+- **Dead-server detection.** Keepalives ask for a reply (`want_reply=1`),
+  and RFC 4254 (the SSH connection protocol) makes a live server answer.
+  libssh2 consumes the reply itself, so the read task records when the
+  socket was last readable. After three keepalive intervals plus 5 s
+  without a byte, the client reports "Server not responding" and drops
+  the session. The 5 s covers a reply that trails its request by one
+  round trip.
+- **Connect.** The TCP connect is non-blocking with a 10 s budget. The
+  client polls it in 200 ms slices, so Cancel takes effect within one
+  slice. Name resolution is not cancellable.
+- **Disconnect.** `ssh_cleanup()` puts the session in blocking mode with
+  a 1.5 s timeout, so the close handshake completes and libssh2 frees the
+  session. If the peer is gone, the client shuts the socket down and
+  frees the session anyway.
+
 ### Threading model (device) — render on core 1, network on core 0
 
 | Context | Core | Stack | Job |
@@ -467,6 +514,8 @@ header, or a stale table entry. No debt edges remain as of item 7
 | `input → storage` | the BLE bond registry (`storage_ble_*`) | sound |
 | `input → display` | the `DISPLAY_WIDTH` constant (touch edge strip) | tolerable |
 | `storage → monocypher` | keystore crypto (Argon2id, AEAD, wipe) | sound — pinned component |
+| `input → esp_hid` | the BLE HID host API | sound — vendored SDK component |
+| `display → esp_lcd`, `input → esp_lcd` | the SDK driver API: RGB panel, touch panel IO over I2C | sound — vendored SDK component |
 
 The sound edges, in one breath: `tsm` and `board` depend on nothing;
 `font → board` supplies only panel constants for cache bounds;
