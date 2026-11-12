@@ -15,9 +15,11 @@
  *  app_statusbar.c; composited by the shell for NAV_CHROME_FULL screens. */
 void ui_statusbar(uint64_t now);
 
-
 /** Free-RAM summary for the header (debug stat, dev screens only). */
 void ram_stats(char *buf, size_t sz);
+
+/** Wall-clock "HH:MM" once SNTP/host time exists; false until then. */
+bool clock_str(char *buf, size_t sz);
 
 const char *wifi_status_str(void);
 const char *ble_status_str(void);

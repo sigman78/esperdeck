@@ -1,12 +1,12 @@
 /*
- * app_ui.c — overlay TUI primitives, double-buffered: the shell draws into
+ * ui.c — overlay TUI primitives, double-buffered: the shell draws into
  * the back buffer while the ISR composites the front one; ui_present()
  * publishes with a single pointer store and swaps. Without this the ISR
  * caught clear-then-redraw mid-flight and the terminal flashed through.
  */
 
-#include "app_ui.h"
-#include "app_theme.h"
+#include "ui_frame.h"
+#include "ui_theme.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include <assert.h>

@@ -12,23 +12,23 @@ CPMAddPackage(
     GIT_SHALLOW TRUE
 )
 
-set(APP_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/../../components/cyberdeck_app)
+set(UI_DIR      ${CMAKE_CURRENT_SOURCE_DIR}/../../components/ui)
 set(DISPLAY_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../components/display)
 set(FONT_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/../../components/font)
 set(IDFSIM      ${CMAKE_CURRENT_SOURCE_DIR}/../../idfsim)
 
-# app_theme.c is a pure function of two colors; display.h needs only the
+# ui_theme.c is a pure function of two colors; display.h needs only the
 # esp_err/esp_attr shims and the font header.
 add_executable(test_theme
     test_theme.c
-    ${APP_DIR}/app_theme.c
+    ${UI_DIR}/ui_theme.c
 )
 
 target_compile_definitions(test_theme PRIVATE BUILD_SIMULATOR=1)
 
 target_include_directories(test_theme PRIVATE
-    ${APP_DIR}
-    ${APP_DIR}/include
+    ${UI_DIR}
+    ${UI_DIR}/include
     ${DISPLAY_DIR}/include
     ${FONT_DIR}/include
     ${FONT_DIR}/../board/include

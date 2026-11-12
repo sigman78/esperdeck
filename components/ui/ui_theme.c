@@ -1,11 +1,11 @@
 /*
- * app_theme.c — bakes the overlay style table. ui_theme_build() resolves
+ * ui_theme.c — bakes the overlay style table. ui_theme_build() resolves
  * every look the rendition uses, once per ui_colors() call, not per cell
  * in the ISR. Tones and derivations carried over verbatim from the
  * retired per-cell resolver (docs/overlay-style.md).
  */
 
-#include "app_theme.h"
+#include "ui_theme.h"
 
 /* Accent tones. TEXT accents are VGA bright; bars use muted companions
  * of the same hues; wells their ~60% versions (ui-spec value wells). */

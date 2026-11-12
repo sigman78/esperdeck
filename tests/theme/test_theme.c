@@ -6,7 +6,7 @@
  */
 
 #include "unity.h"
-#include "app_theme.h"
+#include "ui_theme.h"
 #include <stdio.h>
 
 /* Same luma recipe as the display's mono effect: 0..62. */

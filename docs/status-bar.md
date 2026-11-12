@@ -306,7 +306,7 @@ typedef struct {
 - Overflow: hard cap (6 left-anchored chips), lowest priority dropped
   first, logged once — same posture as HOME tile overflow.
 - Implementation moves `ui_statusbar` + the chip engine into its own
-  `app_statusbar.c`; `app_widgets.c` keeps the generic kit.
+  `app_statusbar.c`; `components/ui` keeps the generic kit.
 
 ---
 

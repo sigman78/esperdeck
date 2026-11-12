@@ -228,7 +228,7 @@ The kit (`cyberdeck_ui.h`, public) is what extensibility items 2/4 need.
 Contracts, not implementation:
 
 **Three layers.**
-1. *Primitives* — cells, pens, chips, boxes (today's `app_ui.h`, exported).
+1. *Primitives* — cells, pens, chips, boxes (`cyberdeck_ui.h`, in `components/ui`).
 2. *Parts* — each is a plain struct + free functions:
    `ui_<part>_draw(p, frame)`, `ui_<part>_hit(p, px, py)`,
    `ui_<part>_nav(p, key)` where applicable. No hidden globals: the

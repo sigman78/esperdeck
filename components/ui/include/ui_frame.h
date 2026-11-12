@@ -1,8 +1,7 @@
 /*
- * app_ui.h — overlay TUI internals (shell-only). The drawing surface
- * itself is public in cyberdeck_ui.h; what stays here is frame
- * COMPOSITION — init, clear, present, colors — which belongs to the
- * shell's nav pass alone: screens draw, never present.
+ * ui_frame.h — frame composition: init, clear, present, colors. This is
+ * for the ONE owner of the frame (the shell's nav pass, or a host tool).
+ * Screens include cyberdeck_ui.h alone: they draw, never present.
  */
 
 #pragma once
@@ -23,7 +22,7 @@ bool ui_visible(void);
 void ui_no_cursor(void);
 
 /** Set the screen theme colors: rebakes the overlay style table
- *  (app_theme.c) and publishes it to the display. */
+ *  (ui_theme.c) and publishes it to the display. */
 void ui_colors(color_t fg, color_t bg);
 
 /** Clear the whole overlay to transparent. */

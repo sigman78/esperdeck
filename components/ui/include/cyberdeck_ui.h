@@ -240,9 +240,6 @@ uint16_t spinner_glyph(uint32_t frame);
 /** Braille "noise" glyph from a hash (never blank). */
 uint16_t braille_noise(uint32_t h);
 
-/** Wall-clock "HH:MM" once SNTP/host time exists; false until then. */
-bool clock_str(char *buf, size_t sz);
-
 /** Stable per-profile accent color from a djb2 hash of the name —
  *  identity accents draw from {green, cyan, magenta, amber, blue};
  *  red/white/default stay reserved for alert/focus/body (ui-spec). */

@@ -66,8 +66,11 @@ sim/                 host composition root (SDL event loop)
 components/
   board/             header-only panel constants (DISPLAY_WIDTH/HEIGHT)
   cyberdeck_app/     THE SHELL — boot→picker→session FSM (finite-state
-                     machine) + overlay TUI (text UI), one module per
-                     screen (app_home/menu/connect/unlock/saver/...)
+                     machine), one module per screen
+                     (app_home/menu/connect/unlock/saver/...)
+  ui/                the UI kit — overlay TUI (text UI) primitives, the
+                     baked style table, touch-first parts; display + font
+                     only, so host tools and tests link it without the shell
   display/ + font/   bounce-buffer render core, CRT effects (display_fx),
                      Terminus font in 8x16 / 10x20 / 12x24 with a bold face;
                      glyph tables are compressed (crop + PackBits row-RLE +
@@ -443,7 +446,7 @@ back to critical-section library calls of comparable cost.
 ## The shell (`cyberdeck_app`) — a platform-neutral state machine
 
 The shell is a platform-neutral state machine plus an overlay TUI
-(`app_ui.c`). The root calls three entry points:
+(`components/ui`). The root calls three entry points:
 
 ```c
 cyberdeck_app_init(cfg, now_ms);      // load profiles, start WiFi, show boot
@@ -509,7 +512,8 @@ header, or a stale table entry. No debt edges remain as of item 7
 | `display → board`, `font → board` | panel constants; render geometry and font-cache bounds derive from them | sound — header-only board definition |
 | `ssh → vterm` | the session controller (`ssh_session.c`) wires the terminal; the transport is sink-only | sound |
 | `ssh → storage` | the controller resolves keys, secrets, and known hosts | sound |
-| `cyberdeck_app → storage ssh wifi display vterm font` | full consumer of every service API | sound |
+| `cyberdeck_app → storage ssh wifi display vterm font ui` | full consumer of every service API; draws through the kit | sound |
+| `ui → display`, `ui → font` | overlay cells + style table; cell size for touch pixel→cell mapping | sound |
 | `wifi → storage` | profile types + wifi.ini persistence | sound |
 | `input → storage` | the BLE bond registry (`storage_ble_*`) | sound |
 | `input → display` | the `DISPLAY_WIDTH` constant (touch edge strip) | tolerable |

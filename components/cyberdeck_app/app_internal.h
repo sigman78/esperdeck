@@ -12,7 +12,7 @@
 
 #include "cyberdeck_app.h"
 #include "app_nav.h"
-#include "app_ui.h"
+#include "ui_frame.h"
 #include "storage.h"
 
 #define MAX_PROFILES     (STORAGE_MAX_PROFILES + 1)   /* stored + synth fallback */
@@ -28,8 +28,6 @@
 #define UI_BG   RGB565(0, 0, 0)
 
 #define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
-
-/* tilegrid_t moved to the public kit (cyberdeck_ui.h, via app_ui.h). */
 
 /** Push app.touch_scroll down to the touch driver (no-op without the
  *  gesture compiled in). Call after boot load and after every toggle. */
