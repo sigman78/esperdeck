@@ -541,7 +541,7 @@ const MO_SETUP = [
     { t: 'act', label: 'Import from phone', nav: true },
     { t: 'act', label: 'Import from PC', nav: true }] },
   { name: 'Wi-Fi', note: 'HomeAP  -55 dBm', items: [
-    { t: 'act', label: 'Networks', nav: true, go: 'mo-list' }, { t: 'act', label: 'Reconnect' }] },
+    { t: 'act', label: 'Reconnect' }, { t: 'act', label: 'Add network (phone)', nav: true }] },
   { name: 'Keyboard', note: 'K380 connected', items: [
     { t: 'act', label: 'Pair keyboard', nav: true },
     { t: 'act', label: 'Forget bonds', accent: C.RED, ask: 'Forget every paired keyboard?' }] },
@@ -565,7 +565,7 @@ const MO_SETUP = [
     { t: 'act', label: 'Factory reset', accent: C.RED, ask: 'Erase every host and setting?' }] },
   { name: 'Keystore', note: 'unlocked', items: [
     { t: 'act', label: 'Lock deck', go: 'mo-unlock' }, { t: 'act', label: 'Change code', nav: true },
-    { t: 'act', label: 'Remove code', accent: C.RED, ask: 'Remove the access code?' }] },
+    { t: 'act', label: 'Remove code', accent: C.RED, nav: true, go: 'mo-unlock' }] },
 ];
 
 // Setup hub: a section per tile, with its present state as the detail.

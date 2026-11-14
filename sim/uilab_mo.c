@@ -439,7 +439,8 @@ static const cat_t MO_SETUP[] = {
         { IT_ACT, "Import from phone", .nav = true },
         { IT_ACT, "Import from PC", .nav = true } } },
     { "Wi-Fi", "HomeAP  -55 dBm", 2, {
-        { IT_ACT, "Networks", .nav = true }, { IT_ACT, "Reconnect" } } },
+        { IT_ACT, "Reconnect" },
+        { IT_ACT, "Add network (phone)", .nav = true } } },
     { "Keyboard", "K380 connected", 2, {
         { IT_ACT, "Pair keyboard", .nav = true },
         { IT_ACT, "Forget bonds", .accent = OVERLAY_COL_RED } } },
@@ -468,7 +469,7 @@ static const cat_t MO_SETUP[] = {
         { IT_ACT, "Factory reset", .accent = OVERLAY_COL_RED } } },
     { "Keystore", "unlocked", 3, {
         { IT_ACT, "Lock deck" }, { IT_ACT, "Change code", .nav = true },
-        { IT_ACT, "Remove code", .accent = OVERLAY_COL_RED } } },
+        { IT_ACT, "Remove code", .nav = true, .accent = OVERLAY_COL_RED } } },
 };
 
 static void scr_setup(void)
