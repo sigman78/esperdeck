@@ -476,6 +476,81 @@ static void test_debug_pose_forces_a_look(void)
     TEST_ASSERT_FALSE(ui_focused(100));
 }
 
+/* A flow packs parts at their own width. A part with no room starts the
+ * next row. A part wider than the flow is cut to it. */
+static void test_flow_wraps_breaks_and_cuts(void)
+{
+    ui_flow_t f = ui_flow(ui_rect(2, 5, 30, 4), 2, 3);
+    ui_rect_t a = ui_flow_next(&f, 10);
+    ui_rect_t b = ui_flow_next(&f, 10);
+    ui_rect_t c = ui_flow_next(&f, 10);             /* 12+12+10 > 30     */
+    TEST_ASSERT_EQUAL(2,  a.x);
+    TEST_ASSERT_EQUAL(5,  a.y);
+    TEST_ASSERT_EQUAL(3,  a.h);
+    TEST_ASSERT_EQUAL(14, b.x);
+    TEST_ASSERT_EQUAL(5,  b.y);
+    TEST_ASSERT_EQUAL(2,  c.x);
+    TEST_ASSERT_EQUAL(8,  c.y);
+
+    ui_flow_break(&f);                              /* row has a part    */
+    TEST_ASSERT_EQUAL(11, f.y);
+    ui_flow_break(&f);                              /* row is empty      */
+    TEST_ASSERT_EQUAL(11, f.y);
+    ui_rect_t d = ui_flow_next(&f, 50);             /* wider than the flow */
+    TEST_ASSERT_EQUAL(2,  d.x);
+    TEST_ASSERT_EQUAL(30, d.w);
+    TEST_ASSERT_EQUAL(11, d.y);
+    ui_rect_t e = ui_flow_next(&f, 4);
+    TEST_ASSERT_EQUAL(2,  e.x);
+    TEST_ASSERT_EQUAL(14, e.y);
+}
+
+static void test_own_widths(void)
+{
+    TEST_ASSERT_EQUAL(10, ui_push_w("Edit"));
+    TEST_ASSERT_EQUAL(12, ui_push_w("Cancel"));
+    TEST_ASSERT_EQUAL(20, ui_push_w(UI_S_UP " Move earlier"));
+    TEST_ASSERT_EQUAL(10, ui_act_w("Key", NULL));
+    TEST_ASSERT_EQUAL(25, ui_act_w("Key", "deck-ed25519 " UI_S_CHEVRON));
+    TEST_ASSERT_EQUAL(25, ui_act_w("Add network (phone)", ""));
+    TEST_ASSERT_EQUAL(30, ui_switch_w("Show password"));
+    TEST_ASSERT_EQUAL(8,  ui_caption_w("Tint"));
+}
+
+static void test_cols_grow_with_the_grid(void)
+{
+    TEST_ASSERT_EQUAL(2, ui_cols_for(30, 30, 2));   /* two at least      */
+    TEST_ASSERT_EQUAL(2, ui_cols_for(64, 30, 2));
+    TEST_ASSERT_EQUAL(3, ui_cols_for(94, 30, 2));
+    TEST_ASSERT_EQUAL(4, ui_cols_for(126, 30, 2));
+    TEST_ASSERT_EQUAL(3, ui_cols_for(78, 24, 2));
+}
+
+/* The next row straight ahead wins over an aligned region two rows away.
+ * Its left edge may be far off. */
+static void test_arrow_prefers_the_next_row_straight_ahead(void)
+{
+    ui_hot_reset();
+    ui_hot_begin(0);
+    ui_hot(ui_rect(20, 0, 10, 3), 1);
+    ui_hot(ui_rect(0, 3, 24, 3), 2);                /* wide, edge far off */
+    ui_hot(ui_rect(20, 6, 10, 3), 3);               /* aligned, 2 rows   */
+    ui_hot_key(K_HOLD);                             /* shows the ring    */
+    TEST_ASSERT_EQUAL(2, ui_hot_key(K_DOWN).id);
+}
+
+/* A region straight ahead beats a nearer one off to the side. */
+static void test_arrow_prefers_straight_ahead_to_the_side(void)
+{
+    ui_hot_reset();
+    ui_hot_begin(0);
+    ui_hot(ui_rect(20, 0, 10, 3), 1);
+    ui_hot(ui_rect(0, 3, 10, 3), 2);                /* nearer, aside     */
+    ui_hot(ui_rect(20, 9, 10, 3), 3);               /* far, ahead        */
+    ui_hot_key(K_HOLD);                             /* shows the ring    */
+    TEST_ASSERT_EQUAL(3, ui_hot_key(K_DOWN).id);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -509,5 +584,10 @@ int main(void)
     RUN_TEST(test_release_after_a_hold_presses_nothing);
     RUN_TEST(test_focus_default_only_fills_an_empty_focus);
     RUN_TEST(test_debug_pose_forces_a_look);
+    RUN_TEST(test_flow_wraps_breaks_and_cuts);
+    RUN_TEST(test_own_widths);
+    RUN_TEST(test_cols_grow_with_the_grid);
+    RUN_TEST(test_arrow_prefers_the_next_row_straight_ahead);
+    RUN_TEST(test_arrow_prefers_straight_ahead_to_the_side);
     return UNITY_END();
 }

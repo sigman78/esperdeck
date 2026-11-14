@@ -164,6 +164,15 @@ the theme background, so a part drawn on a panel would show slate
 notches. Panels therefore hold text only. A question is a panel with
 its two answers below it, on its own page.
 
+**Own widths.** A button, switch or action is as wide as its text needs
+(`ui_push_w`, `ui_act_w`, `ui_switch_w`), never as wide as its row. Rows
+pack from the left with `ui_flow`; a part with no room starts the next
+row. Only tiles in a grid and text panels take a width from the layout,
+and a grid gains columns on a wider screen (`ui_cols_for`). The chips of
+one page share a caption column (`ui_caption_w`, the `cap_w` argument of
+`ui_chips`). Arrow keys prefer the part straight ahead over a nearer one
+off to the side.
+
 **Heights.** A one-line part is three rows; a two-line part is four.
 `ui_centre` places the text. A label that cannot sit on the centre row
 counts as a layout fault, and so does a part with no room. `ui_faults`
@@ -264,6 +273,7 @@ above its action row while storage holds eight.
 | Questions | A page of their own; the safe answer holds the first focus. |
 | Lists | Paged, with the page in the header and a rail at the side. |
 | Status row | The adopted chips on a panel-tone bar. |
+| Widths | Stretched buttons look odd. A button, switch or action keeps its own width and rows pack from the left; tile grids gain columns instead. |
 
 ## Still open
 

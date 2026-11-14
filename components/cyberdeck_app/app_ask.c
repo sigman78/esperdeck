@@ -56,10 +56,11 @@ static void render_ask(uint64_t now)
     for (int i = 0; i < 2; i++)
         ui_text(ui_rect(card.x + 2, card.y + 3 + i, card.w - 4, 1), line[i],
                 UI_PANEL_MUTED, UI_LEFT);
-    const ui_grid_t g = ui_grid(box, 2, 3, pg.m.gutter, 0);
-    ui_push(ui_grid_cell(&g, 0), ID_CANCEL, "Cancel", UI_TONE_CARD, 0, 0);
-    ui_push(ui_grid_cell(&g, 1), ID_VERB, s_ask.verb, UI_TONE_SOLID,
-            s_ask.accent, 0);
+    ui_flow_t f = ui_flow(box, pg.m.gutter, 3);
+    ui_push(ui_flow_next(&f, ui_push_w("Cancel")), ID_CANCEL, "Cancel",
+            UI_TONE_CARD, 0, 0);
+    ui_push(ui_flow_next(&f, ui_push_w(s_ask.verb)), ID_VERB, s_ask.verb,
+            UI_TONE_SOLID, s_ask.accent, 0);
 
     if (ui_faults() != faults)
         ESP_LOGW(TAG, "layout faults +%d", ui_faults() - faults);

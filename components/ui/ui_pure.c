@@ -59,6 +59,28 @@ int ui_len(const char *s)
     return n;
 }
 
+int ui_push_w(const char *label)
+{
+    const int w = ui_len(label) + 6;
+    return w < 10 ? 10 : w;
+}
+
+int ui_act_w(const char *title, const char *right)
+{
+    const int w = ui_len(title) + (right && *right ? ui_len(right) + 2 : 0) + 6;
+    return w < 10 ? 10 : w;
+}
+
+int ui_switch_w(const char *label)
+{
+    return ui_len(label) + 17;
+}
+
+int ui_caption_w(const char *caption)
+{
+    return ui_len(caption) + 4;
+}
+
 int ui_fit(const char *s, int w, bool *cut)
 {
     const int len = ui_len(s);

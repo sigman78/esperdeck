@@ -99,7 +99,9 @@ static void render_home(uint64_t now)
                 UI_LEFT);
         ui_cut_top(&pg.body, 2);
     }
-    const ui_grid_t g = ui_grid(pg.body, 2, 4, pg.m.gutter, 0);
+    const ui_grid_t g = ui_grid(pg.body,
+                                ui_cols_for(pg.body.w, 30, pg.m.gutter), 4,
+                                pg.m.gutter, 0);
     const int per = ui_grid_capacity(&g);
     const int pages = ui_page_count(total, per);
     s_home.per = per;

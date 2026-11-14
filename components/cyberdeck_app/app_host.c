@@ -73,18 +73,20 @@ static void render_host(uint64_t now)
     ui_focus_default(ID_CONNECT);
     ui_title(pg.header, "Hosts", p->name, NULL, true);
     ui_info(ui_cut_top(&pg.body, 6), rows, 4, prof_accent(p->name));
-    ui_push(ui_cut_top(&pg.body, 3), ID_CONNECT, "Connect", UI_TONE_SOLID,
-            OVERLAY_COL_GREEN, 0);
-    const ui_grid_t g = ui_grid(pg.body, 2, 3, pg.m.gutter, 0);
+    /* One row for what you do with the host, one for its place in the list. */
+    ui_flow_t f = ui_flow(pg.body, pg.m.gutter, 3);
     const uint8_t off = stored ? 0 : UI_PART_OFF;
-    ui_push(ui_grid_cell(&g, 0), ID_EDIT, "Edit", UI_TONE_CARD, 0, off);
-    ui_push(ui_grid_cell(&g, 1), ID_DELETE, "Delete", UI_TONE_TINT,
-            OVERLAY_COL_RED, off);
-    ui_push(ui_grid_cell(&g, 2), ID_EARLIER, UI_S_UP " Move earlier",
-            UI_TONE_CARD, 0, off | (s_host.idx <= 0 ? UI_PART_OFF : 0));
-    ui_push(ui_grid_cell(&g, 3), ID_LATER, UI_S_DOWN " Move later",
-            UI_TONE_CARD, 0,
-            off | (s_host.idx >= app.stored_count - 1 ? UI_PART_OFF : 0));
+#define BTN(id, label, tone, accent, flags) \
+    ui_push(ui_flow_next(&f, ui_push_w(label)), id, label, tone, accent, flags)
+    BTN(ID_CONNECT, "Connect", UI_TONE_SOLID, OVERLAY_COL_GREEN, 0);
+    BTN(ID_EDIT, "Edit", UI_TONE_CARD, 0, off);
+    BTN(ID_DELETE, "Delete", UI_TONE_TINT, OVERLAY_COL_RED, off);
+    ui_flow_break(&f);
+    BTN(ID_EARLIER, UI_S_UP " Move earlier", UI_TONE_CARD, 0,
+        off | (s_host.idx <= 0 ? UI_PART_OFF : 0));
+    BTN(ID_LATER, UI_S_DOWN " Move later", UI_TONE_CARD, 0,
+        off | (s_host.idx >= app.stored_count - 1 ? UI_PART_OFF : 0));
+#undef BTN
 
     if (ui_faults() != faults)
         ESP_LOGW(TAG, "layout faults +%d", ui_faults() - faults);

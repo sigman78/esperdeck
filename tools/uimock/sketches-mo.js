@@ -140,6 +140,27 @@ function moBtn(ui, r, id, label, o, act) {
   return moPart(ui, r, id, { ...o, title: label, align: CENTER }, act);
 }
 
+// Own widths. A button is as wide as its label needs, never as wide as
+// its row. Ten cells is the narrowest part a finger hits at the small font.
+const moBtnW = (label) => Math.max(10, moLen(label) + 6);
+const moActW = (title, right) => Math.max(10, moLen(title) + (right ? moLen(right) + 2 : 0) + 6);
+const moToggleW = (label) => moLen(label) + 17;
+
+// A flow packs parts from the left in rows of `h`, `gap` cells apart.
+// A part with no room left starts the next row.
+function moFlow(area, gap, h) {
+  return { x0: area.x, w: area.w, gap, h, x: area.x, y: area.y };
+}
+function moFlowNext(f, w) {
+  if (f.x > f.x0 && f.x + w > f.x0 + f.w) moFlowBreak(f);
+  const r = rect(f.x, f.y, Math.min(w, f.w), f.h);
+  f.x += w + f.gap;
+  return r;
+}
+function moFlowBreak(f) {
+  if (f.x > f.x0) { f.x = f.x0; f.y += f.h; }
+}
+
 // A switch tile. The state shows three ways: the word, the side of the
 // diamond knob on its line, the colour.
 function moToggle(ui, r, id, label, on, o, act) {
@@ -156,17 +177,23 @@ function moToggle(ui, r, id, label, on, o, act) {
   ui.pen(C.DEFAULT);
 }
 
+// The caption column of a choice: the caption, two cells each side.
+const moCapW = (caption) => moLen(caption) + 4;
+
 // One choice of several: a caption, then a chip per option. The chosen
 // chip has a filled face and the check mark. Focus is the light look.
+// The chips follow the caption column. o.capW sets that column's width,
+// so the chips of several choices line up.
 function moChips(ui, r, idBase, caption, labels, value, pick, o = {}) {
   // Seven cells is the narrowest chip a finger hits at the small font.
   const cw = (l) => Math.max(7, moLen(l) + 4);
   const need = labels.reduce((n, l) => n + cw(l) + 1, -1);
+  const capW = o.capW || moCapW(caption);
   const y = moCentre(r.y, r.h, 1, caption);
   ui.pen(C.DEFAULT);
-  ui.text(rect(r.x + 1, y, r.w - need - 2, 1), caption, S.TEXT, LEFT);
-  if (need > r.w) { ui.issues.push({ kind: 'drop', text: `${caption} chips` }); return; }
-  let x = r.x + r.w - need;
+  ui.text(rect(r.x + 2, y, capW - 4, 1), caption, S.TEXT, LEFT);
+  if (capW + need > r.w) { ui.issues.push({ kind: 'drop', text: `${caption} chips` }); return; }
+  let x = r.x + capW;
   labels.forEach((l, i) => {
     const w = cw(l), chosen = i === value;
     moPart(ui, rect(x, r.y, w, r.h), idBase + i, {
@@ -312,6 +339,9 @@ function moPage(ui) {
   return { header, body, status, m };
 }
 
+// Columns of a tile grid: as many tiles of `min` cells as fit, two at least.
+const moCols = (w, min, gap) => Math.max(2, Math.trunc((w + gap) / (min + gap)));
+
 // The first key focus of a screen: its main part, not a header button.
 function moFirst(ui, id) {
   if (!ui.inter.focus) ui.inter.focus = id;
@@ -389,7 +419,7 @@ function moHome(ui, app) {
     { id: MO_ID.PILL + 1, label: 'Setup', act: { tap: () => app.go('mo-setup') } },
     { id: MO_ID.PILL + 2, label: 'Lock', act: { tap: () => app.go('mo-unlock') } },
   ]);
-  const g = grid(pg.body, 2, 4, pg.m.gutter, 0);
+  const g = grid(pg.body, moCols(pg.body.w, 30, pg.m.gutter), 4, pg.m.gutter, 0);
   const per = gridCapacity(g), pages = pageCount(PROFILES.length, per);
   st.page = pageClamp(st.page | 0, PROFILES.length, per);
   const rest = moPager(ui, head, st.page, pages,
@@ -417,14 +447,15 @@ function moHost(ui, app) {
     ['Sign-in', w.key ? 'key deck-ed25519' : 'password, stored'],
     ['Host key', 'SHA256:9fK2..Qm4c', 0, 0, '✓ pinned', C.GREEN],
   ], profAccent(p.name));
-  moBtn(ui, cutTop(body, 3), MO_ID.BTN, 'Connect', { tone: 'solid', accent: C.GREEN },
-    { tap: () => app.go('mo-connect') });
-  const g = grid(body, 2, 3, pg.m.gutter, 0);
-  moBtn(ui, gridCell(g, 0), MO_ID.BTN + 1, 'Edit', {}, { tap: () => app.go('mo-edit') });
-  moBtn(ui, gridCell(g, 1), MO_ID.BTN + 2, 'Delete', { tone: 'tint', accent: C.RED },
-    { tap: () => { st.ask = null; app.go('mo-confirm'); } });
-  moBtn(ui, gridCell(g, 2), MO_ID.BTN + 3, '↑ Move earlier', {}, { tap: () => { app.note = 'moved'; } });
-  moBtn(ui, gridCell(g, 3), MO_ID.BTN + 4, '↓ Move later', {}, { tap: () => { app.note = 'moved'; } });
+  // One row for what you do with the host, one for its place in the list.
+  const f = moFlow(body, pg.m.gutter, 3);
+  const btn = (n, label, o, tap) => moBtn(ui, moFlowNext(f, moBtnW(label)), MO_ID.BTN + n, label, o, { tap });
+  btn(0, 'Connect', { tone: 'solid', accent: C.GREEN }, () => app.go('mo-connect'));
+  btn(1, 'Edit', {}, () => app.go('mo-edit'));
+  btn(2, 'Delete', { tone: 'tint', accent: C.RED }, () => { st.ask = null; app.go('mo-confirm'); });
+  moFlowBreak(f);
+  btn(3, '↑ Move earlier', {}, () => { app.note = 'moved'; });
+  btn(4, '↓ Move later', {}, () => { app.note = 'moved'; });
   moStatus(ui, pg.status, app.note || 'The bar at the top goes back.', '↵ choose  Esc back');
 }
 
@@ -443,9 +474,9 @@ function moConfirm(ui, app) {
   ui.text(rect(card.x + 2, card.y + 1, card.w - 4, 1), ask.title, S.PANEL | BOLD, LEFT);
   ask.lines.forEach((l, i) =>
     ui.text(rect(card.x + 2, card.y + 3 + i, card.w - 4, 1), l, S.PANEL_MUTED, LEFT));
-  const g = grid(box, 2, 3, pg.m.gutter, 0);
-  moBtn(ui, gridCell(g, 0), MO_ID.BTN, 'Cancel', {}, { tap: () => app.back() });
-  moBtn(ui, gridCell(g, 1), MO_ID.BTN + 1, ask.verb, { tone: 'solid', accent }, { tap: yes });
+  const f = moFlow(box, pg.m.gutter, 3);
+  moBtn(ui, moFlowNext(f, moBtnW('Cancel')), MO_ID.BTN, 'Cancel', {}, { tap: () => app.back() });
+  moBtn(ui, moFlowNext(f, moBtnW(ask.verb)), MO_ID.BTN + 1, ask.verb, { tone: 'solid', accent }, { tap: yes });
   moStatus(ui, pg.status, '', '←→ move  ↵ choose  Esc cancel');
 }
 
@@ -507,16 +538,18 @@ function moEdit(ui, app) {
   field(2, rect(body.x, y, wide, 3));
   field(3, rect(body.x + wide + gx, y, portW, 3));
   y += 3;
+  // The chips start in the fields' value column.
   moChips(ui, rect(body.x, y, body.w, 3), MO_ID.OPT, 'Sign-in', ['password', 'key'], f.auth,
-    (i) => { f.auth = i; st.edit = -1; });
+    (i) => { f.auth = i; st.edit = -1; }, { capW: 12 });
   y += 3;
   if (f.auth === 0) {
     field(4, rect(body.x, y, half, 3));
-    moToggle(ui, rect(body.x + half + gx, y, body.w - half - gx, 3), MO_ID.OPT + 4,
-      'Show password', f.show, {}, { tap: () => { f.show = !f.show; } });
+    moToggle(ui, rect(body.x + half + gx, y, moToggleW('Show password'), 3), MO_ID.OPT + 4,
+      'Show password', f.show, { pad: 3 }, { tap: () => { f.show = !f.show; } });
   } else {
-    moPart(ui, rect(body.x, y, half, 3), MO_ID.OPT + 5,
-      { title: 'Key', right: 'deck-ed25519 ›', rightBold: true }, { tap: () => { app.note = 'key picker'; } });
+    const key = 'deck-ed25519 ›';
+    moPart(ui, rect(body.x, y, moActW('Key', key), 3), MO_ID.OPT + 5,
+      { title: 'Key', right: key, rightBold: true, pad: 3 }, { tap: () => { app.note = 'key picker'; } });
   }
   if (st.edit >= 0) {
     const d = MO_FIELDS[st.edit];
@@ -572,28 +605,39 @@ const MO_SETUP = [
 function moSetup(ui, app) {
   const st = app.state, pg = moPage(ui);
   moHeader(ui, pg.header, { title: 'Setup', back: { tap: () => app.back() } });
-  const g = grid(pg.body, 2, 4, pg.m.gutter, 0);
+  const g = grid(pg.body, moCols(pg.body.w, 24, pg.m.gutter), 4, pg.m.gutter, 0);
   MO_SETUP.forEach((c, i) => moPart(ui, gridCell(g, i), MO_ID.HUB + i,
     { title: c.name, detail: c.note, right: '›' },
     { tap: () => { st.cat = i; st.spage = 0; app.go('mo-section'); } }));
   moStatus(ui, pg.status, 'The bar at the top goes back.', '↵ open  Esc back');
 }
 
-// One section. Switches and actions share a row of two. A choice takes
-// a full row and shows every option, so no value hides behind a cycle.
+// One section. A choice takes a row and shows every option, so no value
+// hides behind a cycle. Switches and actions keep their own width and
+// pack into rows from the left.
 function moSection(ui, app) {
   const st = app.state, pg = moPage(ui), c = MO_SETUP[st.cat | 0], body = pg.body;
+  const gx = pg.m.gutter;
   st.opt = st.opt || {};
   moFirst(ui, MO_ID.OPT);
-  const rows = [];
-  let open = null;
-  c.items.forEach((it, n) => {
-    const cell = { it, id: MO_ID.OPT + n * 8 };
-    if (it.t === 'pick') { rows.push([cell]); open = null; }
-    else if (open) { open.push(cell); open = null; }
-    else { open = [cell]; rows.push(open); }
-  });
-  const per = Math.max(1, Math.trunc(body.h / 3)), pages = pageCount(rows.length, per);
+  const own = (it) => (it.t === 'toggle' ? moToggleW(it.label) : moActW(it.label, it.nav ? '›' : ''));
+  const pack = (room) => {
+    const out = [];
+    let open = null, used = 0;
+    c.items.forEach((it, n) => {
+      const cell = { it, id: MO_ID.OPT + n * 8, w: it.t === 'pick' ? room : Math.min(own(it), room) };
+      if (it.t === 'pick') { out.push([cell]); open = null; }
+      else if (open && used + gx + cell.w <= room) { open.push(cell); used += gx + cell.w; }
+      else { open = [cell]; out.push(open); used = cell.w; }
+    });
+    return out;
+  };
+  // A paged section gives two columns to the rail, so it packs again.
+  const per = Math.max(1, Math.trunc(body.h / 3));
+  let rows = pack(body.w);
+  if (rows.length > per) rows = pack(body.w - 2);
+  const pages = pageCount(rows.length, per);
+  const capW = c.items.reduce((n, it) => (it.t === 'pick' ? Math.max(n, moCapW(it.label)) : n), 0);
   st.spage = pageClamp(st.spage | 0, rows.length, per);
   const flip = { prev: { tap: () => st.spage-- }, next: { tap: () => st.spage++ } };
   const head = moPager(ui, pg.header, st.spage, pages, flip);
@@ -604,22 +648,23 @@ function moSection(ui, app) {
     ui.key('PageUp', () => { if (st.spage > 0) st.spage--; });
     ui.key('PageDown', () => { if (st.spage < pages - 1) st.spage++; });
   }
-  const gx = pg.m.gutter, half = (body.w - gx) >> 1;
   rows.slice(st.spage * per, st.spage * per + per).forEach((row, ri) => {
     const y = body.y + ri * 3;
-    row.forEach(({ it, id }, ci) => {
-      const r = it.t === 'pick' ? rect(body.x, y, body.w, 3)
-        : rect(body.x + ci * (half + gx), y, ci ? body.w - half - gx : half, 3);
+    let x = body.x;
+    row.forEach(({ it, id, w }) => {
+      const r = rect(x, y, w, 3);
+      x += w + gx;
       const v = it.key in st.opt ? st.opt[it.key] : it.init;
       if (it.t === 'pick') moChips(ui, r, id, it.label, it.set, v, (i) => {
         if (!it.ask || i === v) { st.opt[it.key] = i; return; }
         st.ask = { ...it.ask(it.set[i]), yes: () => { st.opt[it.key] = i; app.back(); } };
         app.go('mo-confirm');
-      });
+      }, { capW });
       else if (it.t === 'toggle')
-        moToggle(ui, r, id, it.label, v, {}, { tap: () => { st.opt[it.key] = !v; } });
+        moToggle(ui, r, id, it.label, v, { pad: 3 }, { tap: () => { st.opt[it.key] = !v; } });
       else moPart(ui, r, id, {
         title: it.label, right: it.nav ? '›' : '', tone: it.accent ? 'tint' : 'card', accent: it.accent,
+        pad: 3,
       }, { tap: () => {
         if (it.go) app.go(it.go);
         else if (it.ask) {
@@ -720,10 +765,10 @@ function moConnect(ui, app, fail) {
       ok('Wi-Fi  HomeAP'), ok(`Reach  ${w.host} port ${w.port}`), ok('Key exchange'),
       ['✘', 'Sign in: password refused', C.RED, C.RED],
     ], C.RED);
-    const g = grid(box, 2, 3, pg.m.gutter, 0);
-    moBtn(ui, gridCell(g, 0), MO_ID.BTN, 'Back', {}, { tap: () => app.back() });
-    moBtn(ui, gridCell(g, 1), MO_ID.BTN + 1, 'Edit host', { tone: 'solid', accent: C.BLUE },
-      { tap: () => app.go('mo-edit') });
+    const f = moFlow(box, pg.m.gutter, 3);
+    moBtn(ui, moFlowNext(f, moBtnW('Back')), MO_ID.BTN, 'Back', {}, { tap: () => app.back() });
+    moBtn(ui, moFlowNext(f, moBtnW('Edit host')), MO_ID.BTN + 1, 'Edit host',
+      { tone: 'solid', accent: C.BLUE }, { tap: () => app.go('mo-edit') });
     moStatus(ui, pg.status, '', '←→ move  ↵ choose', 'Sign in failed.');
     return;
   }
@@ -734,7 +779,7 @@ function moConnect(ui, app, fail) {
     ['›', 'Key exchange', C.WHITE, C.AMBER],
     ['·', `Sign in as ${w.user}`],
   ], profAccent(p.name));
-  moBtn(ui, box, MO_ID.BTN, 'Cancel', {}, { tap: () => app.back() });
+  moBtn(ui, rect(box.x, box.y, moBtnW('Cancel'), 3), MO_ID.BTN, 'Cancel', {}, { tap: () => app.back() });
   ui.hot(card, MO_ID.ROW, { tap: () => app.go('mo-menu') });
   moStatus(ui, pg.status, 'Mock: tap the panel to finish.', '↵ cancel');
 }
@@ -745,7 +790,7 @@ function moMenu(ui, app) {
   const st = app.state, p = moHostOf(st), m = ui.metrics();
   ui.term(TERM_LINES, MO_TERM_FG, 0);
   ui.dim();
-  const w = Math.min(ui.cols, m.cls === COMPACT ? 30 : 36);
+  const w = Math.min(ui.cols, 28);
   const sheet = rect(ui.cols - w, 0, w, ui.rows);
   ui.fill(sheet, ' ', S.TEXT);
   const inn = inset(sheet, 1, 0);

@@ -60,6 +60,20 @@ static inline int ui_grid_capacity(const ui_grid_t *g)
     return g->ncols * g->nrows;
 }
 
+/** Columns of a tile grid @p w cells wide. As many tiles of @p min cells
+ *  fit with @p gap between them. Two at least. */
+int ui_cols_for(int w, int min, int gap);
+
+/* A flow packs parts from the left in rows of `h`, `gap` cells apart.
+ * Each part keeps its own width. A part with no room left starts the
+ * next row. */
+typedef struct { int x0, w, gap, h, x, y; } ui_flow_t;
+ui_flow_t ui_flow(ui_rect_t area, int gap, int h);
+/** Rect of the next part, @p w cells wide (cut to the flow's width). */
+ui_rect_t ui_flow_next(ui_flow_t *f, int w);
+/** Start a new row, unless the present row is still empty. */
+void ui_flow_break(ui_flow_t *f);
+
 /* Paging for content that outgrows one grid: whole pages, no partial
  * scroll. @p per is the grid capacity. */
 int ui_page_count(int count, int per);

@@ -139,17 +139,18 @@ static int nav_score(const hot_t *f, const hot_t *c, ui_key_t k)
     case K_UP:    if (cy1 > fy0) return -1; along = fy0 - cy1; break;
     default: return -1;
     }
+    int edge;
     if (k == K_LEFT || k == K_RIGHT) {
         cross = cy0 >= fy1 ? cy0 - fy1 + 1 : fy0 >= cy1 ? fy0 - cy1 + 1 : 0;
-        /* Same row band: prefer the one whose top is nearest. */
-        if (!cross) cross = cy0 > fy0 ? (cy0 - fy0) / 4 : (fy0 - cy0) / 4;
-        else        cross += 8;
+        edge  = cy0 > fy0 ? cy0 - fy0 : fy0 - cy0;
     } else {
         cross = cx0 >= fx1 ? cx0 - fx1 + 1 : fx0 >= cx1 ? fx0 - cx1 + 1 : 0;
-        if (!cross) cross = cx0 > fx0 ? (cx0 - fx0) / 4 : (fx0 - cx0) / 4;
-        else        cross += 8;
+        edge  = cx0 > fx0 ? cx0 - fx0 : fx0 - cx0;
     }
-    return along + 4 * cross;
+    /* Straight ahead beats off to the side. Among those ahead the
+     * nearest band wins, then the nearest leading edge. */
+    if (!cross) return along * 256 + (edge < 255 ? edge : 255);
+    return 0x10000 + along + 4 * (cross + 8);
 }
 
 ui_act_t ui_hot_key(ui_key_t k)

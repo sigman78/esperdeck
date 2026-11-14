@@ -57,6 +57,8 @@ enum {
 #define UI_PART_PLAIN      0x08   /* card title in regular weight        */
 #define UI_PART_RIGHT_BOLD 0x10   /* right text in the title style       */
 #define UI_PART_UNITS      0x20   /* right text is a number and a unit   */
+#define UI_PART_ROOMY      0x40   /* three cells of side padding: a part */
+                                  /* drawn at its own width              */
 
 /* Styles of one part in its present state. */
 typedef struct {
@@ -120,6 +122,25 @@ bool ui_part(ui_rect_t r, ui_id_t id, const ui_part_t *p, ui_part_box_t *box);
 bool ui_push(ui_rect_t r, ui_id_t id, const char *label, uint8_t tone,
              uint8_t accent, uint8_t flags);
 
+/* Own widths. A part is as wide as its text needs, never as wide as its
+ * row; ui_flow packs such parts. Ten cells is the narrowest part a
+ * finger hits at the small font. Only tiles in a grid and text panels
+ * take a width from the layout. */
+
+/** Width of a button: the label and three cells each side, 10 at least. */
+int ui_push_w(const char *label);
+
+/** Width of a one-line part with UI_PART_ROOMY or pad 3. @p right may
+ *  be NULL. */
+int ui_act_w(const char *title, const char *right);
+
+/** Width of a switch drawn with UI_PART_ROOMY. */
+int ui_switch_w(const char *label);
+
+/** Width of the caption column of ui_chips: the caption and two cells
+ *  each side. */
+int ui_caption_w(const char *caption);
+
 /** A header button cut from the right end of @p header, with a gap.
  *  Call for the rightmost one first. */
 void ui_pill(ui_rect_t *header, ui_id_t id, const char *label, uint8_t tone,
@@ -130,10 +151,13 @@ void ui_switch(ui_rect_t r, ui_id_t id, const char *label, bool on,
                uint8_t flags);
 
 /** One choice of @p n: a caption, then a chip per label with ids from
- *  @p id_base. The chosen chip is solid in @p accent (0: blue) with a
- *  check mark. */
+ *  @p id_base. The chips follow the caption column, @p cap_w cells wide
+ *  (0: ui_caption_w). Pass one width to several choices and their chips
+ *  line up. The chosen chip is solid in @p accent (0: blue) with a check
+ *  mark. */
 void ui_chips(ui_rect_t r, ui_id_t id_base, const char *caption,
-              const char *const *labels, int n, int value, uint8_t accent);
+              const char *const *labels, int n, int value, uint8_t accent,
+              int cap_w);
 
 #define UI_PAGES_W 19           /* cells ui_pages takes at a header's end */
 

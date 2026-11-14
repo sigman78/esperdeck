@@ -97,10 +97,10 @@ static void scr_parts(void)
     if (rows - y >= 6) {
         const int half = (cols - 3) / 2;
         ui_debug_pose(32, UI_POSE_FOCUS);
-        ui_chips(ui_rect(1, y, half, 3), 31, "Tint", TINT, 2, 0, 0);
+        ui_chips(ui_rect(1, y, half, 3), 31, "Tint", TINT, 2, 0, 0, 0);
         ui_debug_pose(35, UI_POSE_FOCUS);
         ui_debug_pose(36, UI_POSE_DOWN);
-        ui_chips(ui_rect(2 + half, y, half, 3), 35, "Tint", TINT, 2, 0, 0);
+        ui_chips(ui_rect(2 + half, y, half, 3), 35, "Tint", TINT, 2, 0, 0, 0);
         y += 3;
     }
     if (rows - y >= 3) {
@@ -223,20 +223,22 @@ static void draw_edit(const edit_t *st)
                            (fld[i].bad ? UI_ENTRY_BAD : 0)));
     int y = body.y + 6;
     ui_chips(ui_rect(body.x, y, body.w, 3), MO_OPT, "Sign-in", AUTH, 2,
-             f->key ? 1 : 0, 0);
+             f->key ? 1 : 0, 0, 12);
     y += 3;
     if (!f->key) {
         ui_entry(ui_rect(body.x, y, half, 3), MO_FIELD + 4, fld[4].label,
                  fld[4].value, fld[4].lw,
                  (uint8_t)((st->edit == 4 ? UI_ENTRY_EDIT : 0) |
                            (fld[4].mask ? UI_ENTRY_MASK : 0)));
-        ui_switch(ui_rect(body.x + half + gx, y, body.w - half - gx, 3),
-                  MO_OPT + 4, "Show password", f->show, 0);
+        ui_switch(ui_rect(body.x + half + gx, y, ui_switch_w("Show password"),
+                          3),
+                  MO_OPT + 4, "Show password", f->show, UI_PART_ROOMY);
     } else {
-        ui_part(ui_rect(body.x, y, half, 3), MO_OPT + 5,
-                &(ui_part_t){ .title = "Key",
-                              .right = "deck-ed25519 " UI_S_CHEVRON,
-                              .flags = UI_PART_RIGHT_BOLD }, NULL);
+        const char *key = "deck-ed25519 " UI_S_CHEVRON;
+        ui_part(ui_rect(body.x, y, ui_act_w("Key", key), 3), MO_OPT + 5,
+                &(ui_part_t){ .title = "Key", .right = key,
+                              .flags = UI_PART_RIGHT_BOLD | UI_PART_ROOMY },
+                NULL);
     }
     if (st->edit >= 0)
         mo_status(pg.status, "Type on the keyboard.",
@@ -320,7 +322,9 @@ static void scr_home(void)
     ui_pill(&pg.header, MO_PILL + 2, "Lock", UI_TONE_CARD, 0, 0);
     ui_pill(&pg.header, MO_PILL + 1, "Setup", UI_TONE_CARD, 0, 0);
     ui_pill(&pg.header, MO_PILL, "+ New", UI_TONE_CARD, 0, 0);
-    const ui_grid_t g = ui_grid(pg.body, 2, 4, pg.m.gutter, 0);
+    const ui_grid_t g = ui_grid(pg.body,
+                                ui_cols_for(pg.body.w, 30, pg.m.gutter), 4,
+                                pg.m.gutter, 0);
     const int per = ui_grid_capacity(&g);
     const int pages = ui_page_count(LAB_NPROFILES, per);
     const ui_rect_t rest = ui_pages(pg.header, MO_PREV, MO_NEXT, 0, pages);
@@ -358,16 +362,17 @@ static void draw_host(int n)
           OVERLAY_COL_GREEN },
     };
     ui_info(ui_cut_top(&pg.body, 6), rows, 4, prof_accent(p->name));
-    ui_push(ui_cut_top(&pg.body, 3), MO_BTN, "Connect", UI_TONE_SOLID,
-            OVERLAY_COL_GREEN, 0);
-    const ui_grid_t g = ui_grid(pg.body, 2, 3, pg.m.gutter, 0);
-    ui_push(ui_grid_cell(&g, 0), MO_BTN + 1, "Edit", UI_TONE_CARD, 0, 0);
-    ui_push(ui_grid_cell(&g, 1), MO_BTN + 2, "Delete", UI_TONE_TINT,
-            OVERLAY_COL_RED, 0);
-    ui_push(ui_grid_cell(&g, 2), MO_BTN + 3, UI_S_UP " Move earlier",
-            UI_TONE_CARD, 0, 0);
-    ui_push(ui_grid_cell(&g, 3), MO_BTN + 4, UI_S_DOWN " Move later",
-            UI_TONE_CARD, 0, 0);
+    ui_flow_t f = ui_flow(pg.body, pg.m.gutter, 3);
+#define BTN(n, label, tone, accent) \
+    ui_push(ui_flow_next(&f, ui_push_w(label)), MO_BTN + (n), label, tone, \
+            accent, 0)
+    BTN(0, "Connect", UI_TONE_SOLID, OVERLAY_COL_GREEN);
+    BTN(1, "Edit", UI_TONE_CARD, 0);
+    BTN(2, "Delete", UI_TONE_TINT, OVERLAY_COL_RED);
+    ui_flow_break(&f);
+    BTN(3, UI_S_UP " Move earlier", UI_TONE_CARD, 0);
+    BTN(4, UI_S_DOWN " Move later", UI_TONE_CARD, 0);
+#undef BTN
     mo_status(pg.status, "The bar at the top goes back.",
               UI_S_ENTER " choose  Esc back", NULL);
 }
@@ -393,10 +398,11 @@ static void draw_confirm(const ask_t *ask)
     for (int i = 0; i < 2; i++)
         ui_text(ui_rect(card.x + 2, card.y + 3 + i, card.w - 4, 1),
                 ask->line[i], UI_PANEL_MUTED, UI_LEFT);
-    const ui_grid_t g = ui_grid(box, 2, 3, pg.m.gutter, 0);
-    ui_push(ui_grid_cell(&g, 0), MO_BTN, "Cancel", UI_TONE_CARD, 0, 0);
-    ui_push(ui_grid_cell(&g, 1), MO_BTN + 1, ask->verb, UI_TONE_SOLID,
-            ask->accent, 0);
+    ui_flow_t f = ui_flow(box, pg.m.gutter, 3);
+    ui_push(ui_flow_next(&f, ui_push_w("Cancel")), MO_BTN, "Cancel",
+            UI_TONE_CARD, 0, 0);
+    ui_push(ui_flow_next(&f, ui_push_w(ask->verb)), MO_BTN + 1, ask->verb,
+            UI_TONE_SOLID, ask->accent, 0);
     mo_status(pg.status, "",
               UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER " choose  Esc cancel",
               NULL);
@@ -477,7 +483,9 @@ static void scr_setup(void)
     ui_slate_t pg = ui_slate_page();
 
     ui_title(pg.header, NULL, "Setup", NULL, true);
-    const ui_grid_t g = ui_grid(pg.body, 2, 4, pg.m.gutter, 0);
+    const ui_grid_t g = ui_grid(pg.body,
+                                ui_cols_for(pg.body.w, 24, pg.m.gutter), 4,
+                                pg.m.gutter, 0);
     for (int i = 0; i < NELEM(MO_SETUP); i++)
         ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HUB + i),
                 &(ui_part_t){ .title = MO_SETUP[i].name,
@@ -487,33 +495,66 @@ static void scr_setup(void)
               UI_S_ENTER " open  Esc back", NULL);
 }
 
-/* One section. Switches and actions share a row of two. A choice takes
- * a full row and shows every option. */
+typedef struct { int n; struct { int it, w; } c[4]; } sec_row_t;
+
+static int own_w(const item_t *it)
+{
+    return it->type == IT_TOGGLE ? ui_switch_w(it->label)
+                                 : ui_act_w(it->label,
+                                            it->nav ? UI_S_CHEVRON : "");
+}
+
+/* Pack the items into rows of @p room cells. A choice takes a row and
+ * the rest keep their own width. */
+static int pack_rows(const cat_t *c, int room, int gx, sec_row_t *rows)
+{
+    int nrows = 0, used = 0;
+    bool open = false;
+
+    for (int n = 0; n < c->n; n++) {
+        const item_t *it = &c->it[n];
+        const int own = own_w(it);
+        const int w = it->type == IT_PICK ? room : own < room ? own : room;
+        if (it->type == IT_PICK) {
+            rows[nrows].n = 1;
+            rows[nrows].c[0].it = n;
+            rows[nrows++].c[0].w = w;
+            open = false;
+        } else if (open && used + gx + w <= room) {
+            sec_row_t *r = &rows[nrows - 1];
+            r->c[r->n].it = n;
+            r->c[r->n++].w = w;
+            used += gx + w;
+        } else {
+            rows[nrows].n = 1;
+            rows[nrows].c[0].it = n;
+            rows[nrows++].c[0].w = w;
+            open = true;
+            used = w;
+        }
+    }
+    return nrows;
+}
+
+/* One section. A choice takes a row and shows every option. Switches and
+ * actions keep their own width and pack from the left. */
 static void draw_section(int cat)
 {
     ui_slate_t pg = ui_slate_page();
     const cat_t *c = &MO_SETUP[cat];
-    struct { int n, it[2]; } rows[4];
-    int nrows = 0;
-    bool open = false;
+    sec_row_t rows[4];
+    const int gx0 = pg.m.gutter;
 
     ui_focus_default(MO_OPT);
-    for (int n = 0; n < c->n; n++) {
-        if (c->it[n].type == IT_PICK) {
-            rows[nrows].n = 1;
-            rows[nrows++].it[0] = n;
-            open = false;
-        } else if (open) {
-            rows[nrows - 1].it[1] = n;
-            rows[nrows - 1].n = 2;
-            open = false;
-        } else {
-            rows[nrows].n = 1;
-            rows[nrows++].it[0] = n;
-            open = true;
-        }
-    }
     const int per = pg.body.h / 3 > 1 ? pg.body.h / 3 : 1;
+    int nrows = pack_rows(c, pg.body.w, gx0, rows);
+    if (nrows > per) nrows = pack_rows(c, pg.body.w - 2, gx0, rows);
+    int cap_w = 0;
+    for (int n = 0; n < c->n; n++)
+        if (c->it[n].type == IT_PICK) {
+            const int w = ui_caption_w(c->it[n].label);
+            if (w > cap_w) cap_w = w;
+        }
     const int pages = ui_page_count(nrows, per);
     const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, 0, pages);
     ui_title(head, "Setup", c->name, NULL, true);
@@ -522,28 +563,29 @@ static void draw_section(int cat)
         ui_cut_right(&pg.body, 1);
     }
     const ui_rect_t body = pg.body;
-    const int gx = pg.m.gutter, half = (body.w - gx) >> 1;
+    const int gx = pg.m.gutter;
     for (int ri = 0; ri < per && ri < nrows; ri++) {
         const int y = body.y + ri * 3;
+        int x = body.x;
         for (int ci = 0; ci < rows[ri].n; ci++) {
-            const int n = rows[ri].it[ci];
+            const int n = rows[ri].c[ci].it;
             const item_t *it = &c->it[n];
             const ui_id_t id = (ui_id_t)(MO_OPT + n * 8);
-            const ui_rect_t r = it->type == IT_PICK
-                ? ui_rect(body.x, y, body.w, 3)
-                : ui_rect(body.x + ci * (half + gx), y,
-                          ci ? body.w - half - gx : half, 3);
+            const ui_rect_t r = ui_rect(x, y, rows[ri].c[ci].w, 3);
+            x += r.w + gx;
             if (it->type == IT_PICK)
-                ui_chips(r, id, it->label, it->set, it->nset, it->init, 0);
+                ui_chips(r, id, it->label, it->set, it->nset, it->init, 0,
+                         cap_w);
             else if (it->type == IT_TOGGLE)
-                ui_switch(r, id, it->label, it->init != 0, 0);
+                ui_switch(r, id, it->label, it->init != 0, UI_PART_ROOMY);
             else
                 ui_part(r, id,
                         &(ui_part_t){ .title = it->label,
                                       .right = it->nav ? UI_S_CHEVRON : NULL,
                                       .tone = it->accent ? UI_TONE_TINT
                                                          : UI_TONE_CARD,
-                                      .accent = it->accent }, NULL);
+                                      .accent = it->accent,
+                                      .flags = UI_PART_ROOMY }, NULL);
         }
     }
     mo_status(pg.status, "A change applies at once.",
@@ -676,10 +718,11 @@ static void draw_connect(bool fail)
               OVERLAY_COL_RED },
         };
         ui_info(card, rows, 6, OVERLAY_COL_RED);
-        const ui_grid_t g = ui_grid(box, 2, 3, pg.m.gutter, 0);
-        ui_push(ui_grid_cell(&g, 0), MO_BTN, "Back", UI_TONE_CARD, 0, 0);
-        ui_push(ui_grid_cell(&g, 1), MO_BTN + 1, "Edit host", UI_TONE_SOLID,
-                OVERLAY_COL_BLUE, 0);
+        ui_flow_t f = ui_flow(box, pg.m.gutter, 3);
+        ui_push(ui_flow_next(&f, ui_push_w("Back")), MO_BTN, "Back",
+                UI_TONE_CARD, 0, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Edit host")), MO_BTN + 1,
+                "Edit host", UI_TONE_SOLID, OVERLAY_COL_BLUE, 0);
         mo_status(pg.status, "", UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER
                   " choose", "Sign in failed.");
         return;
@@ -696,7 +739,8 @@ static void draw_connect(bool fail)
         { UI_S_MIDDOT, user },
     };
     ui_info(card, rows, 6, prof_accent(p->name));
-    ui_push(box, MO_BTN, "Cancel", UI_TONE_CARD, 0, 0);
+    ui_push(ui_rect(box.x, box.y, ui_push_w("Cancel"), 3), MO_BTN, "Cancel",
+            UI_TONE_CARD, 0, 0);
     ui_hot(card, MO_ROW);
     mo_status(pg.status, "Mock: tap the panel to finish.",
               UI_S_ENTER " cancel", NULL);
@@ -708,12 +752,10 @@ static void scr_fail(void)    { draw_connect(true); }
 /* Session menu: a slate sheet at the right over the dimmed terminal. */
 static void scr_menu(void)
 {
-    const ui_metrics_t m = ui_metrics();
     const int cols = ui_cols(), rows = ui_rows();
 
     ui_dim();
-    const int w = cols < (m.cls == UI_COMPACT ? 30 : 36)
-                      ? cols : (m.cls == UI_COMPACT ? 30 : 36);
+    const int w = cols < 28 ? cols : 28;
     const ui_rect_t sheet = ui_rect(cols - w, 0, w, rows);
     ui_fill(sheet.x, sheet.y, sheet.w, sheet.h, UI_TEXT);
     ui_rect_t inn = ui_inset(sheet, 1, 0);

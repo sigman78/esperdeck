@@ -87,17 +87,19 @@ SCENARIOS = {
         "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
         "|expect-text:example|expect-text:Connect|expect-text:192.168.1.10"
         "|expect-text:not pinned yet|key:esc|wait:400|expect:home|quit",
-    # Delete asks first; Cancel is the default. The second pass confirms.
+    # Delete is two keys right of Connect. It asks first; Cancel is the
+    # default. The second pass confirms.
     "host-delete":
         "key:esc|wait:400|expect:home|expect-text:2 of 8|key: |wait:400"
-        "|expect:host|key:down|key:right|key:enter|wait:400|expect:ask"
+        "|expect:host|key:right|key:right|key:enter|wait:400|expect:ask"
         "|expect-text:Delete example?|key:enter|wait:400|expect:host"
         "|key:enter|wait:400|expect:ask|key:right|key:enter|wait:500"
         "|expect:home|expect-text:1 of 8|quit",
-    # After Move later, the first HOME tile is the other host.
+    # Down from Connect reaches Move later (Move earlier is off on the
+    # first host). Then the first HOME tile is the other host.
     "host-move":
         "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
-        "|expect-text:192.168.1.10|key:down|key:down|key:right|key:enter"
+        "|expect-text:192.168.1.10|key:down|key:enter"
         "|wait:400|expect:host|expect-text:192.168.1.10|key:esc|wait:400"
         "|expect:home|key: |wait:400|expect:host|expect-text:10.0.0.5|quit",
     # The release after a hold must not connect.

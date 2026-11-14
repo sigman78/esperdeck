@@ -436,6 +436,8 @@ export function drawPosed(scr, cols, rows, app) {
 
 // Distance from region f to c along one arrow; -1 when c is not that way.
 // A cell is twice as tall as wide, so rows count double.
+// A region straight ahead beats any region off to the side. Among those
+// straight ahead the nearest band wins, then the nearest leading edge.
 function navScore(f, c, dir) {
   const fx0 = f.x, fx1 = f.x + f.w, fy0 = 2 * f.y, fy1 = 2 * (f.y + f.h);
   const cx0 = c.x, cx1 = c.x + c.w, cy0 = 2 * c.y, cy1 = 2 * (c.y + c.h);
@@ -447,16 +449,16 @@ function navScore(f, c, dir) {
     case 'up':    if (cy1 > fy0) return -1; along = fy0 - cy1; break;
     default: return -1;
   }
+  let edge;
   if (dir === 'left' || dir === 'right') {
     cross = cy0 >= fy1 ? cy0 - fy1 + 1 : fy0 >= cy1 ? fy0 - cy1 + 1 : 0;
-    if (!cross) cross = cy0 > fy0 ? div(cy0 - fy0, 4) : div(fy0 - cy0, 4);
-    else cross += 8;
+    edge = Math.abs(cy0 - fy0);
   } else {
     cross = cx0 >= fx1 ? cx0 - fx1 + 1 : fx0 >= cx1 ? fx0 - cx1 + 1 : 0;
-    if (!cross) cross = cx0 > fx0 ? div(cx0 - fx0, 4) : div(fx0 - cx0, 4);
-    else cross += 8;
+    edge = Math.abs(cx0 - fx0);
   }
-  return along + 4 * cross;
+  if (!cross) return along * 256 + Math.min(edge, 255);
+  return 0x10000 + along + 4 * (cross + 8);
 }
 
 // Id to focus after an arrow key. `dir`: 'up' | 'down' | 'left' | 'right'.

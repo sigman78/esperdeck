@@ -2,6 +2,7 @@
  * ui_part.c — the kit's parts (ui_part.h): slabs on the theme
  * background. A part asks ui_look() for its styles and paints cells.
  * Each function ports its sketch in tools/uimock/sketches-mo.js.
+ * ui_part honours UI_PART_ROOMY (pad 3); ui_switch passes its flags on.
  */
 
 #include "cyberdeck_ui.h"
@@ -145,7 +146,8 @@ bool ui_part(ui_rect_t r, ui_id_t id, const ui_part_t *p, ui_part_box_t *box)
     if (!k.off && p->stripe) ui_stripe(r, p->stripe);
     ui_pen(k.pen);
 
-    const int pad = p->pad ? p->pad : (r.w >= 10 ? 2 : 1);
+    const int pad = p->pad ? p->pad
+                  : (p->flags & UI_PART_ROOMY) ? 3 : (r.w >= 10 ? 2 : 1);
     const ui_rect_t inn = ui_rect(r.x + pad, r.y + 1, r.w - 2 * pad, r.h - 2);
     const bool two = has(p->detail);
     const int y = ui_centre(inn.y, inn.h, two ? 2 : 1);
@@ -217,18 +219,19 @@ static int chip_w(const char *label)
 }
 
 void ui_chips(ui_rect_t r, ui_id_t id_base, const char *caption,
-              const char *const *labels, int n, int value, uint8_t accent)
+              const char *const *labels, int n, int value, uint8_t accent,
+              int cap_w)
 {
     int need = -1;
     for (int i = 0; i < n; i++) need += chip_w(labels[i]) + 1;
 
+    const int capw = cap_w ? cap_w : ui_caption_w(caption);
     const int y = ui_centre(r.y, r.h, 1);
     ui_pen(OVERLAY_COL_DEFAULT);
-    ui_text(ui_rect(r.x + 1, y, r.w - need - 2, 1), caption, UI_TEXT,
-            UI_LEFT);
-    if (need > r.w) { ui_fault(); return; }
+    ui_text(ui_rect(r.x + 2, y, capw - 4, 1), caption, UI_TEXT, UI_LEFT);
+    if (capw + need > r.w) { ui_fault(); return; }
 
-    int x = r.x + r.w - need;
+    int x = r.x + capw;
     for (int i = 0; i < n; i++) {
         const int w = chip_w(labels[i]);
         const bool chosen = i == value;

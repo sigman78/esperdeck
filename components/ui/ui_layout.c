@@ -82,6 +82,31 @@ ui_rect_t ui_grid_cell(const ui_grid_t *g, int i)
                         g->area.y + r * (g->ch + g->gy), g->cw, g->ch };
 }
 
+int ui_cols_for(int w, int min, int gap)
+{
+    const int n = (w + gap) / (min + gap);
+    return n < 2 ? 2 : n;
+}
+
+ui_flow_t ui_flow(ui_rect_t area, int gap, int h)
+{
+    return (ui_flow_t){ .x0 = area.x, .w = area.w, .gap = gap, .h = h,
+                        .x = area.x, .y = area.y };
+}
+
+void ui_flow_break(ui_flow_t *f)
+{
+    if (f->x > f->x0) { f->x = f->x0; f->y += f->h; }
+}
+
+ui_rect_t ui_flow_next(ui_flow_t *f, int w)
+{
+    if (f->x > f->x0 && f->x + w > f->x0 + f->w) ui_flow_break(f);
+    const ui_rect_t r = { f->x, f->y, w < f->w ? w : f->w, f->h };
+    f->x += w + f->gap;
+    return r;
+}
+
 ui_metrics_t ui_metrics_for(int cols, int rows)
 {
     (void)rows;
