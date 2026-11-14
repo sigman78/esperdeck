@@ -13,6 +13,7 @@ import { Font, render, toRGBA, PANELS, rectMM } from './model.js';
 import { drawPosed } from './kit.js';
 import { BASELINE } from './baseline.js';
 import { SKETCHES } from './sketches.js';
+import { MO_GATE } from './sketches-mo.js';
 import { THEMES } from './theme.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -57,13 +58,18 @@ const themes = { ...lab.themes, ...THEMES };
 if (opt.theme && !themes[opt.theme]) { console.log(`no theme '${opt.theme}'`); process.exit(1); }
 const cols = Math.floor(panel.width / font.w), rows = Math.floor(panel.height / font.h);
 const all = [...SKETCHES, ...BASELINE];
-const list = names.length ? names.map((n) => all.find((s) => s.name === n) || n) : SKETCHES;
+// A gate frame name draws its sketch with the gate's state and pose.
+const gateFrame = (n) => {
+  const g = MO_GATE.find((q) => q.name === n), base = g && all.find((s) => s.name === g.sketch);
+  return base && { ...base, name: g.name, pose: g.pose, seed: g.state ? g.state() : null };
+};
+const list = names.length ? names.map((n) => gateFrame(n) || all.find((s) => s.name === n) || n) : SKETCHES;
 mkdirSync(opt.out, { recursive: true });
 
 for (const scr of list) {
   if (typeof scr === 'string') { console.log(`no screen '${scr}'`); process.exitCode = 1; continue; }
   const theme = themes[opt.theme || scr.theme || 'default'];
-  const app = { state: JSON.parse(opt.state), note: '', fg: theme.fg, bg: theme.bg, go() {}, back() {}, home() {} };
+  const app = { state: { ...scr.seed, ...JSON.parse(opt.state) }, note: '', fg: theme.fg, bg: theme.bg, go() {}, back() {}, home() {} };
   const posed = opt.focus || opt.down
     ? { ...scr, pose: { focus: +opt.focus || 0, down: +opt.down || 0 } } : scr;
   const ui = drawPosed(posed, cols, rows, app);

@@ -1,4 +1,4 @@
-# Shell UI surface, as built (2026-11-13)
+# Shell UI surface, as built (2026-11-14)
 
 What the shell can show today, read from the code on `feat/ui-kit2`.
 It is the checklist a redesign has to cover. Paths are under
@@ -10,74 +10,85 @@ SoftAP = the deck's own temporary Wi-Fi access point.
 
 ## Findings that shape the redesign
 
-- **HOME drops tiles.** 66x20 and 80x24 hold 9 tiles; the worst case is
-  11 (8 profiles + Pair + Lock + Configuration). Configuration is lost
-  first, and HOME then has no route to it (`app_home.c:207`).
-- **The unlock pad has no touch cancel.** Outside the device gate, only
-  Esc or a 60 s idle timeout leaves it (`app_unlock.c:63`).
-- **The pad enters digits only.** An access code with other characters
-  needs a keyboard.
-- **All text entry needs the BLE keyboard.** Profile name, host, port,
-  user, password. There is no on-screen keyboard.
+- **Done on the slate parts:** HOME, the host page, the question page,
+  the setup hub with its sections, the session sheet, the host form and
+  the access code pad. Each has a frame in `MO_GATE`.
+- **Not yet ported:** boot, power-off, pairing, host key prompt,
+  connecting, the Wi-Fi and SSH import pages, the saver. The model has
+  sketches for connecting, connect failed and both host-key pages.
+- **All text entry needs the BLE keyboard.** Host name, address, port,
+  user, password, and an access code with other characters than digits.
+  There is no on-screen keyboard.
 - **No saved Wi-Fi management.** No list, delete or reorder; a network
   is added only from a phone.
-- **Phone presence is keyboard-only** (`P` on HOME).
-- **Confirmations are in-place two-step arms**, never dialogs.
-  `ui_dialog`, `ui_pager`, `ui_input`, `ui_meter`, `ui_btn` have no
-  shell callers yet.
-- **Cancel drops edits silently** in the profile editor.
-- **Value tiles cycle forward only.** No backward step by touch.
-- **Font change reboots with no confirm.**
-- **Only the menu table pages draw with the new kit.**
+- **Pairing still arms in place.** "Forget bonds" there asks for a
+  second tap. The setup page uses the question page instead.
+- **Host key prompt and connecting still use the old tile helpers.**
+  Their hazard tape, decode reveal and activity bar are not in the new
+  look.
 
 ## Limits
 
 | What | Limit | Source |
 |------|-------|--------|
-| Profiles | 8 stored, 9 with the built-in default | `storage.h:32`, `app_internal.h:18` |
-| Profile name / user / key id | 31 chars | `storage.h:35-41` |
+| Hosts | 8 stored, 9 with the built-in default | `storage.h:32`, `app_internal.h:18` |
+| Host name / user / key id | 31 chars | `storage.h:35-41` |
 | Host, password, passphrase | 63 chars | `storage.h:35-41` |
 | Port | 5 digits | `app_profile.c` |
 | Wi-Fi networks | 8; SSID 32, PSK 64 | `storage.h:52-56` |
 | BLE bonds | 8; device name 63 | `storage.h:218-223` |
-| Access code | 1..64 bytes; new codes at least 4 | `keystore.h:43-44`, `app_unlock.c:60` |
+| Access code | 1..64 bytes; new codes at least 4 | `keystore.h:43-44`, `app_unlock.c` |
 | Host key fingerprint | 64 hex chars | `ssh_client.h:151` |
-| Menu page | 8 items | `app_menu_defs.h:60` |
+| Stored keys offered by the form | 8 | `app_profile.c` |
+| Items in a setup section | `MENU_ITEM_MAX` | `app_menu_defs.h` |
 | Navigation stack | 6 entries | `app_nav.c:15` |
 | Toast | 64 chars; 3 s, 7 s for errors, 5 s for menu notes | `app_internal.h:21-59` |
 
-Tile grid capacity today (`ui_parts.c:183`): 12 at 100x30, 9 at 80x24,
-9 at 66x20.
+Tile grid: two-line host tiles, 30 cells at least. Eight hosts fit at
+66x20.
 
 ## Screens
 
-Thirteen entries in `SCREENS[]` (`cyberdeck_app.c:297`): boot, home,
-poweroff, pairing, hostkey, connecting, session, menu, wifiprov,
-profile, sshimport, unlock, saver. Boot, poweroff, session and saver
-draw no status bar.
+Entries in `SCREENS[]` (`cyberdeck_app.c`): boot, home, poweroff,
+pairing, hostkey, connecting, session, menu, wifiprov, profile, host,
+ask, sshimport, unlock, saver. Boot, poweroff, session and saver draw
+no status bar.
 
 ### BOOT, POWEROFF
 Logo wipe and tagline; CRT collapse after a session. Any input skips.
 
 ### HOME (`app_home.c`)
-- **Shows:** three status lines (NET with SSID, address, signal; KBD
-  with state and name; RAM), an optional phone-presence dot, wordmark,
-  version, clock. A tile per profile (name, `user@host:port [key]`).
-  Trailing tiles: New profile (only when none stored), Pair keyboard
-  (only when no bond), Lock deck (only with a keystore), Configuration.
-- **Touch:** tap a profile connects; long-press a profile edits it;
-  long-press elsewhere opens pairing.
-- **Keys only:** `R` reload, `W` Wi-Fi retry, `N` new profile, `B`
-  pair, `L` lock, `P` phone presence.
-- **Overflow:** tail tiles are dropped. Titles are cut; the detail line
-  scrolls only on the keyboard-selected tile.
+- **Shows:** a header with the title "Hosts" and "n of 8", a pager when
+  the tiles need pages, and the buttons Setup and + New. Lock shows with
+  a keystore. Pair shows until a keyboard is bonded. A phone dot (PHN)
+  shows when a phone is enrolled. A tile per host: name, `user@host`
+  (`:port` when not 22), its number. Plugin tiles follow the hosts.
+- **Touch:** a tap connects; a hold opens the host page.
+- **Keys:** arrows move; Enter connects; Space holds; `1`-`8` connect;
+  `N` new, `B` pair, `R` reload, `W` Wi-Fi retry, `L` lock, `P` phone.
+- **Empty:** a muted line says to tap + New or import from Setup.
+
+### HOST PAGE (`app_host.c`)
+- **Shows:** a text panel (address and port, user, sign-in, host key
+  with its pin state), then Connect, Edit, Delete, and the two moves.
+- **Leads to:** connecting, the form, the question page; a move
+  reorders the list and stays on the page.
+
+### QUESTION PAGE (`app_ask.c`)
+- **Shows:** a text panel with a title and two lines, then Cancel and
+  the verb. The safe answer holds the first focus. One instance.
+- **Asked by:** host delete, the form's discard, the setup actions
+  that cannot be undone, the font restart.
 
 ### CONNECTING (`app_connect.c`)
 - **Shows:** target, attempt count, activity bar, elapsed seconds; an
-  amber drain bar while waiting to retry.
+  amber drain bar while waiting to retry. Old look.
 - **Input:** Esc, any tap or any long-press cancels. Nothing on screen
   says so.
 - **Leads to:** session, host key prompt, unlock, or HOME with a toast.
+- **Model:** `mo-connect`, `mo-connect-retry` and `mo-fail` show what
+  the shell knows: Wi-Fi, address, try and seconds. The controller
+  reports no handshake steps.
 
 ### SESSION
 - **Shows:** the terminal only. A toast chip top right; a scrollback
@@ -88,56 +99,63 @@ Logo wipe and tagline; CRT collapse after a session. Any input skips.
 ### HOSTKEY (`app_hostkey.c`)
 - **Normal:** "NEW HOST KEY", host and port, fingerprint in a box
   (2 x 32 hex), Trust &amp; Connect / Cancel. Trust is the default.
+  Old look.
 - **Mismatch:** red theme, hazard tape, "HOST KEY CHANGED", Replace key
   / Cancel. Cancel is the default. Replace arms on the first tap and
   fires on the second. The host name is not shown. `Y` replaces at once.
 - The key type is not shown in either.
+- **Model:** `mo-hostkey` and `mo-hostkey-changed`. Replace asks on the
+  question page instead of arming.
 
 ### UNLOCK (`app_unlock.c`)
-- **Flavours:** device gate, connect-time unlock, set or change code
-  (old, new, confirm), remove keystore.
-- **Shows:** title, a corner tag, one slot per character, a status
-  (deriving, denied, retry countdown), a 3 x 4 pad (1-9, DEL, 0, OK).
+- **Flavours:** device gate (no back target), connect-time unlock, set
+  or change code (old, new, confirm), remove keystore. Flows have a
+  back target; Esc or a 60 s idle also leave them.
+- **Shows:** a title and a note per phase, an entry panel, a 3 x 4 pad
+  (1-9, erase, 0, OK). The panel shows the known code length as bullets
+  and muted dots, the newest character while a code is defined,
+  "Checking" while the key is derived, a red note (wrong code, codes do
+  not match) and the backoff seconds.
 - **Input:** pad taps; keys for any character. Input is swallowed for
-  1-2 s while the key is derived.
-- **Leaving:** the gate has no exit. Other flavours: Esc or idle.
+  1-2 s while the key is derived. Keys never light a pad key.
 
 ### MENU (`app_menu.c`, `app_menu_defs.c`)
-Reached from HOME's Configuration tile, or over a dimmed session by F12
-or long-press. A header that is the back target, and a two-column grid
-of cards. Tapping outside a card also goes back.
+One screen, three pages. The session sheet opens over a dimmed
+terminal by F12 or a long-press: Reset terminal, Setup, Disconnect, with
+uptime and link time. The setup hub is a tile per section. A section
+shows switches, choices and actions on one page; a long one pages.
 
-| Page | Items |
-|------|-------|
-| MENU (in session) | Resume session, Reset terminal, Disconnect, Configuration. Shows uptime and link time. |
-| CONFIGURATION | Profiles, Wi-Fi, Keyboard, CRT FX, Motion FX, Font, System, Keystore |
-| PROFILES | Add, Edit, Reorder, Delete, Import |
-| IMPORT | SoftAP (phone), Web (PC) |
-| WIFI | Reconnect, Add network (phone) |
-| KEYBOARD | Pair keyboard, Forget bonds (two-step) |
-| SYSTEM | Saver + lock after (1/3/5/10/30 min), Edge scroll (on/off), Clear host keys (two-step), Factory reset (two-step) |
-| CRT FX | Scanlines (off/on), Phosphor (color/green/amber), Bold pop (off/on) |
-| MOTION FX | Wobble (off/subtle/medium/deep), Wipe in (off/0.3 s/0.6 s), Collapse (off/0.2 s/0.5 s), Static (off/light/heavy) |
-| FONT | 8x16, 10x20, 12x24; a tap saves and reboots |
-| KEYSTORE | Lock deck, Create keystore or Change code, Remove code |
+| Section | Items |
+|---------|-------|
+| Hosts | Import from phone, Import from PC |
+| Wi-Fi | Reconnect, Add network (phone) |
+| Keyboard | Pair keyboard, Forget bonds (asks) |
+| CRT FX | Scanlines, Bold pop, Phosphor; Row glow and Glow decay when built |
+| Motion FX | Wobble, Wipe in, Collapse, Static |
+| Font | Size 8x16, 10x20, 12x24 (asks, then restarts) |
+| System | Saver + lock (1/3/5/10/30 min), Edge scroll, Clear host keys (asks), Factory reset (asks) |
+| Keystore | Lock deck, Create keystore or Change code, Remove code |
 
-**Pickers** (Edit, Delete, Reorder): a 40-wide scrolling list, 5 rows
-visible at 66x20 for up to 8 profiles. Delete is two-step. Reorder:
-first tap grabs, arrows move, a tap on another row swaps the two.
+Edit, delete and reorder moved to the host page; the pickers are gone.
 
-### PROFILE EDITOR (`app_profile.c`)
-- **Fields:** Name, Host, Port, User, Auth (password / key), Pass or
-  Phrase (masked), Key (cycles up to 8 key ids; key auth only).
-- **Input:** tap focuses a row; tap toggles Auth and steps Key forward.
-  Typing, caret moves and stepping Key backward need the keyboard. Rows
-  are one cell tall at 66x20.
-- **Errors, inline:** name required, no `[` or `]`, host required, user
-  required, bad port, no key, name in use, list full, save failed.
+### HOST FORM (`app_profile.c`)
+- **Shows:** Name, User, Host, Port, Sign-in chips (password, key). With
+  a password: the Password entry and a show switch. With a key: the Key
+  part (id, type, place in the list) and the Passphrase entry with its
+  show switch. A Save button in the header, off while the form is
+  invalid. One alert line under the last row.
+- **Input:** an entry types in place with a movable caret. Tab walks the
+  controls and opens an entry for typing. Port takes digits only.
+- **Errors, inline:** port, name, address and user rules; no stored key;
+  and, from the save, name in use, list full, could not save, host gone,
+  unlock the deck first.
+- **Leaving:** back leaves at once when nothing changed, else asks on
+  the question page.
 
 ### PAIRING (`app_pairing.c`)
 Scan list (up to 8 found; 7 fit at 66 and 80 columns), Forget bonds
 (two-step), Cancel. Closes itself after 30 s idle. No passkey prompt
-ever appears.
+ever appears. Old look.
 
 ### WIFIPROV, SSHIMPORT
 Instruction screens for a phone or a browser: a QR code, numbered
@@ -160,10 +178,9 @@ chip expansion, a status page, a keystore chip, a summon in session.
 
 ## Layout literals that assume a grid
 
-`cols >= 97` and `rows >= 22/24/28` branches in home, profile, unlock,
-hostkey, wifiprov, sshimport and `ui_parts.c`. Fixed columns and widths
-in hostkey (rows 5-11, box 43), connecting (bar 42), pickers (40 wide),
-saver (`head[100]`).
+`cols >= 97` and `rows >= 22/24/28` branches in `ui_parts.c`, hostkey,
+wifiprov and sshimport. Fixed columns and widths in hostkey (rows 5-11,
+box 43), connecting (bar 42), pairing and saver (`head[100]`).
 
 ## Not determined
 

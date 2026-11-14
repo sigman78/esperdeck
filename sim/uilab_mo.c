@@ -1,5 +1,5 @@
 /*
- * uilab_mo.c — the lab's slate screens, drawn with the kit's parts.
+ * uilab_mo.c - the lab's slate screens, drawn with the kit's parts.
  * Each screen ports a sketch in tools/uimock/sketches-mo.js and carries
  * the name of its MO_GATE frame. The gate compares both cell by cell.
  */
@@ -122,20 +122,30 @@ static void scr_parts(void)
 
 /* The host form in a known state. */
 typedef struct {
-    char name[40], user[40], host[40], port[12], pass[40];
-    bool key, show;
+    char name[40], user[40], host[72], port[12], pass[40], keyid[40];
+    bool by_key, show;
 } form_t;
 
 typedef struct {
     bool is_new;
     form_t f;
     form_t was;               /* the form as loaded: what "changed" means */
+    char orig[40];            /* the host name at entry, for the title    */
     int edit;                 /* index of the field in typing, else -1    */
+    int caret;                /* caret of that field, -1 = after the last */
+    int nkeys;                /* stored keys: the first nkeys of LAB_KEYS */
 } edit_t;
+
+#define LONG_HOST "edge-gateway-03.eu-west-2.compute.internal.example-corp.co.uk"
+
+static const struct { const char *id, *type; } LAB_KEYS[2] = {
+    { "deck-ed25519", "ssh-ed25519" }, { "work-rsa", "ssh-rsa" },
+};
 
 static form_t base_form(void)
 {
-    return (form_t){ "homelab", "root", "192.168.1.10", "22", "hunter22" };
+    return (form_t){ .name = "homelab", .user = "root", .host = "192.168.1.10",
+                     .port = "22", .pass = "hunter22" };
 }
 
 /* "user@host:port  key" in parts, as moParse does. */
@@ -147,7 +157,8 @@ static form_t form_of(const lab_profile_t *p)
     snprintf(f.user, sizeof f.user, "%.*s", (int)(at - p->where), p->where);
     snprintf(f.host, sizeof f.host, "%.*s", (int)(colon - at - 1), at + 1);
     snprintf(f.pass, sizeof f.pass, "hunter22");
-    f.key = strstr(colon, "key") != NULL;
+    f.by_key = strstr(colon, "key") != NULL;
+    if (f.by_key) snprintf(f.keyid, sizeof f.keyid, "%s", LAB_KEYS[0].id);
     colon++;
     snprintf(f.port, sizeof f.port, "%.*s", (int)strspn(colon, "0123456789"),
              colon);
@@ -158,7 +169,8 @@ static bool same_form(const form_t *a, const form_t *b)
 {
     return !strcmp(a->name, b->name) && !strcmp(a->user, b->user) &&
            !strcmp(a->host, b->host) && !strcmp(a->port, b->port) &&
-           !strcmp(a->pass, b->pass) && a->key == b->key && a->show == b->show;
+           !strcmp(a->pass, b->pass) && !strcmp(a->keyid, b->keyid) &&
+           a->by_key == b->by_key && a->show == b->show;
 }
 
 static bool port_ok(const char *s)
@@ -173,6 +185,27 @@ static bool port_ok(const char *s)
     return v >= 1;
 }
 
+/* Right text of the Key part, @p cap cells at most. It holds the id, the
+ * type and the list place, as far as they fit. */
+static void key_text(char *out, size_t sz, const char *key, int nkeys, int cap)
+{
+    int at = -1;
+    for (int i = 0; i < nkeys; i++)
+        if (!strcmp(LAB_KEYS[i].id, key)) at = i;
+    if (at < 0) {
+        if (key[0]) snprintf(out, sz, "%.*s (missing)", cap - 10, key);
+        else        snprintf(out, sz, "none stored");
+        return;
+    }
+    const char *id = LAB_KEYS[at].id, *type = LAB_KEYS[at].type;
+    char pos[24] = "";
+    if (nkeys > 1) snprintf(pos, sizeof pos, " %d/%d", at + 1, nkeys);
+    if ((int)(strlen(id) + strlen(type) + strlen(pos)) + 2 <= cap)
+        snprintf(out, sz, "%s  %s%s", id, type, pos);
+    else
+        snprintf(out, sz, "%.*s%s", cap - (int)strlen(pos), id, pos);
+}
+
 static void draw_edit(const edit_t *st)
 {
     static const char *const AUTH[2] = { "password", "key" };
@@ -185,16 +218,21 @@ static void draw_edit(const edit_t *st)
     const bool changed = !same_form(f, &st->was);
     const bool port_bad = !port_ok(f->port);
     const bool name_bad = !f->name[0], host_bad = !f->host[0];
+    const bool user_bad = !f->user[0], key_bad = f->by_key && !f->keyid[0];
     /* An untouched new form shows no red yet. Save stays off until valid. */
     const char *msg_port = port_bad ? "Port: a number from 1 to 65535." : NULL;
     const char *msg_name = name_bad && changed ? "A host needs a name." : NULL;
     const char *msg_host = host_bad && changed ? "A host needs an address." : NULL;
-    const bool wrong = port_bad || name_bad || host_bad;
-    const char *alert = msg_port ? msg_port : msg_name ? msg_name : msg_host;
+    const char *msg_user = user_bad && changed ? "A host needs a user." : NULL;
+    const bool wrong = port_bad || name_bad || host_bad || user_bad || key_bad;
+    const char *alert = msg_port ? msg_port : msg_name ? msg_name
+                      : msg_host ? msg_host : msg_user ? msg_user
+                      : key_bad ? "No stored key. Setup, Hosts imports one."
+                                : NULL;
 
     char title[64];
     if (st->is_new) snprintf(title, sizeof title, "New host");
-    else            snprintf(title, sizeof title, "Edit %s", f->name);
+    else            snprintf(title, sizeof title, "Edit %s", st->orig);
     ui_rect_t head = pg.header;
     ui_pill(&head, MO_PILL, "Save", UI_TONE_SOLID, OVERLAY_COL_GREEN,
             wrong ? UI_PART_OFF : 0);
@@ -204,10 +242,11 @@ static void draw_edit(const edit_t *st)
     const struct { const char *label, *value; int lw; bool mask; const char *bad; }
     fld[5] = {
         { "Name", f->name, 0, false, msg_name },
-        { "User", f->user, 0, false, NULL },
+        { "User", f->user, 0, false, msg_user },
         { "Host", f->host, 0, false, msg_host },
         { "Port", f->port, 6, false, msg_port },
-        { "Password", f->pass, 0, !f->show, NULL },
+        { f->by_key ? "Passphrase" : "Password", f->pass, f->by_key ? 12 : 0,
+          !f->show, NULL },
     };
     const ui_rect_t cell[4] = {
         ui_rect(body.x, body.y, half, 3),
@@ -216,46 +255,61 @@ static void draw_edit(const edit_t *st)
         ui_rect(body.x + wide + gx, body.y + 3, port_w, 3),
     };
     for (int i = 0; i < 4; i++)
-        ui_entry(cell[i], (ui_id_t)(MO_FIELD + i), fld[i].label, fld[i].value,
-                 fld[i].lw,
-                 (uint8_t)((st->edit == i ? UI_ENTRY_EDIT : 0) |
-                           (fld[i].mask ? UI_ENTRY_MASK : 0) |
-                           (fld[i].bad ? UI_ENTRY_BAD : 0)));
+        ui_entry_at(cell[i], (ui_id_t)(MO_FIELD + i), fld[i].label,
+                    fld[i].value, fld[i].lw,
+                    (uint8_t)((st->edit == i ? UI_ENTRY_EDIT : 0) |
+                              (fld[i].bad ? UI_ENTRY_BAD : 0)),
+                    st->edit == i && st->caret >= 0 ? st->caret
+                                                    : ui_len(fld[i].value));
     int y = body.y + 6;
     ui_chips(ui_rect(body.x, y, body.w, 3), MO_OPT, "Sign-in", AUTH, 2,
-             f->key ? 1 : 0, 0, 12);
+             f->by_key ? 1 : 0, 0, 12);
     y += 3;
-    if (!f->key) {
-        ui_entry(ui_rect(body.x, y, half, 3), MO_FIELD + 4, fld[4].label,
-                 fld[4].value, fld[4].lw,
-                 (uint8_t)((st->edit == 4 ? UI_ENTRY_EDIT : 0) |
-                           (fld[4].mask ? UI_ENTRY_MASK : 0)));
-        ui_switch(ui_rect(body.x + half + gx, y, ui_switch_w("Show password"),
-                          3),
-                  MO_OPT + 4, "Show password", f->show, UI_PART_ROOMY);
-    } else {
-        const char *key = "deck-ed25519 " UI_S_CHEVRON;
-        ui_part(ui_rect(body.x, y, ui_act_w("Key", key), 3), MO_OPT + 5,
-                &(ui_part_t){ .title = "Key", .right = key,
-                              .flags = UI_PART_RIGHT_BOLD | UI_PART_ROOMY },
+    if (f->by_key) {
+        char right[96];
+        key_text(right, sizeof right, f->keyid, st->nkeys, body.w - 12);
+        ui_part(ui_rect(body.x, y, ui_act_w("Key", right), 3), MO_OPT + 5,
+                &(ui_part_t){ .title = "Key", .right = right,
+                              .flags = (uint8_t)(UI_PART_RIGHT_BOLD |
+                                  UI_PART_ROOMY |
+                                  (st->nkeys ? 0 : UI_PART_OFF)) },
                 NULL);
+        y += 3;
+    }
+    const char *toggle = f->by_key ? "Show passphrase" : "Show password";
+    ui_entry_at(ui_rect(body.x, y, half, 3), MO_FIELD + 4, fld[4].label,
+                fld[4].value, fld[4].lw,
+                (uint8_t)((st->edit == 4 ? UI_ENTRY_EDIT : 0) |
+                          (fld[4].mask ? UI_ENTRY_MASK : 0)),
+                st->edit == 4 && st->caret >= 0 ? st->caret
+                                                : ui_len(fld[4].value));
+    ui_switch(ui_rect(body.x + half + gx, y, ui_switch_w(toggle), 3),
+              MO_OPT + 4, toggle, f->show, UI_PART_ROOMY);
+    y += 3;
+    if (alert && y < body.y + body.h) {
+        ui_pen(OVERLAY_COL_RED);
+        ui_text(ui_rect(body.x + 2, y, body.w - 4, 1), alert, UI_TEXT | UI_BOLD,
+                UI_LEFT);
+        ui_pen(OVERLAY_COL_DEFAULT);
     }
     if (st->edit >= 0)
         mo_status(pg.status, "Type on the keyboard.",
                   "type  " UI_S_ENTER " done  " UI_S_UP UI_S_DOWN " leave",
-                  alert);
+                  NULL);
     else
         mo_status(pg.status, "Tap a field to change it.",
-                  UI_S_ENTER " change  Esc cancel", alert);
+                  UI_S_ENTER " change  Esc cancel", NULL);
 }
 
 static edit_t edit_state(int n)
 {
-    edit_t e = { .edit = -1 };
+    edit_t e = { .edit = -1, .caret = -1, .nkeys = 2 };
     e.f = e.was = form_of(&PROFILES[0]);
+    snprintf(e.orig, sizeof e.orig, "%s", PROFILES[0].name);
     switch (n) {
     case 1:                                    /* a new, empty form      */
         e.is_new = true;
+        e.orig[0] = 0;
         e.f = e.was = (form_t){ .port = "22" };
         break;
     case 2:                                    /* typing in the host     */
@@ -269,9 +323,26 @@ static edit_t edit_state(int n)
         e.f.name[0] = 0;
         snprintf(e.f.port, sizeof e.f.port, "70000");
         break;
-    case 4:                                    /* key sign-in            */
+    case 4:                                    /* key sign-in, two keys  */
         e.f = e.was = base_form();
-        e.f.key = true;
+        e.f.by_key = true;
+        snprintf(e.f.keyid, sizeof e.f.keyid, "%s", LAB_KEYS[0].id);
+        break;
+    case 5:                                    /* key sign-in, no key    */
+        e.f = e.was = base_form();
+        e.f.by_key = true;
+        e.nkeys = 0;
+        break;
+    case 6:                                    /* caret in a long host   */
+        e.f = e.was = base_form();
+        snprintf(e.f.host, sizeof e.f.host, "%s", LONG_HOST);
+        e.edit = 2;
+        e.caret = 24;
+        break;
+    case 7:                                    /* caret in the secret    */
+        e.f = e.was = base_form();
+        e.edit = 4;
+        e.caret = 3;
         break;
     default: break;
     }
@@ -289,6 +360,9 @@ static void scr_edit_new(void)    { draw_edit_n(1); }
 static void scr_edit_typing(void) { draw_edit_n(2); }
 static void scr_edit_bad(void)    { draw_edit_n(3); }
 static void scr_edit_key(void)    { draw_edit_n(4); }
+static void scr_edit_nokey(void)  { draw_edit_n(5); }
+static void scr_edit_caret(void)  { draw_edit_n(6); }
+static void scr_edit_secret(void) { draw_edit_n(7); }
 
 /* "user@host:port  key" in parts, as moParse does. */
 typedef struct { char user[40], host[48], port[12]; bool key; } where_t;
@@ -650,33 +724,116 @@ static void draw_list(int lpage, int joined)
 static void scr_list(void)   { draw_list(0, 0); }
 static void scr_list_2(void) { draw_list(1, 12); }
 
+/* The pad in a known state. A flow has a back target; the device gate
+ * has none. */
+enum { UP_UNLOCK, UP_OLD, UP_NEW, UP_CONFIRM, UP_REMOVE };
+
+typedef struct {
+    const char *code;         /* the typed characters                      */
+    int         expected;     /* known code length, 0 when unknown         */
+    int         phase;        /* UP_*                                      */
+    bool        creating, flow, resume, deriving;
+    const char *note;         /* a red line, or NULL                       */
+    int         wait;         /* seconds left of a backoff                 */
+    char        reveal;       /* the newest character echoed, 0 for none  */
+} unlock_t;
+
+static void unlock_head(const unlock_t *u, const char **title,
+                        const char **note)
+{
+    switch (u->phase) {
+    case UP_OLD:
+        *title = "Change code";
+        *note  = "Enter the current code";
+        break;
+    case UP_NEW:
+    case UP_CONFIRM:
+        *title = u->creating ? "Create keystore" : "Change code";
+        *note  = u->phase == UP_NEW ? "Choose a new code, 4 or more"
+                                    : "Enter the new code again";
+        break;
+    case UP_REMOVE:
+        *title = "Remove code";
+        *note  = "Enter the code to remove it";
+        break;
+    default:
+        *title = u->flow ? "Keystore locked" : "Deck locked";
+        *note  = u->resume ? "Enter the access code to connect"
+                           : "Enter the access code";
+        break;
+    }
+}
+
+/* Bullets for the taken characters, muted dots for those still to come. */
+static void draw_code_row(ui_rect_t line, const unlock_t *u, int len)
+{
+    const ui_code_t c = ui_code_plan(len, u->expected, line.w);
+    const int step = c.spaced ? 2 : 1;
+    int x = line.x + (line.w - c.width) / 2;
+
+    ui_pen(OVERLAY_COL_DEFAULT);
+    for (int i = 0; i < c.bullets + c.dots; i++, x += step) {
+        if (i >= c.bullets)
+            ui_putch(x, line.y, 0xB7, UI_PANEL_MUTED);
+        else if (i == c.bullets - 1 && u->reveal)
+            ui_putch(x, line.y, (uint16_t)(uint8_t)u->reveal,
+                     UI_PANEL | UI_BOLD);
+        else
+            ui_putch(x, line.y, 0x2022, UI_PANEL | UI_BOLD);
+    }
+}
+
+static void draw_entry_panel(ui_rect_t entry, const unlock_t *u, int len)
+{
+    const ui_rect_t line = ui_rect(entry.x + 2, entry.y + 1, entry.w - 4, 1);
+    char msg[64];
+
+    ui_panel(entry, u->note && !u->deriving ? OVERLAY_COL_RED : 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    if (u->deriving) {
+        char glyph[8];
+        ui_utf8_put(glyph, spinner_glyph(lab_frame));
+        snprintf(msg, sizeof msg, "%s Checking", glyph);
+        ui_text(line, msg, UI_PANEL | UI_BOLD, UI_CENTER);
+    } else if (u->note) {
+        if (u->wait > 0 && !len)
+            snprintf(msg, sizeof msg, "%s, wait %d s", u->note, u->wait);
+        else
+            snprintf(msg, sizeof msg, "%s", u->note);
+        ui_pen(OVERLAY_COL_RED);
+        ui_text(line, msg, UI_PANEL | UI_BOLD, UI_CENTER);
+    } else if (u->wait > 0 && !len) {
+        snprintf(msg, sizeof msg, "Wait %d s", u->wait);
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_text(line, msg, UI_PANEL | UI_BOLD, UI_CENTER);
+    } else if (!len) {
+        ui_text(line, u->phase == UP_NEW || u->phase == UP_CONFIRM
+                          ? "new code" : "access code",
+                UI_PANEL_MUTED, UI_CENTER);
+    } else {
+        draw_code_row(line, u, len);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
 /* Access code pad. Keys are three rows high, so a digit sits centered. */
-static void draw_unlock(const char *code, bool wrong_try)
+static void draw_unlock(const unlock_t *u)
 {
     static const char *const KEYS[12] = { "1", "2", "3", "4", "5", "6", "7",
                                           "8", "9", UI_S_LEFT, "0", "OK" };
     ui_slate_t pg = ui_slate_page();
-    const bool wrong = wrong_try && !*code;
-    char shown[64] = "";
+    const int len = (int)strlen(u->code);
+    const char *title, *note;
 
-    ui_title(pg.header, NULL, "Deck locked", "Enter the access code", false);
+    unlock_head(u, &title, &note);
+    ui_title(pg.header, NULL, title, note, u->flow);
     const int kw = 9;
     ui_rect_t pad = ui_center(pg.body, 3 * kw + 2, 15);
-    const ui_rect_t entry = ui_cut_top(&pad, 3);
-    ui_panel(entry, wrong ? OVERLAY_COL_RED : 0);
-    ui_pen(wrong ? OVERLAY_COL_RED : OVERLAY_COL_DEFAULT);
-    if (*code) {
-        for (const char *c = code; *c; c++)
-            strcat(shown, c == code ? UI_S_BULLET : " " UI_S_BULLET);
-    }
-    ui_text(ui_rect(entry.x + 2, entry.y + 1, entry.w - 4, 1),
-            *code ? shown : wrong ? UI_S_CROSS " wrong code" : "access code",
-            *code || wrong ? UI_PANEL | UI_BOLD : UI_PANEL_MUTED, UI_CENTER);
-    ui_pen(OVERLAY_COL_DEFAULT);
+    draw_entry_panel(ui_cut_top(&pad, 3), u, len);
     for (int i = 0; i < 12; i++) {
         const ui_rect_t r = ui_rect(pad.x + (i % 3) * (kw + 1),
                                     pad.y + (i / 3) * 3, kw, 3);
-        const uint8_t off = *code ? 0 : UI_PART_OFF;
+        const uint8_t off = len ? 0 : UI_PART_OFF;
         if (i == 9)
             ui_push(r, (ui_id_t)(MO_KEY + i), KEYS[i], UI_TONE_CARD, 0, off);
         else if (i == 11)
@@ -686,59 +843,117 @@ static void draw_unlock(const char *code, bool wrong_try)
             ui_push(r, (ui_id_t)(MO_KEY + i), KEYS[i], UI_TONE_CARD, 0, 0);
     }
     mo_status(pg.status, "Tap digits, or type the code.",
-              "0-9 type  " UI_S_ENTER " unlock",
-              wrong ? "Wrong code. Try again." : NULL);
+              "0-9 type  " UI_S_ENTER " unlock", NULL);
 }
 
-static void scr_unlock(void)       { draw_unlock("", false); }
-static void scr_unlock_code(void)  { draw_unlock("12", false); }
-static void scr_unlock_wrong(void) { draw_unlock("", true); }
+static void scr_unlock(void)       { draw_unlock(&(unlock_t){ "" }); }
+static void scr_unlock_code(void)  { draw_unlock(&(unlock_t){ "12" }); }
+static void scr_unlock_known(void)
+{
+    draw_unlock(&(unlock_t){ "12", .expected = 6 });
+}
+static void scr_unlock_wrong(void)
+{
+    draw_unlock(&(unlock_t){ "", .note = UI_S_CROSS " wrong code", .wait = 12 });
+}
+static void scr_unlock_wait(void)  { draw_unlock(&(unlock_t){ "", .wait = 12 }); }
+static void scr_unlock_check(void)
+{
+    draw_unlock(&(unlock_t){ "", .deriving = true });
+}
+static void scr_unlock_new(void)
+{
+    draw_unlock(&(unlock_t){ "ab7", .phase = UP_NEW, .creating = true,
+                             .flow = true, .reveal = '7' });
+}
+static void scr_unlock_mismatch(void)
+{
+    draw_unlock(&(unlock_t){ "", .phase = UP_NEW, .flow = true,
+                             .note = "The codes do not match" });
+}
+static void scr_unlock_resume(void)
+{
+    draw_unlock(&(unlock_t){ "1", .expected = 4, .flow = true,
+                             .resume = true });
+}
 
-/* Connecting: the steps so far and a way out. The failed form shows the
- * same panel after a refused sign-in. */
-static void draw_connect(bool fail)
+/* Wrap @p text into at most two lines of @p w cells (ASCII). The first
+ * line breaks at the last space that fits; the rest goes on the second
+ * line whole. Returns the line count. */
+static int wrap2(const char *text, int w, char *l1, char *l2, size_t sz)
+{
+    const int n = (int)strlen(text);
+    if (n <= w) {
+        snprintf(l1, sz, "%s", text);
+        l2[0] = 0;
+        return 1;
+    }
+    int cut = w;
+    while (cut > 0 && text[cut] != ' ') cut--;
+    if (cut <= 0) cut = w;
+    snprintf(l1, sz, "%.*s", cut, text);
+    const char *rest = text + cut;
+    while (*rest == ' ') rest++;
+    snprintf(l2, sz, "%s", rest);
+    return 2;
+}
+
+/* Connecting: what the shell knows, and a way out. @p retry shows the
+ * wait before the next try. The failed form is a red panel after a
+ * refused sign-in; @p lng gives it a reason that wraps. */
+static void draw_connect(bool fail, bool retry, bool lng)
 {
     ui_slate_t pg = ui_slate_page();
     const lab_profile_t *p = &PROFILES[0];
     const where_t w = parse_where(p->where);
-    ui_rect_t box = ui_center(pg.area, 46, 11);
-    const ui_rect_t card = ui_cut_top(&box, 8);
-    char wifi[] = "Wi-Fi  HomeAP", reach[80], head[64], user[64], spin[8];
+    char head[64], addr[96];
 
-    snprintf(reach, sizeof reach, "Reach  %s port %s", w.host, w.port);
+    snprintf(addr, sizeof addr, "%s@%s port %s", w.user, w.host, w.port);
     if (fail) {
+        const char *reason = lng ? "the server offered no method the deck supports"
+                                 : "wrong password";
+        char refused[128], l1[128], l2[128];
+        snprintf(refused, sizeof refused, "Sign in refused: %s", reason);
+        /* The value column: the panel less 4, less the label column and its gap. */
+        const int nl = wrap2(refused, 46 - 4 - 3, l1, l2, sizeof l1);
         snprintf(head, sizeof head, "No session on %s", p->name);
-        const ui_info_row_t rows[6] = {
+        ui_info_row_t rows[5] = {
             { UI_S_CROSS, head, OVERLAY_COL_WHITE, OVERLAY_COL_RED },
             { "", "" },
-            { UI_S_CHECK, wifi, 0, OVERLAY_COL_GREEN },
-            { UI_S_CHECK, reach, 0, OVERLAY_COL_GREEN },
-            { UI_S_CHECK, "Key exchange", 0, OVERLAY_COL_GREEN },
-            { UI_S_CROSS, "Sign in: password refused", OVERLAY_COL_RED,
-              OVERLAY_COL_RED },
+            { "", l1 },
         };
-        ui_info(card, rows, 6, OVERLAY_COL_RED);
+        int n = 3;
+        if (nl == 2) rows[n++] = (ui_info_row_t){ "", l2 };
+        rows[n++] = (ui_info_row_t){ "", addr };
+        ui_rect_t box = ui_center(pg.area, 46, n + 5);
+        const ui_rect_t card = ui_cut_top(&box, n + 2);
+        ui_info(card, rows, n, OVERLAY_COL_RED);
+        ui_focus_default(MO_BTN + 1);
         ui_flow_t f = ui_flow(box, pg.m.gutter, 3);
         ui_push(ui_flow_next(&f, ui_push_w("Back")), MO_BTN, "Back",
                 UI_TONE_CARD, 0, 0);
-        ui_push(ui_flow_next(&f, ui_push_w("Edit host")), MO_BTN + 1,
+        ui_push(ui_flow_next(&f, ui_push_w("Try again")), MO_BTN + 1,
+                "Try again", UI_TONE_CARD, 0, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Edit host")), MO_BTN + 2,
                 "Edit host", UI_TONE_SOLID, OVERLAY_COL_BLUE, 0);
         mo_status(pg.status, "", UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER
-                  " choose", "Sign in failed.");
+                  " choose", NULL);
         return;
     }
+    ui_rect_t box = ui_center(pg.area, 46, 10);
+    const ui_rect_t card = ui_cut_top(&box, 7);
+    char spin[8];
     ui_utf8_put(spin, spinner_glyph(lab_frame + 2));
-    snprintf(head, sizeof head, "Connecting to %s", p->name);
-    snprintf(user, sizeof user, "Sign in as %s", w.user);
-    const ui_info_row_t rows[6] = {
+    snprintf(head, sizeof head, "%s %s", retry ? "Retrying" : "Connecting to",
+             p->name);
+    const ui_info_row_t rows[5] = {
         { spin, head, OVERLAY_COL_WHITE, OVERLAY_COL_AMBER },
         { "", "" },
-        { UI_S_CHECK, wifi, 0, OVERLAY_COL_GREEN },
-        { UI_S_CHECK, reach, 0, OVERLAY_COL_GREEN },
-        { UI_S_CHEVRON, "Key exchange", OVERLAY_COL_WHITE, OVERLAY_COL_AMBER },
-        { UI_S_MIDDOT, user },
+        { UI_S_CHECK, "Wi-Fi  HomeAP", 0, OVERLAY_COL_GREEN },
+        { "", addr },
+        { "", retry ? "Next try in 3 s" : "Try 2, 14 s" },
     };
-    ui_info(card, rows, 6, prof_accent(p->name));
+    ui_info(card, rows, 5, prof_accent(p->name));
     ui_push(ui_rect(box.x, box.y, ui_push_w("Cancel"), 3), MO_BTN, "Cancel",
             UI_TONE_CARD, 0, 0);
     ui_hot(card, MO_ROW);
@@ -746,8 +961,86 @@ static void draw_connect(bool fail)
               UI_S_ENTER " cancel", NULL);
 }
 
-static void scr_connect(void) { draw_connect(false); }
-static void scr_fail(void)    { draw_connect(true); }
+static void scr_connect(void)       { draw_connect(false, false, false); }
+static void scr_connect_retry(void) { draw_connect(false, true, false); }
+static void scr_fail(void)          { draw_connect(true, false, false); }
+static void scr_fail_long(void)     { draw_connect(true, false, true); }
+
+/* The host-key pages: a text panel, the fingerprint panel and one row of
+ * buttons under a back header. A changed key has a red stripe, and
+ * Cancel holds the first focus. */
+#define HK_FP "3f9a1c7e5b02d84a6c19e7f30b5d28a41e6c7f902ab3d5c8e1f4067a9b2d3c58"
+
+static void draw_hostkey(bool changed)
+{
+    ui_slate_t pg = ui_slate_page();
+    const lab_profile_t *p = &PROFILES[0];
+    const where_t w = parse_where(p->where);
+    char l[3][96];
+    int n;
+
+    ui_title(pg.header, NULL, changed ? "Host key changed" : "New host key",
+             NULL, true);
+    if (changed) {
+        snprintf(l[0], sizeof l[0], "The key of %s differs from the pinned one.",
+                 w.host);
+        snprintf(l[1], sizeof l[1],
+                 "Replace it only if you know the server got a new key.");
+        n = 2;
+    } else {
+        snprintf(l[0], sizeof l[0], "First connection to %s,", p->name);
+        snprintf(l[1], sizeof l[1], "%s port %s.", w.host, w.port);
+        snprintf(l[2], sizeof l[2], "Compare the fingerprint before you trust it.");
+        n = 3;
+    }
+    const ui_rect_t card = ui_cut_top(&pg.body, n + 2);
+    ui_panel(card, changed ? OVERLAY_COL_RED : 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    for (int i = 0; i < n; i++)
+        ui_text(ui_rect(card.x + 2, card.y + 1 + i, card.w - 4, 1), l[i],
+                i == n - 1 ? UI_PANEL_MUTED : UI_PANEL, UI_LEFT);
+    const ui_rect_t fp = ui_cut_top(&pg.body, 5);
+    ui_panel(fp, 0);
+    ui_pen(OVERLAY_COL_CYAN);
+    ui_text(ui_rect(fp.x + 2, fp.y + 1, fp.w - 4, 1), "SHA256", UI_PANEL_MUTED,
+            UI_LEFT);
+    ui_pen(OVERLAY_COL_WHITE);
+    for (int row = 0; row < 2; row++) {
+        char groups[40] = "";
+        for (int g = 0; g < 8; g++)
+            snprintf(groups + strlen(groups), sizeof groups - strlen(groups),
+                     "%s%.4s", g ? " " : "", HK_FP + row * 32 + g * 4);
+        ui_text(ui_rect(fp.x + 2, fp.y + 2 + row, fp.w - 4, 1), groups,
+                UI_PANEL | UI_BOLD, UI_LEFT);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_flow_t f = ui_flow(pg.body, pg.m.gutter, 3);
+    if (changed) {
+        ui_push(ui_flow_next(&f, ui_push_w("Cancel")), MO_BTN, "Cancel",
+                UI_TONE_CARD, 0, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Replace key")), MO_BTN + 1,
+                "Replace key", UI_TONE_TINT, OVERLAY_COL_RED, 0);
+    } else {
+        ui_push(ui_flow_next(&f, ui_push_w("Trust and connect")), MO_BTN,
+                "Trust and connect", UI_TONE_SOLID, OVERLAY_COL_GREEN, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Cancel")), MO_BTN + 1, "Cancel",
+                UI_TONE_CARD, 0, 0);
+    }
+    mo_status(pg.status, "The bar at the top goes back.",
+              UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER " choose  Esc cancel",
+              NULL);
+}
+
+static void scr_hostkey(void)         { draw_hostkey(false); }
+static void scr_hostkey_changed(void) { draw_hostkey(true); }
+
+static void scr_confirm_replace(void)
+{
+    draw_confirm(&(ask_t){ "Replace the pinned key?", "Replace",
+                           { "A changed key can mean an attack.",
+                             "The old pin is lost." },
+                           OVERLAY_COL_RED });
+}
 
 /* Session menu: a slate sheet at the right over the dimmed terminal. */
 static void scr_menu(void)
@@ -784,12 +1077,17 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-confirm",     scr_confirm,     .slate = true },
     { "mo-confirm-ask", scr_confirm_ask, .slate = true,
       .focus = MO_BTN + 1 },
+    { "mo-confirm-replace", scr_confirm_replace, .slate = true,
+      .focus = MO_BTN },
     { "mo-edit",        scr_edit,        .slate = true },
     { "mo-edit-new",    scr_edit_new,    .slate = true },
     { "mo-edit-typing", scr_edit_typing, .slate = true },
     { "mo-edit-bad",    scr_edit_bad,    .slate = true },
     { "mo-edit-key",    scr_edit_key,    .slate = true,
       .focus = MO_OPT + 5 },
+    { "mo-edit-nokey",  scr_edit_nokey,  .slate = true },
+    { "mo-edit-caret",  scr_edit_caret,  .slate = true },
+    { "mo-edit-secret", scr_edit_secret, .slate = true },
     { "mo-setup",       scr_setup,       .slate = true,
       .focus = MO_HUB + 3 },
     { "mo-section-wifi",   scr_section_wifi,   .slate = true },
@@ -804,10 +1102,23 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-unlock",      scr_unlock,      .slate = true },
     { "mo-unlock-code", scr_unlock_code, .slate = true,
       .down = MO_KEY + 4 },
+    { "mo-unlock-known", scr_unlock_known, .slate = true },
     { "mo-unlock-wrong", scr_unlock_wrong, .slate = true },
+    { "mo-unlock-wait", scr_unlock_wait, .slate = true },
+    { "mo-unlock-check", scr_unlock_check, .slate = true },
+    { "mo-unlock-new",  scr_unlock_new,  .slate = true },
+    { "mo-unlock-mismatch", scr_unlock_mismatch, .slate = true },
+    { "mo-unlock-resume", scr_unlock_resume, .slate = true },
     { "mo-connect",     scr_connect,     .slate = true },
+    { "mo-connect-retry", scr_connect_retry, .slate = true },
     { "mo-fail",        scr_fail,        .slate = true,
       .focus = MO_BTN + 1 },
+    { "mo-fail-long",   scr_fail_long,   .slate = true,
+      .focus = MO_BTN + 1 },
+    { "mo-hostkey",     scr_hostkey,     .slate = true,
+      .focus = MO_BTN },
+    { "mo-hostkey-changed", scr_hostkey_changed, .slate = true,
+      .focus = MO_BTN },
     { "mo-menu",        scr_menu,        .slate = true, .term = true,
       .focus = MO_BTN },
 };

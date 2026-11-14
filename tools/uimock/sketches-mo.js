@@ -13,6 +13,7 @@ import {
   S, C, G, BOLD, LEFT, CENTER, RIGHT, WIDE, COMPACT, ID_BACK,
   rect, cutTop, cutBottom, cutLeft, cutRight, inset, center,
   grid, gridCell, gridCapacity, pageCount, pageClamp, spinnerGlyph, profAccent,
+  entryFirst, codePlan,
 } from './kit.js';
 import { PROFILES, TERM_LINES } from './baseline.js';
 
@@ -380,23 +381,28 @@ function moInfo(ui, r, rows, stripe) {
   ui.pen(C.DEFAULT);
 }
 
-// A form field: label, then the value. Editing lights it and adds a caret.
+// A form field: label, then the value. Editing lights it and puts a caret
+// on character o.caret (default: after the last). A long value scrolls to
+// keep the caret in view, as ui_entry_at does.
 // o.bad marks an invalid value: red stripe, red text, a mark at the end.
 function moField(ui, r, id, label, value, o, act) {
   const p = moPart(ui, r, id, { title: '', accent: C.CYAN, lit: o.edit, stripe: o.bad ? C.RED : 0 }, act);
   if (!p) return;
   const k = p.k, lw = o.lw || 10, vx = p.inn.x + lw, vw = p.inn.w - lw;
-  const cs = Array.from(o.mask ? '•'.repeat(moLen(value)) : value);
-  const shown = o.edit && cs.length > vw - 1 ? cs.slice(cs.length - (vw - 1)).join('') : cs.join('');
+  const cs = Array.from(value), n = cs.length, room = vw - (o.bad ? 2 : 0);
+  const caret = Math.max(0, Math.min(o.caret === undefined ? n : o.caret, n));
+  const first = o.edit && n > room - 1 ? entryFirst(n, caret, room) : 0;
+  const shown = o.mask ? '•'.repeat(n - first) : cs.slice(first).join('');
   ui.pen(k.card ? MO_LABEL : k.pen);
   ui.text(rect(p.inn.x, p.y, lw - 1, 1), label, k.detail, LEFT);
   ui.pen(o.bad && k.card ? C.RED : k.pen);
-  ui.text(rect(vx, p.y, vw - (o.bad ? 2 : 0), 1), shown, k.title, LEFT);
+  ui.text(rect(vx, p.y, room, 1), shown, k.title, LEFT);
   if (o.bad) ui.putch(p.inn.x + p.inn.w - 1, p.y, '!', k.title);
   ui.pen(k.pen);
   if (o.edit) {
+    const under = caret < n ? (o.mask ? '•' : cs[caret]) : ' ';
     ui.pen(C.WHITE);
-    ui.putch(Math.min(vx + moLen(shown), vx + vw - 1), p.y, ' ', S.BAR);
+    ui.putch(Math.min(vx + caret - first, vx + vw - 1), p.y, under, S.BAR);
   }
   ui.pen(C.DEFAULT);
 }
@@ -486,50 +492,67 @@ const MO_FIELDS = [
   { key: 'pass', label: 'Password', mask: true },
 ];
 
+// Keys stored on the deck, as the host form lists them.
+const MO_KEYS = [{ id: 'deck-ed25519', type: 'ssh-ed25519' }, { id: 'work-rsa', type: 'ssh-rsa' }];
+
+// Right text of the Key part, `cap` cells at most. Id, type and place in
+// the list as far as they fit; pf_key_text in app_profile.c.
+function moKeyText(key, keys, cap) {
+  const at = keys.findIndex((k) => k.id === key);
+  if (at < 0) return key ? `${key.slice(0, cap - 10)} (missing)` : 'none stored';
+  const { id, type } = keys[at], pos = keys.length > 1 ? ` ${at + 1}/${keys.length}` : '';
+  if (type && id.length + type.length + pos.length + 2 <= cap) return `${id}  ${type}${pos}`;
+  return `${id.slice(0, cap - pos.length)}${pos}`;
+}
+
 // The host form. Save sits in the header. The header bar is Cancel.
+// st.edit: the entry in typing, else -1. st.caret: its caret. st.keys: the stored keys.
 function moEdit(ui, app) {
   const st = app.state, pg = moPage(ui), isNew = st.host === -1;
   if (!st.form || st.formFor !== st.host) {
     const p = moHostOf(st), w = moParse(p.where);
-    st.form = isNew ? { name: '', user: '', host: '', port: '22', pass: '', auth: 0, show: false }
+    st.form = isNew ? { name: '', user: '', host: '', port: '22', pass: '', auth: 0, key: '', show: false }
       : { name: p.name, user: w.user, host: w.host, port: w.port, pass: 'hunter22',
-          auth: w.key ? 1 : 0, show: false };
+          auth: w.key ? 1 : 0, key: w.key ? MO_KEYS[0].id : '', show: false };
     st.formFor = st.host;
     st.formWas = JSON.stringify(st.form);
+    st.orig = isNew ? '' : p.name;
     st.edit = -1;
   }
-  const f = st.form, body = pg.body, gx = pg.m.gutter;
+  const f = st.form, body = pg.body, gx = pg.m.gutter, keys = st.keys || MO_KEYS;
   moFirst(ui, MO_ID.FIELD);
   const changed = JSON.stringify(f) !== st.formWas;
   const port = /^\d+$/.test(f.port) && +f.port >= 1 && +f.port <= 65535;
   // An untouched new form shows no red yet. Save stays off until it is valid.
-  const bad = {
-    name: f.name ? '' : 'A host needs a name.',
-    host: f.host ? '' : 'A host needs an address.',
-    port: port ? '' : 'Port: a number from 1 to 65535.',
-  };
-  const wrong = bad.port || bad.name || bad.host;
-  const shown = (key) => (bad[key] && (changed || key === 'port') ? bad[key] : '');
+  const bad = { port: !port, name: !f.name, host: !f.host, user: !f.user, key: f.auth === 1 && !f.key };
+  const wrong = Object.values(bad).some(Boolean);
+  const alert = bad.port ? 'Port: a number from 1 to 65535.'
+    : bad.name && changed ? 'A host needs a name.'
+    : bad.host && changed ? 'A host needs an address.'
+    : bad.user && changed ? 'A host needs a user.'
+    : bad.key ? 'No stored key. Setup, Hosts imports one.' : '';
   const leave = () => { st.form = null; app.back(); };
   // A changed form asks first. An unchanged form leaves at once.
   const cancel = () => {
     st.edit = -1;
-    if (JSON.stringify(f) === st.formWas) { leave(); return; }
+    if (!changed) { leave(); return; }
     st.ask = { title: 'Discard the changes?', verb: 'Discard', accent: C.AMBER,
-      lines: ['This host keeps its old values.', ''], yes: () => { app.back(); leave(); } };
+      lines: [isNew ? 'The new host is not stored.' : 'This host keeps its old values.', ''],
+      yes: () => { app.back(); leave(); } };
     app.go('mo-confirm');
   };
   const head = moPills(ui, pg.header, [{ id: MO_ID.PILL, label: 'Save',
-    o: { tone: 'solid', accent: C.GREEN, off: !!wrong }, act: { tap: leave } }]);
-  moHeader(ui, head, { path: 'Hosts', title: isNew ? 'New host' : `Edit ${f.name}`,
+    o: { tone: 'solid', accent: C.GREEN, off: wrong }, act: { tap: leave } }]);
+  moHeader(ui, head, { path: 'Hosts', title: isNew ? 'New host' : `Edit ${st.orig}`,
     back: { tap: cancel } });
   ui.key('Escape', cancel);
   const half = (body.w - gx) >> 1, portW = 17, wide = body.w - gx - portW;
-  const field = (i, r) => {
+  const field = (i, r, label, lw) => {
     const d = MO_FIELDS[i], edit = st.edit === i;
-    moField(ui, r, MO_ID.FIELD + i, d.label, f[d.key],
-      { edit, mask: d.mask && !f.show, lw: d.lw, bad: shown(d.key) },
-      { tap: () => { st.edit = edit ? -1 : i; } });
+    moField(ui, r, MO_ID.FIELD + i, label || d.label, f[d.key],
+      { edit, caret: st.caret, mask: d.mask && !f.show, lw: lw || d.lw,
+        bad: d.key !== 'pass' && bad[d.key] && (changed || d.key === 'port') },
+      { tap: () => { st.edit = edit ? -1 : i; st.caret = Array.from(f[d.key]).length; } });
   };
   let y = body.y;
   field(0, rect(body.x, y, half, 3));
@@ -540,33 +563,57 @@ function moEdit(ui, app) {
   y += 3;
   // The chips start in the fields' value column.
   moChips(ui, rect(body.x, y, body.w, 3), MO_ID.OPT, 'Sign-in', ['password', 'key'], f.auth,
-    (i) => { f.auth = i; st.edit = -1; }, { capW: 12 });
+    (i) => {
+      f.auth = i;
+      if (i && !f.key && keys.length) f.key = keys[0].id;
+      st.edit = -1;
+    }, { capW: 12 });
   y += 3;
-  if (f.auth === 0) {
-    field(4, rect(body.x, y, half, 3));
-    moToggle(ui, rect(body.x + half + gx, y, moToggleW('Show password'), 3), MO_ID.OPT + 4,
-      'Show password', f.show, { pad: 3 }, { tap: () => { f.show = !f.show; } });
-  } else {
-    const key = 'deck-ed25519 ›';
-    moPart(ui, rect(body.x, y, moActW('Key', key), 3), MO_ID.OPT + 5,
-      { title: 'Key', right: key, rightBold: true, pad: 3 }, { tap: () => { app.note = 'key picker'; } });
+  const key = f.auth === 1;
+  if (key) {
+    const right = moKeyText(f.key, keys, body.w - 12);
+    moPart(ui, rect(body.x, y, moActW('Key', right), 3), MO_ID.OPT + 5,
+      { title: 'Key', right, rightBold: true, pad: 3, off: !keys.length }, { tap: () => {
+        const at = keys.findIndex((k) => k.id === f.key);
+        f.key = keys[(at + 1) % keys.length].id;
+      } });
+    y += 3;
+  }
+  const toggle = key ? 'Show passphrase' : 'Show password';
+  field(4, rect(body.x, y, half, 3), key ? 'Passphrase' : 'Password', key ? 12 : 0);
+  moToggle(ui, rect(body.x + half + gx, y, moToggleW(toggle), 3), MO_ID.OPT + 4,
+    toggle, f.show, { pad: 3 }, { tap: () => { f.show = !f.show; } });
+  y += 3;
+  if (alert && y < body.y + body.h) {
+    ui.pen(C.RED);
+    ui.text(rect(body.x + 2, y, body.w - 4, 1), alert, S.TEXT | BOLD, LEFT);
+    ui.pen(C.DEFAULT);
   }
   if (st.edit >= 0) {
-    const d = MO_FIELDS[st.edit];
-    ui.key('text', (ch) => { f[d.key] += ch; });
-    ui.key('Backspace', () => { f[d.key] = Array.from(f[d.key]).slice(0, -1).join(''); });
+    const d = MO_FIELDS[st.edit], cs = Array.from(f[d.key]);
+    const caret = Math.min(st.caret === undefined ? cs.length : st.caret, cs.length);
+    ui.key('text', (ch) => {
+      if (d.key === 'port' && !/^\d$/.test(ch)) return;
+      if (d.key === 'name' && /[[\]]/.test(ch)) return;
+      f[d.key] = [...cs.slice(0, caret), ch, ...cs.slice(caret)].join('');
+      st.caret = caret + 1;
+    });
+    ui.key('Backspace', () => {
+      if (caret === 0) return;
+      f[d.key] = [...cs.slice(0, caret - 1), ...cs.slice(caret)].join('');
+      st.caret = caret - 1;
+    });
     const done = () => { st.edit = -1; };
     ui.key('Enter', done);
     ui.key('Escape', done);
-    // Up and down leave the field. Left and right belong to the caret.
+    // Up and down leave the field. Left and right move the caret.
     ui.key('ArrowUp', done);
     ui.key('ArrowDown', done);
-    ui.key('ArrowLeft', () => {});
-    ui.key('ArrowRight', () => {});
+    ui.key('ArrowLeft', () => { st.caret = Math.max(0, caret - 1); });
+    ui.key('ArrowRight', () => { st.caret = Math.min(cs.length, caret + 1); });
   }
   moStatus(ui, pg.status, st.edit >= 0 ? 'Type on the keyboard.' : 'Tap a field to change it.',
-    st.edit >= 0 ? 'type  ↵ done  ↑↓ leave' : '↵ change  Esc cancel',
-    shown('port') || shown('name') || shown('host'));
+    st.edit >= 0 ? 'type  ↵ done  ↑↓ leave' : '↵ change  Esc cancel');
 }
 
 const MO_SETUP = [
@@ -714,29 +761,81 @@ function moList(ui, app) {
   moStatus(ui, pg.status, 'Tap a network to join it.', '↵ join  PgUp PgDn page  Esc back');
 }
 
+// Title and note of the pad for its phase; phase_head in app_unlock.c.
+// st.phase: unlock, old, new, confirm or remove. A flow (st.flow) has a
+// back target; the device gate has none.
+function moUnlockHead(st) {
+  const phase = st.phase || 'unlock';
+  if (phase === 'old') return ['Change code', 'Enter the current code'];
+  if (phase === 'new' || phase === 'confirm')
+    return [st.creating ? 'Create keystore' : 'Change code',
+            phase === 'new' ? 'Choose a new code, 4 or more' : 'Enter the new code again'];
+  if (phase === 'remove') return ['Remove code', 'Enter the code to remove it'];
+  return [st.flow ? 'Keystore locked' : 'Deck locked',
+          st.resume ? 'Enter the access code to connect' : 'Enter the access code'];
+}
+
+// Marks of the typed code: bullets for the taken characters, muted dots
+// for those still to come. st.reveal echoes the newest one.
+function moCodeRow(ui, line, st, len) {
+  const c = codePlan(len, st.expected | 0, line.w), step = c.spaced ? 2 : 1;
+  let x = line.x + ((line.w - c.width) >> 1);
+  ui.pen(C.DEFAULT);
+  for (let i = 0; i < c.bullets + c.dots; i++, x += step) {
+    if (i >= c.bullets) ui.putch(x, line.y, 0xB7, S.PANEL_MUTED);
+    else if (i === c.bullets - 1 && st.reveal) ui.putch(x, line.y, st.reveal, S.PANEL | BOLD);
+    else ui.putch(x, line.y, 0x2022, S.PANEL | BOLD);
+  }
+}
+
+// The entry panel. st.note is a red line, st.wait the seconds left of a
+// backoff, st.deriving the check that runs after a submit.
+function moEntryPanel(ui, entry, st, len) {
+  const line = rect(entry.x + 2, entry.y + 1, entry.w - 4, 1), wait = st.wait | 0;
+  moSlab(ui, entry, moLook(ui, 0, {}));
+  if (st.note && !st.deriving) moStripe(ui, entry, C.RED);
+  ui.pen(C.DEFAULT);
+  if (st.deriving) {
+    const glyph = String.fromCodePoint(spinnerGlyph(ui.frameNo));
+    ui.text(line, `${glyph} Checking`, S.PANEL | BOLD, CENTER);
+  } else if (st.note) {
+    ui.pen(C.RED);
+    ui.text(line, wait > 0 && !len ? `${st.note}, wait ${wait} s` : st.note, S.PANEL | BOLD, CENTER);
+  } else if (wait > 0 && !len) {
+    ui.pen(C.AMBER);
+    ui.text(line, `Wait ${wait} s`, S.PANEL | BOLD, CENTER);
+  } else if (!len) {
+    const defining = st.phase === 'new' || st.phase === 'confirm';
+    ui.text(line, defining ? 'new code' : 'access code', S.PANEL_MUTED, CENTER);
+  } else moCodeRow(ui, line, st, len);
+  ui.pen(C.DEFAULT);
+}
+
 // Access code pad. Keys are three rows high, so a digit sits centred.
 function moUnlock(ui, app) {
-  const st = app.state, pg = moPage(ui), code = st.code || '', wrong = !!st.wrong && !code;
-  moHeader(ui, pg.header, { title: 'Deck locked', note: 'Enter the access code' });
+  const st = app.state, pg = moPage(ui), code = st.code || '', len = moLen(code);
+  const [title, note] = moUnlockHead(st);
+  moHeader(ui, pg.header, { title, note, back: st.flow ? { tap: () => app.back() } : undefined });
+  if (st.flow) ui.key('Escape', () => app.back());
   const kw = 9, w = 3 * kw + 2, pad = center(pg.body, w, 15);
   if (pg.body.h < 15) { ui.issues.push({ kind: 'drop', text: 'code pad' }); return; }
-  const entry = cutTop(pad, 3);
-  moSlab(ui, entry, moLook(ui, 0, {}));
-  if (wrong) moStripe(ui, entry, C.RED);
-  ui.pen(wrong ? C.RED : C.DEFAULT);
-  ui.text(rect(entry.x + 2, entry.y + 1, entry.w - 4, 1),
-    code ? Array.from(code, () => '•').join(' ') : wrong ? '✘ wrong code' : 'access code',
-    code || wrong ? S.PANEL | BOLD : S.PANEL_MUTED, CENTER);
-  ui.pen(C.DEFAULT);
-  const add = (d) => () => { if (moLen(code) < 13) st.code = code + d; };
-  const erase = () => { st.code = code.slice(0, -1); };
-  // The mock treats 0000 as the wrong code.
-  const enter = () => {
-    if (!code) return;
+  moEntryPanel(ui, cutTop(pad, 3), st, len);
+  const submit = (c) => {
+    if (!c) return;
     st.code = '';
-    st.wrong = code === '0000';
-    if (!st.wrong) app.home();
+    // The mock treats 0000 as the wrong code.
+    st.note = c === '0000' ? '✘ wrong code' : '';
+    st.wait = st.note ? 12 : 0;
+    if (!st.note) app.home();
   };
+  const enter = () => submit(code);
+  const add = (d) => () => {
+    if (len >= 13) return;
+    st.code = code + d;
+    st.note = '';
+    if (st.expected && len + 1 === st.expected) submit(st.code);
+  };
+  const erase = () => { st.code = code.slice(0, -1); st.note = ''; };
   const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '←', '0', 'OK'];
   KEYS.forEach((label, i) => {
     const r = rect(pad.x + (i % 3) * (kw + 1), pad.y + Math.trunc(i / 3) * 3, kw, 3);
@@ -747,41 +846,109 @@ function moUnlock(ui, app) {
   });
   ui.key('Backspace', erase);
   if (code) ui.key('Enter', enter);
-  moStatus(ui, pg.status, 'Tap digits, or type the code.', '0-9 type  ↵ unlock',
-    wrong ? 'Wrong code. Try again.' : '');
+  moStatus(ui, pg.status, 'Tap digits, or type the code.', '0-9 type  ↵ unlock');
 }
 
-// Connecting: the steps so far, and a way out. `fail` shows the same
-// panel after a refused sign-in: the red step says what went wrong.
+// Wrap text into at most two lines of `w` cells. The first line breaks at
+// the last space that fits. The rest goes on the second line whole.
+function moWrap(text, w) {
+  if (moLen(text) <= w) return [text];
+  let cut = text.lastIndexOf(' ', w);
+  if (cut <= 0) cut = w;
+  return [text.slice(0, cut), text.slice(cut).replace(/^ +/, '')];
+}
+
+// Connecting: what the shell knows, and a way out. st.retry shows the
+// wait before the next try. `fail` shows a refused sign-in on a red panel;
+// st.long gives it a reason that wraps.
 function moConnect(ui, app, fail) {
   const st = app.state, pg = moPage(ui), p = moHostOf(st), w = moParse(p.where);
   const area = rect(pg.body.x, pg.header.y, pg.body.w, pg.header.h + pg.body.h);
-  const box = center(area, Math.min(area.w, 46), 11), card = cutTop(box, 8);
-  const ok = (text) => ['✓', text, 0, C.GREEN];
+  const addr = `${w.user}@${w.host} port ${w.port}`;
   if (fail) {
-    moInfo(ui, card, [
+    const reason = st.long ? 'the server offered no method the deck supports' : 'wrong password';
+    // The value column is the panel less 4, less the one-cell label column and its gap.
+    const lines = moWrap(`Sign in refused: ${reason}`, Math.min(area.w, 46) - 4 - 3);
+    const rows = [
       ['✘', `No session on ${p.name}`, C.WHITE, C.RED],
       ['', ''],
-      ok('Wi-Fi  HomeAP'), ok(`Reach  ${w.host} port ${w.port}`), ok('Key exchange'),
-      ['✘', 'Sign in: password refused', C.RED, C.RED],
-    ], C.RED);
+      ...lines.map((l) => ['', l]),
+      ['', addr],
+    ];
+    const box = center(area, Math.min(area.w, 46), rows.length + 5), card = cutTop(box, rows.length + 2);
+    moInfo(ui, card, rows, C.RED);
     const f = moFlow(box, pg.m.gutter, 3);
+    moFirst(ui, MO_ID.BTN + 1);
     moBtn(ui, moFlowNext(f, moBtnW('Back')), MO_ID.BTN, 'Back', {}, { tap: () => app.back() });
-    moBtn(ui, moFlowNext(f, moBtnW('Edit host')), MO_ID.BTN + 1, 'Edit host',
+    moBtn(ui, moFlowNext(f, moBtnW('Try again')), MO_ID.BTN + 1, 'Try again', {},
+      { tap: () => app.go('mo-connect') });
+    moBtn(ui, moFlowNext(f, moBtnW('Edit host')), MO_ID.BTN + 2, 'Edit host',
       { tone: 'solid', accent: C.BLUE }, { tap: () => app.go('mo-edit') });
-    moStatus(ui, pg.status, '', '←→ move  ↵ choose', 'Sign in failed.');
+    moStatus(ui, pg.status, '', '←→ move  ↵ choose');
     return;
   }
+  const box = center(area, Math.min(area.w, 46), 10), card = cutTop(box, 7);
   moInfo(ui, card, [
-    [String.fromCodePoint(spinnerGlyph(ui.frameNo + 2)), `Connecting to ${p.name}`, C.WHITE, C.AMBER],
+    [String.fromCodePoint(spinnerGlyph(ui.frameNo + 2)),
+      `${st.retry ? 'Retrying' : 'Connecting to'} ${p.name}`, C.WHITE, C.AMBER],
     ['', ''],
-    ok('Wi-Fi  HomeAP'), ok(`Reach  ${w.host} port ${w.port}`),
-    ['›', 'Key exchange', C.WHITE, C.AMBER],
-    ['·', `Sign in as ${w.user}`],
+    ['✓', 'Wi-Fi  HomeAP', 0, C.GREEN],
+    ['', addr],
+    ['', st.retry ? 'Next try in 3 s' : 'Try 2, 14 s'],
   ], profAccent(p.name));
   moBtn(ui, rect(box.x, box.y, moBtnW('Cancel'), 3), MO_ID.BTN, 'Cancel', {}, { tap: () => app.back() });
   ui.hot(card, MO_ID.ROW, { tap: () => app.go('mo-menu') });
   moStatus(ui, pg.status, 'Mock: tap the panel to finish.', '↵ cancel');
+}
+
+const MO_FP = '3f9a1c7e5b02d84a6c19e7f30b5d28a41e6c7f902ab3d5c8e1f4067a9b2d3c58';
+
+// The host-key pages. Both stack a text panel, the fingerprint panel and
+// one row of buttons under a back header. `changed` is the pinned key
+// that now differs: a red stripe, and Cancel holds the first focus.
+function moHostKey(ui, app, changed) {
+  const st = app.state, pg = moPage(ui), p = moHostOf(st), w = moParse(p.where), body = pg.body;
+  moHeader(ui, pg.header, { title: changed ? 'Host key changed' : 'New host key',
+    back: { tap: () => app.back() } });
+  const lines = changed
+    ? [`The key of ${w.host} differs from the pinned one.`,
+       'Replace it only if you know the server got a new key.']
+    : [`First connection to ${p.name},`, `${w.host} port ${w.port}.`,
+       'Compare the fingerprint before you trust it.'];
+  const card = cutTop(body, lines.length + 2);
+  moSlab(ui, card, moLook(ui, 0, {}));
+  if (changed) moStripe(ui, card, C.RED);
+  lines.forEach((l, i) => ui.text(rect(card.x + 2, card.y + 1 + i, card.w - 4, 1), l,
+    i === lines.length - 1 ? S.PANEL_MUTED : S.PANEL, LEFT));
+  const fp = cutTop(body, 5);
+  moSlab(ui, fp, moLook(ui, 0, {}));
+  ui.pen(MO_LABEL);
+  ui.text(rect(fp.x + 2, fp.y + 1, fp.w - 4, 1), 'SHA256', S.PANEL_MUTED, LEFT);
+  ui.pen(C.WHITE);
+  for (let i = 0; i < 2; i++) {
+    const groups = [];
+    for (let g = 0; g < 8; g++) groups.push(MO_FP.slice(i * 32 + g * 4, i * 32 + g * 4 + 4));
+    ui.text(rect(fp.x + 2, fp.y + 2 + i, fp.w - 4, 1), groups.join(' '), S.PANEL | BOLD, LEFT);
+  }
+  ui.pen(C.DEFAULT);
+  const f = moFlow(body, pg.m.gutter, 3);
+  const cancel = () => moBtn(ui, moFlowNext(f, moBtnW('Cancel')), MO_ID.BTN, 'Cancel', {},
+    { tap: () => app.back() });
+  if (changed) {
+    cancel();
+    moBtn(ui, moFlowNext(f, moBtnW('Replace key')), MO_ID.BTN + 1, 'Replace key',
+      { tone: 'tint', accent: C.RED }, { tap: () => {
+        st.ask = { title: 'Replace the pinned key?', verb: 'Replace', accent: C.RED,
+          lines: ['A changed key can mean an attack.', 'The old pin is lost.'],
+          yes: () => app.go('mo-connect') };
+        app.go('mo-confirm');
+      } });
+  } else {
+    moBtn(ui, moFlowNext(f, moBtnW('Trust and connect')), MO_ID.BTN, 'Trust and connect',
+      { tone: 'solid', accent: C.GREEN }, { tap: () => app.go('mo-connect') });
+    moBtn(ui, moFlowNext(f, moBtnW('Cancel')), MO_ID.BTN + 1, 'Cancel', {}, { tap: () => app.back() });
+  }
+  moStatus(ui, pg.status, 'The bar at the top goes back.', '←→ move  ↵ choose  Esc cancel');
 }
 
 // Session menu: a slate sheet at the right over the dimmed terminal.
@@ -802,12 +969,16 @@ function moMenu(ui, app) {
     { tap: () => app.home() });
 }
 
-// A host form in a known state, for a gate frame.
-const moFormState = (over, edit = -1) => () => {
+// A host form in a known state, for a gate frame. `more` adds state: the
+// caret, or the stored keys.
+const moFormState = (over, edit = -1, more = {}) => () => {
   const base = { name: 'homelab', user: 'root', host: '192.168.1.10', port: '22',
-                 pass: 'hunter22', auth: 0, show: false };
-  return { host: 0, formFor: 0, form: { ...base, ...over }, formWas: JSON.stringify(base), edit };
+                 pass: 'hunter22', auth: 0, key: '', show: false };
+  return { host: 0, formFor: 0, form: { ...base, ...over }, formWas: JSON.stringify(base),
+           orig: 'homelab', edit, ...more };
 };
+
+const MO_LONG_HOST = 'edge-gateway-03.eu-west-2.compute.internal.example-corp.co.uk';
 
 // The frames the C kit must match cell for cell. kitcheck.mjs draws each
 // frame and compares it with the lab screen of the same name.
@@ -827,7 +998,11 @@ export const MO_GATE = [
   { name: 'mo-edit-new', sketch: 'mo-edit', state: () => ({ host: -1 }) },
   { name: 'mo-edit-typing', sketch: 'mo-edit', state: moFormState({ host: '192.168.1.1', show: true }, 2) },
   { name: 'mo-edit-bad', sketch: 'mo-edit', state: moFormState({ name: '', port: '70000' }) },
-  { name: 'mo-edit-key', sketch: 'mo-edit', state: moFormState({ auth: 1 }), pose: { focus: MO_ID.OPT + 5 } },
+  { name: 'mo-edit-key', sketch: 'mo-edit', state: moFormState({ auth: 1, key: MO_KEYS[0].id }),
+    pose: { focus: MO_ID.OPT + 5 } },
+  { name: 'mo-edit-nokey', sketch: 'mo-edit', state: moFormState({ auth: 1 }, -1, { keys: [] }) },
+  { name: 'mo-edit-caret', sketch: 'mo-edit', state: moFormState({ host: MO_LONG_HOST }, 2, { caret: 24 }) },
+  { name: 'mo-edit-secret', sketch: 'mo-edit', state: moFormState({}, 4, { caret: 3 }) },
   { name: 'mo-setup', sketch: 'mo-setup', pose: { focus: MO_ID.HUB + 3 } },
   { name: 'mo-section-wifi', sketch: 'mo-section', state: () => ({ cat: 1 }) },
   { name: 'mo-section-fx', sketch: 'mo-section', state: () => ({ cat: 3 }) },
@@ -837,9 +1012,25 @@ export const MO_GATE = [
   { name: 'mo-list-2', sketch: 'mo-list', state: () => ({ lpage: 1, net: 12 }), pose: { focus: MO_ID.ROW + 12 } },
   { name: 'mo-unlock', sketch: 'mo-unlock' },
   { name: 'mo-unlock-code', sketch: 'mo-unlock', state: () => ({ code: '12' }), pose: { down: MO_ID.KEY + 4 } },
-  { name: 'mo-unlock-wrong', sketch: 'mo-unlock', state: () => ({ wrong: true }) },
+  { name: 'mo-unlock-known', sketch: 'mo-unlock', state: () => ({ code: '12', expected: 6 }) },
+  { name: 'mo-unlock-wrong', sketch: 'mo-unlock', state: () => ({ note: '✘ wrong code', wait: 12 }) },
+  { name: 'mo-unlock-wait', sketch: 'mo-unlock', state: () => ({ wait: 12 }) },
+  { name: 'mo-unlock-check', sketch: 'mo-unlock', state: () => ({ deriving: true }) },
+  { name: 'mo-unlock-new', sketch: 'mo-unlock',
+    state: () => ({ flow: true, phase: 'new', creating: true, code: 'ab7', reveal: '7' }) },
+  { name: 'mo-unlock-mismatch', sketch: 'mo-unlock',
+    state: () => ({ flow: true, phase: 'new', note: 'The codes do not match' }) },
+  { name: 'mo-unlock-resume', sketch: 'mo-unlock',
+    state: () => ({ flow: true, resume: true, code: '1', expected: 4 }) },
   { name: 'mo-connect', sketch: 'mo-connect' },
+  { name: 'mo-connect-retry', sketch: 'mo-connect', state: () => ({ retry: true }) },
   { name: 'mo-fail', sketch: 'mo-fail', pose: { focus: MO_ID.BTN + 1 } },
+  { name: 'mo-fail-long', sketch: 'mo-fail', state: () => ({ long: true }), pose: { focus: MO_ID.BTN + 1 } },
+  { name: 'mo-hostkey', sketch: 'mo-hostkey', pose: { focus: MO_ID.BTN } },
+  { name: 'mo-hostkey-changed', sketch: 'mo-hostkey-changed', pose: { focus: MO_ID.BTN } },
+  { name: 'mo-confirm-replace', sketch: 'mo-confirm', pose: { focus: MO_ID.BTN },
+    state: () => ({ ask: { title: 'Replace the pinned key?', verb: 'Replace', accent: C.RED,
+                           lines: ['A changed key can mean an attack.', 'The old pin is lost.'] } }) },
   { name: 'mo-menu', sketch: 'mo-menu', pose: { focus: MO_ID.BTN } },
 ];
 
@@ -854,6 +1045,8 @@ export const MO_SKETCHES = [
   { name: 'mo-unlock', title: 'Access code pad', theme: 'slate', draw: moUnlock },
   { name: 'mo-connect', title: 'Connecting', theme: 'slate', draw: (u, a) => moConnect(u, a, false) },
   { name: 'mo-fail', title: 'Connect failed', theme: 'slate', draw: (u, a) => moConnect(u, a, true) },
+  { name: 'mo-hostkey', title: 'Host key, first contact', theme: 'slate', draw: (u, a) => moHostKey(u, a, false) },
+  { name: 'mo-hostkey-changed', title: 'Host key changed', theme: 'slate', draw: (u, a) => moHostKey(u, a, true) },
   { name: 'mo-menu', title: 'Session menu sheet', theme: 'slate', draw: moMenu },
   { name: 'mo-parts', title: 'Parts in every state', theme: 'slate', draw: moParts },
 ];

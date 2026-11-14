@@ -100,6 +100,26 @@ export function pageClamp(page, count, per) {
 const SPIN = [0x280B, 0x2819, 0x2839, 0x2838, 0x283C, 0x2834, 0x2826, 0x2827];
 export const spinnerGlyph = (frame) => SPIN[frame % 8];
 
+// First shown character of an entry value; ui_entry_first in C. The window
+// of `room` cells holds room - 1 characters and keeps the caret in view.
+export function entryFirst(len, caret, room) {
+  const shown = room - 1;
+  if (len <= shown) return 0;
+  let first = caret - (room >> 1);
+  if (first > len - shown) first = len - shown;
+  return first < 0 ? 0 : first;
+}
+
+// How a typed code shows in `room` cells; ui_code_plan in C. Marks for
+// the taken characters, then dots for those still to come.
+export function codePlan(len, expected, room) {
+  const total = Math.max(len, expected);
+  const spaced = total > 0 && total * 2 - 1 <= room;
+  const cap = Math.min(total, room), bullets = Math.min(len, cap), dots = cap - bullets;
+  const marks = bullets + dots;
+  return { bullets, dots, spaced, width: marks === 0 ? 0 : spaced ? marks * 2 - 1 : marks };
+}
+
 export function profAccent(name) {
   const pal = [C.GREEN, C.CYAN, C.MAGENTA, C.AMBER, C.BLUE];
   let h = 5381;

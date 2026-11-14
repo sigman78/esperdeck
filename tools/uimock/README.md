@@ -65,6 +65,7 @@ focus, the arrow keys must reach every touch region of every screen.
 | `--mono 0` | Phosphor mode: 0 colour, 1 green, 2 amber. |
 | `--regions` | Outline the touch regions. |
 | `--state JSON` | Seed the screen's state, for example `'{"cat":4}'`. |
+| a gate frame name | A name from `MO_GATE`, such as `mo-edit-caret`, draws that frame with its state and pose. |
 | `--focus ID`, `--down ID` | Pose a region as key focus or finger down. |
 | `--tag TEXT` | Add TEXT to the file name. |
 | `--out DIR` | Output folder. The default is `dist/shots/`. |

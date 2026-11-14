@@ -12,7 +12,8 @@ const GRIDS = [['12x24', 66, 20], ['10x20', 80, 24], ['8x16', 100, 30]];
 const STATES = {
   'mo-section': [0, 1, 2, 3, 4, 5, 6, 7].map((cat) => ({ cat })),
   'mo-list': [{ lpage: 0 }, { lpage: 1 }],
-  'mo-unlock': [{}, { code: '12' }],
+  'mo-unlock': [{}, { code: '12' }, { flow: true, phase: 'new', code: 'ab7' }],
+  'mo-edit': [{}, { host: -1 }, { host: 3 }, { host: 3, keys: [] }],
 };
 const prefix = process.argv[2] || 'mo-';
 
