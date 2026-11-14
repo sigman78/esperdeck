@@ -15,6 +15,8 @@
 #pragma once
 
 #include "display.h"     /* color_t, display_overlay_style_t */
+#include "ui_hot.h"      /* ui_key_t, ids, touch + focus model */
+#include "ui_layout.h"   /* rects, cuts, grids, metrics */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -36,9 +38,17 @@
 #define UI_WELL    3   /* value well: darker companion of the bar   */
 #define UI_FOCUS   4   /* focused / lit bar: pastel wash, dark text */
 #define UI_TRACK   5   /* gauge track: medium white on dark tint    */
-#define UI_STYLE_COUNT 6
-#define UI_STYLE_MASK  0x07
-#define UI_BOLD    (1 << 3)   /* bold glyph face; composes with any style */
+/* Edge styles carry a surface colour as INK on the screen background,
+ * for the half-block cells (UI_HALF_*) that end a surface mid-cell. */
+#define UI_BAR_EDGE    6
+#define UI_WELL_EDGE   7
+#define UI_FOCUS_EDGE  8
+#define UI_PANEL       9   /* accent text on the dark neutral panel    */
+#define UI_PANEL_MUTED 10  /* receding text on the panel               */
+#define UI_PANEL_EDGE  11
+#define UI_STYLE_COUNT 12
+#define UI_STYLE_MASK  0x0F
+#define UI_BOLD    (1 << 7)   /* bold glyph face; composes with any style */
 
 /* Pen accents — index within a style's palette bank. */
 #define OVERLAY_COL_DEFAULT   0
@@ -80,6 +90,15 @@
 #define UI_SHADE1  0x2591u  /* ░ light shade  */
 #define UI_LHALF   0x258Cu  /* ▌ left half  */
 #define UI_RHALF   0x2590u  /* ▐ right half */
+#define UI_QUAD_LL 0x2596u  /* ▖ lower-left quadrant */
+#define UI_QUAD_UL 0x2598u  /* ▘ upper-left quadrant */
+#define UI_HALF_UP 0x2580u  /* ▀ upper half: a surface's bottom edge */
+#define UI_HALF_DN 0x2584u  /* ▄ lower half: a surface's top edge    */
+#define UI_CHECK   0x2713u  /* check mark */
+#define UI_CROSS   0x2718u  /* heavy ballot x */
+#define UI_HEAVY_H 0x2501u  /* ━ the switch line */
+#define UI_CHEVRON 0x203Au  /* › */
+#define UI_ELLIPSIS 0x2026u /* … */
 #define UI_LED_ON  0x25CFu  /* ● */
 #define UI_LED_OFF 0x25CBu  /* ○ */
 #define UI_DIAMOND 0x25C6u  /* ◆ */
@@ -90,13 +109,6 @@
 #define UI_BULLET  0x2022u  /* • */
 #define UI_PL_R    0xE0B0u  /* powerline right-facing separator */
 #define UI_PL_L    0xE0B2u  /* powerline left-facing separator  */
-
-/* Decoded UI keys — decoded once by the core, screens get the result. */
-typedef enum {
-    K_NONE = 0, K_UP, K_DOWN, K_LEFT, K_RIGHT,
-    K_ENTER, K_ESC, K_F12, K_CHAR, K_BACKSPACE, K_TAB,
-    K_SCROLL_UP, K_SCROLL_DOWN,
-} ui_key_t;
 
 int  ui_cols(void);
 int  ui_rows(void);
@@ -259,3 +271,6 @@ int draw_step(int y, char num, const char *label,
 /** Scrollback fill down the right edge, line count on gray above it.
  *  @p offset is rows back from live, @p total the history available. */
 void draw_scrollbar(int offset, int total);
+
+#include "ui_widgets.h"
+#include "ui_part.h"

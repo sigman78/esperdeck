@@ -34,4 +34,8 @@ void ui_frame(uint32_t frame);
 #ifdef BUILD_SIMULATOR
 /** True when one row of the currently published overlay contains @p text. */
 bool ui_debug_contains(const char *text);
+/** The published frame's cells (ui_cols() x ui_rows()), NULL when hidden. */
+const display_overlay_cell_t *ui_debug_frame(bool *scrim);
+/** The baked style table, UI_PAL_COUNT entries. */
+const display_overlay_style_t *ui_debug_styles(void);
 #endif

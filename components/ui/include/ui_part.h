@@ -1,0 +1,176 @@
+/*
+ * ui_part.h — the kit's parts: plain slabs on the theme background.
+ * A part has half-cell top and bottom edges and square corners. Tone
+ * shows depth. Colour marks a state. A part reads its own focus and
+ * pressed state from ui_hot.
+ *
+ * Included through cyberdeck_ui.h. Design notes: docs/ui-kit.md.
+ * Reference drawing: tools/uimock.
+ */
+
+#pragma once
+
+#include "ui_hot.h"
+#include "ui_layout.h"
+
+/* UTF-8 forms of the kit glyphs, for string literals. C sources stay
+ * ASCII: write UI_S_CHECK " joined". */
+#define UI_S_CHECK   "\xE2\x9C\x93"   /* U+2713 check mark              */
+#define UI_S_CROSS   "\xE2\x9C\x98"   /* U+2718 heavy ballot x          */
+#define UI_S_CHEVRON "\xE2\x80\xBA"   /* U+203A opens another page      */
+#define UI_S_BULLET  "\xE2\x80\xA2"   /* U+2022 one masked character    */
+#define UI_S_MIDDOT  "\xC2\xB7"       /* U+00B7 a step not started      */
+#define UI_S_UP      "\xE2\x86\x91"   /* U+2191                         */
+#define UI_S_DOWN    "\xE2\x86\x93"   /* U+2193                         */
+#define UI_S_LEFT    "\xE2\x86\x90"   /* U+2190 erase                   */
+#define UI_S_POINT_L "\xE2\x97\x84"   /* U+25C4 back, previous page     */
+#define UI_S_ARROW   "\xE2\x96\xBA"   /* U+25BA next page               */
+#define UI_S_ENTER   "\xE2\x86\xB5"   /* U+21B5 the Enter key           */
+#define UI_S_RIGHT   "\xE2\x86\x92"   /* U+2192                         */
+
+/** Code points in a UTF-8 string: its width in cells. */
+int ui_len(const char *s);
+
+/** Paint the whole screen in the theme background. */
+void ui_slate(void);
+
+/* The page split of a slate screen. The status row is the bottom row.
+ * The body is inset by the side margin. The header is the top three
+ * body rows. `area` is header and body as one rect, for a centered
+ * panel. ui_slate_page paints the background first. */
+typedef struct {
+    ui_rect_t header, body, status, area;
+    ui_metrics_t m;
+} ui_slate_t;
+ui_slate_t ui_slate_page(void);
+
+/* Tone: how much a part stands out. */
+enum {
+    UI_TONE_CARD = 0,   /* neutral panel                                */
+    UI_TONE_TINT,       /* dark accent: a caution, the chosen row       */
+    UI_TONE_SOLID,      /* bright accent: the main action               */
+};
+
+#define UI_PART_CENTER     0x01   /* centered title                      */
+#define UI_PART_OFF        0x02   /* disabled: muted, not a touch target */
+#define UI_PART_LIT        0x04   /* holds the pressed look              */
+#define UI_PART_PLAIN      0x08   /* card title in regular weight        */
+#define UI_PART_RIGHT_BOLD 0x10   /* right text in the title style       */
+#define UI_PART_UNITS      0x20   /* right text is a number and a unit   */
+
+/* Styles of one part in its present state. */
+typedef struct {
+    uint8_t pen;               /* OVERLAY_COL_* for every cell            */
+    uint8_t fill, edge;        /* inner cells; half-row edge cells        */
+    uint8_t title, detail;     /* first line; second line and trailers    */
+    bool    card;              /* neutral panel: text may take a colour   */
+    bool    off;
+} ui_look_t;
+
+/** The look of part @p id. Off beats focus. Focus and pressed share one
+ *  light look: focus takes the focus colour, pressed keeps @p accent.
+ *  Id 0 has no focus and no pressed state. */
+ui_look_t ui_look(ui_id_t id, uint8_t tone, uint8_t accent, uint8_t flags);
+
+/** Draw a slab in @p r: edge rows and fill. Needs three rows. */
+void ui_slab(ui_rect_t r, const ui_look_t *k);
+
+/** A colour stripe: the first column of a slab, at its full height. */
+void ui_stripe(ui_rect_t r, uint8_t accent);
+
+/** A text panel: a card-tone slab, with a stripe when @p stripe is an
+ *  accent. Not a touch target. Text on it takes the UI_PANEL styles. */
+void ui_panel(ui_rect_t r, uint8_t stripe);
+
+/** Top row of @p lines text rows centered in @p h rows from @p y. An
+ *  uneven split counts as a layout fault and puts the text one row high. */
+int ui_centre(int y, int h, int lines);
+
+/** Layout faults since start: a part with no room, an off-center label.
+ *  A host tool reads it after a draw. A correct screen adds none. */
+int ui_faults(void);
+
+/** Text with its units dimmed. A word right after a number draws in
+ *  @p unit. A number is digits with at most one '.' or ':' part. */
+void ui_units(ui_rect_t r, const char *text, uint8_t value, uint8_t unit,
+              int align);
+
+/* The one tappable part. Three rows hold one line; four rows hold a
+ * title and a detail line. */
+typedef struct {
+    const char *title;
+    const char *detail;     /* second line, or NULL                      */
+    const char *right;      /* text at the right end of the title row    */
+    uint8_t     tone;       /* UI_TONE_*                                 */
+    uint8_t     accent;     /* OVERLAY_COL_*                             */
+    uint8_t     stripe;     /* accent of a stripe at the left edge, or 0 */
+    uint8_t     reserve;    /* cells kept free at the right for a control */
+    uint8_t     pad;        /* side padding; 0 picks 2 wide, 1 narrow    */
+    uint8_t     flags;      /* UI_PART_*                                 */
+} ui_part_t;
+
+/* Where a part put its text, for a caller that adds a control. */
+typedef struct { ui_look_t k; int y; ui_rect_t inn; } ui_part_box_t;
+
+/** Draw a part and register its region. @p box may be NULL. Returns
+ *  false and counts a fault when @p r is under 4 by 3 cells. */
+bool ui_part(ui_rect_t r, ui_id_t id, const ui_part_t *p, ui_part_box_t *box);
+
+/** A button: one centered label. */
+bool ui_push(ui_rect_t r, ui_id_t id, const char *label, uint8_t tone,
+             uint8_t accent, uint8_t flags);
+
+/** A header button cut from the right end of @p header, with a gap.
+ *  Call for the rightmost one first. */
+void ui_pill(ui_rect_t *header, ui_id_t id, const char *label, uint8_t tone,
+             uint8_t accent, uint8_t flags);
+
+/** A switch. The state shows as a word, a knob position and a colour. */
+void ui_switch(ui_rect_t r, ui_id_t id, const char *label, bool on,
+               uint8_t flags);
+
+/** One choice of @p n: a caption, then a chip per label with ids from
+ *  @p id_base. The chosen chip is solid in @p accent (0: blue) with a
+ *  check mark. */
+void ui_chips(ui_rect_t r, ui_id_t id_base, const char *caption,
+              const char *const *labels, int n, int value, uint8_t accent);
+
+#define UI_PAGES_W 19           /* cells ui_pages takes at a header's end */
+
+/** Page stepper for the right end of a header: previous, "2/3", next.
+ *  Draws nothing for a single page. Returns the header rect left of it. */
+ui_rect_t ui_pages(ui_rect_t header, ui_id_t prev, ui_id_t next,
+                   int page, int pages);
+
+/** Position rail, one column: a thumb on a faint track. */
+void ui_rail(ui_rect_t r, int page, int pages);
+
+/** Thumb of a rail of @p h rows: first row in @p at, returns its length. */
+int ui_rail_thumb(int h, int page, int pages, int *at);
+
+/** Page header in three rows. With @p back the whole slab is the back
+ *  target (UI_ID_BACK) and @p path leads the title. Without it: a bold
+ *  title and a muted note on the background. */
+void ui_title(ui_rect_t r, const char *path, const char *title,
+              const char *note, bool back);
+
+/* One line of a text panel. A pen makes its text bold. A label without
+ * a pen takes the label hue. A value without a pen dims its units. */
+typedef struct {
+    const char *label, *value;
+    uint8_t     value_pen, label_pen;   /* OVERLAY_COL_*, 0 for plain    */
+    const char *tail;                   /* state mark after the value    */
+    uint8_t     tail_pen;
+} ui_info_row_t;
+
+/** A text panel: not a touch target. @p r must hold @p n + 2 rows. */
+void ui_info(ui_rect_t r, const ui_info_row_t *rows, int n, uint8_t stripe);
+
+#define UI_ENTRY_MASK 0x01   /* draw the value as bullets                */
+#define UI_ENTRY_EDIT 0x02   /* lit, with a caret after the value        */
+#define UI_ENTRY_BAD  0x04   /* invalid: red stripe, red value, a mark   */
+
+/** A form field: label, then the value. @p label_w is the label column
+ *  width in cells; 0 picks 10. */
+void ui_entry(ui_rect_t r, ui_id_t id, const char *label, const char *value,
+              int label_w, uint8_t flags);

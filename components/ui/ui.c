@@ -6,6 +6,7 @@
  */
 
 #include "ui_frame.h"
+#include "ui_pure.h"
 #include "ui_theme.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -138,6 +139,15 @@ bool ui_debug_contains(const char *text)
     }
     return false;
 }
+
+const display_overlay_cell_t *ui_debug_frame(bool *scrim)
+{
+    if (!s_visible || !s_draw) return NULL;
+    if (scrim) *scrim = s_scrim;
+    return s_draw == s_buf[0] ? s_buf[1] : s_buf[0];
+}
+
+const display_overlay_style_t *ui_debug_styles(void) { return s_theme; }
 #endif
 
 void ui_no_cursor(void)
@@ -162,6 +172,7 @@ void ui_clear(void)
 {
     s_pen   = OVERLAY_COL_DEFAULT;   /* each frame starts on the default */
     s_scrim = false;                 /* and re-decides its backdrop */
+    ui_hot_begin(s_frame);           /* ...and its interactive regions */
     if (s_draw)
         memset(s_draw, 0, (size_t)s_cols * s_rows * sizeof(*s_draw));
 }
@@ -202,29 +213,9 @@ void ui_puts(int col, int row, const char *s, uint8_t attrs)
 
 void ui_puts_u8(int col, int row, const char *s, uint8_t attrs)
 {
-    const uint8_t *p = (const uint8_t *)s;
-    while (*p && col < s_cols) {
-        uint16_t cp;
-        if (p[0] < 0x80) {
-            cp = p[0];
-            p += 1;
-        } else if ((p[0] & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) {
-            cp = (uint16_t)(((p[0] & 0x1F) << 6) | (p[1] & 0x3F));
-            p += 2;
-        } else if ((p[0] & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 &&
-                   (p[2] & 0xC0) == 0x80) {
-            cp = (uint16_t)(((p[0] & 0x0F) << 12) |
-                            ((p[1] & 0x3F) << 6) | (p[2] & 0x3F));
-            p += 3;
-        } else {
-            /* Beyond-BMP (4-byte) or malformed: one '?', resync past any
-             * continuation bytes. */
-            cp = '?';
-            p += 1;
-            while ((*p & 0xC0) == 0x80) p++;
-        }
+    uint16_t cp;
+    while (col < s_cols && (cp = ui_utf8_next(&s)) != 0)
         ui_putch(col++, row, cp, attrs);
-    }
 }
 
 void ui_printf(int col, int row, uint8_t attrs, const char *fmt, ...)

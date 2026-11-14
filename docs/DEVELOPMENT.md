@@ -129,6 +129,9 @@ Host-compiled Unity suites (no ESP-IDF required) live under
   from the BLE peer: truncated, oversized and malformed input)
 - **`ssh_txbuf`** — the SSH TX FIFO (append, partial consume, EAGAIN keeps
   the head bytes, overflow)
+- **`ui`** — the UI kit's layout and interaction logic at every grid
+  (rect cuts, grids, fit-one-screen capacity, hit test, focus walk, tap
+  and press)
 
 Each suite builds the same way:
 
@@ -202,7 +205,8 @@ cmake --build build-sim
 - **Mouse emulates touch** faithfully (tap, drag, long-press =
   right-click).
 - **`--drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|..."`**
-  scripts input and screen/overlay assertions for demos and tests.
+  scripts input and screen/overlay assertions for demos and tests. Touch
+  steps are `tap`, `hold` (long press), `press` and `release`.
 - **Alt+Enter** toggles window scale; **F12** opens the in-session menu.
 - **MSVC toolchain.** On Windows the sim links against MSVC. Build from
   an environment where `cl` is available (a VS developer prompt, for
@@ -214,6 +218,23 @@ ed25519). Key exchange, host-key algorithms, cipher list and known-hosts
 pins therefore match between sim and device — a fingerprint accepted in
 the sim is valid on the deck. What the deck needs from crypto and where
 each piece comes from: [`crypto-stack.md`](crypto-stack.md).
+
+### UI lab — kit screens without the shell
+
+`cyberdeck_uilab` builds with the simulator. It draws example screens
+through the real display path using only the `ui`, `display` and `font`
+components. Design record: [`ui-kit.md`](ui-kit.md).
+
+```bash
+./build-sim/sim/cyberdeck_uilab.exe --font 12x24               # live window
+./build-sim/sim/cyberdeck_uilab.exe --font 12x24 --out shots   # one BMP per screen
+```
+
+- **Live:** the mouse is the finger, right-click is a long press, arrows
+  and Enter drive focus, Tab steps through the screens.
+- **`--out DIR`** renders each screen in a fixed pose with animated
+  effects off. Two runs give the same image. The directory must exist.
+- **`--screen NAME`** limits the run to one screen.
 
 ### Simulator storage isolation tests
 
