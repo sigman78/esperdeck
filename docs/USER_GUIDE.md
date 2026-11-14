@@ -18,7 +18,7 @@ Contents:
 5. [Adding an SSH connection](#5-adding-an-ssh-connection)
 6. [Connecting, and the host-key question](#6-connecting-and-the-host-key-question)
 7. [Using the terminal](#7-using-the-terminal)
-8. [The Configuration menu](#8-the-configuration-menu)
+8. [Setup and the session menu](#8-setup-and-the-session-menu)
 9. [Securing the deck with an access code](#9-securing-the-deck-with-an-access-code)
 10. [Auto-lock and the screensaver](#10-auto-lock-and-the-screensaver)
 11. [Resetting things](#11-resetting-things)
@@ -52,9 +52,9 @@ a pager at the top right.
 - **Tap a tile** to connect. **Long-press it** (or press **Space**) to open
   the host page: details, Connect, Edit, Delete and Move earlier / later.
   With a keyboard: arrows + **Enter**, or a digit **1**-**8** to connect.
-- The buttons at the top right: **+ New**, **Setup** (the Configuration
-  menu), **Lock** (once an access code exists) and **Pair** (while no
-  keyboard is bonded).
+- The buttons at the top right: **+ New**, **Setup** (the settings),
+  **Lock** (once an access code exists) and **Pair** (while no keyboard
+  is bonded).
 - The status bar at the bottom shows WiFi, keyboard and the clock. A
   `PHN` dot at the top shows an enrolled phone nearby (walk-away lock,
   [section 10](#10-auto-lock-and-the-screensaver)).
@@ -70,7 +70,7 @@ from the tiles also opens keyboard pairing.
 The deck joins stored networks automatically, in the order they are
 listed. To add a network without any cable:
 
-1. Open **Configuration → WiFi → Add network (phone)**.
+1. Open **Setup → Wi-Fi → Add network (phone)**.
 2. The screen shows a QR code and four numbered steps. Scan the code with
    your phone: it joins the deck's own temporary WiFi hotspot.
 3. Your phone opens a small web page served by the deck. A short **proof
@@ -79,7 +79,7 @@ listed. To add a network without any cable:
 4. Enter your network's name and password in the form. The deck tests the
    credentials, saves them, and tears the hotspot down.
 
-**Configuration → WiFi → Reconnect** retries the stored networks (same as
+**Setup → Wi-Fi → Reconnect** retries the stored networks (same as
 pressing **W** on HOME).
 
 ## 4. Pairing a keyboard
@@ -92,9 +92,9 @@ Any Bluetooth Low Energy (BLE) keyboard should work.
 3. The PAIR KEYBOARD screen scans and lists what it finds; pick yours.
 
 Once paired, the keyboard reconnects by itself — the `KBD` light tells you
-when it's linked. To unpair everything: **Configuration → Keyboard →
-Forget bonds** (activate it twice — the first tap arms it, the second
-confirms).
+when it's linked. To unpair everything: **Setup → Keyboard →
+Forget bonds** (it asks first on its own page; Cancel is the default
+answer).
 
 No keyboard at hand? The whole interface works by touch, and a USB cable
 into the same port used for flashing also delivers keystrokes.
@@ -103,13 +103,12 @@ into the same port used for flashing also delivers keystrokes.
 
 Three ways, pick what's convenient:
 
-- **On the device.** Tap **+ New** (or **Configuration → Profiles
-  → Add**). Fill in host, port, user, and either a password or a key
-  reference.
-- **From your phone.** **Configuration → Profiles → Import → SoftAP
-  (phone)**: same QR-plus-form flow as WiFi onboarding — join the deck's
-  temporary hotspot, fill in the form, done.
-- **From your PC.** **Configuration → Profiles → Import → Web (PC)**: the
+- **On the device.** Tap **+ New** on HOME. Fill in host, port, user,
+  and either a password or a key reference.
+- **From your phone.** **Setup → Hosts → Import from phone**: same
+  QR-plus-form flow as WiFi onboarding — join the deck's temporary
+  hotspot, fill in the form, done.
+- **From your PC.** **Setup → Hosts → Import from PC**: the
   deck (already on your WiFi) serves a form at the address it shows.
   **Heads-up:** this runs over plain HTTP on your local network — the
   screen says "LAN only — use on a network you trust", and it means it.
@@ -119,8 +118,8 @@ Space on it) for the host page. **+ New** on HOME adds one. Delete asks
 you to confirm.
 
 **Careful when deleting or re-keying a profile:** if no other profile
-still uses its private key or its pinned host fingerprint, those are
-cleaned up with it.
+still uses its private key, the key goes with it. The pinned host
+fingerprint stays; **Clear host keys** in Setup drops the pins.
 
 ## 6. Connecting, and the host-key question
 
@@ -145,8 +144,10 @@ passes.
 Once connected you are in a normal terminal — vim, htop, mc, tmux all
 work, in color, at your chosen font size.
 
-- **Menu:** press **F12** or long-press the screen. From the menu: resume,
-  reset the terminal, disconnect, or enter Configuration.
+- **Menu:** press **F12** or long-press the screen. The menu is a sheet at the
+  right of the screen: reset the terminal, open Setup, or disconnect.
+  The title bar, **Esc**, **F12** or a tap beside the sheet resume the
+  session.
 - **Reset terminal:** menu → Reset terminal. The link stays up; the
   terminal state (colors, modes, scrollback) goes back to power-on and
   the remote program is asked to repaint, like `reset` in a shell. Use it
@@ -159,20 +160,35 @@ work, in color, at your chosen font size.
   collapse, then HOME). If the remote side ends the session, you land back
   on HOME too.
 
-## 8. The Configuration menu
+## 8. Setup and the session menu
 
-Reachable from HOME (the **Setup** button) or in-session (**F12 →
-Configuration**). The pages:
+Open **Setup** from HOME (the **Setup** button) or in-session (**F12 →
+Setup**). Setup is a grid of eight tiles. Each tile shows its section and
+the present state, such as "3 stored" or "HomeAP  -55 dBm". Tap a tile, or
+move with the arrows and press **Enter**. The bar at the top, or **Esc**,
+goes back one level.
 
-| Page | What's there |
+Inside a section every choice shows all its options as chips; tap one to
+choose it. Switches flip, and actions run, when tapped. **A change applies at
+once.** An action that cannot be undone asks first on a page of its own;
+**Cancel** is the default answer. A long section pages: use the arrows in
+the bar or **Shift+PageUp / Shift+PageDown**.
+
+| Section | What's there |
 |---|---|
-| **Profiles** | Import ([section 5](#5-adding-an-ssh-connection)) |
-| **WiFi** | Reconnect; Add network (phone) ([section 3](#3-getting-on-wifi)) |
-| **Keyboard** | Pair; Forget bonds ([section 4](#4-pairing-a-keyboard)) |
-| **Effects** | CRT look: scanlines, phosphor color (color/green/amber), bold pop, wobble, wipe-in, collapse, static. Changes apply live. |
-| **Font** | Terminal size: 8×16 / 10×20 / 12×24. The device reboots to apply. |
+| **Hosts** | Import from phone; Import from PC ([section 5](#5-adding-an-ssh-connection)) |
+| **Wi-Fi** | Reconnect; Add network (phone) ([section 3](#3-getting-on-wifi)) |
+| **Keyboard** | Pair keyboard; Forget bonds, which asks first ([section 4](#4-pairing-a-keyboard)) |
+| **CRT FX** | Scanlines and Bold pop (switches); Phosphor (color / green / amber) |
+| **Motion FX** | Wobble, Wipe in, Collapse, Static |
+| **Font** | Terminal size: 8×16 / 10×20 / 12×24. Choosing another size asks, then the deck restarts and an open session ends. |
+| **System** | Saver + lock timeout in minutes; Edge scroll switch; Clear host keys and Factory reset, both ask first ([section 11](#11-resetting-things)) |
 | **Keystore** | Create keystore / Change code / Remove code / Lock deck ([section 9](#9-securing-the-deck-with-an-access-code)) |
-| **System** | Saver + lock timeout; edge-scroll gesture on/off; Clear host keys; Factory reset ([section 11](#11-resetting-things)) |
+
+In a session, **F12** or a long press opens the **session menu**: a panel at
+the right over the dimmed terminal. It shows the deck uptime and the link
+time with the signal, and has **Reset terminal**, **Setup** and a red
+**Disconnect** button.
 
 ## 9. Securing the deck with an access code
 
@@ -181,7 +197,7 @@ passwords in `profiles.ini`, the WiFi password in `wifi.ini`, private keys
 as plain files. Anyone who picks the device up can use it. If that
 matters for your keys and networks, create a keystore.
 
-**Configuration → Keystore → Create keystore** walks you through choosing
+**Setup → Keystore → Create keystore** walks you through choosing
 an access code on a PIN pad (4–6 digits, auto-submits at your chosen
 length; a keyboard-typed passphrase also works). From that moment:
 
@@ -206,7 +222,7 @@ the code first.
 
 ## 10. Auto-lock and the screensaver
 
-- **Configuration → System → "Saver + lock after"** (1/3/5/10/30 minutes)
+- **Setup → System → "Saver + lock, min"** (1/3/5/10/30 minutes)
   controls when the digital-rain screensaver starts on an idle HOME
   screen — and, once a keystore exists, when the deck re-locks. Waking
   from the saver lands on the PIN pad.
@@ -219,9 +235,8 @@ the code first.
 
 ## 11. Resetting things
 
-Both live under **Configuration → System**, and both confirm by making you
-activate the same item twice — there is no extra "are you sure" dialog, so
-treat the second tap as final.
+Both live under **Setup → System**, and both ask first on a page of their
+own. **Cancel** is the default answer, so treat the red button as final.
 
 - **Clear host keys** drops every pinned server fingerprint. The next
   connect to each server asks the trust question again ([section
@@ -233,7 +248,7 @@ treat the second tap as final.
 
 ## 12. Troubleshooting
 
-- **WiFi won't connect.** `NET` stays dark: check **Configuration → WiFi →
+- **WiFi won't connect.** `NET` stays dark: check **Setup → Wi-Fi →
   Reconnect** first; if the network is new, re-run "Add network (phone)".
   Remember the factory placeholder network is not real.
 - **Keyboard won't pair.** Make sure it is in pairing mode and not still

@@ -2,10 +2,10 @@
 
 **Status: draft, 2026-11-14.** The kit and its lab exist. The look is
 decided: plain slabs on a slate screen (see *Parts*). The parts are
-built and gated against their design sketches. HOME, the host page and
-the question page draw with them. The menu hub and its section pages
-still draw with the earlier Slab widgets, every other screen with the
-old tile helpers. The whole shell uses the slate colour pair.
+built and gated against their design sketches. HOME, the host page,
+the question page, the setup hub, its sections and the session sheet
+draw with them. Every other screen still uses the old tile helpers.
+The whole shell uses the slate colour pair.
 Companion to
 [`ui-spec.md`](ui-spec.md) (what each part must do) and
 [`overlay-style.md`](overlay-style.md) (how a look is named).
@@ -300,7 +300,10 @@ one moves.
    (done). The margin fill at 12x24 is still open: the scanline code
    zeroes those pixels, so it is a display change with its own timing
    check.
-5. Setup hub and sections; the host form; the paged lists.
-6. Unlock pad, connect progress, session menu, host-key prompt, status
-   row.
+5. Setup hub, sections and the session sheet (done): `app_menu.c` draws
+   the lab's `scr_setup`, `draw_section` and `scr_menu`. A section packs
+   its rows once; a long one pages with `ui_pages` and `ui_rail`. A
+   destructive action asks on the question page. The host form and the
+   paged lists are still open.
+6. Unlock pad, connect progress, host-key prompt, status row.
 7. Delete the Slab widgets and the old tile, field and header helpers.

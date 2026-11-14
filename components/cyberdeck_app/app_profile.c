@@ -6,7 +6,6 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_widgets.h"
-#include "app_menu_defs.h"   /* the editor exits back into MS_PROFILES */
 #include "font.h"            /* form-row touch mapping */
 #include "keystore.h"        /* keystore_wipe */
 

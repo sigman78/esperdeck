@@ -51,40 +51,63 @@ SCENARIOS = {
         "key:esc|wait:400|key:n|wait:400|expect:profile|key:a|key:b"
         "|key:tab|key:h|key:tab|key:down|key:down|key:left|wait:300"
         "|expect:profile|key:esc|wait:400|expect:home|quit",
-    # HOME -> Setup pill -> MENU; also verifies the published overlay is
-    # the menu frame, catching an accidental second ui_present().
+    # HOME -> Setup pill -> the hub; also verifies the published overlay
+    # is the hub frame, catching an accidental second ui_present().
     "config-menu-roundtrip":
         "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
-        "|wait:500|expect:menu"
-        "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
-    # Walk the two-column hub: CRT FX, FONT, SYSTEM. Cycling the CRT FX
-    # value tile toggles [fx] scanlines and flushes them on page exit. The
-    # breadcrumb lands back on CONFIGURATION each time. The hub uses a
-    # 2-col row-major layout. Order: 0 PROFILES, 1 WIFI, 2 KEYBOARD,
-    # 3 CRT FX, 4 MOTION FX, 5 FONT, 6 SYSTEM, 7 KEYSTORE.
+        "|wait:500|expect:menu|expect-text:Setup|expect-text:1 stored"
+        "|key:esc|wait:500|expect:home|quit",
+    # Hub tiles, row-major, three columns: Hosts, Wi-Fi, Keyboard (off),
+    # CRT FX, Motion FX, Font, System, Keystore. Two switches flip and a
+    # chip picks Phosphor: the CRT FX note then reads "phosphor".
     "config-pages":
         "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
-        "|wait:500|expect:menu"
-        "|expect-text:CONFIGURATION"
-        "|key:down|key:right|key:enter|wait:400|expect-text:CRT FX"
-        "|key:enter|wait:300|key:esc|wait:400|expect-text:CONFIGURATION"
-        "|key:down|key:down|key:right|key:enter|wait:400"
-        "|expect-text:FONT|key:esc|wait:400|expect-text:CONFIGURATION"
-        "|key:down|key:down|key:down|key:enter"
-        "|wait:400|expect-text:SYSTEM|key:esc|wait:400"
-        "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
-    # Touch: a finger-down alone does nothing. A long press on a tile
-    # opens its host page. Taps walk the menu; its header steps back.
-    # Points (100x30 grid): 130,64 first HOME tile; 744,24 Setup pill;
-    # 150,90 first menu card; 10,8 header back.
+        "|wait:500|expect:menu|expect-text:scanlines, bold pop"
+        "|key:down|key:enter|wait:300|expect-text:Setup / CRT FX"
+        "|key:enter|wait:200|key:right|key:enter|wait:200"
+        "|key:down|key:left|key:left|key:left|key:right|key:enter|wait:200"
+        "|key:esc|wait:400|expect-text:phosphor"
+        "|key:right|key:enter|wait:300|expect-text:Setup / Motion FX"
+        "|expect-text:Wobble|key:esc|wait:300|key:right|key:enter|wait:300"
+        "|expect-text:Size (restarts the deck)|key:esc|wait:300|expect:menu"
+        "|key:esc|wait:500|expect:home|quit",
+    # A switch shows its new word at once.
+    "config-switch":
+        "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
+        "|wait:500|expect:menu|key:down|key:down|key:enter|wait:300"
+        "|expect-text:Setup / System|key:down|key:left|expect-text:On"
+        "|key:enter|wait:300|expect-text:Off|key:enter|wait:300"
+        "|expect-text:On|key:esc|wait:300|key:esc|wait:500|expect:home|quit",
+    # A destructive action asks on its own page; Cancel is the default.
+    # A new font size asks too, and the active size does nothing.
+    "config-destructive":
+        "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
+        "|wait:500|expect:menu|key:down|key:down|key:enter|wait:300"
+        "|expect-text:Setup / System|key:down|key:enter|wait:300|expect:ask"
+        "|expect-text:Clear every pinned host key?|key:enter|wait:300"
+        "|expect:menu|expect-text:Setup / System"
+        "|key:enter|wait:300|expect:ask|key:right|key:enter|wait:300"
+        "|expect:menu|expect-text:Setup / System|expect-text:host keys"
+        "|key:esc|wait:300|key:up|key:right|key:right|key:enter|wait:300"
+        "|expect-text:Size (restarts the deck)|key:enter|wait:300|expect:menu"
+        "|key:right|key:enter|wait:300|expect:ask"
+        "|expect-text:Restart with the 10x20 font?|key:esc|wait:300"
+        "|expect:menu|expect-text:Size (restarts the deck)"
+        "|key:enter|wait:300|key:right|key:enter|wait:300|expect:menu"
+        "|expect-text:saved|key:esc|wait:300|key:esc|wait:500|expect:home|quit",
+    # Touch: a finger-down alone does nothing; a long press opens the host
+    # page; empty space does nothing. Points: 130,64 first HOME tile;
+    # 744,24 Setup pill; 130,80 first hub tile; 40,24 header back.
     "touch":
         "key:esc|wait:400|expect:home|press:130,64|wait:300|expect:home"
         "|release:130,64|hold:130,64|wait:500|expect:host"
         "|key:esc|wait:500|expect:home|tap:744,24|wait:500|expect:menu"
-        "|expect-text:MOTION FX|press:150,90|wait:300|expect-text:MOTION FX"
-        "|release:150,90|press:150,90|tap:150,90|wait:400"
-        "|expect-text:Import|tap:10,8|wait:400"
-        "|expect-text:MOTION FX|tap:10,8|wait:500|expect:home|quit",
+        "|expect-text:1 stored|press:130,80|wait:300|expect-text:1 stored"
+        "|release:130,80|tap:400,300|wait:300|expect-text:1 stored"
+        "|tap:130,80|wait:400|expect-text:Import from phone"
+        "|tap:400,300|wait:300|expect-text:Import from PC"
+        "|tap:40,24|wait:400|expect-text:1 stored|tap:40,24|wait:500"
+        "|expect:home|quit",
     # One tap on a tile connects. The fixture edit points it at a closed
     # loopback port. Esc cancels; the SSH thread needs real time to stop.
     "tap-connect":

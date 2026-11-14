@@ -1,152 +1,332 @@
 /*
- * app_menu.c is the overlay menu screen. It renders generic pages and
- * dispatches input over the app_menu_defs.c item tables.
+ * app_menu.c - the setup screen (SCR_MENU): the session sheet, the setup
+ * hub and the section pages, on the kit's parts. The item tables live in
+ * app_menu_defs.c. Layout: docs/ui-kit.md.
  */
 
 #include "app_internal.h"
-
-static struct {
-    int      sel;
-    int      screen;                /* menu_screen_t: page of the menu tree */
-    /* root is the entry page. Back from here pops the screen: MS_MAIN
-     * in-session, MS_CONFIG from HOME, deep links later. */
-    int      root;
-    bool     armed;                 /* a destructive item needs a 2nd hit   */
-    bool     fresh;                 /* page switched, not drawn yet         */
-    bool     note_wifi;             /* live-track wifi_status_str()         */
-} s_menu;
+#include "app_menu_defs.h"
 #include "app_screens.h"
 #include "app_settings.h"
 #include "app_widgets.h"
-#include "app_menu_defs.h"
+#include "font.h"
 #include "ssh_client.h"
 #include "wifi_manager.h"
+
+#include "esp_log.h"
 
 #include <stdio.h>
 #include <string.h>
 
-/* Card ids on a table page: slot + 1 (0 is "no region"). */
-#define SLOT_ID(i)  ((ui_id_t)((i) + 1))
+/* Region ids. An item has ID_OPT + item * MENU_PICK_MAX + option. */
+enum {
+    ID_PREV = 1, ID_NEXT,
+    ID_RESET = 10, ID_SETUP, ID_DISCONNECT,
+    ID_HUB = 20,
+    ID_OPT = 100,
+};
 
-/* Rendered slot -> item, hidden items skipped (the KEYSTORE page is
- * contextual). Rebuilt by menu_goto and every render. */
-static const menu_item_t *s_slot[MENU_MAX_TILES];
-static int s_slot_count;
+/* One row of a section: the items on it, left to right. */
+typedef struct {
+    uint8_t n;
+    struct { uint8_t it, w; } c[MENU_ITEM_MAX];
+} sec_row_t;
 
-static int build_slots(const menu_page_t *p)
+/* A section packed into rows and pages, as the last render saw it. */
+typedef struct {
+    sec_row_t rows[MENU_ITEM_MAX];
+    int nrows, per, pages, cap_w;
+} sec_lay_t;
+
+static struct {
+    int       screen;               /* menu_screen_t: page of the menu tree */
+    /* root is the entry page. Back from here pops the screen: MS_MAIN
+     * in-session, MS_CONFIG from HOME. */
+    int       root;
+    int       page;                 /* shown page of a section              */
+    ui_id_t   saved_focus;          /* focus saved when another screen opens */
+    int       sheet_x;              /* first column of the session sheet    */
+    bool      fresh;                /* page switched, not drawn yet         */
+    bool      follow;               /* resumed: show the focused item's page */
+    bool      note_wifi;            /* live-track wifi_status_str()         */
+    sec_lay_t lay;
+} s_menu;
+
+static const char *TAG = "app_menu";
+
+static bool is_section(int sc)
 {
-    int n = 0;
-    for (int i = 0; i < p->count && n < MENU_MAX_TILES; i++) {
-        const menu_item_t *it = &p->items[i];
-        if (it->hidden && it->hidden(it->arg)) continue;
-        s_slot[n++] = it;
-    }
-    return s_slot_count = n;
+    return sc >= MS_HOSTS && sc < MS_COUNT;
 }
 
-/* The header: the page title, the pages above it as a muted path (at
- * most two; the in-session MENU root drops off a depth-3 chain). The
- * whole bar is the back target. */
-static void draw_header(ui_rect_t r, int sc)
+static bool item_hidden(const menu_item_t *it)
 {
-    const char *seg[3];
-    int n = 0, cur = sc;
-    while (n < 3) {
-        const menu_page_t *p = menu_page(cur);
-        seg[n++] = p->title;
-        if (cur == s_menu.root || p->back_to < 0) break;
-        cur = p->back_to;
+    return it->hidden && it->hidden(it->arg);
+}
+
+static bool item_off(const menu_item_t *it)
+{
+    return it->off && it->off(it->arg);
+}
+
+static const char *item_label(const menu_item_t *it)
+{
+    return it->label_fn ? it->label_fn(it->arg) : it->label;
+}
+
+static ui_id_t item_id(int n, int opt)
+{
+    return (ui_id_t)(ID_OPT + n * MENU_PICK_MAX + opt);
+}
+
+/* The width an item keeps for itself. A choice takes the whole row. */
+static int own_w(const menu_item_t *it)
+{
+    return it->kind == MENU_SWITCH
+        ? ui_switch_w(item_label(it))
+        : ui_act_w(item_label(it), it->nav ? UI_S_CHEVRON : "");
+}
+
+/* Pack the visible items into rows of @p room cells. A choice takes a row
+ * and the rest keep their own width. Returns the row count. */
+static int pack_rows(const menu_page_t *p, int room, int gx, sec_row_t *rows)
+{
+    int nrows = 0, used = 0;
+    bool open = false;
+
+    for (int n = 0; n < p->count; n++) {
+        const menu_item_t *it = &p->items[n];
+        if (item_hidden(it)) continue;
+        const int own = own_w(it);
+        const int w = it->kind == MENU_PICK ? room : own < room ? own : room;
+        if (it->kind != MENU_PICK && open && used + gx + w <= room) {
+            sec_row_t *r = &rows[nrows - 1];
+            r->c[r->n].it = (uint8_t)n;
+            r->c[r->n++].w = (uint8_t)w;
+            used += gx + w;
+            continue;
+        }
+        rows[nrows].n = 1;
+        rows[nrows].c[0].it = (uint8_t)n;
+        rows[nrows++].c[0].w = (uint8_t)w;
+        open = it->kind != MENU_PICK;
+        used = w;
     }
-    char path[48] = "";
-    int len = 0;
-    for (int i = n - 1; i >= 1 && len < (int)sizeof(path); i--)
-        len += snprintf(path + len, sizeof(path) - len, "%s%s",
-                        i == n - 1 ? "" : " / ", seg[i]);
-    ui_header(r, path, seg[0], NULL, true);
+    return nrows;
+}
+
+/* The one place that decides rows, pages and the caption column. Drawing,
+ * the page flip and the focus after a resume all read the result. */
+static void section_layout(const menu_page_t *p, int room, int gx, int per,
+                           sec_lay_t *L)
+{
+    L->per = per > 1 ? per : 1;
+    L->nrows = pack_rows(p, room, gx, L->rows);
+    /* Paged rows lose two cells to the rail and its gap. */
+    if (L->nrows > L->per) L->nrows = pack_rows(p, room - 2, gx, L->rows);
+    L->pages = ui_page_count(L->nrows, L->per);
+    L->cap_w = 0;
+    for (int n = 0; n < p->count; n++) {
+        const menu_item_t *it = &p->items[n];
+        if (it->kind != MENU_PICK || item_hidden(it)) continue;
+        const int w = ui_caption_w(item_label(it));
+        if (w > L->cap_w) L->cap_w = w;
+    }
+}
+
+/* The region a keyboard lands on when it enters item @p n. */
+static ui_id_t item_entry(const menu_item_t *it, int n)
+{
+    const int ix = it->kind == MENU_PICK ? it->index(it->arg) : 0;
+    return item_id(n, ix > 0 ? ix : 0);
+}
+
+/* First target of row @p ri, or 0 when the row has none. */
+static ui_id_t row_entry(const menu_page_t *p, int ri)
+{
+    const sec_lay_t *L = &s_menu.lay;
+    if (ri < 0 || ri >= L->nrows) return 0;
+    for (int ci = 0; ci < L->rows[ri].n; ci++) {
+        const int n = L->rows[ri].c[ci].it;
+        if (!item_off(&p->items[n])) return item_entry(&p->items[n], n);
+    }
+    return 0;
+}
+
+static void draw_item(const menu_item_t *it, int n, ui_rect_t r, int cap_w)
+{
+    const ui_id_t id = item_id(n, 0);
+    const uint8_t off = item_off(it) ? UI_PART_OFF : 0;
+
+    if (it->kind == MENU_PICK) {
+        const char *opt[MENU_PICK_MAX];
+        int cnt = it->count(it->arg);
+        if (cnt > MENU_PICK_MAX) cnt = MENU_PICK_MAX;
+        for (int i = 0; i < cnt; i++) opt[i] = it->option(it->arg, i);
+        ui_chips(r, id, item_label(it), opt, cnt, it->index(it->arg), 0,
+                 cap_w);
+    } else if (it->kind == MENU_SWITCH) {
+        ui_switch(r, id, item_label(it), it->on(it->arg),
+                  (uint8_t)(UI_PART_ROOMY | off));
+    } else {
+        ui_part(r, id,
+                &(ui_part_t){ .title = item_label(it),
+                              .right = it->nav ? UI_S_CHEVRON : NULL,
+                              .tone = it->accent ? UI_TONE_TINT
+                                                 : UI_TONE_CARD,
+                              .accent = it->accent,
+                              .flags = (uint8_t)(UI_PART_ROOMY | off) }, NULL);
+    }
+}
+
+/* One section: a choice takes a row and shows every option. Switches and
+ * actions keep their own width and pack from the left. */
+static void draw_section(const menu_page_t *p)
+{
+    ui_slate_t pg = ui_slate_page();
+    sec_lay_t *L = &s_menu.lay;
+
+    section_layout(p, pg.body.w, pg.m.gutter, pg.body.h / 3, L);
+    if (s_menu.follow) {
+        /* Resumed: land on the page that holds the focused item. */
+        s_menu.follow = false;
+        const ui_id_t f = ui_focus_get();
+        for (int ri = 0; f >= ID_OPT && ri < L->nrows; ri++)
+            for (int ci = 0; ci < L->rows[ri].n; ci++)
+                if ((f - ID_OPT) / MENU_PICK_MAX == L->rows[ri].c[ci].it)
+                    s_menu.page = ri / L->per;
+    }
+    s_menu.page = ui_page_clamp(s_menu.page, L->nrows, L->per);
+    ui_focus_default(row_entry(p, s_menu.page * L->per));
+
+    const ui_rect_t head = ui_pages(pg.header, ID_PREV, ID_NEXT, s_menu.page,
+                                    L->pages);
+    ui_title(head, "Setup", p->title, NULL, true);
+    if (L->pages > 1) {
+        ui_rail(ui_cut_right(&pg.body, 1), s_menu.page, L->pages);
+        ui_cut_right(&pg.body, 1);
+    }
+    const int gx = pg.m.gutter;
+    for (int k = 0; k < L->per; k++) {
+        const int ri = s_menu.page * L->per + k;
+        if (ri >= L->nrows) break;
+        int x = pg.body.x;
+        for (int ci = 0; ci < L->rows[ri].n; ci++) {
+            const int n = L->rows[ri].c[ci].it, w = L->rows[ri].c[ci].w;
+            draw_item(&p->items[n], n, ui_rect(x, pg.body.y + k * 3, w, 3),
+                      L->cap_w);
+            x += w + gx;
+        }
+    }
+}
+
+/* The hub: a tile per section with its present state as the detail. */
+static void draw_hub(void)
+{
+    ui_slate_t pg = ui_slate_page();
+    int n;
+    const uint8_t *hub = menu_hub(&n);
+
+    ui_title(pg.header, s_menu.root == MS_MAIN ? "Session" : NULL, "Setup",
+             NULL, true);
+    const ui_grid_t g = ui_grid(pg.body,
+                                ui_cols_for(pg.body.w, 24, pg.m.gutter), 4,
+                                pg.m.gutter, 0);
+    ui_focus_default(ID_HUB);
+    for (int i = 0; i < n && i < ui_grid_capacity(&g); i++) {
+        const menu_page_t *s = menu_page(hub[i]);
+        char buf[64];
+        const char *why = s->unavail ? s->unavail() : NULL;
+        const char *detail = why ? why
+                           : s->note ? s->note(buf, sizeof buf) : NULL;
+        ui_part(ui_grid_cell(&g, i), (ui_id_t)(ID_HUB + i),
+                &(ui_part_t){ .title = s->title, .detail = detail,
+                              .right = UI_S_CHEVRON,
+                              .flags = why ? UI_PART_OFF : 0 }, NULL);
+    }
+}
+
+/* "42 s", "14 min" or "2 h 14 min": the units are separate words. */
+static void fmt_span(char *buf, size_t sz, uint64_t s)
+{
+    if (s < 60)
+        snprintf(buf, sz, "%u s", (unsigned)s);
+    else if (s < 3600)
+        snprintf(buf, sz, "%u min", (unsigned)(s / 60));
+    else
+        snprintf(buf, sz, "%u h %u min", (unsigned)(s / 3600),
+                 (unsigned)(s / 60 % 60));
+}
+
+/* The session sheet: a slate panel at the right over the dimmed terminal. */
+static void draw_sheet(void)
+{
+    const int cols = ui_cols(), rows = ui_rows();
+    ui_dim();
+    const int w = cols < 28 ? cols : 28;
+    const ui_rect_t sheet = ui_rect(cols - w, 0, w, rows);
+    s_menu.sheet_x = sheet.x;
+    ui_fill(sheet.x, sheet.y, sheet.w, sheet.h, UI_TEXT);
+    ui_rect_t inn = ui_inset(sheet, 1, 0);
+
+    const conn_profile_t *cp = conn_active();
+    ui_focus_default(ID_RESET);
+    ui_title(ui_cut_top(&inn, 3), "Session",
+             cp && cp->name[0] ? cp->name : "Connected", NULL, true);
+
+    const uint64_t now_ms = (uint64_t)app.anim_frame * ANIM_PERIOD_MS;
+    const uint64_t ss = conn_session_start();
+    char up[32], span[32], link[64];
+    fmt_span(up, sizeof up, now_ms / 1000);
+    fmt_span(span, sizeof span, now_ms > ss ? (now_ms - ss) / 1000 : 0);
+    const int rssi = net_rssi();
+    if (rssi) snprintf(link, sizeof link, "%s, %d dBm", span, rssi);
+    else      snprintf(link, sizeof link, "%s", span);
+    const ui_info_row_t info[2] = { { .label = "Up", .value = up },
+                                    { .label = "Link", .value = link } };
+    ui_info(ui_cut_top(&inn, 4), info, 2, 0);
+
+    ui_part(ui_cut_top(&inn, 3), ID_RESET,
+            &(ui_part_t){ .title = "Reset terminal" }, NULL);
+    ui_part(ui_cut_top(&inn, 3), ID_SETUP,
+            &(ui_part_t){ .title = "Setup", .right = UI_S_CHEVRON }, NULL);
+    ui_push(ui_cut_top(&inn, 3), ID_DISCONNECT, "Disconnect", UI_TONE_TINT,
+            OVERLAY_COL_RED, 0);
 }
 
 static void render_menu(uint64_t now)
 {
     (void)now;
-    ui_dim();   /* dim the live session behind the menu so it pops */
-
+    const int faults = ui_faults();
     const int sc = s_menu.screen;
-    const menu_page_t *p = menu_page(sc);
 
-    const ui_metrics_t m = ui_metrics();
-    const ui_page_t pg = ui_page();
-    draw_header(pg.header, sc);
     s_menu.fresh = false;
-
-    char vbuf[MENU_MAX_TILES][16];
-    const int note_row = ui_rows() - 1;
-
-    /* Two columns of one-line cards. The whole section fits one
-     * screen at every grid (fit-one-screen contract, asserted in
-     * app_menu_defs.c and tests/ui). */
-    const int count = build_slots(p);
-    const ui_grid_t g = ui_grid(pg.body, 2, m.unit, m.gutter, 0);
-    app.grid = (tilegrid_t){ 0 };  /* taps route through ui_hot */
-    if (s_menu.sel >= count) s_menu.sel = count ? count - 1 : 0;
-
-    for (int i = 0; i < count; i++) {
-        const menu_item_t *it = s_slot[i];
-        const bool armed = i == s_menu.sel && s_menu.armed && it->confirm;
-        ui_card_t c = {
-            .title  = it->label_fn ? it->label_fn(it->arg) : it->label,
-            .accent = it->color_fn ? it->color_fn(it->arg) : it->color,
-        };
-        vbuf[i][0] = '\0';
-        if (armed) {
-            /* The armed confirm reads as the one action on the page. */
-            c.title  = it->confirm;
-            c.accent = OVERLAY_COL_RED;
-            c.flags  = UI_CARD_ACTION | UI_CARD_LIT;
-        } else if (it->dim && it->dim(it->arg)) {
-            /* Still a region: activating it explains why (dim_note). */
-            c.flags = UI_CARD_DISABLED;
-        } else if (it->value) {
-            c.value = it->value(it->arg, vbuf[i], sizeof(vbuf[i]));
-        }
-        ui_card(ui_grid_cell(&g, i), SLOT_ID(i), &c);
-    }
+    if (sc == MS_MAIN)         draw_sheet();
+    else if (sc == MS_CONFIG)  draw_hub();
+    else if (is_section(sc))   draw_section(menu_page(sc));
     ui_pen(OVERLAY_COL_DEFAULT);
 
-    if (sc == MS_MAIN) {
-        /* Mainframe flex: deck uptime + link time. */
-        uint64_t up = (uint64_t)app.anim_frame * ANIM_PERIOD_MS / 1000;
-        char flex[48];
-        uint64_t now_ms = (uint64_t)app.anim_frame * ANIM_PERIOD_MS;
-        uint64_t ss = conn_session_start();
-        uint64_t lk = now_ms > ss ? (now_ms - ss) / 1000 : 0;
-        snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u   LINK %02u:%02u",
-                 (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
-                 (unsigned)(up % 60), (unsigned)(lk / 60),
-                 (unsigned)(lk % 60));
-        ui_pen(OVERLAY_COL_BLUE);
-        ui_puts((ui_cols() - (int)strlen(flex)) / 2, note_row - 1, flex, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    }
-
-    /* Feedback renders on the StatusBar (the shared toast) — the shell
+    /* Feedback renders on the StatusBar (the shared toast): the shell
      * composites it after this render. */
+    if (ui_faults() != faults)
+        ESP_LOGW(TAG, "layout faults +%d", ui_faults() - faults);
 }
 
-/* Paint + present out of turn — for an action that blocks and reboots
+/* Paint and present out of turn, for an action that blocks and reboots
  * (font apply), so its note is readable before the restart. */
 void menu_present_now(uint64_t now)
 {
     ui_colors(UI_FG, UI_BG);
     ui_clear();
     render_menu(now);
+    ui_statusbar(now);       /* the note rides the StatusBar */
     ui_no_cursor();
     ui_present();
 }
 
 /* Menu feedback rides the shared toast on the StatusBar (ui-spec).
- * @p ms: lifetime; 0 = sticky (an armed confirm holds its prompt until
- * acted on or disarmed — menu_exit clears a leftover sticky so it can
- * never follow the user onto another screen). */
+ * @p ms: lifetime; 0 = sticky. menu_exit clears a leftover sticky so it
+ * never follows the user onto another screen. */
 void menu_note(uint64_t now, uint32_t ms, bool live_wifi, const char *text)
 {
     toast_for(now, 1, "%s", text);
@@ -160,63 +340,43 @@ static void menu_clear_note(void)
     s_menu.note_wifi = false;
 }
 
-/* Switch to menu screen @p sc, resetting selection/arm/note. Table pages
- * snapshot volatile state via on_open and prebuild the slot map (a tap
- * can land before the first render). The settings hold defers flash
- * writes while their page is open (see app_settings_idle_flush). */
+/* Switch to menu screen @p sc: first page, no saved focus, no note. The
+ * page snapshots volatile state in on_open. The settings hold defers flash
+ * writes while its page is open (see app_settings_idle_flush). */
 void menu_goto(int sc)
 {
-    s_menu.screen = sc;
-    s_menu.sel    = 0;
-    s_menu.armed  = false;
-    s_menu.fresh  = true;
+    s_menu.screen      = sc;
+    s_menu.page        = 0;
+    s_menu.saved_focus = 0;
+    s_menu.follow      = false;
+    s_menu.fresh       = true;
     ui_hot_reset();
     const menu_page_t *p = menu_page(sc);
     if (p && p->on_open) p->on_open();
-    if (p) build_slots(p);
     app_settings_hold(p ? p->hold : 0);
     menu_clear_note();
     nav_invalidate();
 }
 
-/* Back one level. Every back path (Esc, tap-outside, Back tile) funnels here
- * so an armed confirm can never leak across pages. Back at the entry root
- * leaves the menu screen; anywhere else follows the page's back_to. */
+/* Back one level. Back at the entry root leaves the menu screen; anywhere
+ * else it follows the page's back_to, with the focus on the way we came. */
 void menu_back(uint64_t now)
 {
-    const int to = menu_page(s_menu.screen)->back_to;
-    if (s_menu.screen == s_menu.root || to == MENU_BACK_LEAVE) {
-        s_menu.armed = false;
+    const int from = s_menu.screen;
+    const int to = menu_page(from)->back_to;
+    if (from == s_menu.root || to == MENU_BACK_LEAVE) {
         nav_pop(now);
-    } else {
-        menu_goto(to);
-    }
-}
-
-/* Generic activation: dim gates first, then the 2-step confirm arm, then
- * the item's own action. Replaces the per-page positional switch. */
-static void menu_activate(uint64_t now)
-{
-    const int sel = s_menu.sel;
-    const bool was_armed = s_menu.armed;
-    s_menu.armed = false;
-
-    const menu_item_t *it = (sel >= 0 && sel < s_slot_count) ? s_slot[sel]
-                                                             : NULL;
-    if (!it) return;
-    if (it->dim && it->dim(it->arg)) {
-        if (it->dim_note) menu_note(now, MENU_MSG_MS, false, it->dim_note);
-        nav_invalidate();
         return;
     }
-    if (it->confirm && !was_armed) {
-        s_menu.armed = true;
-        menu_note(now, 0, false, it->arm_note);
-        nav_invalidate();
-        return;
+    menu_goto(to);
+    if (to == MS_MAIN) {
+        ui_focus_set(ID_SETUP);
+    } else if (to == MS_CONFIG) {
+        int n;
+        const uint8_t *hub = menu_hub(&n);
+        for (int i = 0; i < n; i++)
+            if (hub[i] == from) ui_focus_set((ui_id_t)(ID_HUB + i));
     }
-    if (it->action) it->action(it->arg, now);
-    nav_invalidate();
 }
 
 /* @p arg = the root page: MS_MAIN in-session, MS_CONFIG from HOME. */
@@ -227,21 +387,27 @@ static void menu_enter(intptr_t arg, uint64_t now)
     menu_goto((int)arg);
 }
 
-/* Revealed by a pop (profile editor, keystore pad): re-land on the page
- * the user left, selection reset. */
+/* Revealed by a pop (question page, code pad, pairing, import): land on
+ * the page and the item the user left. */
 static void menu_resume(intptr_t arg, uint64_t now)
 {
     (void)arg; (void)now;
-    menu_goto(s_menu.screen);
+    const menu_page_t *p = menu_page(s_menu.screen);
+    if (p && p->on_open) p->on_open();
+    app_settings_hold(p ? p->hold : 0);
+    s_menu.fresh  = true;
+    s_menu.follow = true;
+    if (s_menu.saved_focus) ui_focus_set(s_menu.saved_focus);
+    nav_invalidate();
 }
 
-/* Any departure — a pop, or another screen pushed on top — releases
- * the settings hold. This lets deferred writes flush on the next tick.
- * It also drops a leftover STICKY note: an arm prompt must not follow
- * the user out. */
+/* Any departure, a pop or another screen pushed on top, releases the
+ * settings hold. Deferred writes then flush on the next tick. It also
+ * drops a leftover STICKY note. */
 static void menu_exit(uint64_t now)
 {
     (void)now;
+    s_menu.saved_focus = ui_focus_get();
     app_settings_hold(0);
     if (app.toast_until == UINT64_MAX) menu_clear_note();
 }
@@ -263,15 +429,14 @@ static void menu_tick(uint64_t now)
         session_dropped(now);
         return;
     }
-    /* Live feedback runs on the 10 fps gate. Wifi-tracking notes rewrite
-     * from the real state, expired notes clear, and the UP/LINK clocks
-     * tick. */
+    /* Live state runs on the 10 fps gate: the hub notes, the sheet clocks
+     * and the wifi-tracking note. Expired notes clear. */
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
         if (s_menu.note_wifi && app.toast[0]) {
             snprintf(app.toast, sizeof(app.toast), "wifi: %s",
                      wifi_status_str());
-            /* Still in flight? Keep the note alive — expiring mid-
+            /* Still in flight? Keep the note alive: expiring mid-
              * reconnect reads as the action silently dying. */
             wifi_mgr_state_t ws = wifi_manager_get_state();
             if (ws == WIFI_MGR_CONNECTING || ws == WIFI_MGR_LOST)
@@ -283,62 +448,87 @@ static void menu_tick(uint64_t now)
     }
 }
 
-/* A table page: every card is a region, so touch and keys resolve the
- * same way. The tapped or focused slot becomes the selection that
- * menu_activate and the confirm arm work on. */
-static void page_input(const cyberdeck_input_t *ev, ui_key_t k, uint64_t now)
+/* Step the page of a section; focus lands on the first item of the new one. */
+static void menu_flip(int dir)
 {
-    /* A tap that lands before the page's first frame has no regions to
-     * hit. Drop it: it must not read as a tap outside. */
-    if (s_menu.fresh) return;
+    const sec_lay_t *L = &s_menu.lay;
+    const int page = s_menu.page + dir;
+    if (!is_section(s_menu.screen) || page < 0 || page >= L->pages) return;
+    s_menu.page = page;
+    ui_focus_set(row_entry(menu_page(s_menu.screen), page * L->per));
+    nav_invalidate();
+}
 
-    const ui_act_t a = app_hot_input(ev, k);
-    const int slot = (a.id && a.id != UI_ID_BACK) ? (int)a.id - 1 : -1;
+/* A hit on an item: a switch flips, a choice picks, an action runs or asks. */
+static void item_press(const menu_item_t *it, int opt, uint64_t now)
+{
+    if (item_off(it)) return;
+    if (it->kind == MENU_PICK) {
+        if (it->set) it->set(it->arg, opt, now);
+    } else if (it->kind == MENU_ACT && it->ask) {
+        ask_open(&(ask_t){
+            .title = it->ask,
+            .line1 = it->ask_line ? it->ask_line : "This cannot be undone.",
+            .verb = item_label(it),
+            .yes = it->action, .arg = it->arg,
+        }, now);
+    } else if (it->action) {
+        it->action(it->arg, now);
+    }
+}
 
-    if (a.kind == UI_ACT_PRESS && a.id == UI_ID_BACK) {
-        menu_back(now);
-        return;
+static void menu_press(ui_id_t id, uint64_t now)
+{
+    switch (id) {
+    case UI_ID_BACK:      menu_back(now);                 return;
+    case ID_PREV:         menu_flip(-1);                  return;
+    case ID_NEXT:         menu_flip(1);                   return;
+    case ID_RESET:        menu_act_reset_terminal(now);   return;
+    case ID_SETUP:        menu_goto(MS_CONFIG);           return;
+    case ID_DISCONNECT:   menu_act_disconnect(now);       return;
+    default: break;
     }
-    if (ev->type == CYBERDECK_INPUT_TAP && !a.id) {   /* tap outside: back */
-        menu_back(now);
-        return;
+    if (id >= ID_OPT) {
+        const menu_page_t *p = menu_page(s_menu.screen);
+        const int n = (id - ID_OPT) / MENU_PICK_MAX;
+        if (is_section(s_menu.screen) && n < p->count)
+            item_press(&p->items[n], (id - ID_OPT) % MENU_PICK_MAX, now);
+    } else if (id >= ID_HUB && s_menu.screen == MS_CONFIG) {
+        int n;
+        const uint8_t *hub = menu_hub(&n);
+        const int i = id - ID_HUB;
+        const menu_page_t *s = i < n ? menu_page(hub[i]) : NULL;
+        if (s && !(s->unavail && s->unavail())) menu_goto(hub[i]);
     }
-    /* Finger down or up only changes how a card looks. A long press does
-     * nothing here, but it ends the press and the card must repaint. */
-    if (ev->type == CYBERDECK_INPUT_PRESS ||
-        ev->type == CYBERDECK_INPUT_RELEASE ||
-        ev->type == CYBERDECK_INPUT_LONG_PRESS) {
-        if (a.kind != UI_ACT_NONE) nav_invalidate();
-        return;
-    }
-    if (a.kind != UI_ACT_PRESS && a.kind != UI_ACT_MOVE) return;
-    if (slot < 0 || slot >= s_slot_count) {
-        nav_invalidate();
-        return;
-    }
-
-    /* Moving to, or hitting, a DIFFERENT card than the armed one disarms
-     * it first. Otherwise the stale arm fires that card's destructive
-     * action unconfirmed. */
-    if (slot != s_menu.sel && s_menu.armed) {
-        s_menu.armed = false;
-        menu_clear_note();
-    }
-    s_menu.sel = slot;
-    if (a.kind == UI_ACT_PRESS) menu_activate(now);    /* tap == Enter */
-    else                        nav_invalidate();
 }
 
 static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                        uint64_t now)
 {
     (void)ch;
-    /* Esc / F12 / tap-outside all step back one level. */
+    /* Esc and F12 step back one level. */
     if (k == K_ESC || k == K_F12) {
         menu_back(now);
         return;
     }
-    page_input(ev, k, now);
+    /* A tap that lands before the page's first frame has no regions to
+     * hit: drop it. */
+    if (s_menu.fresh) return;
+    if (k == K_SCROLL_UP || k == K_SCROLL_DOWN) {
+        menu_flip(k == K_SCROLL_UP ? -1 : 1);
+        return;
+    }
+
+    const ui_act_t a = app_hot_input(ev, k);
+    /* On the sheet a tap beside it resumes the session. */
+    if (ev->type == CYBERDECK_INPUT_TAP && !a.id && s_menu.screen == MS_MAIN &&
+        ev->x / font_width() < s_menu.sheet_x) {
+        menu_back(now);
+        return;
+    }
+    if (a.kind == UI_ACT_NONE) return;
+    nav_invalidate();
+    if (a.kind == UI_ACT_PRESS) menu_press(a.id, now);
 }
 
 const nav_screen_t menu_screen = {

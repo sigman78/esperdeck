@@ -71,10 +71,10 @@ static int sb_label(chip_cell_t cell[SB_MAX_CELLS], const char *s,
     return n + 1;
 }
 
-static int poll_net(chip_cell_t cell[SB_MAX_CELLS])
+int net_rssi(void)
 {
     /* RSSI moves over seconds; taking the WiFi driver's lock at the render
-     * cadence is the thing this cache exists to avoid (as on HOME). */
+     * cadence is what this cache avoids. The setup hub reads it too. */
     static bool     fresh = false;
     static uint32_t frame = 0;
     static int      rssi  = 0;
@@ -83,6 +83,12 @@ static int poll_net(chip_cell_t cell[SB_MAX_CELLS])
         frame = app.anim_frame;
         rssi  = wifi_manager_get_rssi();
     }
+    return rssi;
+}
+
+static int poll_net(chip_cell_t cell[SB_MAX_CELLS])
+{
+    const int rssi = net_rssi();
 
     chip_state_t st;
     switch (wifi_manager_get_state()) {

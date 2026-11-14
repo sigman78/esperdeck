@@ -1,10 +1,10 @@
 /*
- * app_menu_defs.h — the data-driven menu tree (internal).
+ * app_menu_defs.h - the setup tree as data (internal).
  *
- * A page is a table of menu_item_t. Behavior (action / confirm / dim /
- * value) rides the table, not a positional switch. Tables and their
- * action callbacks live in app_menu_defs.c; rendering and input in
- * app_menu.c. (extensibility.md item 3)
+ * A section is a table of menu_item_t. An item is an action, a switch
+ * or a choice, and it carries its own behavior. Tables and callbacks
+ * live in app_menu_defs.c; drawing and input live in app_menu.c.
+ * Look and layout: docs/ui-kit.md, sketches mo-setup and mo-section.
  */
 
 #pragma once
@@ -14,65 +14,77 @@
 #include <stdint.h>
 
 typedef enum {
-    MS_MAIN = 0,   /* in-session root: Resume / Disconnect / Configuration */
-    MS_CONFIG,     /* hub: two-column section tiles (ui-spec rendition) */
-    MS_PROFILES,   /* Import > */
-    MS_IMPORT,     /* SoftAP from a phone, or web import from a PC */
-    MS_WIFI,       /* Reconnect / Add network */
-    MS_KEYBOARD,   /* Pair / Forget bonds */
-    MS_SYSTEM,     /* Saver / Clear host keys / Factory reset */
-    MS_FX_CRT,     /* value tiles: beam-look fx (scanlines/phosphor/bold...) */
-    MS_FX_MOTION,  /* value tiles: motion fx (wobble/wipe/collapse/static) */
-    MS_FONT,       /* value tiles: terminal font size, applied on reboot     */
-    MS_KEYSTORE,   /* contextual: lock now / set code / remove code          */
+    MS_MAIN = 0,   /* in-session sheet: Reset terminal, Setup, Disconnect */
+    MS_CONFIG,     /* the Setup hub: one tile per section                 */
+    MS_HOSTS,      /* import hosts from a phone or a PC                   */
+    MS_WIFI,       /* Reconnect, Add network                              */
+    MS_KEYBOARD,   /* Pair, Forget bonds                                  */
+    MS_FX_CRT,     /* beam look: scanlines, phosphor, bold                */
+    MS_FX_MOTION,  /* motion: wobble, wipe, collapse, static              */
+    MS_FONT,       /* terminal font size; a change restarts the deck      */
+    MS_SYSTEM,     /* saver, edge scroll, clear host keys, factory reset  */
+    MS_KEYSTORE,   /* contextual: lock, set or change code, remove code   */
+    MS_COUNT
 } menu_screen_t;
 
-/* One tile. Static parts sit inline. Dynamic parts are callbacks that
- * take the item's @p arg. This lets one function serve a family of
- * items (font sizes, fx tunables). Each tile must set one of
- * label/label_fn and one of color/color_fn. String-returning callbacks
- * run every render (~10 fps): keep them cheap, by snapshotting
- * expensive reads in the page's on_open. They must return @p buf or a
- * static-storage string, never NULL. @p sz is >= 16. */
+/* How an item draws and what a hit means. */
+typedef enum {
+    MENU_ACT = 0,  /* ui_part: a hit runs `action`                        */
+    MENU_SWITCH,   /* ui_switch: `on` reads the state, `action` flips it  */
+    MENU_PICK,     /* ui_chips: every option shows; a hit runs `set`      */
+} menu_kind_t;
+
+/* One item. Callbacks take the item's @p arg, so one function serves a
+ * family (fx tunables). State callbacks run every render (about 10 Hz):
+ * keep them cheap and snapshot slow reads in the page's on_open. */
 typedef struct {
+    uint8_t     kind;                            /* menu_kind_t           */
     const char *label;
-    const char *(*label_fn)(intptr_t arg);       /* overrides label      */
-    uint8_t     color;                           /* OVERLAY_COL_*        */
-    uint8_t   (*color_fn)(intptr_t arg);         /* overrides color      */
+    const char *(*label_fn)(intptr_t arg);       /* overrides label       */
     intptr_t    arg;
+    bool        nav;           /* opens another page: draws a chevron     */
+    uint8_t     accent;        /* OVERLAY_COL_*; red marks a destructive act */
     void      (*action)(intptr_t arg, uint64_t now);
-    const char *confirm;       /* 2-step: tile label while armed         */
-    const char *arm_note;      /* 2-step: feedback on the arming hit     */
-    bool      (*hidden)(intptr_t arg);           /* tile not rendered    */
-    bool      (*dim)(intptr_t arg);              /* shown, unavailable   */
-    const char *dim_note;      /* feedback for activating a dim item     */
-    const char *(*value)(intptr_t arg, char *buf, size_t sz);  /* body   */
+    bool      (*on)(intptr_t arg);               /* MENU_SWITCH state     */
+    int       (*count)(intptr_t arg);            /* MENU_PICK: options, at most MENU_PICK_MAX */
+    int       (*index)(intptr_t arg);            /* MENU_PICK: chosen one */
+    const char *(*option)(intptr_t arg, int i);  /* MENU_PICK: label      */
+    void      (*set)(intptr_t arg, int i, uint64_t now);
+    const char *ask;           /* MENU_ACT: question page title; the verb */
+    const char *ask_line;      /* is the label. NULL runs `action` at once */
+    bool      (*hidden)(intptr_t arg);           /* item not drawn        */
+    bool      (*off)(intptr_t arg);              /* drawn, not a target   */
 } menu_item_t;
 
-#define MENU_BACK_LEAVE (-1)   /* pops the whole menu, not another page  */
+#define MENU_PICK_MAX   8      /* options of one choice                   */
+#define MENU_ITEM_MAX   8      /* items of one section                    */
+#define MENU_BACK_LEAVE (-1)   /* back pops the whole menu screen         */
 
-/* Fit-one-screen contract (ui-spec, locked): a page holds at most what
- * the smallest grid shows — 2 columns x 4 rows at 66x20. A larger
- * section is split at design time; menus never scroll or paginate. */
-#define MENU_PAGE_MAX 8
-
+/* One section. On the hub its tile shows `title` and the present state
+ * from `note`. A non-NULL `unavail` result draws the tile off, with
+ * that text as its detail. Both run every render. */
 typedef struct {
     const char *title;
     const menu_item_t *items;
     uint8_t count;
     int8_t  back_to;           /* menu_screen_t target, or MENU_BACK_LEAVE */
-    uint8_t hold;              /* APP_SETTINGS_HOLD_* while page is open */
-    void  (*on_open)(void);    /* snapshot volatile state at page open   */
+    uint8_t hold;              /* APP_SETTINGS_HOLD_* while the page is open */
+    void  (*on_open)(void);    /* snapshot volatile state at page open    */
+    const char *(*note)(char *buf, size_t sz);
+    const char *(*unavail)(void);
 } menu_page_t;
 
-/* Largest items[] count across the pages (slot-map sizing in app_menu.c;
- * checked against the tables by a static assert in app_menu_defs.c). */
-#define MENU_MAX_TILES 12
-
-/** The page table for @p sc, or NULL for an unknown page. */
+/** The page table for @p sc, or NULL when out of range. */
 const menu_page_t *menu_page(int sc);
 
+/** The hub's sections in tile order; @p n receives the count. */
+const uint8_t *menu_hub(int *n);
+
+/* Session sheet actions (MS_MAIN). The sheet is drawn by app_menu.c. */
+void menu_act_reset_terminal(uint64_t now);
+void menu_act_disconnect(uint64_t now);
+
 /* app_menu.c internals the tables call back into. Shell-wide callers use
- * menu_goto/menu_note (app_screens.h); these stay menu-private. */
+ * menu_goto and menu_note (app_screens.h); these stay menu-private. */
 void menu_back(uint64_t now);
-void menu_present_now(uint64_t now);   /* paint + present before a reboot */
+void menu_present_now(uint64_t now);   /* paint and present before a reboot */

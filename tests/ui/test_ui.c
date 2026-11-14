@@ -106,16 +106,38 @@ static void test_grid_cells_tile_without_overlap(void)
     }
 }
 
-/* The fit-one-screen menu contract (docs/ui-spec.md). The smallest grid
- * shows at least 8 one-line items and 8 two-line items in two columns. */
-static void test_smallest_grid_fits_a_menu_section(void)
+/* The setup hub holds its eight sections as 4-row tiles at every grid.
+ * The columns come from ui_cols_for, so no tile is narrower than 24. */
+static void test_hub_tiles_fit_at_every_grid(void)
 {
-    ui_rect_t body = body_of(66, 20);
-    TEST_ASSERT_EQUAL(16, body.h);
-    ui_grid_t one = ui_grid(body, 2, 3, 2, 0);
-    TEST_ASSERT_TRUE(ui_grid_capacity(&one) >= 8);
-    ui_grid_t two = ui_grid(body, 2, 4, 2, 0);
-    TEST_ASSERT_TRUE(ui_grid_capacity(&two) >= 8);
+    for (int i = 0; i < NGRIDS; i++) {
+        const ui_metrics_t m = ui_metrics_for(GRIDS[i].cols, GRIDS[i].rows);
+        ui_rect_t body = body_of(GRIDS[i].cols, GRIDS[i].rows);
+        const int cols = ui_cols_for(body.w, 24, m.gutter);
+        TEST_ASSERT_TRUE(cols >= 2);
+        ui_grid_t g = ui_grid(body, cols, 4, m.gutter, 0);
+        TEST_ASSERT_TRUE(ui_grid_capacity(&g) >= 8);
+        TEST_ASSERT_TRUE(ui_grid_cell(&g, 0).w >= 24);
+    }
+}
+
+/* A section lays one choice or one pack of parts per 3-row line. More
+ * lines than the body holds make pages. Every line lands on one page. */
+static void test_section_pages_instead_of_overflowing(void)
+{
+    for (int i = 0; i < NGRIDS; i++) {
+        const ui_rect_t body = body_of(GRIDS[i].cols, GRIDS[i].rows);
+        const int per = body.h / 3;
+        TEST_ASSERT_TRUE(per >= 1);
+        TEST_ASSERT_EQUAL(1, ui_page_count(per, per));
+        TEST_ASSERT_EQUAL(2, ui_page_count(per + 1, per));
+        for (int lines = 1; lines <= 12; lines++) {
+            const int pages = ui_page_count(lines, per);
+            TEST_ASSERT_TRUE(pages * per >= lines);
+            TEST_ASSERT_TRUE((pages - 1) * per < lines);
+            TEST_ASSERT_EQUAL(pages - 1, ui_page_clamp(99, lines, per));
+        }
+    }
 }
 
 /* A 2x3 grid of regions, ids 1..6 row-major, plus the back target. */
@@ -559,7 +581,8 @@ int main(void)
     RUN_TEST(test_center_and_inset_stay_inside);
     RUN_TEST(test_metrics_keep_touch_heights_odd);
     RUN_TEST(test_grid_cells_tile_without_overlap);
-    RUN_TEST(test_smallest_grid_fits_a_menu_section);
+    RUN_TEST(test_hub_tiles_fit_at_every_grid);
+    RUN_TEST(test_section_pages_instead_of_overflowing);
     RUN_TEST(test_hit_resolves_a_cell_to_its_region);
     RUN_TEST(test_default_focus_skips_the_back_target);
     RUN_TEST(test_arrows_walk_the_grid);

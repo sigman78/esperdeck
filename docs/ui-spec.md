@@ -109,7 +109,8 @@ scroll; pagination: ugly, eats estate):
   smallest grid shows — 2×4 = **8 items at 66×20** (10 at 80×24, 12 at
   100×30). A larger section is split at design time (e.g. glow-build
   EFFECTS → CRT + MOTION). Menus never scroll, never paginate, never
-  need a swipe.
+  need a swipe. (Update: sections now page when their rows do not fit;
+  see `ui-kit.md`.)
 - **Tiles are 3 rows** — odd heights only, so text centers on a real
   row; even-height tiles are banned (misaligned text).
 - **Value well**: the right span of a value tile in the *dimmed* accent

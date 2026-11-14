@@ -15,6 +15,11 @@
  *  app_statusbar.c; composited by the shell for NAV_CHROME_FULL screens. */
 void ui_statusbar(uint64_t now);
 
+/** Wi-Fi signal in dBm, 0 while the link is down. Cached for a second,
+ *  because the driver call takes a lock. The StatusBar and the setup hub
+ *  share it. */
+int net_rssi(void);
+
 /** Free-RAM summary for the header (debug stat, dev screens only). */
 void ram_stats(char *buf, size_t sz);
 
