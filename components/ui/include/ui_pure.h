@@ -56,6 +56,11 @@ void ui_group4(const char *s, int n, char *out, size_t sz);
 /** The cell that holds two QR modules, one above the other. */
 uint16_t ui_qr_glyph(bool top, bool bottom);
 
+/** Rows of the QR panel that fit a body of @p w by @p h cells. One row
+ *  less than ui_qr_h leaves the caption out. Zero drops the code. The
+ *  steps keep 30 cells beside the code. */
+int ui_qr_rows(int size, int w, int h);
+
 #define UI_QR_ZONE 2       /* quiet zone, in modules                       */
 
 /* One step of an onboarding page. @p mark is its number, or '!' for a

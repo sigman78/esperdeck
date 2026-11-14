@@ -13,7 +13,7 @@ import {
   S, C, G, BOLD, LEFT, CENTER, RIGHT, WIDE, COMPACT, ID_BACK,
   rect, cutTop, cutBottom, cutLeft, cutRight, inset, center,
   grid, gridCell, gridCapacity, pageCount, pageClamp, spinnerGlyph, profAccent,
-  entryFirst, codePlan, qrW, qrH, qrGlyph, QR_ZONE, fakeQr, wrapLines, stepLines,
+  entryFirst, codePlan, qrW, qrH, qrRows, qrGlyph, QR_ZONE, fakeQr, wrapLines, stepLines,
 } from './kit.js';
 import { PROFILES, TERM_LINES } from './baseline.js';
 
@@ -962,7 +962,7 @@ function moQr(ui, r, size, mod, caption) {
       const g = qrGlyph(mod(cc - QR_ZONE, my), mod(cc - QR_ZONE, my + 1));
       if (g !== 0x20) ui.putch(r.x + cc, r.y + cr, g, S.BAR);
     }
-  ui.text(rect(r.x, r.y + crows, r.w, 1), caption, S.BAR, CENTER);
+  if (r.h > crows) ui.text(rect(r.x, r.y + crows, r.w, 1), caption, S.BAR, CENTER);
   ui.pen(C.DEFAULT);
 }
 
@@ -982,8 +982,9 @@ function moState(ui, r, mark, pen, text) {
 // With no steps it is a result card. o: { steps, qr, mark, pen, state, state2 }.
 function moOnboard(ui, body, o) {
   let left = rect(body.x, body.y, body.w, body.h);
-  const qr = o.qr, qw = qr ? qrW(qr.size) : 0, qh = qr ? qrH(qr.size) : 0;
-  if (qr && qh <= body.h && body.w - qw - 2 >= 30) {
+  const qr = o.qr, qw = qr ? qrW(qr.size) : 0;
+  const qh = qr ? qrRows(qr.size, body.w, body.h) : 0;
+  if (qh) {
     moQr(ui, rect(body.x + body.w - qw, body.y, qw, qh), qr.size, qr.mod, qr.caption);
     left = rect(body.x, body.y, body.w - qw - 2, body.h);
   }

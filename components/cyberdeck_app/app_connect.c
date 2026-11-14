@@ -403,7 +403,14 @@ static void connecting_tick(uint64_t now)
 {
     if (handle_session_event(ssh_session_poll(now), now))
         return;
-    if (s_conn.failed) return;           /* a still page */
+    if (s_conn.failed) {                 /* a still page */
+        /* A toast from the last retry runs out here: one more frame. */
+        if (app.toast[0] && now >= app.toast_until) {
+            app.toast[0] = '\0';
+            nav_invalidate();
+        }
+        return;
+    }
     if (now >= app.next_anim) {          /* keep the spinner/counters alive */
         app.next_anim = now + ANIM_PERIOD_MS;
         nav_invalidate();

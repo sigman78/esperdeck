@@ -197,7 +197,8 @@ int ui_qr_w(int size);
 int ui_qr_h(int size);
 
 /** A QR code on a white panel, as half blocks. @p r is ui_qr_w by ui_qr_h
- *  cells. @p mod answers one module and gives false outside the code. */
+ *  cells; one row less leaves the caption out. @p mod answers one module
+ *  and gives false outside the code. */
 void ui_qr(ui_rect_t r, int size, bool (*mod)(int x, int y),
            const char *caption);
 

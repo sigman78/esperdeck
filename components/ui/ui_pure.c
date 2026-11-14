@@ -240,6 +240,13 @@ int ui_qr_h(int size)
     return size > 0 ? (ui_qr_w(size) + 1) / 2 + 1 : 0;
 }
 
+int ui_qr_rows(int size, int w, int h)
+{
+    const int qw = ui_qr_w(size), qh = ui_qr_h(size);
+    if (!qw || w - qw - 2 < 30 || qh - 1 > h) return 0;
+    return qh <= h ? qh : qh - 1;
+}
+
 void ui_group4(const char *s, int n, char *out, size_t sz)
 {
     size_t o = 0;

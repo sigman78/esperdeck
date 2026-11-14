@@ -362,7 +362,9 @@ void ui_qr(ui_rect_t r, int size, bool (*mod)(int x, int y),
             if (g != ' ') ui_putch(r.x + cc, r.y + cr, g, UI_BAR);
         }
     }
-    ui_text(ui_rect(r.x, r.y + crows, r.w, 1), str(caption), UI_BAR, UI_CENTER);
+    if (r.h > crows)
+        ui_text(ui_rect(r.x, r.y + crows, r.w, 1), str(caption), UI_BAR,
+                UI_CENTER);
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
@@ -403,11 +405,12 @@ static int state_rows(ui_info_row_t *rows, char (*a)[UI_STEP_TEXT],
 void ui_onboard(ui_rect_t body, const ui_onboard_t *o)
 {
     ui_rect_t left = body;
-    const int qw = ui_qr_w(o->qr_size), qh = ui_qr_h(o->qr_size);
+    const int qw = ui_qr_w(o->qr_size);
+    const int qh = o->qr_mod ? ui_qr_rows(o->qr_size, body.w, body.h) : 0;
     char a[2][UI_STEP_TEXT], b[2][UI_STEP_TEXT];
     ui_info_row_t rows[16];
 
-    if (qw && o->qr_mod && qh <= body.h && body.w - qw - 2 >= 30) {
+    if (qh) {
         ui_qr(ui_rect(body.x + body.w - qw, body.y, qw, qh), o->qr_size,
               o->qr_mod, o->qr_caption);
         left.w = body.w - qw - 2;

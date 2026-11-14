@@ -124,6 +124,12 @@ export function codePlan(len, expected, room) {
 export const QR_ZONE = 2;
 export const qrW = (size) => size + 2 * QR_ZONE;
 export const qrH = (size) => ((qrW(size) + 1) >> 1) + 1;
+// Panel rows that fit a body: all, one less (no caption), or 0.
+export function qrRows(size, w, h) {
+  const qw = qrW(size), qh = qrH(size);
+  if (!size || w - qw - 2 < 30 || qh - 1 > h) return 0;
+  return qh <= h ? qh : qh - 1;
+}
 export function qrGlyph(top, bot) {
   return top && bot ? 0x2588 : top ? 0x2580 : bot ? 0x2584 : 0x20;
 }

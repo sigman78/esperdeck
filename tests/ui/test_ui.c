@@ -822,14 +822,26 @@ static void test_onboard_steps_fit_every_grid(void)
         const int w = GRIDS[g].cols - 2 * m.margin, h = GRIDS[g].rows - 4;
         for (int k = 0; k < 2; k++) {
             const int size = k ? 25 : 33;
-            const bool qr = ui_qr_h(size) <= h && w - ui_qr_w(size) - 2 >= 30;
+            const bool qr = ui_qr_rows(size, w, h) > 0;
             const int vw = (qr ? w - ui_qr_w(size) - 2 : w) - 4 - 3;
             const int n = ui_steps_wrap(k ? host : wifi, 4, vw, r, 16);
             TEST_ASSERT_TRUE(n + 2 + 1 + 6 <= h);
         }
     }
-    TEST_ASSERT_TRUE(ui_qr_h(25) <= 16 && 64 - ui_qr_w(25) - 2 >= 30);
-    TEST_ASSERT_FALSE(ui_qr_h(33) <= 16);
+    TEST_ASSERT_EQUAL(16, ui_qr_rows(25, 64, 16));
+    TEST_ASSERT_EQUAL(0, ui_qr_rows(33, 64, 16));
+}
+
+/* A tight page loses the caption row first, then the whole code. */
+static void test_qr_drops_its_caption_before_the_code(void)
+{
+    TEST_ASSERT_EQUAL(20, ui_qr_rows(33, 96, 20));
+    TEST_ASSERT_EQUAL(19, ui_qr_rows(33, 96, 19));
+    TEST_ASSERT_EQUAL(0, ui_qr_rows(33, 96, 18));
+    /* The steps keep 30 cells beside the code and its gap. */
+    TEST_ASSERT_EQUAL(20, ui_qr_rows(33, 69, 20));
+    TEST_ASSERT_EQUAL(0, ui_qr_rows(33, 68, 20));
+    TEST_ASSERT_EQUAL(0, ui_qr_rows(0, 96, 20));
 }
 
 int main(void)
@@ -885,5 +897,6 @@ int main(void)
     RUN_TEST(test_wrap_n_stops_at_the_line_limit);
     RUN_TEST(test_steps_wrap_keeps_marks_and_values_apart);
     RUN_TEST(test_onboard_steps_fit_every_grid);
+    RUN_TEST(test_qr_drops_its_caption_before_the_code);
     return UNITY_END();
 }
