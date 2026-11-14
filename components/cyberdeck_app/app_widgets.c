@@ -12,6 +12,24 @@
 
 #include "esp_heap_caps.h"   /* free-RAM stats (idfsim stubs it) */
 
+ui_act_t app_hot_input(const cyberdeck_input_t *ev, ui_key_t k)
+{
+    switch (ev->type) {
+    case CYBERDECK_INPUT_TAP:
+        return ui_touch_px(UI_TOUCH_TAP, ev->x, ev->y);
+    case CYBERDECK_INPUT_LONG_PRESS:
+        return ui_touch_px(UI_TOUCH_HOLD, ev->x, ev->y);
+    case CYBERDECK_INPUT_PRESS:
+        return ui_touch_px(UI_TOUCH_DOWN, ev->x, ev->y);
+    case CYBERDECK_INPUT_RELEASE:
+        return ui_touch_px(UI_TOUCH_UP, ev->x, ev->y);
+    case CYBERDECK_INPUT_SCROLL:
+        return (ui_act_t){ UI_ACT_NONE, 0 };
+    default:
+        return ui_hot_key(k);
+    }
+}
+
 const char *wifi_status_str(void)
 {
     switch (wifi_manager_get_state()) {

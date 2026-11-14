@@ -81,6 +81,7 @@ static void enter_top(bool via_pop, uint64_t now)
      * enter/resume may override (hostkey hazard). Never per render —
      * the style table is ISR-live (ui.c). */
     ui_colors(UI_FG, UI_BG);
+    ui_hot_reset();
     if (via_pop && d->resume) d->resume(e->arg, now);
     else if (d->enter)        d->enter(e->arg, now);
     s_dirty = true;

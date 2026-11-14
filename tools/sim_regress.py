@@ -3,8 +3,9 @@
 
 Each scenario walks a screen flow, asserts the active screen (and important
 published overlay text), then ends with `quit`. A mismatch, crash, or timeout
-fails the scenario. Keyboard-only steps on purpose - no tile coordinates to
-go stale. Each scenario gets a fresh temporary copy of sim_storage.example.
+fails the scenario. Keyboard steps where possible - tile coordinates go
+stale. Only the `touch` scenario uses them, and it lists its points.
+Each scenario gets a fresh temporary copy of sim_storage.example.
 Run from the repo root after building the simulator:
 
     python tools/sim_regress.py [path\\to\\cyberdeck_sim.exe]
@@ -30,7 +31,7 @@ def timeout_s(script):
 SCENARIOS = {
     # boot -> HOME, arrow navigation, profile reload + wifi kick keys
     "home-nav":
-        "key:esc|wait:400|expect:home|expect-text:CYBERDECK"
+        "key:esc|wait:400|expect:home|expect-text:Hosts"
         "|key:right|key:down|key:left|key:up|key:r|key:w"
         "|wait:600|expect:home|quit",
     # HOME -> profile editor (push) -> Esc (pop) -> HOME
@@ -42,11 +43,11 @@ SCENARIOS = {
         "key:esc|wait:400|key:n|wait:400|expect:profile|key:a|key:b"
         "|key:tab|key:h|key:tab|key:down|key:down|key:left|wait:300"
         "|expect:profile|key:esc|wait:400|expect:home|quit",
-    # HOME -> last tile (Configuration) -> MENU; also verifies the published
-    # overlay is the menu frame, catching an accidental second ui_present().
+    # HOME -> Setup pill -> MENU; also verifies the published overlay is
+    # the menu frame, catching an accidental second ui_present().
     "config-menu-roundtrip":
-        "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
-        "|key:right|key:right|key:enter|wait:500|expect:menu"
+        "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
+        "|wait:500|expect:menu"
         "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
     # Walk the two-column hub: CRT FX, FONT, SYSTEM. Cycling the CRT FX
     # value tile toggles [fx] scanlines and flushes them on page exit. The
@@ -54,8 +55,8 @@ SCENARIOS = {
     # 2-col row-major layout. Order: 0 PROFILES, 1 WIFI, 2 KEYBOARD,
     # 3 CRT FX, 4 MOTION FX, 5 FONT, 6 SYSTEM, 7 KEYSTORE.
     "config-pages":
-        "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
-        "|key:right|key:right|key:enter|wait:500|expect:menu"
+        "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
+        "|wait:500|expect:menu"
         "|expect-text:CONFIGURATION"
         "|key:down|key:right|key:enter|wait:400|expect-text:CRT FX"
         "|key:enter|wait:300|key:esc|wait:400|expect-text:CONFIGURATION"
@@ -69,15 +70,69 @@ SCENARIOS = {
     # PROFILES -> CONFIG -> HOME. Navigation only - Enter on a profile
     # row would open the editor.
     "profile-picker":
-        "key:esc|wait:400|expect:home|key:down|key:down|key:down|key:down"
-        "|key:right|key:right|key:enter|wait:500|expect:menu"
+        "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
+        "|wait:500|expect:menu"
         "|expect-text:CONFIGURATION"
-        "|key:enter|wait:400|expect-text:CONFIGURATION / PROFILES"
-        "|key:right|key:enter|wait:400|expect-text:PROFILES / EDIT"
-        "|key:down|key:down|key:up|wait:300|expect-text:PROFILES / EDIT"
-        "|key:esc|wait:400|expect-text:CONFIGURATION / PROFILES"
-        "|key:esc|wait:400|expect-text:CONFIGURATION"
+        "|key:enter|wait:400|expect-text:Add (type here)"
+        "|key:right|key:enter|wait:400|expect-text:CONFIGURATION / PROFILES"
+        "|key:down|key:down|key:up|wait:300|expect-text:CONFIGURATION / PROFILES"
+        "|key:esc|wait:400|expect-text:Add (type here)"
+        "|key:esc|wait:400|expect-text:MOTION FX"
         "|key:esc|wait:500|expect:home|quit",
+    # Touch: a finger-down alone does nothing. A long press on a tile
+    # opens its host page. Taps walk the menu; its header steps back.
+    # Points (100x30 grid): 130,64 first HOME tile; 744,24 Setup pill;
+    # 150,90 first menu card; 10,8 header back.
+    "touch":
+        "key:esc|wait:400|expect:home|press:130,64|wait:300|expect:home"
+        "|release:130,64|hold:130,64|wait:500|expect:host"
+        "|key:esc|wait:500|expect:home|tap:744,24|wait:500|expect:menu"
+        "|expect-text:MOTION FX|press:150,90|wait:300|expect-text:MOTION FX"
+        "|release:150,90|press:150,90|tap:150,90|wait:400"
+        "|expect-text:Add (type here)|tap:10,8|wait:400"
+        "|expect-text:MOTION FX|tap:10,8|wait:500|expect:home|quit",
+    # One tap on a tile connects. The fixture edit points it at a closed
+    # loopback port.
+    "tap-connect":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:150"
+        "|expect:connecting|wait:2500|key:esc|wait:700|expect:home|quit",
+    # Space opens the host page. Enter or a digit would connect.
+    "host-page":
+        "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
+        "|expect-text:example|expect-text:Connect|expect-text:192.168.1.10"
+        "|expect-text:not pinned yet|key:esc|wait:400|expect:home|quit",
+    # Delete asks first; Cancel is the default. The second pass confirms.
+    "host-delete":
+        "key:esc|wait:400|expect:home|expect-text:2 of 8|key: |wait:400"
+        "|expect:host|key:down|key:right|key:enter|wait:400|expect:ask"
+        "|expect-text:Delete example?|key:enter|wait:400|expect:host"
+        "|key:enter|wait:400|expect:ask|key:right|key:enter|wait:500"
+        "|expect:home|expect-text:1 of 8|quit",
+    # After Move later, the first HOME tile is the other host.
+    "host-move":
+        "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
+        "|expect-text:192.168.1.10|key:down|key:down|key:right|key:enter"
+        "|wait:400|expect:host|expect-text:192.168.1.10|key:esc|wait:400"
+        "|expect:home|key: |wait:400|expect:host|expect-text:10.0.0.5|quit",
+    # The release after a hold must not connect.
+    "hold-opens-host":
+        "key:esc|wait:400|expect:home|hold:130,64|wait:400|expect:host"
+        "|release:130,64|wait:400|expect:host|expect-text:Connect"
+        "|key:esc|wait:400|expect:home|quit",
+}
+
+# Per-scenario edits to the fixture's profiles.ini (old text, new text).
+SECOND_HOST = ("#[server]\n#host=server.local\n#port=22\n#user=me\n"
+               "#auth=key\n#key_id=id_deck",
+               "[server]\nhost=10.0.0.5\nport=22\nuser=ops\n"
+               "auth=password\npassword=secret")
+FIXTURE_EDITS = {
+    "tap-connect": [("host=192.168.1.10", "host=127.0.0.1"),
+                    ("port=22", "port=1")],
+    "hold-opens-host": [("host=192.168.1.10", "host=127.0.0.1"),
+                        ("port=22", "port=1")],
+    "host-delete": [SECOND_HOST],
+    "host-move": [SECOND_HOST],
 }
 
 
@@ -93,6 +148,13 @@ def main():
             with tempfile.TemporaryDirectory(prefix="deck-regress-") as tmp:
                 fixture = Path(tmp) / "storage"
                 shutil.copytree(ROOT / "sim_storage.example", fixture)
+                ini = fixture / "profiles.ini"
+                text = ini.read_text(encoding="utf-8")
+                for old, new in FIXTURE_EDITS.get(name, []):
+                    if old not in text:
+                        raise SystemExit(f"{name}: fixture lacks '{old}'")
+                    text = text.replace(old, new, 1)
+                ini.write_text(text, encoding="utf-8")
                 r = subprocess.run(
                     [str(sim), "--storage-dir", str(fixture), "--drive", script],
                     timeout=timeout_s(script), cwd=tmp,

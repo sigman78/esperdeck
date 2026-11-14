@@ -179,6 +179,8 @@ published with the buffer, dims the live session behind a modal. Overlay
 cells carry a palette
 index into an app-registered style table, not colors or style bits — the
 rationale and vocabulary live in [`overlay-style.md`](overlay-style.md).
+The kit's layout, interaction model and widgets are recorded in
+[`ui-kit.md`](ui-kit.md).
 Because chrome lives in the overlay, it never corrupts the `vterm` cell
 buffer: a full-screen remote app (vim, htop) stays intact behind a menu.
 
@@ -456,7 +458,8 @@ cyberdeck_app_handle_input(ev, now);  // one key or touch event
 
 Flow: **BOOT** → (**UNLOCK**, when a keystore exists) → **HOME** (profile
 picker) → **CONNECTING** → **SESSION**, with MENU, PROFILE, PAIRING,
-HOSTKEY, WIFIPROV, SSHIMPORT and POWEROFF as modal screens along the way.
+HOSTKEY, WIFIPROV, SSHIMPORT, POWEROFF, HOST (per-host page from a HOME
+hold) and ASK (a question page) as modal screens along the way.
 
 Screens are **registered, not enumerated** (`app_nav.h`): each module
 exports a hook table — `enter(arg)`, `resume`, `exit`, `tick`, `input`,

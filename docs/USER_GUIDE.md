@@ -45,27 +45,25 @@ anything real — edit or delete it and add your own
 
 ## 2. The HOME screen
 
-HOME is the profile picker: a grid of tiles, one per stored connection,
-labeled `user@host:port` (profiles that log in with a key show `[key]`).
+HOME lists your hosts as tiles, two per row: the name, `user@host` (plus
+`:port` when it is not 22) and the tile number. More than a page shows
+a pager at the top right.
 
-- **Tap a tile once** to select it, **tap it again to connect**. With a
-  keyboard: arrows + **Enter**.
-- Special tiles appear when useful: **+ New profile**, **+ Pair keyboard**,
-  **Lock deck** (once an access code exists), and **Configuration**.
-
-Top of the screen, the status readouts:
-
-| Light | Meaning |
-|---|---|
-| `NET` | WiFi: connected or not |
-| `KBD` | Bluetooth keyboard: linked or not |
-| `PHN` | Enrolled phone nearby (walk-away lock, [section 10](#10-auto-lock-and-the-screensaver)) |
-| `RAM` | Free memory |
+- **Tap a tile** to connect. **Long-press it** (or press **Space**) to open
+  the host page: details, Connect, Edit, Delete and Move earlier / later.
+  With a keyboard: arrows + **Enter**, or a digit **1**-**8** to connect.
+- The buttons at the top right: **+ New**, **Setup** (the Configuration
+  menu), **Lock** (once an access code exists) and **Pair** (while no
+  keyboard is bonded).
+- The status bar at the bottom shows WiFi, keyboard and the clock. A
+  `PHN` dot at the top shows an enrolled phone nearby (walk-away lock,
+  [section 10](#10-auto-lock-and-the-screensaver)).
 
 Keyboard shortcuts on HOME: **R** reloads profiles, **W** reconnects WiFi,
 **N** creates a new profile, **B** opens keyboard pairing, **L** locks the
 deck (when a code exists), **P** enrolls a phone (when the build includes
-phone presence). Long-press anywhere also opens keyboard pairing.
+phone presence). Shift+PgUp / Shift+PgDn flip pages. A long-press away
+from the tiles also opens keyboard pairing.
 
 ## 3. Getting on WiFi
 
@@ -89,8 +87,8 @@ pressing **W** on HOME).
 Any Bluetooth Low Energy (BLE) keyboard should work.
 
 1. Put the keyboard in pairing mode.
-2. On the deck: tap **+ Pair keyboard**, press **B**, or long-press
-   anywhere on HOME.
+2. On the deck: tap **Pair**, press **B**, or long-press
+   HOME away from the tiles.
 3. The PAIR KEYBOARD screen scans and lists what it finds; pick yours.
 
 Once paired, the keyboard reconnects by itself — the `KBD` light tells you
@@ -105,7 +103,7 @@ into the same port used for flashing also delivers keystrokes.
 
 Three ways, pick what's convenient:
 
-- **On the device.** Tap **+ New profile** (or **Configuration → Profiles
+- **On the device.** Tap **+ New** (or **Configuration → Profiles
   → Add**). Fill in host, port, user, and either a password or a key
   reference.
 - **From your phone.** **Configuration → Profiles → Import → SoftAP
@@ -125,7 +123,7 @@ cleaned up with it.
 
 ## 6. Connecting, and the host-key question
 
-Tap-tap a tile and the deck connects: "Connecting to user@host:port", with
+Tap a tile and the deck connects: "Connecting to user@host:port", with
 a retry countdown if the host is slow.
 
 The first time you reach a new server, the deck stops and shows **NEW HOST
@@ -162,7 +160,7 @@ work, in color, at your chosen font size.
 
 ## 8. The Configuration menu
 
-Reachable from HOME (the **Configuration** tile) or in-session (**F12 →
+Reachable from HOME (the **Setup** button) or in-session (**F12 →
 Configuration**). The pages:
 
 | Page | What's there |
@@ -189,8 +187,7 @@ length; a keyboard-typed passphrase also works). From that moment:
 - Stored private keys and secrets are **encrypted** with a key derived
   from your code (Argon2 — deliberately slow to brute-force; unlocking
   takes about a second).
-- The deck **boots locked, wakes locked, and locks on demand** ("Lock
-  deck" tile, or **L** on HOME). The PIN pad is the only way in — there is
+- The deck **boots locked, wakes locked, and locks on demand** (the **Lock** button, or **L** on HOME). The PIN pad is the only way in — there is
   no skip.
 - Wrong codes get punished: after 4 free tries the deck makes you wait
   30 seconds, then 60, 120... up to 15 minutes per try. **Rebooting does

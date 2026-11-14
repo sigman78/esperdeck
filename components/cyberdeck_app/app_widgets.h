@@ -21,5 +21,10 @@ void ram_stats(char *buf, size_t sz);
 /** Wall-clock "HH:MM" once SNTP/host time exists; false until then. */
 bool clock_str(char *buf, size_t sz);
 
+/** Resolve one input event against the regions of the last frame
+ *  (ui_hot.h). Touch events go by position, arrows and Enter by focus.
+ *  Scroll events and other keys give UI_ACT_NONE. */
+ui_act_t app_hot_input(const cyberdeck_input_t *ev, ui_key_t k);
+
 const char *wifi_status_str(void);
 const char *ble_status_str(void);

@@ -133,6 +133,7 @@ static void touch_mouse_down(const SDL_MouseButtonEvent *b, uint64_t now)
     touch_y     = y;
     touch_start = now;
     touch_state = TOUCH_TOUCHING;
+    send_touch(CYBERDECK_INPUT_PRESS, x, y, now);
 }
 
 static void touch_mouse_up(const SDL_MouseButtonEvent *b, uint64_t now)
@@ -141,6 +142,8 @@ static void touch_mouse_up(const SDL_MouseButtonEvent *b, uint64_t now)
     SDL_CaptureMouse(SDL_FALSE);
     if (touch_state == TOUCH_TOUCHING && now - touch_start < TOUCH_TAP_MAX_MS)
         send_touch(CYBERDECK_INPUT_TAP, touch_x, touch_y, now);
+    else if (touch_state == TOUCH_TOUCHING)
+        send_touch(CYBERDECK_INPUT_RELEASE, touch_x, touch_y, now);
     touch_state = TOUCH_IDLE;
 }
 
@@ -192,6 +195,7 @@ static void touch_mouse_motion(const SDL_MouseMotionEvent *m, uint64_t now)
         if (dy > -TOUCH_SCROLL_START_PX && dy < TOUCH_SCROLL_START_PX) return;
         s_scroll_last_y = y;
         touch_state     = TOUCH_SCROLLING;
+        send_touch(CYBERDECK_INPUT_RELEASE, touch_x, touch_y, now);
         return;
     }
 
@@ -219,7 +223,8 @@ static void touch_tick(uint64_t now)
  * --drive "tap:x,y|key:enter|expect:home|shot:menu.bmp|wait:800|quit" —
  * scripted input for UI screenshot automation and regression runs
  * (framebuffer pixel coords; key names: enter, esc, tab, up/down/left/right,
- * f12, sbup/sbdn for scrollback paging, or a single character). Expectations
+ * f12, sbup/sbdn for scrollback paging, or a single character). Touch
+ * steps: tap, hold (long press), press and release. Expectations
  * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms apart
  * (wait:N overrides the gap), starting 2.5 s after boot. Each step
  * injects through the same paths as real input. Sim-only test hook.
@@ -292,6 +297,10 @@ static void drive_tick(uint64_t now)
         send_touch(CYBERDECK_INPUT_TAP, (uint16_t)x, (uint16_t)y, now);
     } else if (sscanf(step, "hold:%d,%d", &x, &y) == 2) {
         send_touch(CYBERDECK_INPUT_LONG_PRESS, (uint16_t)x, (uint16_t)y, now);
+    } else if (sscanf(step, "press:%d,%d", &x, &y) == 2) {
+        send_touch(CYBERDECK_INPUT_PRESS, (uint16_t)x, (uint16_t)y, now);
+    } else if (sscanf(step, "release:%d,%d", &x, &y) == 2) {
+        send_touch(CYBERDECK_INPUT_RELEASE, (uint16_t)x, (uint16_t)y, now);
     } else if (!strncmp(step, "key:", 4)) {
         drive_key(step + 4, now);
     }

@@ -55,6 +55,14 @@ page holds the numbers.** Nothing long-form is ever resident.
 
 ## The chip grammar
 
+> **Revised after the status-bar mock round.** The shipped chip is a
+> short label plus a value field, with one bar cell between chips:
+> `NET` with a four-cell signal ladder, `KBD` with the lock letters
+> `C` and `N`. Cells carry state one by one, so a lit lock sits inside
+> a plain chip. The state table below still holds; the spinner and the
+> `✘` now take the first value cell and the label stays readable. The
+> icon-only paragraph that follows records the earlier decision.
+
 A **chip** is 1–2 segments drawn adjacent on the bar, no gaps between
 chips (the shipped patch look). **A chip's body is an icon, not a
 word** (user call, 2026-08-29): cells are the scarce resource — at

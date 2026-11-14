@@ -14,6 +14,7 @@ static struct {
      * in-session, MS_CONFIG from HOME, deep links later. */
     int      root;
     bool     armed;                 /* a destructive item needs a 2nd hit   */
+    bool     fresh;                 /* page switched, not drawn yet         */
     bool     note_wifi;             /* live-track wifi_status_str()         */
     int      reorder_grab;          /* grabbed stored index, -1 = none      */
 } s_menu = { .reorder_grab = -1 };
@@ -27,6 +28,9 @@ static struct {
 
 #include <stdio.h>
 #include <string.h>
+
+/* Card ids on a table page: slot + 1 (0 is "no region"). */
+#define SLOT_ID(i)  ((ui_id_t)((i) + 1))
 
 /* Rendered slot -> item, hidden items skipped (the KEYSTORE page is
  * contextual). Rebuilt by menu_goto and every render. */
@@ -62,9 +66,10 @@ static int picker_items(const char *out[], const char *bodies[],
     return n;
 }
 
-/* Breadcrumb text: root-to-leaf page titles, at most three segments
- * (the in-session MENU root drops off a depth-3 chain). */
-static void crumb_build(char *out, size_t sz, int sc)
+/* The header: the page title, the pages above it as a muted path (at
+ * most two; the in-session MENU root drops off a depth-3 chain). The
+ * whole bar is the back target. */
+static void draw_header(ui_rect_t r, int sc)
 {
     const char *seg[3];
     int n = 0, cur = sc;
@@ -81,43 +86,12 @@ static void crumb_build(char *out, size_t sz, int sc)
         if (cur == s_menu.root || p->back_to < 0) break;
         cur = p->back_to;
     }
-    int len = snprintf(out, sz, "<");
-    for (int i = n - 1; i >= 0 && len < (int)sz; i--)
-        len += snprintf(out + len, sz - len, "%s %s",
-                        i == n - 1 ? " " : " /", seg[i]);
-}
-
-/* The BreadcrumbBar: rows 0-2 full width — names the place and IS the
- * back target (menu_input routes any tap on it to menu_back). */
-static void draw_crumb(int x0, int w, int sc)
-{
-    char crumb[64];
-    crumb_build(crumb, sizeof(crumb), sc);
-    ui_pen(OVERLAY_COL_BLUE);
-    ui_tile(x0, 0, w, 3, crumb, "", false);
-    /* ui_puts is Latin-1 only, so the ◄ back chevron overdraws the
-     * placeholder '<' the crumb string carries. */
-    ui_putch(x0 + 2, 1, UI_POINT_L, UI_BAR);
-    char clk[8];
-    if (clock_str(clk, sizeof(clk)))
-        ui_puts(x0 + w - 2 - (int)strlen(clk), 1, clk, UI_BAR);
-    ui_pen(OVERLAY_COL_DEFAULT);
-}
-
-/* One value tile: 3-row solid bar, the value on a dimmed-accent well
- * (ui-spec, locked). Armed confirms replace the label and drop the well. */
-static void draw_value_tile(int x, int y, int tw, const char *label,
-                            const char *body, bool well, bool sel)
-{
-    ui_tile(x, y, tw, 3, label, well ? "" : body, sel);
-    if (!well || !body[0]) return;
-    int ww = tw / 3 + 4;
-    if (ww > 14) ww = 14;
-    for (int r = 0; r < 3; r++)
-        for (int c = 0; c < ww; c++)
-            ui_putch(x + tw - ww + c, y + r, ' ', UI_WELL);
-    ui_puts(x + tw - 2 - (int)strlen(body), y + 1, body,
-            UI_WELL | (sel ? UI_BOLD : 0));
+    char path[48] = "";
+    int len = 0;
+    for (int i = n - 1; i >= 1 && len < (int)sizeof(path); i--)
+        len += snprintf(path + len, sizeof(path) - len, "%s%s",
+                        i == n - 1 ? "" : " / ", seg[i]);
+    ui_header(r, path, seg[0], NULL, true);
 }
 
 static void render_menu(uint64_t now)
@@ -129,9 +103,10 @@ static void render_menu(uint64_t now)
     const bool picker = menu_is_picker(sc);
     const menu_page_t *p = picker ? NULL : menu_page(sc);
 
-    const int w  = ui_cols() - 8;
-    const int x0 = 4;
-    draw_crumb(x0, w, sc);
+    const ui_metrics_t m = ui_metrics();
+    const ui_page_t pg = ui_page();
+    draw_header(pg.header, sc);
+    s_menu.fresh = false;
 
     const char *pick_titles[MAX_PROFILES];
     const char *pick_bodies[MAX_PROFILES];
@@ -179,50 +154,34 @@ static void render_menu(uint64_t now)
             ui_puts((ui_cols() - (int)strlen(m)) / 2, 5, m, 0);
         }
     } else {
-        /* Two-column grid of 3-row tiles — the whole section fits one
+        /* Two columns of one-line cards. The whole section fits one
          * screen at every grid (fit-one-screen contract, asserted in
-         * app_menu_defs.c). */
+         * app_menu_defs.c and tests/ui). */
         const int count = build_slots(p);
-        tilegrid_t g = { .tw = (w - 2) / 2, .th = 3, .gx = 2, .gy = 1,
-                         .ncols = 2, .x0 = x0, .y0 = 4, .count = count };
-        g.nrows = (count + 1) / 2;
-        app.grid = g;
+        const ui_grid_t g = ui_grid(pg.body, 2, m.unit, m.gutter, 0);
+        app.grid = (tilegrid_t){ 0 };  /* taps route through ui_hot */
         if (s_menu.sel >= count) s_menu.sel = count ? count - 1 : 0;
 
         for (int i = 0; i < count; i++) {
             const menu_item_t *it = s_slot[i];
-            const bool dim = it->dim && it->dim(it->arg);
             const bool armed = i == s_menu.sel && s_menu.armed && it->confirm;
-            const bool sel = i == s_menu.sel;
-            const int tx = tile_x(&g, i), ty = tile_y(&g, i);
-            const char *label = armed ? it->confirm
-                       : it->label_fn ? it->label_fn(it->arg)
-                                      : it->label;
-            ui_pen(armed         ? OVERLAY_COL_RED
-                 : it->color_fn  ? it->color_fn(it->arg)
-                                 : it->color);
-            if (dim && !armed) {
-                /* Unavailable: the whole bar in the dimmed accent, label
-                 * centered — the muted look IS the message (dim_note
-                 * explains on activation). */
-                for (int r = 0; r < 3; r++)
-                    for (int c = 0; c < g.tw; c++)
-                        ui_putch(tx + c, ty + r, ' ', UI_WELL);
-                ui_puts(tx + 2, ty + 1, label, UI_WELL | UI_BOLD);
-                if (sel) {          /* focus rail, as ui_tile draws it */
-                    ui_pen(OVERLAY_COL_WHITE);
-                    for (int r = 0; r < 3; r++)
-                        ui_putch(tx, ty + r, UI_RHALF, UI_BAR);
-                }
-                continue;
-            }
+            ui_card_t c = {
+                .title  = it->label_fn ? it->label_fn(it->arg) : it->label,
+                .accent = it->color_fn ? it->color_fn(it->arg) : it->color,
+            };
             vbuf[i][0] = '\0';
-            const char *body =
-                it->value ? it->value(it->arg, vbuf[i], sizeof(vbuf[i])) : "";
-            /* Value items put the body on the dimmed well; armed confirms
-             * drop it. Plain items (hub sections, actions) center alone. */
-            draw_value_tile(tx, ty, g.tw, label, body,
-                            !armed && it->value, sel);
+            if (armed) {
+                /* The armed confirm reads as the one action on the page. */
+                c.title  = it->confirm;
+                c.accent = OVERLAY_COL_RED;
+                c.flags  = UI_CARD_ACTION | UI_CARD_LIT;
+            } else if (it->dim && it->dim(it->arg)) {
+                /* Still a region: activating it explains why (dim_note). */
+                c.flags = UI_CARD_DISABLED;
+            } else if (it->value) {
+                c.value = it->value(it->arg, vbuf[i], sizeof(vbuf[i]));
+            }
+            ui_card(ui_grid_cell(&g, i), SLOT_ID(i), &c);
         }
         ui_pen(OVERLAY_COL_DEFAULT);
 
@@ -284,6 +243,8 @@ void menu_goto(int sc)
     s_menu.screen = sc;
     s_menu.sel    = 0;
     s_menu.armed  = false;
+    s_menu.fresh  = true;
+    ui_hot_reset();
     if (sc == MS_REORDER) s_menu.reorder_grab = -1;
     if (menu_is_picker(sc)) {
         s_pick.top = 0;
@@ -333,9 +294,10 @@ void menu_back(uint64_t now)
 
 /* Delete the stored profile at @p idx, plus its key files and TOFU
  * host pin. It deletes the files only if no other profile still
- * references them. This never touches a live session, which runs on
- * the connect module's snapshot instead. */
-static void delete_profile_at(int idx)
+ * references them. @p keep_pin leaves the pin in place. This never
+ * touches a live session, which runs on the connect module's snapshot
+ * instead. */
+void profile_delete_at(int idx, bool keep_pin)
 {
     if (idx < 0 || idx >= app.stored_count) return;
     conn_profile_t doomed = app.profiles[idx];
@@ -360,7 +322,8 @@ static void delete_profile_at(int idx)
     for (int i = 0; i < n; i++)
         if (set[i].port == doomed.port &&
             strcmp(set[i].host, doomed.host) == 0) { host_shared = true; break; }
-    if (!host_shared) storage_known_host_delete(doomed.host, doomed.port);
+    if (!host_shared && !keep_pin)
+        storage_known_host_delete(doomed.host, doomed.port);
 
     load_profiles();
 }
@@ -388,7 +351,7 @@ static void picker_activate(int sc, int sel, bool was_armed, uint64_t now)
             s_menu.armed = true;
             menu_note(now, 0, false, "activate again to delete");
         } else {
-            delete_profile_at(sel);
+            profile_delete_at(sel, false);
             if (s_menu.sel >= app.stored_count && s_menu.sel > 0) s_menu.sel--;
             menu_note(now, MENU_MSG_MS, false, "profile deleted");
         }
@@ -512,6 +475,52 @@ static void menu_tick(uint64_t now)
     }
 }
 
+/* A table page: every card is a region, so touch and keys resolve the
+ * same way. The tapped or focused slot becomes the selection that
+ * menu_activate and the confirm arm work on. */
+static void page_input(const cyberdeck_input_t *ev, ui_key_t k, uint64_t now)
+{
+    /* A tap that lands before the page's first frame has no regions to
+     * hit. Drop it: it must not read as a tap outside. */
+    if (s_menu.fresh) return;
+
+    const ui_act_t a = app_hot_input(ev, k);
+    const int slot = (a.id && a.id != UI_ID_BACK) ? (int)a.id - 1 : -1;
+
+    if (a.kind == UI_ACT_PRESS && a.id == UI_ID_BACK) {
+        menu_back(now);
+        return;
+    }
+    if (ev->type == CYBERDECK_INPUT_TAP && !a.id) {   /* tap outside: back */
+        menu_back(now);
+        return;
+    }
+    /* Finger down or up only changes how a card looks. A long press does
+     * nothing here, but it ends the press and the card must repaint. */
+    if (ev->type == CYBERDECK_INPUT_PRESS ||
+        ev->type == CYBERDECK_INPUT_RELEASE ||
+        ev->type == CYBERDECK_INPUT_LONG_PRESS) {
+        if (a.kind != UI_ACT_NONE) nav_invalidate();
+        return;
+    }
+    if (a.kind != UI_ACT_PRESS && a.kind != UI_ACT_MOVE) return;
+    if (slot < 0 || slot >= s_slot_count) {
+        nav_invalidate();
+        return;
+    }
+
+    /* Moving to, or hitting, a DIFFERENT card than the armed one disarms
+     * it first. Otherwise the stale arm fires that card's destructive
+     * action unconfirmed. */
+    if (slot != s_menu.sel && s_menu.armed) {
+        s_menu.armed = false;
+        menu_clear_note();
+    }
+    s_menu.sel = slot;
+    if (a.kind == UI_ACT_PRESS) menu_activate(now);    /* tap == Enter */
+    else                        nav_invalidate();
+}
+
 static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                        uint64_t now)
 {
@@ -520,6 +529,10 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     /* Esc / F12 / tap-outside all step back one level. */
     if (k == K_ESC || k == K_F12) {
         menu_back(now);
+        return;
+    }
+    if (!picker) {
+        page_input(ev, k, now);
         return;
     }
     /* Right-edge drag scrolls a picker's list; selection follows the view. */
@@ -537,8 +550,7 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     if (ev->type == CYBERDECK_INPUT_TAP) {
         /* The BreadcrumbBar (rows 0-2) is the back target. */
         if (ev->y / font_height() < 3) { menu_back(now); return; }
-        int slot = picker ? ui_list_hit(&s_pick, ev->x, ev->y)
-                          : tile_hit(&app.grid, ev->x, ev->y);
+        int slot = ui_list_hit(&s_pick, ev->x, ev->y);
         if (slot < 0) { menu_back(now); return; }   /* tap outside: back */
         /* Tapping a DIFFERENT tile than the armed one must disarm it
          * first. Otherwise the stale arm fires this tile's destructive
@@ -547,8 +559,7 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
             s_menu.armed = false;
             menu_clear_note();
         }
-        s_menu.sel = slot;
-        if (picker) s_pick.sel = slot;
+        s_menu.sel = s_pick.sel = slot;
         menu_activate(now);                        /* == Enter */
         return;
     }
@@ -574,12 +585,8 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
             break;
         }
         int ns = s_menu.sel;
-        if (picker) {
-            s_pick.sel = s_menu.sel;
-            if (ui_list_nav(&s_pick, k)) ns = s_pick.sel;
-        } else {
-            ns = tile_nav(&app.grid, s_menu.sel, k);
-        }
+        s_pick.sel = s_menu.sel;
+        if (ui_list_nav(&s_pick, k)) ns = s_pick.sel;
         if (ns != s_menu.sel) {
             s_menu.sel = ns;
             if (s_menu.armed) {              /* moving away backs the arm down */

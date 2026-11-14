@@ -4,6 +4,8 @@
  * Polls GT911 at ~50ms intervals using the official Espressif component API.
  * Detects tap (touch down + up within 300ms) and long-press (held >= 500ms).
  * Posts INPUT_EVENT_TAP / INPUT_EVENT_LONG_PRESS with x,y coordinates.
+ * Every touch-down posts INPUT_EVENT_PRESS first; a press that ends as
+ * neither gesture posts INPUT_EVENT_RELEASE.
  *
  * The Waveshare Touch-LCD-7 routes GT911 RST and INT through I2C IO expanders
  * (0x24 and 0x38) rather than direct GPIOs. The custom reset sequence runs
@@ -79,6 +81,12 @@ static inline bool in_scroll_edge(uint16_t x)
     return w > 0 && (int)x >= DISPLAY_WIDTH - w;
 }
 
+static void post_touch(uint8_t type, uint16_t x, uint16_t y)
+{
+    input_event_t ev = { .type = type, .len = 0, .x = x, .y = y };
+    input_hal_post_event(&ev);
+}
+
 static void touch_poll_task(void *arg)
 {
     touch_state_t state       = STATE_IDLE;
@@ -107,6 +115,7 @@ static void touch_poll_task(void *arg)
                 touch_start = now_ms;
                 state       = STATE_TOUCHING;
                 ESP_LOGD(TAG, "touch down x=%u y=%u", touch_x, touch_y);
+                post_touch(INPUT_EVENT_PRESS, touch_x, touch_y);
             }
             break;
 
@@ -122,6 +131,7 @@ static void touch_poll_task(void *arg)
                     last_y = pt.y;
                     state  = STATE_SCROLLING;
                     ESP_LOGD(TAG, "scroll drag begins x=%u y=%u", touch_x, touch_y);
+                    post_touch(INPUT_EVENT_RELEASE, touch_x, touch_y);
                     break;
                 }
             }
@@ -147,7 +157,8 @@ static void touch_poll_task(void *arg)
                 input_hal_post_event(&ev);
                 state = STATE_IDLE;
             } else if (!pressed) {
-                ESP_LOGD(TAG, "lift in dead zone (%lldms), no event", elapsed);
+                ESP_LOGD(TAG, "lift in dead zone (%lldms), release", elapsed);
+                post_touch(INPUT_EVENT_RELEASE, touch_x, touch_y);
                 state = STATE_IDLE;
             }
             break;

@@ -36,6 +36,10 @@ extern const storage_kv_field_t cyberdeck_font_fields[];
 #define CYBERDECK_INPUT_LONG_PRESS 2
 #define CYBERDECK_INPUT_SCROLL     3
 #define CYBERDECK_INPUT_HIDKEY     4
+/* Finger down at x,y. Exactly one of TAP, LONG_PRESS or RELEASE follows.
+ * Feedback only: a screen acts on the TAP, never on the PRESS. */
+#define CYBERDECK_INPUT_PRESS      5
+#define CYBERDECK_INPUT_RELEASE    6
 
 typedef struct {
     uint8_t  type;
