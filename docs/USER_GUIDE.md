@@ -55,8 +55,12 @@ a pager at the top right.
 - The buttons at the top right: **+ New**, **Setup** (the settings),
   **Lock** (once an access code exists) and **Pair** (while no keyboard
   is bonded).
-- The status bar at the bottom shows WiFi, keyboard and the clock. A
-  `PHN` dot at the top shows an enrolled phone nearby (walk-away lock,
+- The status bar at the bottom shows WiFi (`NET`, with signal bars),
+  keyboard (`KBD`, with caps and num lock) and the clock. When a link
+  comes up, its chip stretches for a few seconds: `NET` shows the network
+  name and address, `KBD` the keyboard name. It says "link lost" or
+  "disconnected" when a link drops. The row stays on every page except
+  the session and the screensaver. A `PHN` dot at the top shows an enrolled phone nearby (walk-away lock,
   [section 10](#10-auto-lock-and-the-screensaver)).
 
 Keyboard shortcuts on HOME: **R** reloads profiles, **W** reconnects WiFi,

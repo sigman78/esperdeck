@@ -138,15 +138,6 @@ static void hostkey_exit(uint64_t now)
     s_hostkey.saved_focus = ui_focus_get();
 }
 
-/* Nothing animates here. A toast that expires needs one more frame. */
-static void hostkey_tick(uint64_t now)
-{
-    if (app.toast[0] && now >= app.toast_until) {
-        app.toast[0] = '\0';
-        nav_invalidate();
-    }
-}
-
 void hostkey_open(bool mismatch, uint64_t now)
 {
     nav_replace(SCR_HOSTKEY, mismatch, now);
@@ -175,6 +166,6 @@ static void hostkey_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 
 const nav_screen_t hostkey_screen = {
     .name = "hostkey", .enter = hostkey_enter, .resume = hostkey_resume,
-    .exit = hostkey_exit, .tick = hostkey_tick, .input = hostkey_input,
+    .exit = hostkey_exit, .input = hostkey_input,
     .render = render_hostkey, .chrome = NAV_CHROME_FULL,
 };

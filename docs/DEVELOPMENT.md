@@ -207,6 +207,11 @@ cmake --build build-sim
 - **`--drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|..."`**
   scripts input and screen/overlay assertions for demos and tests. Touch
   steps are `tap`, `hold` (long press), `press` and `release`.
+  `expect-no-text:TEXT` fails while the overlay shows TEXT.
+  `wifi:up`, `wifi:down` and `wifi:fail` set the mocked Wi-Fi link
+  (connected, lost, failed). `settle` waits until no chip announcement
+  is live or waiting. The boot announcement runs for about 5 s after
+  HOME appears.
 - **`--headless`** runs a `--drive` script with no window and on a
   virtual clock. Each loop pass counts as 16 ms of deck time and takes
   no wall time, so a `wait:` costs nothing and a run takes about a
@@ -273,7 +278,9 @@ python tools/sim_shots.py --out shots --hosts 8 "key:esc|wait:300|expect:home|sh
 ```
 
 `--hosts N` stores N example hosts first, `--font` limits the fonts and
-`--fx` keeps the effects.
+`--fx` keeps the effects. A `settle` step runs before every picture, so
+the bar is compact. `--live` drops it, to shoot a chip while it
+announces (`wifi:down|wait:300|shot:lost`).
 
 ## Performance — see performance.md for the log
 

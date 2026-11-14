@@ -175,8 +175,11 @@ chip. Clock at the right once time is known. A panel-tone bar drawn by
 the kit's `ui_status` (twin: `statusBar` in `kit.js`). Toasts draw as
 a note in the gap between chips and clock: about 36 characters at 66
 columns. The in-session toast is a `ui_toast` box at the top right.
-Chips are not touch targets. Designed but not built: phone chip, memory chip,
-chip expansion, a status page, a keystore chip, a summon in session.
+Chips are not touch targets. On a state edge a chip stretches with a
+detail text (NET: SSID and address, "link lost", "join failed"; KBD:
+name, "disconnected"), holds 3 s and collapses a cell per 100 ms. The
+status tick in the shell drives it. Designed but not built: phone chip,
+memory chip, a status page, a keystore chip, a summon in session.
 
 ## Layout literals that assume a grid
 

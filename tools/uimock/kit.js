@@ -153,7 +153,13 @@ function sbLook(c, accent, frame) {
 
 const notePen = (tone) => (tone === NOTE.GOOD ? C.GREEN : tone === NOTE.ALERT ? C.RED : C.DEFAULT);
 
+// Cells a chip may stretch; ui_sb_room in C.
+export function sbRoom(chipsEnd, clockX, note) {
+  return Math.max(0, clockX - chipsEnd - (note ? NOTE_MIN_GAP : 2));
+}
+
 // `s` holds the chips, clock, note, tone, hintTouch, hintKeys and frame.
+// A stretched chip adds xchip, xtext and xw: the cells shown, a blank first.
 export function statusBar(ui, r, s) {
   const y = r.y, left = r.x + 1;
   ui.pen(C.DEFAULT);
@@ -168,9 +174,21 @@ export function statusBar(ui, r, s) {
     ui.putch(clockX + 1 + n, y, ' ', S.FOCUS | BOLD);
     ui.pen(C.DEFAULT);
   }
+  const chips = s.chips || [], live = (c) => c.cells.length && c.cells[0].state !== SB.ABSENT;
   let x = left;
-  for (const c of s.chips || []) {
-    if (!c.cells.length || c.cells[0].state === SB.ABSENT) continue;
+  for (const c of chips) {
+    if (!live(c)) continue;
+    if (x > left) x++;
+    x += c.cells.length + 2;
+  }
+  let xw = 0;
+  const xcp = s.xtext ? chars(s.xtext) : [];
+  if (xcp.length && s.xchip >= 0 && s.xchip < chips.length) {
+    xw = Math.min(1 + xcp.length, s.xw || 0, sbRoom(x, clockX, !!s.note));
+  }
+  x = left;
+  chips.forEach((c, ci) => {
+    if (!live(c)) return;
     if (x > left) x++;
     let last = null;
     const put = (cell, ch) => {
@@ -181,9 +199,15 @@ export function statusBar(ui, r, s) {
     };
     put(c.cells[0], ' ');
     for (const cell of c.cells) put(cell);
+    if (ci === s.xchip && xw > 0) {
+      const k = sbLook(c.cells[0], c.accent, 0);
+      ui.pen(k.pen);
+      for (let i = 0; i < xw; i++) ui.putch(x++, y, i ? xcp[i - 1] : ' ', k.style | BOLD);
+      last = k;
+    }
     ui.putch(x++, y, ' ', last.style | BOLD);
     ui.pen(C.DEFAULT);
-  }
+  });
   const sp = noteSpan(left, x, clockX, !!s.note);
   if (s.note) {
     if (sp.whole) ui.fill(rect(left, y, clockX - left, 1), ' ', S.PANEL);

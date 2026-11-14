@@ -35,7 +35,7 @@ for (const size of ['8x16', '10x20', '12x24']) {
   for (const scr of lab.screens) {
     // A screen names its theme. A screen without one uses the default.
     const table = lab.themes[scr.theme || 'default'].table;
-    const ref = readBmp565(join(data, `ref-${size}`, `${scr.name}.bmp`));
+    const ref = readBmp565(join(process.env.UIMOCK_REF || data, `ref-${size}`, `${scr.name}.bmp`));
     const { px } = render(Frame.fromDump(lab, scr), font, table,
                           { width: ref.W, height: ref.H });
     let diff = 0, first = -1;

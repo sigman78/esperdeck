@@ -224,7 +224,10 @@ static void touch_tick(uint64_t now)
  * scripted input for UI screenshot automation and regression runs
  * (framebuffer pixel coords; key names: enter, esc, tab, bs (backspace),
  * up/down/left/right, f12, sbup/sbdn for scrollback paging, or a single
- * character; type:TEXT sends TEXT one character at a time). Touch
+ * character; type:TEXT sends TEXT one character at a time). wifi:up,
+ * wifi:down and wifi:fail set the mocked link. settle waits until the
+ * status chips stop announcing. expect-no-text:TEXT fails when the
+ * overlay still shows TEXT. Touch
  * steps: tap, hold (long press), press and release. Expectations
  * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms apart
  * (wait:N overrides the gap), starting 2.5 s after boot. Each step
@@ -337,6 +340,12 @@ static void drive_tick(uint64_t now)
     if (n >= sizeof(step)) n = sizeof(step) - 1;
     memcpy(step, s_drive, n);
     step[n] = '\0';
+
+    /* settle: hold the script until the chips stop announcing. */
+    if (!strcmp(step, "settle") && !cyberdeck_app_debug_status_idle()) {
+        s_drive_next = now + 50;
+        return;
+    }
     s_drive = bar ? bar + 1 : "";
 
     uint64_t gap = 450;
@@ -352,6 +361,22 @@ static void drive_tick(uint64_t now)
             fprintf(stderr, "drive: expected overlay text '%s' on screen '%s'\n",
                     want, cyberdeck_app_debug_screen());
             exit(4);
+        }
+    } else if (!strncmp(step, "expect-no-text:", 15)) {
+        const char *bad = step + 15;
+        if (cyberdeck_app_debug_overlay_contains(bad)) {
+            fprintf(stderr, "drive: overlay text '%s' still on screen '%s'\n",
+                    bad, cyberdeck_app_debug_screen());
+            exit(4);
+        }
+    } else if (!strncmp(step, "wifi:", 5)) {
+        const char *to = step + 5;
+        if      (!strcmp(to, "up"))   wifi_manager_sim_set(WIFI_MGR_CONNECTED);
+        else if (!strcmp(to, "down")) wifi_manager_sim_set(WIFI_MGR_LOST);
+        else if (!strcmp(to, "fail")) wifi_manager_sim_set(WIFI_MGR_FAILED);
+        else {
+            fprintf(stderr, "drive: unknown wifi state '%s'\n", to);
+            exit(6);
         }
     } else if (!strncmp(step, "expect:", 7)) {
         const char *want = step + 7;

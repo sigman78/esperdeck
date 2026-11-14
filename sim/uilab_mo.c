@@ -103,6 +103,19 @@ static void mo_bar(ui_rect_t r, const char *touch, const char *keys,
     } else if (!strcmp(v, "hint")) {
         s.hint_touch = "Tap a host to connect. Hold a host for its options "
                        "and more.";
+    } else if (!strcmp(v, "net-up")) {
+        s.xchip = 0; s.xtext = "HomeAP 192.168.1.7"; s.xw = 19;
+    } else if (!strcmp(v, "kbd-up")) {
+        s.xchip = 1; s.xtext = "Logitech K380"; s.xw = 14;
+    } else if (!strcmp(v, "net-lost")) {
+        chips[0] = sb_net(UI_SB_BUSY, 0);
+        s.xchip = 0; s.xtext = "link lost"; s.xw = 10;
+    } else if (!strcmp(v, "collapse")) {
+        s.xchip = 0; s.xtext = "HomeAP 192.168.1.7"; s.xw = 9;
+    } else if (!strcmp(v, "up-note")) {
+        s.note = "Host saved";
+        s.tone = UI_NOTE_PLAIN;
+        s.xchip = 0; s.xtext = "Homelab-5GHz 192.168.100.200"; s.xw = 29;
     }
     ui_status(r, &s);
 }
@@ -486,6 +499,11 @@ static void scr_status_note(void)       { home_bar("note"); }
 static void scr_status_note_good(void)  { home_bar("note-good"); }
 static void scr_status_note_alert(void) { home_bar("note-alert"); }
 static void scr_status_hint(void)       { home_bar("hint"); }
+static void scr_status_net_up(void)     { home_bar("net-up"); }
+static void scr_status_kbd_up(void)     { home_bar("kbd-up"); }
+static void scr_status_net_lost(void)   { home_bar("net-lost"); }
+static void scr_status_collapse(void)   { home_bar("collapse"); }
+static void scr_status_up_note(void)    { home_bar("up-note"); }
 
 /* The in-session toast over the terminal. */
 static void scr_session_toast(void)
@@ -1385,6 +1403,11 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-status-note-good", scr_status_note_good, .slate = true },
     { "mo-status-note-alert", scr_status_note_alert, .slate = true },
     { "mo-status-hint", scr_status_hint, .slate = true },
+    { "mo-status-net-up", scr_status_net_up, .slate = true },
+    { "mo-status-kbd-up", scr_status_kbd_up, .slate = true },
+    { "mo-status-net-lost", scr_status_net_lost, .slate = true },
+    { "mo-status-collapse", scr_status_collapse, .slate = true },
+    { "mo-status-up-note", scr_status_up_note, .slate = true },
     { "mo-session-toast", scr_session_toast, .slate = true, .term = true },
     { "mo-session-toast-ok", scr_session_toast_ok, .slate = true,
       .term = true },

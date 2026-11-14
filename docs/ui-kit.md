@@ -144,7 +144,7 @@ port those sketches line by line.
 | `ui_pages`, `ui_rail` | Page stepper in the header; position rail at the side of a paged list. |
 | `ui_info`, `ui_panel` | Text panels. They hold text only and are never touch targets. |
 | `ui_slate_page` | Paints the background and returns header, body, status and the whole area. |
-| `ui_status` | The status row: a panel-tone bar, the chips (`ui_sb_chip_t`, one state per cell), the clock, then a note (plain, good or alert) or a hint pair in the gap. `ui_note_span` places the text. |
+| `ui_status` | The status row: a panel-tone bar, the chips (`ui_sb_chip_t`, one state per cell), the clock, then a note (plain, good or alert) or a hint pair in the gap. `ui_note_span` places the text. One chip may stretch with a detail text (`xchip`, `xtext`, `xw`); `ui_sb_room` clips it. `ui_ann_*` is the queue and clock of those announcements. |
 | `ui_toast` | The in-session toast: a panel-tone box as wide as its text. The good tone adds a check mark. |
 | `ui_qr` | A QR code on a white panel: half blocks, a quiet zone and a caption row. `ui_qr_w` and `ui_qr_h` give its size. |
 | `ui_onboard` | The page of a phone or PC flow: numbered steps on a text panel (`ui_steps_wrap` wraps them), a `ui_qr` beside them when it fits, a state line (`ui_state`) or a striped state panel under them. With no steps it is a centered result card. |
@@ -336,6 +336,9 @@ one moves.
    away from the header bar no longer cancels either page.
    The status row and the session toast (done). `app_statusbar.c` keeps
    the polls and passes chips, clock and note to `ui_status`. The
-   session toast is a `ui_toast` box with no taper or spinner. Whether
+   session toast is a `ui_toast` box with no taper or spinner. The
+   chips announce their own changes: the shell's status tick runs the
+   queue and expires the toast for every screen (`mo-status-net-up`,
+   `-kbd-up`, `-net-lost`, `-collapse` and `-up-note` frames). Whether
    the shipped screens show key hints is still open.
 7. Delete the Slab widgets and the old tile, field and header helpers.

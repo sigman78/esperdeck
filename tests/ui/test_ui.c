@@ -889,9 +889,196 @@ static void test_toast_width_counts_pads_and_mark(void)
     TEST_ASSERT_EQUAL(0, ui_toast_w(5, false, 2));
 }
 
+static void test_ann_edges_follow_the_announce_rules(void)
+{
+    TEST_ASSERT_EQUAL(UI_ANN_UP,   ui_ann_edge(UI_SB_OFF, UI_SB_ON, false, false));
+    TEST_ASSERT_EQUAL(UI_ANN_UP,   ui_ann_edge(UI_SB_BUSY, UI_SB_ON, false, false));
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_ON, UI_SB_ON, false, false));
+    TEST_ASSERT_EQUAL(UI_ANN_FAIL, ui_ann_edge(UI_SB_BUSY, UI_SB_ALERT, false, false));
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_ALERT, UI_SB_ALERT, false, false));
+    TEST_ASSERT_EQUAL(UI_ANN_LOST, ui_ann_edge(UI_SB_ON, UI_SB_BUSY, false, false));
+    TEST_ASSERT_EQUAL(UI_ANN_LOST, ui_ann_edge(UI_SB_ON, UI_SB_OFF, false, false));
+    /* A failure outranks a loss. */
+    TEST_ASSERT_EQUAL(UI_ANN_FAIL, ui_ann_edge(UI_SB_ON, UI_SB_ALERT, false, false));
+    /* No news for a chip that starts to work, or gives up quietly. */
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_OFF, UI_SB_BUSY, false, false));
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_BUSY, UI_SB_OFF, false, false));
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_ON, UI_SB_ABSENT, false, false));
+}
+
+static void test_ann_quiet_drops_only_the_loss(void)
+{
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_ON, UI_SB_BUSY, false, true));
+    TEST_ASSERT_EQUAL(UI_ANN_UP,   ui_ann_edge(UI_SB_BUSY, UI_SB_ON, false, true));
+}
+
+static void test_ann_first_poll_counts_when_the_chip_is_on(void)
+{
+    TEST_ASSERT_EQUAL(UI_ANN_UP,   ui_ann_edge(UI_SB_ABSENT, UI_SB_ON, true, false));
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_ABSENT, UI_SB_OFF, true, false));
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_ABSENT, UI_SB_BUSY, true, false));
+    TEST_ASSERT_EQUAL(UI_ANN_NONE, ui_ann_edge(UI_SB_ABSENT, UI_SB_ALERT, true, false));
+}
+
+/* "MyNet 10.0.0.7" is 14 characters: 15 cells with the separator. */
+static void test_ann_holds_then_collapses_one_cell_per_step(void)
+{
+    ui_ann_t a;
+    ui_ann_init(&a);
+    ui_ann_post(&a, 0, "MyNet 10.0.0.7", 1000);
+    TEST_ASSERT_TRUE(ui_ann_step(&a, 1000));
+    TEST_ASSERT_EQUAL(15, ui_ann_width(&a));
+    TEST_ASSERT_EQUAL(0, ui_ann_chip(&a));
+    TEST_ASSERT_FALSE(ui_ann_step(&a, 2000));
+    TEST_ASSERT_FALSE(ui_ann_step(&a, 3999));
+    TEST_ASSERT_EQUAL(15, ui_ann_width(&a));
+    TEST_ASSERT_FALSE(ui_ann_step(&a, 4000));      /* collapse starts */
+    TEST_ASSERT_TRUE(ui_ann_step(&a, 4100));
+    TEST_ASSERT_EQUAL(14, ui_ann_width(&a));
+    TEST_ASSERT_FALSE(ui_ann_step(&a, 4150));
+    TEST_ASSERT_TRUE(ui_ann_step(&a, 4200));
+    TEST_ASSERT_EQUAL(13, ui_ann_width(&a));
+    TEST_ASSERT_TRUE(ui_ann_step(&a, 5400));
+    TEST_ASSERT_EQUAL(1, ui_ann_width(&a));
+    TEST_ASSERT_TRUE(ui_ann_step(&a, 5500));
+    TEST_ASSERT_EQUAL(0, ui_ann_width(&a));
+    TEST_ASSERT_EQUAL(-1, ui_ann_chip(&a));
+    TEST_ASSERT_FALSE(ui_ann_busy(&a));
+    TEST_ASSERT_FALSE(ui_ann_step(&a, 9000));
+}
+
+static void test_ann_waiter_shortens_the_hold(void)
+{
+    ui_ann_t a;
+    ui_ann_init(&a);
+    ui_ann_post(&a, 0, "abc", 0);
+    ui_ann_post(&a, 1, "xy", 0);
+    TEST_ASSERT_EQUAL(0, ui_ann_chip(&a));
+    ui_ann_step(&a, 0);
+    ui_ann_step(&a, 1499);
+    TEST_ASSERT_EQUAL(4, ui_ann_width(&a));
+    ui_ann_step(&a, 1500);                         /* collapse starts */
+    TEST_ASSERT_EQUAL(4, ui_ann_width(&a));
+    ui_ann_step(&a, 1600);
+    TEST_ASSERT_EQUAL(3, ui_ann_width(&a));
+}
+
+static void test_ann_late_waiter_starts_the_collapse_at_once(void)
+{
+    ui_ann_t a;
+    ui_ann_init(&a);
+    ui_ann_post(&a, 0, "abcdefgh", 0);
+    ui_ann_step(&a, 0);
+    ui_ann_post(&a, 1, "xy", 2000);                /* 2 s into a 3 s hold */
+    ui_ann_step(&a, 2000);
+    TEST_ASSERT_EQUAL(9, ui_ann_width(&a));        /* no jump */
+    ui_ann_step(&a, 2100);
+    TEST_ASSERT_EQUAL(8, ui_ann_width(&a));
+}
+
+static void test_ann_plays_in_order_and_each_starts_full(void)
+{
+    ui_ann_t a;
+    ui_ann_init(&a);
+    ui_ann_post(&a, 0, "ab", 0);                   /* 3 cells */
+    ui_ann_post(&a, 1, "wxyz", 0);                 /* 5 cells */
+    ui_ann_step(&a, 1500);
+    ui_ann_step(&a, 1800);                         /* 3 steps: first done */
+    TEST_ASSERT_EQUAL(1, ui_ann_chip(&a));
+    TEST_ASSERT_EQUAL(5, ui_ann_width(&a));
+    TEST_ASSERT_EQUAL(0, ui_ann_waiting(&a));
+    TEST_ASSERT_EQUAL_STRING("wxyz", ui_ann_text(&a));
+    /* Nothing waits now: the full hold. */
+    ui_ann_step(&a, 3299);
+    TEST_ASSERT_EQUAL(5, ui_ann_width(&a));
+    ui_ann_step(&a, 4800);
+    ui_ann_step(&a, 5300);
+    TEST_ASSERT_FALSE(ui_ann_busy(&a));
+}
+
+static void test_ann_newer_edge_of_a_chip_replaces_its_waiting_one(void)
+{
+    ui_ann_t a;
+    ui_ann_init(&a);
+    ui_ann_post(&a, 0, "first", 0);
+    ui_ann_post(&a, 1, "old", 0);
+    ui_ann_post(&a, 1, "new", 0);
+    TEST_ASSERT_EQUAL(1, ui_ann_waiting(&a));
+    ui_ann_step(&a, 1500);
+    ui_ann_step(&a, 1500 + 600);
+    TEST_ASSERT_EQUAL(1, ui_ann_chip(&a));
+    TEST_ASSERT_EQUAL_STRING("new", ui_ann_text(&a));
+}
+
+static void test_ann_same_chip_waits_behind_its_live_edge(void)
+{
+    ui_ann_t a;
+    ui_ann_init(&a);
+    ui_ann_post(&a, 0, "up", 0);
+    ui_ann_post(&a, 0, "link lost", 100);
+    TEST_ASSERT_EQUAL(1, ui_ann_waiting(&a));
+    TEST_ASSERT_EQUAL_STRING("up", ui_ann_text(&a));
+}
+
+static void test_ann_queue_keeps_four_and_drops_the_oldest(void)
+{
+    ui_ann_t a;
+    ui_ann_init(&a);
+    const char *const T[] = { "a", "b", "c", "d", "e", "f" };
+    for (int i = 0; i < 6; i++) ui_ann_post(&a, i, T[i], 0);
+    TEST_ASSERT_EQUAL(4, ui_ann_waiting(&a));
+    TEST_ASSERT_EQUAL_STRING("a", ui_ann_text(&a));
+    /* "b" was the oldest waiter: it went. Order c, d, e, f stays. */
+    int at = 1500;
+    ui_ann_step(&a, at);
+    at += 200;
+    ui_ann_step(&a, at);                           /* "a" is 2 cells wide */
+    TEST_ASSERT_EQUAL_STRING("c", ui_ann_text(&a));
+}
+
+static void test_ann_never_sees_a_cell_wider_than_its_text(void)
+{
+    ui_ann_t a;
+    ui_ann_init(&a);
+    ui_ann_post(&a, 0, UI_S_CHECK "ok", 0);        /* code points, not bytes */
+    TEST_ASSERT_EQUAL(4, ui_ann_width(&a));
+    char big[200];
+    memset(big, 'x', sizeof big - 1);
+    big[sizeof big - 1] = '\0';
+    ui_ann_post(&a, 1, big, 0);
+    ui_ann_step(&a, 1500);
+    ui_ann_step(&a, 1500 + 100 * 80);              /* waiter text is cut */
+    TEST_ASSERT_EQUAL(1, ui_ann_chip(&a));
+    TEST_ASSERT_TRUE(ui_ann_width(&a) <= UI_ANN_TEXT);
+}
+
+static void test_ann_room_keeps_the_note_gap_and_the_clock_clear(void)
+{
+    /* Chips end at 20, the clock starts at 58. */
+    TEST_ASSERT_EQUAL(22, ui_sb_room(20, 58, true));
+    TEST_ASSERT_EQUAL(36, ui_sb_room(20, 58, false));
+    TEST_ASSERT_EQUAL(0, ui_sb_room(45, 58, true));
+    TEST_ASSERT_EQUAL(0, ui_sb_room(70, 58, false));
+    /* With the room used, the note keeps its 16 cells. */
+    ui_note_span_t s = ui_note_span(1, 20 + ui_sb_room(20, 58, true), 58, true);
+    TEST_ASSERT_FALSE(s.whole);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_ann_edges_follow_the_announce_rules);
+    RUN_TEST(test_ann_quiet_drops_only_the_loss);
+    RUN_TEST(test_ann_first_poll_counts_when_the_chip_is_on);
+    RUN_TEST(test_ann_holds_then_collapses_one_cell_per_step);
+    RUN_TEST(test_ann_waiter_shortens_the_hold);
+    RUN_TEST(test_ann_late_waiter_starts_the_collapse_at_once);
+    RUN_TEST(test_ann_plays_in_order_and_each_starts_full);
+    RUN_TEST(test_ann_newer_edge_of_a_chip_replaces_its_waiting_one);
+    RUN_TEST(test_ann_same_chip_waits_behind_its_live_edge);
+    RUN_TEST(test_ann_queue_keeps_four_and_drops_the_oldest);
+    RUN_TEST(test_ann_never_sees_a_cell_wider_than_its_text);
+    RUN_TEST(test_ann_room_keeps_the_note_gap_and_the_clock_clear);
     RUN_TEST(test_note_span_sits_in_the_gap);
     RUN_TEST(test_note_span_takes_the_row_in_a_tight_gap);
     RUN_TEST(test_note_span_hint_never_takes_the_row);

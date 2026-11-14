@@ -11,6 +11,7 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_settings.h"
+#include "app_widgets.h"
 #include "cyberdeck_plugin.h"
 #include "session_guard.h"
 
@@ -252,42 +253,7 @@ void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
     va_end(ap);
     app.toast_until = now + ms;
     app.toast_ok    = false;   /* only enter_session() garnishes with a checkmark */
-}
-
-/* Watch the wifi + BLE keyboard links and toast every transition the user
- * cares about. Pairing-scan churn is deliberately silent — the pairing
- * screen narrates itself, and leaving it for a scan is not a "disconnect". */
-static void status_toasts(uint64_t now)
-{
-    uint8_t w = (uint8_t)wifi_manager_get_state();
-    if (w != app.prev_wifi) {
-        if (w == WIFI_MGR_CONNECTED)
-            toast(now, "wifi connected %s", wifi_manager_get_ip());
-        else if (w == WIFI_MGR_CONNECTING)
-            toast(now, "wifi connecting...");
-        else if (w == WIFI_MGR_FAILED)
-            toast_for(now, ERR_TOAST_MS, "wifi connect failed (retrying)");
-        else if (app.prev_wifi == WIFI_MGR_CONNECTED)   /* -> LOST / IDLE */
-            toast(now, "wifi disconnected");
-        app.prev_wifi = w;
-    }
-
-    if (app.ble && app.ble->get_state) {
-        cyberdeck_ble_state_t b = app.ble->get_state();
-        if ((uint8_t)b != app.prev_ble) {
-            if (b == CYBERDECK_BLE_CONNECTED) {
-                const char *n = app.ble->get_name
-                              ? app.ble->get_name() : "";
-                toast(now, "keyboard connected %s", n);
-            } else if (b == CYBERDECK_BLE_CONNECTING) {
-                toast(now, "keyboard connecting...");
-            } else if (app.prev_ble == CYBERDECK_BLE_CONNECTED &&
-                       b != CYBERDECK_BLE_PAIRING_SCAN) {
-                toast(now, "keyboard disconnected");
-            }
-            app.prev_ble = (uint8_t)b;
-        }
-    }
+    app.toast_wifi  = false;   /* menu_note() sets it after this call */
 }
 
 /* The whole surface at a glance, scr_id_t-indexed (designated, so array
@@ -375,6 +341,11 @@ bool cyberdeck_app_debug_overlay_contains(const char *text)
 {
     return ui_debug_contains(text);
 }
+
+bool cyberdeck_app_debug_status_idle(void)
+{
+    return status_idle();
+}
 #endif
 
 void cyberdeck_app_tick(uint64_t now)
@@ -382,7 +353,7 @@ void cyberdeck_app_tick(uint64_t now)
     app.anim_frame = (uint32_t)(now / ANIM_PERIOD_MS);
     ui_frame(app.anim_frame);   /* marquee clock for ui_tile */
 
-    status_toasts(now);
+    status_tick(now);            /* toast expiry + chip announcements */
     app_settings_idle_flush();   /* deferred settings saves, once held pages close */
     session_guard_tick(now);     /* idle + walk-away lock, saver or not */
 

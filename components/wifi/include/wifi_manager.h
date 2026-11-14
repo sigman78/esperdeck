@@ -77,4 +77,9 @@ int              wifi_manager_get_rssi(void);
  *  timeout arithmetic (elapsed = difftime(time(NULL), start)). */
 time_t           wifi_manager_time(void);
 
+#ifdef BUILD_SIMULATOR
+/** Simulator hook: put the mocked link in @p state (the --drive wifi step). */
+void             wifi_manager_sim_set(wifi_mgr_state_t state);
+#endif
+
 #endif // WIFI_MANAGER_H

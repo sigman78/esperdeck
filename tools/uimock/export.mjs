@@ -19,8 +19,10 @@ if (!existsSync(lab)) {
 }
 
 const data = join(here, 'data');
+// UIMOCK_REF moves the large reference pictures off a small disk.
+const refRoot = process.env.UIMOCK_REF || data;
 for (const size of ['8x16', '10x20', '12x24']) {
-  const ref = join(data, `ref-${size}`);
+  const ref = join(refRoot, `ref-${size}`);
   mkdirSync(ref, { recursive: true });
   const r = spawnSync(lab, ['--font', size, '--out', ref, '--dump', data],
                       { stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });

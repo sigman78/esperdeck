@@ -273,6 +273,17 @@ function moBarData(touch, keys, v) {
     case 'note-good': Object.assign(s, { note: 'Connected to homelab', tone: NOTE.GOOD }); break;
     case 'note-alert': Object.assign(s, { note: 'Could not save.', tone: NOTE.ALERT }); break;
     case 'hint': s.hintTouch = 'Tap a host to connect. Hold a host for its options and more.'; break;
+    case 'net-up': Object.assign(s, { xchip: 0, xtext: 'HomeAP 192.168.1.7', xw: 19 }); break;
+    case 'kbd-up': Object.assign(s, { xchip: 1, xtext: 'Logitech K380', xw: 14 }); break;
+    case 'net-lost':
+      s.chips = [sbNet(SB.BUSY, 0), sbKbd(SB.ON, [true, false])];
+      Object.assign(s, { xchip: 0, xtext: 'link lost', xw: 10 });
+      break;
+    case 'collapse': Object.assign(s, { xchip: 0, xtext: 'HomeAP 192.168.1.7', xw: 9 }); break;
+    case 'up-note':
+      Object.assign(s, { note: 'Host saved', tone: NOTE.PLAIN, xchip: 0,
+                         xtext: 'Homelab-5GHz 192.168.100.200', xw: 29 });
+      break;
     default: break;
   }
   return s;
@@ -1194,6 +1205,11 @@ export const MO_GATE = [
   { name: 'mo-status-note-good', sketch: 'mo-home', state: () => ({ bar: 'note-good' }) },
   { name: 'mo-status-note-alert', sketch: 'mo-home', state: () => ({ bar: 'note-alert' }) },
   { name: 'mo-status-hint', sketch: 'mo-home', state: () => ({ bar: 'hint' }) },
+  { name: 'mo-status-net-up', sketch: 'mo-home', state: () => ({ bar: 'net-up' }) },
+  { name: 'mo-status-kbd-up', sketch: 'mo-home', state: () => ({ bar: 'kbd-up' }) },
+  { name: 'mo-status-net-lost', sketch: 'mo-home', state: () => ({ bar: 'net-lost' }) },
+  { name: 'mo-status-collapse', sketch: 'mo-home', state: () => ({ bar: 'collapse' }) },
+  { name: 'mo-status-up-note', sketch: 'mo-home', state: () => ({ bar: 'up-note' }) },
   { name: 'mo-session-toast', sketch: 'mo-session' },
   { name: 'mo-session-toast-ok', sketch: 'mo-session',
     state: () => ({ toast: { text: 'homelab - F12 or long-press for menu', tone: NOTE.GOOD } }) },

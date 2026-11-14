@@ -139,6 +139,111 @@ int ui_toast_w(int len, bool mark, int max_w)
     return w < max_w ? w : max_w;
 }
 
+int ui_sb_room(int chips_end, int clock_x, bool note)
+{
+    const int room = clock_x - chips_end - (note ? UI_NOTE_MIN_GAP : 2);
+    return room > 0 ? room : 0;
+}
+
+int ui_ann_edge(uint8_t prev, uint8_t cur, bool first, bool quiet)
+{
+    if (cur == UI_SB_ON)
+        return first || prev != UI_SB_ON ? UI_ANN_UP : UI_ANN_NONE;
+    if (first) return UI_ANN_NONE;
+    if (cur == UI_SB_ALERT)
+        return prev != UI_SB_ALERT ? UI_ANN_FAIL : UI_ANN_NONE;
+    if (prev == UI_SB_ON && cur != UI_SB_ABSENT)
+        return quiet ? UI_ANN_NONE : UI_ANN_LOST;
+    return UI_ANN_NONE;
+}
+
+void ui_ann_init(ui_ann_t *a)
+{
+    memset(a, 0, sizeof(*a));
+    a->seen_chip = -1;
+}
+
+/* Copy whole code points: a cut never splits a UTF-8 sequence. */
+static void ann_copy(ui_ann_item_t *to, int chip, const char *text)
+{
+    size_t n = 0;
+    to->chip = chip;
+    for (const char *p = text; *p;) {
+        char one[5];
+        const uint16_t cp = ui_utf8_next(&p);
+        const int k = ui_utf8_put(one, cp);
+        if (n + (size_t)k >= sizeof(to->text)) break;
+        memcpy(to->text + n, one, (size_t)k);
+        n += (size_t)k;
+    }
+    to->text[n] = '\0';
+}
+
+static void ann_start(ui_ann_t *a, uint64_t now)
+{
+    bool cut;
+    a->cur = a->wait[0];
+    memmove(&a->wait[0], &a->wait[1],
+            (size_t)(a->nwait - 1) * sizeof(a->wait[0]));
+    a->nwait--;
+    a->full       = 1 + ui_fit(a->cur.text, UI_ANN_TEXT, &cut);
+    a->width      = a->full;
+    a->live       = true;
+    a->collapsing = false;
+    a->t0         = now;
+}
+
+void ui_ann_post(ui_ann_t *a, int chip, const char *text, uint64_t now)
+{
+    int at = -1;
+    for (int i = 0; i < a->nwait; i++)
+        if (a->wait[i].chip == chip) at = i;
+    if (at < 0) {
+        if (a->nwait == UI_ANN_WAITING) {
+            memmove(&a->wait[0], &a->wait[1],
+                    (UI_ANN_WAITING - 1) * sizeof(a->wait[0]));
+            a->nwait--;
+        }
+        at = a->nwait++;
+    }
+    ann_copy(&a->wait[at], chip, text);
+    if (!a->live) ann_start(a, now);
+}
+
+bool ui_ann_step(ui_ann_t *a, uint64_t now)
+{
+    for (;;) {
+        if (!a->live) {
+            if (a->nwait == 0) break;
+            ann_start(a, now);
+        }
+        if (!a->collapsing) {
+            const uint64_t hold = a->nwait ? UI_ANN_SHORT_MS : UI_ANN_HOLD_MS;
+            if (now < a->t0 + hold) break;
+            a->collapsing = true;
+            a->c0 = now;
+        }
+        const uint64_t gone = (now - a->c0) / UI_ANN_STEP_MS;
+        if (gone < (uint64_t)a->full) {
+            a->width = a->full - (int)gone;
+            break;
+        }
+        a->live  = false;
+        a->width = 0;
+    }
+    const int chip = ui_ann_chip(a), width = ui_ann_width(a);
+    const bool changed = chip != a->seen_chip || width != a->seen_width;
+    a->seen_chip  = chip;
+    a->seen_width = width;
+    return changed;
+}
+
+int ui_ann_width(const ui_ann_t *a) { return a->live ? a->width : 0; }
+int ui_ann_chip(const ui_ann_t *a) { return a->live ? a->cur.chip : -1; }
+const char *ui_ann_text(const ui_ann_t *a) { return a->cur.text; }
+int ui_ann_waiting(const ui_ann_t *a) { return a->nwait; }
+bool ui_ann_busy(const ui_ann_t *a) { return a->live || a->nwait > 0; }
+
 ui_code_t ui_code_plan(int len, int expected, int room)
 {
     ui_code_t c = { 0 };

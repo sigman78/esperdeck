@@ -51,6 +51,54 @@ ui_note_span_t ui_note_span(int left, int chips_end, int clock_x,
  *  it cannot hold text. */
 int ui_toast_w(int len, bool mark, int max_w);
 
+/** Cells a chip may stretch on a status row. @p chips_end is the first
+ *  cell after the last chip, @p clock_x the clock's first cell. A live
+ *  note keeps UI_NOTE_MIN_GAP cells, else the row keeps two. */
+int ui_sb_room(int chips_end, int clock_x, bool note);
+
+/* A chip announces its own change: it stretches with a detail text,
+ * holds, then collapses one cell per step. This is the queue and the
+ * clock of it, in milliseconds. The shell drives it from its tick. */
+#define UI_ANN_TEXT     56      /* bytes of one detail text, with the NUL  */
+#define UI_ANN_WAITING  4       /* edges that may wait for the live one    */
+#define UI_ANN_HOLD_MS  3000
+#define UI_ANN_SHORT_MS 1500    /* hold while another edge waits           */
+#define UI_ANN_STEP_MS  100     /* one collapse step                       */
+
+enum { UI_ANN_NONE = 0, UI_ANN_UP, UI_ANN_FAIL, UI_ANN_LOST };
+
+/** What a chip's move from @p prev to @p cur announces (UI_SB_* states).
+ *  The first poll counts as an edge when the chip is on. @p quiet drops
+ *  the loss, for a chip that left only to scan. */
+int ui_ann_edge(uint8_t prev, uint8_t cur, bool first, bool quiet);
+
+typedef struct { int chip; char text[UI_ANN_TEXT]; } ui_ann_item_t;
+
+typedef struct {
+    ui_ann_item_t cur, wait[UI_ANN_WAITING];
+    int      nwait, full, width;
+    bool     live, collapsing;
+    uint64_t t0, c0;               /* hold start, collapse start          */
+    int      seen_chip, seen_width;  /* what the last step reported       */
+} ui_ann_t;
+
+void ui_ann_init(ui_ann_t *a);
+
+/** Queue the detail @p text of @p chip. It plays at once when none is
+ *  live. It replaces a waiting edge of the same chip. A full queue drops
+ *  its oldest. */
+void ui_ann_post(ui_ann_t *a, int chip, const char *text, uint64_t now);
+
+/** Move the clock to @p now. True when the live chip or its width is not
+ *  what the last step reported: the row needs a redraw. */
+bool ui_ann_step(ui_ann_t *a, uint64_t now);
+
+int         ui_ann_width(const ui_ann_t *a);   /* cells, 0 when none      */
+int         ui_ann_chip(const ui_ann_t *a);    /* -1 when none            */
+const char *ui_ann_text(const ui_ann_t *a);
+int         ui_ann_waiting(const ui_ann_t *a);
+bool        ui_ann_busy(const ui_ann_t *a);    /* live or waiting         */
+
 /** Insert printable ASCII @p ch at *@p caret of the NUL-terminated @p buf,
  *  which holds at most @p max characters. The caret moves past it.
  *  Returns whether the text changed. */

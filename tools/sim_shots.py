@@ -11,7 +11,10 @@ The run fails on a simulator error or a "layout faults" log line.
 
 Options: --font picks the fonts (default: all three). --hosts N stores N
 example hosts first. --fx keeps the display effects. --ble adds the fake
-BLE keyboard service. --sim names the simulator binary.
+BLE keyboard service. --sim names the simulator binary. A settle step
+runs before every picture, so the boot announcement is over and the bar
+is compact; --live drops it. Add your own settle steps and wifi:down,
+wifi:up or wifi:fail steps to shoot the chips announcing.
 """
 
 import argparse
@@ -47,17 +50,19 @@ def profiles_ini(count):
         for name, user, host, port in HOSTS[:count])
 
 
-def shoot(sim, font, script, hosts, fx, out, ble=False):
-    """Run the script at one font. Returns (ok, log lines worth showing)."""
+def shoot(sim, font, script, hosts, fx, out, ble=False, live=False):
+    """Run the script at one font. Returns (ok, log lines worth showing).
+    Each picture waits for the status chips to settle, unless live."""
     with tempfile.TemporaryDirectory(prefix="deck-shots-") as tmp:
         fixture = Path(tmp) / "storage"
         shutil.copytree(ROOT / "sim_storage.example", fixture)
         if hosts is not None:
             (fixture / "profiles.ini").write_text(profiles_ini(hosts),
                                                   encoding="utf-8")
+        wait = "" if live else "settle|"
         steps = re.sub(r"(^|\|)shot:([^|]+)",
-                       lambda m: f"{m.group(1)}shot:{m.group(2)}-{font}.bmp",
-                       script)
+                       lambda m: f"{m.group(1)}{wait}shot:{m.group(2)}"
+                                 f"-{font}.bmp", script)
         mode = (["--headless"] + ([] if fx else ["--no-fx"]) +
                 (["--fake-ble"] if ble else []))
         try:
@@ -100,6 +105,9 @@ def main():
                     help="keep the display effects on")
     ap.add_argument("--ble", action="store_true",
                     help="run with the simulator's fake BLE keyboard service")
+    ap.add_argument("--live", action="store_true",
+                    help="no settle step before a picture: chips may be "
+                         "mid-announcement")
     ap.add_argument("--sim", default=str(SIM_DEFAULT))
     args = ap.parse_args()
 
@@ -114,7 +122,7 @@ def main():
     with ThreadPoolExecutor(len(fonts)) as pool:
         results = list(pool.map(
             lambda f: shoot(sim, f, args.script, args.hosts, args.fx, out,
-                            args.ble),
+                            args.ble, args.live),
             fonts))
     bad = 0
     for ok, notes in results:

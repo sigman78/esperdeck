@@ -114,7 +114,6 @@ static void host_exit(uint64_t now)
 
 static void host_tick(uint64_t now)
 {
-    if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
     if (!host_valid()) enter_home(now);     /* the entry is gone */
 }
 

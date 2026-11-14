@@ -48,7 +48,6 @@ static struct {
     int       sheet_x;              /* first column of the session sheet    */
     bool      fresh;                /* page switched, not drawn yet         */
     bool      follow;               /* resumed: show the focused item's page */
-    bool      note_wifi;            /* live-track wifi_status_str()         */
     sec_lay_t lay;
 } s_menu;
 
@@ -326,18 +325,20 @@ void menu_present_now(uint64_t now)
 
 /* Menu feedback rides the shared toast on the StatusBar (ui-spec).
  * @p ms: lifetime; 0 = sticky. menu_exit clears a leftover sticky so it
- * never follows the user onto another screen. */
+ * never follows the user onto another screen. The shell's status tick
+ * expires a timed note. app.toast_wifi marks a note that tracks Wi-Fi;
+ * any new toast and the expiry drop the mark. */
 void menu_note(uint64_t now, uint32_t ms, bool live_wifi, const char *text)
 {
     toast_for(now, 1, "%s", text);
     app.toast_until = ms ? now + ms : UINT64_MAX;   /* MAX = sticky */
-    s_menu.note_wifi = live_wifi;
+    app.toast_wifi  = live_wifi;
 }
 
 static void menu_clear_note(void)
 {
-    app.toast[0]     = '\0';
-    s_menu.note_wifi = false;
+    app.toast[0]   = '\0';
+    app.toast_wifi = false;
 }
 
 /* Switch to menu screen @p sc: first page, no saved focus, no note. The
@@ -433,7 +434,7 @@ static void menu_tick(uint64_t now)
      * and the wifi-tracking note. Expired notes clear. */
     if (now >= app.next_anim) {
         app.next_anim = now + ANIM_PERIOD_MS;
-        if (s_menu.note_wifi && app.toast[0]) {
+        if (app.toast_wifi && app.toast[0]) {
             snprintf(app.toast, sizeof(app.toast), "wifi: %s",
                      wifi_status_str());
             /* Still in flight? Keep the note alive: expiring mid-

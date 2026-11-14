@@ -88,8 +88,9 @@ static const char *note_wifi(char *buf, size_t sz)
 {
     if (wifi_manager_get_state() != WIFI_MGR_CONNECTED) return wifi_status_str();
     const int rssi = net_rssi();
-    if (rssi) snprintf(buf, sz, "%s  %d dBm", wifi_manager_get_ssid(), rssi);
-    else      snprintf(buf, sz, "%s", wifi_manager_get_ssid());
+    const char *ssid = wifi_manager_get_ssid(), *ip = wifi_manager_get_ip();
+    if (rssi) snprintf(buf, sz, "%s  %s  %d dBm", ssid, ip, rssi);
+    else      snprintf(buf, sz, "%s  %s", ssid, ip);
     return buf;
 }
 

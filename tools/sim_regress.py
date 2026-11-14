@@ -113,7 +113,7 @@ SCENARIOS = {
     "config-menu-roundtrip":
         "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
         "|wait:500|expect:menu|expect-text:Setup|expect-text:1 stored"
-        "|key:esc|wait:500|expect:home|quit",
+        "|expect-text:HomeAP  127.0.0.1|key:esc|wait:500|expect:home|quit",
     # Hub tiles, row-major, three columns: Hosts, Wi-Fi, Keyboard (off),
     # CRT FX, Motion FX, Font, System, Keystore. Two switches flip and a
     # chip picks Phosphor: the CRT FX note then reads "phosphor".
@@ -313,6 +313,24 @@ SCENARIOS = {
     "pair-timeout":
         PAIR_OPEN + "|wait:3300|expect-text:2 found|wait:20000"
         "|expect-text:closes in|wait:11000|expect:home|quit",
+    "status-boot":
+        "expect:home|expect-text:HomeAP 127.0.0.1|wait:6000"
+        "|expect-no-text:HomeAP|expect-text:NET|quit",
+    "status-lost-still-page":
+        "key:esc|wait:400|expect:home|settle|key: |wait:400|expect:host"
+        "|wifi:down|wait:300|expect-text:link lost|expect:host|wait:5000"
+        "|expect-no-text:link lost|expect-text:NET|wifi:up|wait:300"
+        "|expect-text:HomeAP 127.0.0.1|wait:5000|expect-no-text:HomeAP"
+        "|expect:host|quit",
+    "status-failed-page-toast":
+        "key:esc|wait:500|expect:home|settle|tap:130,64|wait:300"
+        "|expect-text:Try again|wifi:down|key:left|key:enter|wait:300"
+        "|expect-text:wifi not connected yet|expect:connecting|wait:3500"
+        "|expect-no-text:wifi not connected yet|expect-text:Try again|quit",
+    "status-connect-refused":
+        "key:esc|wait:500|expect:home|settle|wifi:down|tap:130,64|wait:300"
+        "|expect:home|expect-text:wifi not connected yet|wait:3500"
+        "|expect-no-text:wifi not connected yet|expect:home|quit",
 }
 
 # Per-scenario edits to the fixture's profiles.ini (old text, new text).
@@ -334,6 +352,7 @@ FIXTURE_EDITS = {
     "connect-failed-again": KEY_MISSING,
     "connect-failed-edit": KEY_MISSING,
     "connect-failed-edit-discard": KEY_MISSING,
+    "status-failed-page-toast": KEY_MISSING,
     "tap-connect": [("host=192.168.1.10", "host=127.0.0.1"),
                     ("port=22", "port=1")],
     "hold-opens-host": [("host=192.168.1.10", "host=127.0.0.1"),

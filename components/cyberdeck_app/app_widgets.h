@@ -15,6 +15,14 @@
  *  app_statusbar.c; composited by the shell for NAV_CHROME_FULL screens. */
 void ui_statusbar(uint64_t now);
 
+/** The status tick, once per shell loop. It expires the toast and times
+ *  the chip announcements. It invalidates the page when the row changes,
+ *  so a still page shows the news. */
+void status_tick(uint64_t now);
+
+/** No announcement is live or waiting. The simulator's settle step reads it. */
+bool status_idle(void);
+
 /** Wi-Fi signal in dBm, 0 while the link is down. Cached for a second,
  *  because the driver call takes a lock. The StatusBar and the setup hub
  *  share it. */

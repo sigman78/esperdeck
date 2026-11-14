@@ -211,6 +211,38 @@ Expansions replace rev-1's transition toasts. The toast survives for
 messages that belong to no chip (menu notes, hints, errors), and its
 span is now rarely contended.
 
+**Shipped (2026-11, step 4a).** NET and KBD announce. The queue and
+timing live in `ui_pure.c` (`ui_ann_*`, unit tested). The shell's
+status tick (`status_tick`, `app_statusbar.c`) runs them in
+milliseconds from `cyberdeck_app_tick`, so a page that never redraws
+still shows them. The render only reads the state.
+
+- Edges: into ON (NET: SSID and address; KBD: the keyboard name, or
+  "connected"), into ALERT (NET: "join failed"), ON to anything else
+  (NET: "link lost"; KBD: "disconnected"). Into BUSY from OFF and
+  pairing-scan churn stay silent. The first poll on a screen with a bar
+  counts as an edge when the chip is ON.
+- Hold 3 s, or 1.5 s while another edge waits. Collapse one cell per
+  100 ms. First in, first out; at most 4 wait; a newer edge replaces
+  the waiting one of the same chip; a full queue drops the oldest.
+- The expansion takes the chip's wash, without the blink. The kit part
+  clips it (`ui_sb_room`): a live note keeps 16 cells, otherwise two
+  cells stay free before the clock.
+- No bar, no expansion: a session or the saver on top plays none, and
+  edges there are not replayed. In a session a Wi-Fi failure, a Wi-Fi
+  loss and a keyboard loss still show as toasts.
+- The same tick expires the toast for every screen.
+- The tick also redraws the page when a chip changes (state, a lock,
+  a signal rung), not only on an announcement.
+- Where the facts are: SSID and address on the NET expansion and the
+  Setup Wi-Fi tile (SSID, address, signal); signal on the NET ladder
+  and the session sheet; the keyboard name on the KBD expansion and
+  the Setup Keyboard tile.
+
+Still open: the STATUS page, the memory chip, the phone chip and the
+plugin seam. "wifi connecting..." and "keyboard connecting..." no
+longer announce; the BUSY blink on the chip carries them.
+
 ### Layout
 
 **Look (2026-11).** The bar is a panel-tone row, not a blue strip. The
@@ -336,7 +368,8 @@ typedef struct {
    WiFi-provisioning) and HOME's RAM line.
 4. **Expansion + STATUS page** — the engine's edge-diff + hold/decay
    machine, `detail()` on NET/KBD/MEM; after this, IP/SSID/name leave
-   the HOME header with no information loss.
+   the HOME header with no information loss. (Expansion on NET and KBD
+   is shipped; the STATUS page and MEM remain.)
 5. **Plugin seam** — `status_chips` on the descriptor, dogfooded by
    whichever chip moves out of core last.
 

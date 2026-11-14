@@ -474,9 +474,11 @@ static void sb_look(const ui_sb_cell_t *c, uint8_t accent, uint32_t frame,
     }
 }
 
-/* A chip: an opening pad, its cells, a closing pad. The pads borrow the
- * look of the cell they touch, so the run reads as one wash. */
-static int sb_chip(int x, int y, const ui_sb_chip_t *c, uint32_t frame)
+/* A chip: an opening pad, its cells, an optional stretch, a closing pad.
+ * The pads borrow the look of the cell they touch, so the run reads as
+ * one wash. The stretch takes the label's look without the blink. */
+static int sb_chip(int x, int y, const ui_sb_chip_t *c, uint32_t frame,
+                   const char *xtext, int xw)
 {
     uint16_t cp;
     uint8_t  style, pen;
@@ -488,6 +490,13 @@ static int sb_chip(int x, int y, const ui_sb_chip_t *c, uint32_t frame)
         sb_look(&c->cell[i], c->accent, frame, &cp, &style, &pen);
         ui_pen(pen);
         ui_putch(x++, y, cp, style | UI_BOLD);
+    }
+    if (xw > 0) {
+        sb_look(&c->cell[0], c->accent, 0, &cp, &style, &pen);
+        ui_pen(pen);
+        for (int i = 0; i < xw; i++)
+            ui_putch(x++, y, i ? ui_utf8_next(&xtext) : ' ',
+                     style | UI_BOLD);
     }
     ui_putch(x++, y, ' ', style | UI_BOLD);
     ui_pen(OVERLAY_COL_DEFAULT);
@@ -523,7 +532,22 @@ void ui_status(ui_rect_t r, const ui_status_t *s)
         const ui_sb_chip_t *c = &s->chips[i];
         if (c->n == 0 || c->cell[0].state == UI_SB_ABSENT) continue;
         if (x > left) x++;
-        x = sb_chip(x, y, c, s->frame);
+        x += c->n + 2;
+    }
+    int xw = 0;
+    if (has(s->xtext) && s->xchip >= 0 && s->xchip < s->nchips) {
+        xw = 1 + ui_len(s->xtext);
+        if (xw > s->xw) xw = s->xw;
+        const int room = ui_sb_room(x, clock_x, has(s->note));
+        if (xw > room) xw = room;
+    }
+    x = left;
+    for (int i = 0; i < s->nchips; i++) {
+        const ui_sb_chip_t *c = &s->chips[i];
+        if (c->n == 0 || c->cell[0].state == UI_SB_ABSENT) continue;
+        if (x > left) x++;
+        const bool more = i == s->xchip && xw > 0;
+        x = sb_chip(x, y, c, s->frame, s->xtext, more ? xw : 0);
     }
 
     const bool note = has(s->note);

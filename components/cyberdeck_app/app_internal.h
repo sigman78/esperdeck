@@ -59,10 +59,7 @@ struct app_state {
     char     toast[64];
     uint64_t toast_until;
     bool     toast_ok;     /* success toast: green, with a check mark */
-
-    /* link watcher: last states seen, for connect/disconnect toasts */
-    uint8_t  prev_wifi;    /* wifi_mgr_state_t */
-    uint8_t  prev_ble;     /* cyberdeck_ble_state_t */
+    bool     toast_wifi;   /* the menu's note tracks the Wi-Fi state  */
 
     uint32_t anim_frame;   /* advances ~10 fps for subtle animation */
     uint64_t next_anim;    /* next animated re-render */

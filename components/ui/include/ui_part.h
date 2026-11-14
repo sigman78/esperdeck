@@ -253,11 +253,15 @@ typedef struct {
     const char *hint_touch;     /* shown while no note is live           */
     const char *hint_keys;      /* instead, once a key lit the focus     */
     uint32_t    frame;          /* animation clock: BUSY blink, spinner  */
+    const char *xtext;          /* detail a chip stretches to, or NULL   */
+    int         xchip;          /* index in chips of the stretched chip  */
+    int         xw;             /* cells shown: a blank, then the text   */
 } ui_status_t;
 
 /** Draw a status row in the one-row rect @p r. It paints a panel-tone
  *  bar, the chips and the clock at the right. The note or the hint fills
- *  the gap between them. */
+ *  the gap between them. A stretched chip carries @p xtext in its own
+ *  wash, clipped to ui_sb_room so a live note keeps its gap. */
 void ui_status(ui_rect_t r, const ui_status_t *s);
 
 /** A toast: a panel-tone box, as wide as its text, at the right end of

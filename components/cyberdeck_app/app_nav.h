@@ -53,6 +53,7 @@ bool nav_reset(int id, intptr_t arg, uint64_t now);    /* whole stack   */
 bool nav_pop(uint64_t now);
 
 int  nav_current(void);                  /* id of the top screen        */
+bool nav_has_bar(void);                  /* top screen shows the status row */
 
 #ifdef BUILD_SIMULATOR
 /* Simulator regression hook: stable descriptor name of the top screen. */

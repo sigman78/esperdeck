@@ -237,10 +237,6 @@ void enter_home_after_collapse(uint64_t now)
 
 static void home_tick(uint64_t now)
 {
-    /* Expire toasts regardless of the saver, so a wake never flashes
-     * a long-dead message. */
-    if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
-
     if (now >= s_home.next_refresh) {
         s_home.next_refresh = now + ANIM_PERIOD_MS;   /* animation cadence */
         nav_invalidate();   /* live phone dot, pressed flash */

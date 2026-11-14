@@ -9,9 +9,11 @@
  */
 
 #include "app_widgets.h"
+#include "app_screens.h"
 #include "wifi_manager.h"
 #include "vterm.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #define SB_LADDER         4    /* NET signal ladder, cells              */
@@ -34,6 +36,11 @@ typedef struct {
     const char *id;        /* stable key for the plugin seam            */
     uint8_t     accent;    /* default ON accent                         */
     int       (*poll)(ui_sb_cell_t cell[UI_SB_CELLS]);  /* fill, return count */
+    /* Both NULL for a chip that never announces. state returns a UI_SB_*
+     * value. It sets @p quiet when a loss is only a scan. detail writes
+     * the text of an UI_ANN_* edge. */
+    uint8_t   (*state)(bool *quiet);
+    void      (*detail)(int kind, char *buf, size_t sz);
 } chip_desc_t;
 
 /* The chip's name plus the separator cell that opens its value field.
@@ -67,18 +74,37 @@ int net_rssi(void)
     return rssi;
 }
 
+static uint8_t net_state(bool *quiet)
+{
+    if (quiet) *quiet = false;
+    switch (wifi_manager_get_state()) {
+    case WIFI_MGR_CONNECTED:  return UI_SB_ON;
+    case WIFI_MGR_CONNECTING:
+    case WIFI_MGR_LOST:       return UI_SB_BUSY;
+    case WIFI_MGR_FAILED:     return UI_SB_ALERT;
+    default:                  return UI_SB_OFF;
+    }
+}
+
+static void net_detail(int kind, char *buf, size_t sz)
+{
+    if (kind == UI_ANN_UP) {
+        const char *ssid = wifi_manager_get_ssid();
+        const char *ip   = wifi_manager_get_ip();
+        if (!ip) ip = "";
+        if (ssid && ssid[0]) snprintf(buf, sz, "%.32s %.15s", ssid, ip);
+        else                 snprintf(buf, sz, "%.15s", ip);
+    } else {
+        snprintf(buf, sz, "%s", kind == UI_ANN_FAIL ? "join failed"
+                                                    : "link lost");
+    }
+}
+
 static int poll_net(ui_sb_cell_t cell[UI_SB_CELLS])
 {
     const int rssi = net_rssi();
 
-    uint8_t st;
-    switch (wifi_manager_get_state()) {
-    case WIFI_MGR_CONNECTED:  st = UI_SB_ON;    break;
-    case WIFI_MGR_CONNECTING:
-    case WIFI_MGR_LOST:       st = UI_SB_BUSY;  break;
-    case WIFI_MGR_FAILED:     st = UI_SB_ALERT; break;
-    default:                  st = UI_SB_OFF;   break;
-    }
+    const uint8_t st = net_state(NULL);
     int n = sb_label(cell, "NET", st);
 
     /* Rung i is lit once quality reaches level i+1. Unlit rungs stay
@@ -110,18 +136,38 @@ static const struct { char c; uint8_t bit; } KBD_LOCKS[] = {
     { 'N', CYBERDECK_KBD_LOCK_NUM  },
 };
 
+/* A scan is no loss: the pairing page narrates it. */
+static uint8_t kbd_state(bool *quiet)
+{
+    if (quiet) *quiet = false;
+    if (!app.ble || !app.ble->get_state) return UI_SB_ABSENT;
+    const cyberdeck_ble_state_t b = app.ble->get_state();
+    if (quiet) *quiet = b == CYBERDECK_BLE_PAIRING_SCAN;
+    switch (b) {
+    case CYBERDECK_BLE_CONNECTED:    return UI_SB_ON;
+    case CYBERDECK_BLE_CONNECTING:
+    case CYBERDECK_BLE_PAIRING_SCAN:
+    case CYBERDECK_BLE_RECONNECT:    return UI_SB_BUSY;
+    default:                         return UI_SB_OFF;
+    }
+}
+
+static void kbd_detail(int kind, char *buf, size_t sz)
+{
+    if (kind == UI_ANN_UP) {
+        const char *name = app.ble && app.ble->get_name ? app.ble->get_name()
+                                                        : NULL;
+        snprintf(buf, sz, "%.54s", name && name[0] ? name : "connected");
+    } else {
+        snprintf(buf, sz, "disconnected");
+    }
+}
+
 static int poll_kbd(ui_sb_cell_t cell[UI_SB_CELLS])
 {
     if (!app.ble || !app.ble->get_state) return 0;
 
-    uint8_t st;
-    switch (app.ble->get_state()) {
-    case CYBERDECK_BLE_CONNECTED:    st = UI_SB_ON;   break;
-    case CYBERDECK_BLE_CONNECTING:
-    case CYBERDECK_BLE_PAIRING_SCAN:
-    case CYBERDECK_BLE_RECONNECT:    st = UI_SB_BUSY; break;
-    default:                         st = UI_SB_OFF;  break;
-    }
+    const uint8_t st = kbd_state(NULL);
     int n = sb_label(cell, "KBD", st);
 
     /* A lock has no referent while the keyboard is down. Off ON the field
@@ -155,38 +201,127 @@ static int poll_sync(ui_sb_cell_t cell[UI_SB_CELLS])
 }
 
 static const chip_desc_t CHIPS[] = {
-    { "net",  OVERLAY_COL_GREEN, poll_net  },
-    { "kbd",  OVERLAY_COL_CYAN,  poll_kbd  },
-    { "sync", OVERLAY_COL_AMBER, poll_sync },
+    { .id = "net",  .accent = OVERLAY_COL_GREEN, .poll = poll_net,
+      .state = net_state, .detail = net_detail },
+    { .id = "kbd",  .accent = OVERLAY_COL_CYAN,  .poll = poll_kbd,
+      .state = kbd_state, .detail = kbd_detail },
+    { .id = "sync", .accent = OVERLAY_COL_AMBER, .poll = poll_sync },
 };
 
 _Static_assert(sizeof(CHIPS) / sizeof(CHIPS[0]) <= SB_MAX_CHIPS,
                "the status row holds SB_MAX_CHIPS chips");
 
-/* Polls the table into the chips the kit draws; returns how many. */
-static int sb_poll(ui_sb_chip_t chips[SB_MAX_CHIPS])
+/* Polls the table into the chips the kit draws; returns how many. A
+ * table entry that draws nothing gets slot -1 in @p slot. */
+static int sb_poll(ui_sb_chip_t chips[SB_MAX_CHIPS], int slot[SB_MAX_CHIPS])
 {
     int count = 0;
     for (int i = 0; i < NELEM(CHIPS); i++) {
         ui_sb_chip_t *c = &chips[count];
         memset(c, 0, sizeof(*c));
+        slot[i] = -1;
         const int n = CHIPS[i].poll(c->cell);
         if (n <= 0 || c->cell[0].state == UI_SB_ABSENT) continue;
         c->accent = CHIPS[i].accent;
         c->n      = (uint8_t)n;
-        count++;
+        slot[i]   = count++;
     }
     return count;
+}
+
+/* The chip announcements. A chip that moves queues a detail text. The
+ * tick below times it. The render only reads it. */
+static ui_ann_t s_ann;
+static bool     s_primed;               /* a screen with a bar has been up   */
+static uint8_t  s_prev[SB_MAX_CHIPS];   /* last UI_SB_* state per table entry */
+static uint32_t s_sig;                  /* what the last tick saw drawn      */
+
+static uint32_t chips_sig(const ui_sb_chip_t *chips, int n)
+{
+    uint32_t h = 2166136261u;
+#define MIX(v) (h = (h ^ (uint32_t)(v)) * 16777619u)
+    for (int i = 0; i < n; i++) {
+        MIX(chips[i].n);
+        for (int k = 0; k < chips[i].n; k++) {
+            MIX(chips[i].cell[k].state);
+            MIX(chips[i].cell[k].cp);
+            MIX(chips[i].cell[k].accent);
+        }
+    }
+#undef MIX
+    return h;
+}
+
+/* A session hides the bar. Its bad news goes to a toast. */
+static void session_news(uint64_t now, int chip, int kind)
+{
+    if (kind == UI_ANN_NONE || kind == UI_ANN_UP) return;
+    if (chip == 0 && kind == UI_ANN_FAIL)
+        toast_for(now, ERR_TOAST_MS, "wifi connect failed (retrying)");
+    else if (chip == 0)
+        toast(now, "wifi disconnected");
+    else
+        toast(now, "keyboard disconnected");
+}
+
+void status_tick(uint64_t now)
+{
+    if (app.toast[0] && now >= app.toast_until) {
+        app.toast[0]   = '\0';
+        app.toast_wifi = false;
+        nav_invalidate();
+    }
+
+    const bool bar = nav_has_bar();
+    if (!s_primed && !bar) return;
+    const bool first = !s_primed;
+    s_primed = true;
+
+    for (int i = 0; i < NELEM(CHIPS); i++) {
+        if (!CHIPS[i].state) continue;
+        bool quiet = false;
+        const uint8_t cur = CHIPS[i].state(&quiet);
+        const int kind = ui_ann_edge(s_prev[i], cur, first, quiet);
+        s_prev[i] = cur;
+        if (kind == UI_ANN_NONE) continue;
+        if (bar) {
+            char text[UI_ANN_TEXT];
+            CHIPS[i].detail(kind, text, sizeof(text));
+            ui_ann_post(&s_ann, i, text, now);
+        } else if (nav_current() == SCR_SESSION) {
+            session_news(now, i, kind);
+        }
+    }
+
+    ui_sb_chip_t chips[SB_MAX_CHIPS];
+    int          slot[SB_MAX_CHIPS];
+    const uint32_t sig = chips_sig(chips, sb_poll(chips, slot));
+    const bool moved = ui_ann_step(&s_ann, now);
+    if ((moved || sig != s_sig) && bar) nav_invalidate();
+    s_sig = sig;
+}
+
+bool status_idle(void)
+{
+    return s_primed ? !ui_ann_busy(&s_ann) : !nav_has_bar();
 }
 
 void ui_statusbar(uint64_t now)
 {
     ui_sb_chip_t chips[SB_MAX_CHIPS];
+    int          slot[SB_MAX_CHIPS];
     char         clk[10];
     ui_status_t  s = { .chips = chips, .frame = app.anim_frame };
 
-    s.nchips = sb_poll(chips);
+    s.nchips = sb_poll(chips, slot);
     if (clock_str(clk, sizeof(clk))) s.clock = clk;
+
+    const int live = ui_ann_chip(&s_ann);
+    if (live >= 0 && slot[live] >= 0 && ui_ann_width(&s_ann) > 0) {
+        s.xchip = slot[live];
+        s.xtext = ui_ann_text(&s_ann);
+        s.xw    = ui_ann_width(&s_ann);
+    }
 
     /* No keystore-lock chip, by user call 2026-08-27. A locked deck shows
      * the PIN pad, so the state is self-evident. */

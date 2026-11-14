@@ -53,6 +53,12 @@ int nav_current(void)
     return s_depth > 0 ? s_stack[s_depth - 1].id : -1;
 }
 
+bool nav_has_bar(void)
+{
+    const nav_screen_t *d = s_depth > 0 ? screen(nav_current()) : NULL;
+    return d && d->chrome == NAV_CHROME_FULL;
+}
+
 #ifdef BUILD_SIMULATOR
 const char *nav_current_name(void)
 {

@@ -66,6 +66,8 @@ bool wifi_manager_take_nvs_cred(wifi_profile_t *out)
 
 void wifi_manager_clear_nvs_cred(void) {}
 
+void wifi_manager_sim_set(wifi_mgr_state_t state) { s_state = state; }
+
 wifi_mgr_state_t wifi_manager_get_state(void) { return s_state; }
 bool wifi_manager_is_connected(void) { return s_state == WIFI_MGR_CONNECTED; }
 const char *wifi_manager_get_ip(void)   { return "127.0.0.1"; }
