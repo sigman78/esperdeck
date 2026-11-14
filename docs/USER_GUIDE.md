@@ -103,8 +103,13 @@ into the same port used for flashing also delivers keystrokes.
 
 Three ways, pick what's convenient:
 
-- **On the device.** Tap **+ New** on HOME. Fill in host, port, user,
-  and either a password or a key reference.
+- **On the device.** Tap **+ New** on HOME, or press N. The form has
+  Name, User, Host and Port. **Sign-in** is a password or a stored key.
+  A password has a **Show password** switch. A key shows the stored key
+  and an optional passphrase. Press the key part to step to the next
+  stored key. A host needs a name, an address and a user. The port is a
+  number from 1 to 65535. **Save**, at the top right, stays grey until
+  the form is valid.
 - **From your phone.** **Setup → Hosts → Import from phone**: same
   QR-plus-form flow as WiFi onboarding — join the deck's temporary
   hotspot, fill in the form, done.
@@ -116,6 +121,16 @@ Three ways, pick what's convenient:
 To edit, delete, or move a profile, hold its tile on HOME (or press
 Space on it) for the host page. **+ New** on HOME adds one. Delete asks
 you to confirm.
+
+**Filling in the form.** Tap a field, or press Enter on it, and type.
+A letter on a focused field starts typing at once. Left and Right move
+the caret and Backspace deletes before it. Enter, Esc, Up or Down end
+typing. **Tab** goes to the next control and starts typing in a field,
+so you can fill the whole form with text and Tab. Esc outside a field,
+or the back bar, leaves the form. If you changed anything it asks
+"Discard the changes?" and Cancel returns to the form. While the deck
+is locked, saving a host that has a stored password asks you to unlock
+first.
 
 **Careful when deleting or re-keying a profile:** if no other profile
 still uses its private key, the key goes with it. The pinned host

@@ -27,5 +27,20 @@ int ui_fit(const char *s, int w, bool *cut);
  *  optional sign, digits, and at most one '.' or ':' part with digits. */
 bool ui_is_number(const char *w, int n);
 
+/** First shown character of an entry value. @p len is its length and
+ *  @p caret the caret index. The window of @p room cells holds room - 1
+ *  characters and keeps the caret in view. A caret at the end shows the
+ *  tail. */
+int ui_entry_first(int len, int caret, int room);
+
+/** Insert printable ASCII @p ch at *@p caret of the NUL-terminated @p buf,
+ *  which holds at most @p max characters. The caret moves past it.
+ *  Returns whether the text changed. */
+bool ui_text_insert(char *buf, int max, int *caret, char ch);
+
+/** Delete the character before *@p caret. Returns whether the text
+ *  changed. */
+bool ui_text_delete(char *buf, int *caret);
+
 /** Count one layout fault. */
 void ui_fault(void);

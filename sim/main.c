@@ -222,8 +222,9 @@ static void touch_tick(uint64_t now)
 /* -------------------------------------------------------------------------
  * --drive "tap:x,y|key:enter|expect:home|shot:menu.bmp|wait:800|quit" —
  * scripted input for UI screenshot automation and regression runs
- * (framebuffer pixel coords; key names: enter, esc, tab, up/down/left/right,
- * f12, sbup/sbdn for scrollback paging, or a single character). Touch
+ * (framebuffer pixel coords; key names: enter, esc, tab, bs (backspace),
+ * up/down/left/right, f12, sbup/sbdn for scrollback paging, or a single
+ * character; type:TEXT sends TEXT one character at a time). Touch
  * steps: tap, hold (long press), press and release. Expectations
  * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms apart
  * (wait:N overrides the gap), starting 2.5 s after boot. Each step
@@ -254,6 +255,7 @@ static void drive_key(const char *name, uint64_t now)
     if      (!strcmp(name, "enter")) seq = "\r";
     else if (!strcmp(name, "esc"))   seq = "\x1b";
     else if (!strcmp(name, "tab"))   seq = "\t";
+    else if (!strcmp(name, "bs"))    seq = "\x7f";
     else if (name[0] && !name[1])    { one[0] = name[0]; seq = one; }
     /* Special keys travel as HID usages (SDL scancodes ARE the usages). */
     else if (!strcmp(name, "up"))    send_hidkey(SDL_SCANCODE_UP,    0, now);
@@ -323,6 +325,8 @@ static void drive_tick(uint64_t now)
         send_touch(CYBERDECK_INPUT_RELEASE, (uint16_t)x, (uint16_t)y, now);
     } else if (!strncmp(step, "key:", 4)) {
         drive_key(step + 4, now);
+    } else if (!strncmp(step, "type:", 5)) {
+        for (const char *c = step + 5; *c; c++) send_key_bytes(c, 1, now);
     }
     s_drive_next = now + gap;
 }

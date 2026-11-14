@@ -198,3 +198,9 @@ void ui_info(ui_rect_t r, const ui_info_row_t *rows, int n, uint8_t stripe);
  *  width in cells; 0 picks 10. */
 void ui_entry(ui_rect_t r, ui_id_t id, const char *label, const char *value,
               int label_w, uint8_t flags);
+
+/** ui_entry with the caret at character @p caret of the value. The caret
+ *  shows on the character it sits on; a long value scrolls to keep it in
+ *  view. ui_entry puts it after the last character. */
+void ui_entry_at(ui_rect_t r, ui_id_t id, const char *label, const char *value,
+                 int label_w, uint8_t flags, int caret);

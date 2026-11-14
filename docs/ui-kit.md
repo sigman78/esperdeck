@@ -3,8 +3,9 @@
 **Status: draft, 2026-11-14.** The kit and its lab exist. The look is
 decided: plain slabs on a slate screen (see *Parts*). The parts are
 built and gated against their design sketches. HOME, the host page,
-the question page, the setup hub, its sections and the session sheet
-draw with them. Every other screen still uses the old tile helpers.
+the question page, the setup hub, its sections, the session sheet and
+the host form draw with them. Every other screen still uses the old
+tile helpers.
 The whole shell uses the slate colour pair.
 Companion to
 [`ui-spec.md`](ui-spec.md) (what each part must do) and
@@ -136,7 +137,7 @@ port those sketches line by line.
 | `ui_pill` | A header button, cut from the right end of the header. |
 | `ui_switch` | A two-state setting. |
 | `ui_chips` | One choice of several, every option visible. |
-| `ui_entry` | A form field: label, value, caret while editing, invalid mark. |
+| `ui_entry`, `ui_entry_at` | A form field: label, value, caret while editing, invalid mark. `ui_entry_at` puts the caret anywhere in the value and scrolls to keep it in view. |
 | `ui_title` | Page header. With `back`, the whole bar is the back target. |
 | `ui_pages`, `ui_rail` | Page stepper in the header; position rail at the side of a paged list. |
 | `ui_info`, `ui_panel` | Text panels. They hold text only and are never touch targets. |
@@ -303,7 +304,10 @@ one moves.
 5. Setup hub, sections and the session sheet (done): `app_menu.c` draws
    the lab's `scr_setup`, `draw_section` and `scr_menu`. A section packs
    its rows once; a long one pages with `ui_pages` and `ui_rail`. A
-   destructive action asks on the question page. The host form and the
+   destructive action asks on the question page.
+   The host form (done): `app_profile.c` draws the lab's `draw_edit`.
+   An entry types in place, with a movable caret (`ui_entry_at`). Tab
+   walks the controls. A changed form asks before it discards. The
    paged lists are still open.
 6. Unlock pad, connect progress, host-key prompt, status row.
 7. Delete the Slab widgets and the old tile, field and header helpers.

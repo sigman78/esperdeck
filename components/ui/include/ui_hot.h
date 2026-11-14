@@ -81,6 +81,10 @@ bool ui_pressed(ui_id_t id);
 ui_id_t ui_focus_get(void);
 void    ui_focus_set(ui_id_t id);
 
+/** Show the focus ring. A key the screen handles itself (Tab) calls it,
+ *  since only keys fed to ui_hot_key reveal the ring. */
+void ui_focus_show(void);
+
 /** Focus @p id only when no region holds focus yet. A screen calls it
  *  before it registers its regions, to name the main part. */
 void ui_focus_default(ui_id_t id);

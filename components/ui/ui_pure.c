@@ -6,6 +6,8 @@
 #include "ui_part.h"
 #include "ui_pure.h"
 
+#include <string.h>
+
 uint16_t ui_utf8_next(const char **s)
 {
     const uint8_t *p = (const uint8_t *)*s;
@@ -105,6 +107,38 @@ bool ui_is_number(const char *w, int n)
         if (!digits(w, &i, n)) return false;
     }
     return i == n;
+}
+
+int ui_entry_first(int len, int caret, int room)
+{
+    const int shown = room - 1;
+    if (len <= shown) return 0;
+    int first = caret - (room >> 1);
+    if (first > len - shown) first = len - shown;
+    return first < 0 ? 0 : first;
+}
+
+bool ui_text_insert(char *buf, int max, int *caret, char ch)
+{
+    const int len = (int)strlen(buf);
+    int at = *caret;
+    if (at > len) at = len;
+    if (ch < 0x20 || ch > 0x7E || len >= max) return false;
+    memmove(buf + at + 1, buf + at, (size_t)(len - at + 1));
+    buf[at] = ch;
+    *caret = at + 1;
+    return true;
+}
+
+bool ui_text_delete(char *buf, int *caret)
+{
+    const int len = (int)strlen(buf);
+    int at = *caret;
+    if (at > len) at = len;
+    if (at <= 0) return false;
+    memmove(buf + at - 1, buf + at, (size_t)(len - at + 1));
+    *caret = at - 1;
+    return true;
 }
 
 static int s_faults;

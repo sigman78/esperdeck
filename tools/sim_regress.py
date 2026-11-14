@@ -42,15 +42,60 @@ SCENARIOS = {
         "key:esc|wait:400|expect:home|expect-text:Hosts"
         "|key:right|key:down|key:left|key:up|key:r|key:w"
         "|wait:600|expect:home|quit",
-    # HOME -> profile editor (push) -> Esc (pop) -> HOME
+    # An unchanged form leaves on one Esc, with no question.
     "editor-roundtrip":
         "key:esc|wait:400|expect:home|key:n|wait:500|expect:profile"
-        "|expect-text:NEW PROFILE|key:esc|wait:500|expect:home|quit",
-    # editor field focus + typing + selector row, then cancel
+        "|expect-text:New host|key:esc|wait:500|expect:home|quit",
     "editor-typing":
-        "key:esc|wait:400|key:n|wait:400|expect:profile|key:a|key:b"
-        "|key:tab|key:h|key:tab|key:down|key:down|key:left|wait:300"
-        "|expect:profile|key:esc|wait:400|expect:home|quit",
+        "key:esc|wait:400|key:n|wait:400|expect:profile|type:wxz|key:left"
+        "|type:y|expect-text:wxyz|key:bs|expect-text:wxz|key:esc|wait:300"
+        "|expect:profile|key:tab|type:bob|key:tab|type:h|key:tab|type:x"
+        "|type:5|expect-text:225|key:esc|key:esc"
+        "|wait:300|expect:ask|key:esc|wait:300|expect:profile|quit",
+    "editor-new":
+        "key:esc|wait:400|expect:home|key:n|wait:400|expect:profile"
+        "|type:nas|key:tab|type:me|key:tab|type:10.0.0.9|key:tab|key:tab"
+        "|key:tab|type:pw|key:tab|key:enter|wait:200|expect-text:On"
+        "|key:tab|key:enter|wait:500|expect:home|expect-text:2 of 8|quit",
+    "editor-dup":
+        "key:esc|wait:400|key:n|wait:400|type:example|key:tab|type:me"
+        "|key:tab|type:h|key:tab|key:tab|key:tab|key:tab|key:tab|key:enter"
+        "|wait:300|expect:profile|expect-text:That name is in use.|quit",
+    "editor-edit":
+        "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
+        "|key:right|key:enter|wait:400|expect:profile|expect-text:Edit example"
+        "|type:2|key:tab|key:tab|key:tab|key:tab|key:tab|key:tab|key:tab"
+        "|key:enter|wait:500|expect:host|expect-text:example2|quit",
+    # Save is off. A tap there does nothing. A tap hides the focus ring,
+    # so the question page needs a left key first.
+    "editor-bad-port":
+        "key:esc|wait:400|key:n|wait:400|type:nas|key:tab|type:me|key:tab"
+        "|type:h|key:tab|key:bs|key:bs"
+        "|expect-text:Port: a number from 1 to 65535."
+        "|key:esc|wait:300|tap:744,24|wait:300|expect:profile"
+        "|expect-text:Port: a number|type:99999|expect-text:Port: a number"
+        "|key:esc|key:esc|wait:300|expect:ask|key:left|key:right|key:enter"
+        "|wait:400|expect:home|quit",
+    "editor-discard":
+        "key:esc|wait:400|expect:home|key:n|wait:400|expect:profile"
+        "|type:abcd|key:esc|key:esc|wait:300|expect:ask"
+        "|expect-text:Discard the changes?|expect-text:The new host is not stored."
+        "|key:enter|wait:300|expect:profile|expect-text:abcd|key:esc|wait:300"
+        "|expect:ask|key:right|key:enter|wait:500|expect:home"
+        "|expect-text:1 of 8|quit",
+    "editor-key":
+        "key:esc|wait:400|key:n|wait:400|type:nas|key:tab|type:me|key:tab"
+        "|type:h|key:tab|key:tab|key:right|key:enter|wait:300"
+        "|expect-text:none stored|expect-text:No stored key. Setup"
+        "|expect-text:Passphrase|key:esc|wait:300|expect:ask|key:right"
+        "|key:enter|wait:400|expect:home|quit",
+    # Points (100x30 grid): 100,72 Name; 300,120 Host; 230,168 key chip.
+    "editor-tap":
+        "key:esc|wait:400|expect:home|key:n|wait:400|expect:profile"
+        "|tap:100,72|wait:200|type:zz|expect-text:zz|tap:300,120|wait:200"
+        "|type:hh|expect-text:hh|tap:230,168|wait:300|expect-text:none stored"
+        "|key:esc|wait:300|expect:ask|key:left|key:right|key:enter"
+        "|wait:400|expect:home|quit",
     # HOME -> Setup pill -> the hub; also verifies the published overlay
     # is the hub frame, catching an accidental second ui_present().
     "config-menu-roundtrip":

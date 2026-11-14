@@ -351,6 +351,12 @@ void ui_info(ui_rect_t r, const ui_info_row_t *rows, int n, uint8_t stripe)
 void ui_entry(ui_rect_t r, ui_id_t id, const char *label, const char *value,
               int label_w, uint8_t flags)
 {
+    ui_entry_at(r, id, label, value, label_w, flags, ui_len(value));
+}
+
+void ui_entry_at(ui_rect_t r, ui_id_t id, const char *label, const char *value,
+                 int label_w, uint8_t flags, int caret)
+{
     const bool edit = flags & UI_ENTRY_EDIT, bad = flags & UI_ENTRY_BAD;
     const ui_part_t pt = { .title = "", .accent = OVERLAY_COL_CYAN,
                            .stripe = bad ? OVERLAY_COL_RED : 0,
@@ -362,18 +368,27 @@ void ui_entry(ui_rect_t r, ui_id_t id, const char *label, const char *value,
     const int lw = label_w ? label_w : 10;
     const int vx = b.inn.x + lw, vw = b.inn.w - lw;
     const int n = ui_len(value);
-    int show = edit && n > vw - 1 ? vw - 1 : n;
-    if (show < 0) show = 0;
+    const int room = vw - (bad ? 2 : 0);
+    if (caret > n) caret = n;
+    if (caret < 0) caret = 0;
+    const int first = edit && n > room - 1 ? ui_entry_first(n, caret, room) : 0;
+    const int show = n - first;
     char dots[3 * 100 + 1];
     const char *shown = str(value);
+    const char *under = NULL;       /* the character the caret sits on */
 
     if (flags & UI_ENTRY_MASK) {
         const int d = show < 100 ? show : 100;
         for (int i = 0; i < d; i++) memcpy(dots + 3 * i, UI_S_BULLET, 3);
         dots[3 * d] = 0;
         shown = dots;
+        if (caret < n) under = UI_S_BULLET;
     } else {
-        for (int i = n - show; i > 0; i--) ui_utf8_next(&shown);
+        for (int i = first; i > 0; i--) ui_utf8_next(&shown);
+        if (caret < n) {
+            under = str(value);
+            for (int i = caret; i > 0; i--) ui_utf8_next(&under);
+        }
     }
 
     ui_pen(k->card ? PART_LABEL : k->pen);
@@ -383,9 +398,10 @@ void ui_entry(ui_rect_t r, ui_id_t id, const char *label, const char *value,
     if (bad) ui_putch(b.inn.x + b.inn.w - 1, b.y, '!', k->title);
     ui_pen(k->pen);
     if (edit) {
-        const int cx = vx + show, cmax = vx + vw - 1;
+        const int cx = vx + caret - first, cmax = vx + vw - 1;
+        const uint16_t cp = under ? ui_utf8_next(&under) : ' ';
         ui_pen(OVERLAY_COL_WHITE);
-        ui_putch(cx < cmax ? cx : cmax, b.y, ' ', UI_BAR);
+        ui_putch(cx < cmax ? cx : cmax, b.y, cp, UI_BAR);
     }
     ui_pen(OVERLAY_COL_DEFAULT);
 }

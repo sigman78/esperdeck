@@ -573,6 +573,68 @@ static void test_arrow_prefers_straight_ahead_to_the_side(void)
     TEST_ASSERT_EQUAL(3, ui_hot_key(K_DOWN).id);
 }
 
+static void test_entry_window_keeps_the_caret_in_view(void)
+{
+    /* Room 10 shows nine characters and the caret cell. */
+    TEST_ASSERT_EQUAL(0, ui_entry_first(0, 0, 10));
+    TEST_ASSERT_EQUAL(0, ui_entry_first(9, 9, 10));      /* fits         */
+    TEST_ASSERT_EQUAL(1, ui_entry_first(10, 10, 10));    /* tail         */
+    TEST_ASSERT_EQUAL(11, ui_entry_first(20, 20, 10));   /* tail         */
+    TEST_ASSERT_EQUAL(0, ui_entry_first(20, 0, 10));     /* head         */
+    TEST_ASSERT_EQUAL(0, ui_entry_first(20, 5, 10));
+    TEST_ASSERT_EQUAL(5, ui_entry_first(20, 10, 10));    /* middle       */
+    for (int len = 0; len <= 40; len++)
+        for (int caret = 0; caret <= len; caret++)
+            for (int room = 3; room <= 12; room++) {
+                const int f = ui_entry_first(len, caret, room);
+                TEST_ASSERT_TRUE(f >= 0);
+                TEST_ASSERT_TRUE(caret >= f);
+                TEST_ASSERT_TRUE(caret - f <= room - 1);
+                if (len <= room - 1) TEST_ASSERT_EQUAL(0, f);
+                if (caret == len && len > room - 1)
+                    TEST_ASSERT_EQUAL(len - (room - 1), f);
+            }
+}
+
+static void test_text_insert_respects_caret_and_max(void)
+{
+    char b[8] = "ac";
+    int c = 1;
+    TEST_ASSERT_TRUE(ui_text_insert(b, 5, &c, 'b'));
+    TEST_ASSERT_EQUAL_STRING("abc", b);
+    TEST_ASSERT_EQUAL(2, c);
+    TEST_ASSERT_TRUE(ui_text_insert(b, 5, &c, 'X'));
+    TEST_ASSERT_EQUAL_STRING("abXc", b);
+    TEST_ASSERT_TRUE(ui_text_insert(b, 5, &c, 'Y'));
+    TEST_ASSERT_EQUAL_STRING("abXYc", b);
+    TEST_ASSERT_FALSE(ui_text_insert(b, 5, &c, 'Z'));    /* full        */
+    TEST_ASSERT_EQUAL_STRING("abXYc", b);
+    TEST_ASSERT_EQUAL(4, c);
+    c = 0;
+    TEST_ASSERT_FALSE(ui_text_insert(b, 5, &c, '\n'));   /* control     */
+    TEST_ASSERT_EQUAL_STRING("abXYc", b);
+}
+
+static void test_text_delete_takes_the_char_before_the_caret(void)
+{
+    char b[8] = "abcd";
+    int c = 0;
+    TEST_ASSERT_FALSE(ui_text_delete(b, &c));
+    TEST_ASSERT_EQUAL_STRING("abcd", b);
+    c = 2;
+    TEST_ASSERT_TRUE(ui_text_delete(b, &c));
+    TEST_ASSERT_EQUAL_STRING("acd", b);
+    TEST_ASSERT_EQUAL(1, c);
+    c = 3;
+    TEST_ASSERT_TRUE(ui_text_delete(b, &c));
+    TEST_ASSERT_EQUAL_STRING("ac", b);
+    TEST_ASSERT_EQUAL(2, c);
+    c = 9;                                   /* past the end: clamped   */
+    TEST_ASSERT_TRUE(ui_text_delete(b, &c));
+    TEST_ASSERT_EQUAL_STRING("a", b);
+    TEST_ASSERT_EQUAL(1, c);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -612,5 +674,8 @@ int main(void)
     RUN_TEST(test_cols_grow_with_the_grid);
     RUN_TEST(test_arrow_prefers_the_next_row_straight_ahead);
     RUN_TEST(test_arrow_prefers_straight_ahead_to_the_side);
+    RUN_TEST(test_entry_window_keeps_the_caret_in_view);
+    RUN_TEST(test_text_insert_respects_caret_and_max);
+    RUN_TEST(test_text_delete_takes_the_char_before_the_caret);
     return UNITY_END();
 }

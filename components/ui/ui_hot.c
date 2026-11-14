@@ -211,6 +211,8 @@ ui_id_t ui_focus_get(void) { return s.focus; }
 
 void ui_focus_set(ui_id_t id) { s.focus = id; }
 
+void ui_focus_show(void) { s.ring = true; }
+
 void ui_focus_default(ui_id_t id)
 {
     if (id && !s.focus) s.focus = id;
