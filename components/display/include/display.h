@@ -172,6 +172,10 @@ void display_render_bench_get(uint32_t *avg_cycles, uint32_t *max_cycles, uint32
 void display_render_bench_reset(void);
 
 #ifdef BUILD_SIMULATOR
+/** Run without a window. Call before display_init. Frames still render,
+ *  into memory, so effects advance as they do on screen. */
+void display_sim_headless(void);
+
 /** Render one full frame to the SDL2 window; call once per event loop. */
 void display_render_frame(void);
 

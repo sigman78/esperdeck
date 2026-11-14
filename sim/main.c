@@ -228,9 +228,21 @@ static void touch_tick(uint64_t now)
  * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms apart
  * (wait:N overrides the gap), starting 2.5 s after boot. Each step
  * injects through the same paths as real input. Sim-only test hook.
+ *
+ * --headless: no window, virtual clock; sleep:N waits N real ms.
+ * --no-fx: display effects off. Details: docs/DEVELOPMENT.md.
  * ---------------------------------------------------------------------- */
 static const char *s_drive      = NULL;
 static uint64_t    s_drive_next = 0;
+static bool        s_headless   = false;
+static uint64_t    s_vnow       = 0;      /* headless deck time, ms */
+
+#define HEADLESS_STEP_MS 16
+
+static uint64_t sim_now(void)
+{
+    return s_headless ? s_vnow : SDL_GetTicks64();
+}
 
 static void drive_key(const char *name, uint64_t now)
 {
@@ -257,7 +269,12 @@ static void drive_key(const char *name, uint64_t now)
 
 static void drive_tick(uint64_t now)
 {
-    if (!s_drive || !*s_drive || now < s_drive_next) return;
+    if (!s_drive || now < s_drive_next) return;
+    if (!*s_drive) {
+        /* A window stays up for a look. A headless run has no viewer. */
+        if (s_headless) exit(0);
+        return;
+    }
     char step[64];
     const char *bar = strchr(s_drive, '|');
     size_t n = bar ? (size_t)(bar - s_drive) : strlen(s_drive);
@@ -270,6 +287,9 @@ static void drive_tick(uint64_t now)
     int x = 0, y = 0;
     if (!strncmp(step, "wait:", 5)) {
         gap = strtoul(step + 5, NULL, 10);
+    } else if (!strncmp(step, "sleep:", 6)) {
+        SDL_Delay((uint32_t)strtoul(step + 6, NULL, 10));
+        gap = 0;
     } else if (!strncmp(step, "expect-text:", 12)) {
         const char *want = step + 12;
         if (!cyberdeck_app_debug_overlay_contains(want)) {
@@ -353,6 +373,17 @@ static int sim_main(int argc, char *argv[])
         i--;
     }
 
+    bool no_fx = false;
+    for (int i = 1; i < argc; i++) {
+        const bool headless = strcmp(argv[i], "--headless") == 0;
+        if (!headless && strcmp(argv[i], "--no-fx") != 0) continue;
+        if (headless) s_headless = true;
+        else          no_fx = true;
+        memmove(&argv[i], &argv[i + 1], (size_t)(argc - i) * sizeof(*argv));
+        argc--;
+        i--;
+    }
+
     /* Keystore provisioning commands run headless and exit (see
      * keystore_cli.c); returns -1 when none is present. */
     int cli_rc = keystore_cli_main(argc, argv);
@@ -363,9 +394,13 @@ static int sim_main(int argc, char *argv[])
      * the "(default)" entry in the profile picker. */
     if (argc > 2 && strcmp(argv[1], "--drive") == 0) {
         s_drive      = argv[2];
-        s_drive_next = SDL_GetTicks64() + 2500;
+        s_drive_next = sim_now() + 2500;
         argv += 2;
         argc -= 2;
+    }
+    if (s_headless && !s_drive) {
+        fprintf(stderr, "--headless needs a --drive script\n");
+        return 2;
     }
     const char *host = (argc > 1) ? argv[1] : "";
     int         port = (argc > 2) ? atoi(argv[2]) : 22;
@@ -383,6 +418,11 @@ static int sim_main(int argc, char *argv[])
         return 1;
     }
 
+    /* The dummy video driver opens no window and takes no input. */
+    if (s_headless) {
+        SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
+        display_sim_headless();
+    }
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
@@ -417,16 +457,20 @@ static int sim_main(int argc, char *argv[])
         .scroll_edge_px  = CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX,
 #endif
     };
-    if (cyberdeck_app_init(&app_cfg, SDL_GetTicks64()) != ESP_OK) {
+    if (cyberdeck_app_init(&app_cfg, sim_now()) != ESP_OK) {
         fprintf(stderr, "cyberdeck_app_init() failed\n");
         SDL_Quit();
         return 1;
+    }
+    if (no_fx) {
+        const display_fx_cfg_t off = { 0 };
+        display_fx_set(&off);
     }
 
     bool running = true;
     while (running) {
         bool got_input = false;
-        uint64_t now = SDL_GetTicks64();
+        uint64_t now = sim_now();
 
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
@@ -491,13 +535,14 @@ static int sim_main(int argc, char *argv[])
             }
         }
 
-        uint64_t tick = SDL_GetTicks64();
+        uint64_t tick = sim_now();
         touch_tick(tick);
         drive_tick(tick);
         cyberdeck_app_tick(tick);
         display_render_frame();
 
-        SDL_Delay(got_input ? 1 : 16);
+        if (s_headless) s_vnow += HEADLESS_STEP_MS;
+        else            SDL_Delay(got_input ? 1 : 16);
     }
 
     ssh_client_disconnect();

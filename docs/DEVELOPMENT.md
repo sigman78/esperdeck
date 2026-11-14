@@ -207,6 +207,14 @@ cmake --build build-sim
 - **`--drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|..."`**
   scripts input and screen/overlay assertions for demos and tests. Touch
   steps are `tap`, `hold` (long press), `press` and `release`.
+- **`--headless`** runs a `--drive` script with no window and on a
+  virtual clock. Each loop pass counts as 16 ms of deck time and takes
+  no wall time, so a `wait:` costs nothing and a run takes about a
+  second. The run ends with the script. Work on another thread (an SSH
+  connect) still needs real time: the `sleep:N` step waits N real
+  milliseconds.
+- **`--no-fx`** turns the display effects off, so a `shot:` shows the
+  layout and not a wipe or a static burst in mid-flight.
 - **Alt+Enter** toggles window scale; **F12** opens the in-session menu.
 - **MSVC toolchain.** On Windows the sim links against MSVC. Build from
   an environment where `cl` is available (a VS developer prompt, for
@@ -246,6 +254,23 @@ Run from the repository root after building the simulator:
 python tests/sim/test_storage_dir.py --binary build-sim/sim/cyberdeck_sim.exe
 python tools/sim_regress.py build-sim/sim/cyberdeck_sim.exe
 ```
+
+The scenarios run headless and side by side. `-k PATTERN` keeps the
+scenarios whose name matches, `-j N` sets how many run at once, and
+`--window` shows each run in a window at real speed.
+
+### Screenshots of shell screens
+
+`tools/sim_shots.py` runs one `--drive` script per font, headless and
+with the effects off. Each `shot:NAME` step writes `NAME-<font>.png`.
+A "layout faults" log line fails the run.
+
+```powershell
+python tools/sim_shots.py --out shots --hosts 8 "key:esc|wait:300|expect:home|shot:home"
+```
+
+`--hosts N` stores N example hosts first, `--font` limits the fonts and
+`--fx` keeps the effects.
 
 ## Performance — see performance.md for the log
 

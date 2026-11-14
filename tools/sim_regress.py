@@ -8,23 +8,31 @@ stale. Only the `touch` scenario uses them, and it lists its points.
 Each scenario gets a fresh temporary copy of sim_storage.example.
 Run from the repo root after building the simulator:
 
-    python tools/sim_regress.py [path\\to\\cyberdeck_sim.exe]
+    python tools/sim_regress.py [-k PATTERN] [-j N] [--window] [simulator]
+
+The scenarios run headless, side by side: no window, and a wait costs
+no wall time. `-k` keeps the scenarios whose name matches a regular
+expression. `--window` shows each run in a window at real speed.
 """
 
+import argparse
+import re
 import subprocess
 import sys
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SIM_DEFAULT = ROOT / "build-sim/sim/cyberdeck_sim.exe"
 
 
-def timeout_s(script):
-    """Per-scenario budget. Steps fire about 450 ms apart, after a 2.5 s
-    boot delay. The timeout scales with script length, plus slack."""
-    return 8 + 0.6 * (script.count("|") + 1)
+def timeout_s(script, window):
+    """Per-scenario budget. In a window, steps fire about 450 ms apart
+    after a 2.5 s boot delay. That budget scales with the script.
+    A headless run takes a second or two."""
+    return 8 + 0.6 * (script.count("|") + 1) if window else 30
 
 # Esc first: skips the boot splash, harmless if HOME is already up.
 # Never send a bare Enter on HOME - it would start a real SSH connect.
@@ -78,10 +86,10 @@ SCENARIOS = {
         "|expect-text:Import|tap:10,8|wait:400"
         "|expect-text:MOTION FX|tap:10,8|wait:500|expect:home|quit",
     # One tap on a tile connects. The fixture edit points it at a closed
-    # loopback port.
+    # loopback port. Esc cancels; the SSH thread needs real time to stop.
     "tap-connect":
         "key:esc|wait:500|expect:home|tap:130,64|wait:150"
-        "|expect:connecting|wait:2500|key:esc|wait:700|expect:home|quit",
+        "|expect:connecting|key:esc|sleep:300|wait:700|expect:home|quit",
     # Space opens the host page. Enter or a digit would connect.
     "host-page":
         "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
@@ -124,37 +132,67 @@ FIXTURE_EDITS = {
 }
 
 
+def run(sim, name, script, window):
+    """Run one scenario on its own storage copy. Returns (ok, output)."""
+    try:
+        with tempfile.TemporaryDirectory(prefix="deck-regress-") as tmp:
+            fixture = Path(tmp) / "storage"
+            shutil.copytree(ROOT / "sim_storage.example", fixture)
+            ini = fixture / "profiles.ini"
+            text = ini.read_text(encoding="utf-8")
+            for old, new in FIXTURE_EDITS.get(name, []):
+                if old not in text:
+                    return False, f"fixture lacks '{old}'"
+                text = text.replace(old, new, 1)
+            ini.write_text(text, encoding="utf-8")
+            mode = [] if window else ["--headless"]
+            r = subprocess.run(
+                [str(sim), *mode, "--storage-dir", str(fixture),
+                 "--drive", script],
+                timeout=timeout_s(script, window), cwd=tmp,
+                capture_output=True, text=True, errors="replace",
+            )
+            return r.returncode == 0, r.stdout + r.stderr
+    except subprocess.TimeoutExpired:
+        return False, "timed out"
+
+
 def main():
-    sim = (Path(sys.argv[1]) if len(sys.argv) > 1 else SIM_DEFAULT).resolve()
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("sim", nargs="?", default=str(SIM_DEFAULT))
+    ap.add_argument("-k", metavar="PATTERN", default="",
+                    help="run the scenarios whose name matches")
+    ap.add_argument("-j", metavar="N", type=int, default=8,
+                    help="scenarios side by side (default 8)")
+    ap.add_argument("--window", action="store_true",
+                    help="show each run in a window, at real speed")
+    args = ap.parse_args()
+
+    sim = Path(args.sim).resolve()
     if not sim.exists():
         print(f"simulator not found: {sim} (build it first)")
         return 2
+    names = [n for n in SCENARIOS if re.search(args.k, n)]
+    if not names:
+        print(f"no scenario matches '{args.k}'")
+        return 2
+
+    jobs = 1 if args.window else max(1, args.j)
+    with ThreadPoolExecutor(jobs) as pool:
+        results = list(pool.map(
+            lambda n: run(sim, n, SCENARIOS[n], args.window), names))
 
     failed = []
-    for name, script in SCENARIOS.items():
-        try:
-            with tempfile.TemporaryDirectory(prefix="deck-regress-") as tmp:
-                fixture = Path(tmp) / "storage"
-                shutil.copytree(ROOT / "sim_storage.example", fixture)
-                ini = fixture / "profiles.ini"
-                text = ini.read_text(encoding="utf-8")
-                for old, new in FIXTURE_EDITS.get(name, []):
-                    if old not in text:
-                        raise SystemExit(f"{name}: fixture lacks '{old}'")
-                    text = text.replace(old, new, 1)
-                ini.write_text(text, encoding="utf-8")
-                r = subprocess.run(
-                    [str(sim), "--storage-dir", str(fixture), "--drive", script],
-                    timeout=timeout_s(script), cwd=tmp,
-                )
-                ok = r.returncode == 0
-        except subprocess.TimeoutExpired:
-            ok = False
+    for name, (ok, out) in zip(names, results):
         print(f"{'PASS' if ok else 'FAIL'}  {name}")
         if not ok:
             failed.append(name)
+            # The simulator names the failed step on a "drive:" line.
+            lines = [l for l in out.splitlines() if "drive:" in l]
+            for line in lines[-3:] or out.splitlines()[-3:]:
+                print(f"      {line}")
 
-    print(f"\n{len(SCENARIOS) - len(failed)}/{len(SCENARIOS)} scenarios pass")
+    print(f"\n{len(names) - len(failed)}/{len(names)} scenarios pass")
     return 1 if failed else 0
 
 

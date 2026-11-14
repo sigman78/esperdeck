@@ -11,6 +11,7 @@
 #include "font.h"
 #include "esp_log.h"
 #include <SDL2/SDL.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,9 +23,33 @@ static SDL_Window   *s_window   = NULL;
 static SDL_Renderer *s_renderer = NULL;
 static SDL_Texture  *s_texture  = NULL;
 static int           s_scale    = 1;   /* 1 or 2 */
+static bool          s_headless = false;
+static color_t      *s_frame    = NULL;   /* headless frame target */
+
+void display_sim_headless(void)
+{
+    s_headless = true;
+}
+
+/* Run the chunk renderer over one frame, band by band, as the ESP32
+ * ISR does for each bounce-buffer fill. */
+static void render_into(color_t *pixels)
+{
+    const int band_h   = display_band_height();
+    const int chunk_px = DISPLAY_WIDTH * band_h;
+
+    for (int r = 0; r < DISPLAY_HEIGHT / band_h; r++)
+        display_render_chunk(pixels + r * chunk_px, r * chunk_px,
+                             chunk_px * (int)sizeof(color_t));
+}
 
 esp_err_t display_init(void)
 {
+    if (s_headless) {
+        s_frame = malloc((size_t)DISPLAY_WIDTH * DISPLAY_HEIGHT * sizeof(color_t));
+        return s_frame ? ESP_OK : ESP_ERR_NO_MEM;
+    }
+
     ESP_LOGI(TAG, "Initializing SDL2 display (%dx%d)", DISPLAY_WIDTH, DISPLAY_HEIGHT);
 
     s_window = SDL_CreateWindow(
@@ -71,25 +96,15 @@ void display_render_frame(void)
     void *pixels = NULL;
     int   pitch  = 0;
 
+    if (s_headless) {
+        if (s_frame) render_into(s_frame);
+        return;
+    }
     if (SDL_LockTexture(s_texture, NULL, &pixels, &pitch) != 0) {
         ESP_LOGE(TAG, "SDL_LockTexture failed: %s", SDL_GetError());
         return;
     }
-
-    /* Render one bounce-buffer band per call to display_render_chunk,
-     * mirroring how the ESP32 ISR calls it for each bounce-buffer fill. */
-    const int band_h      = display_band_height();
-    const int chunk_px    = DISPLAY_WIDTH * band_h;
-    const int chunk_bytes = chunk_px * (int)sizeof(color_t);
-    const int num_rows    = DISPLAY_HEIGHT / band_h;
-
-    for (int r = 0; r < num_rows; r++) {
-        display_render_chunk(
-            (color_t *)pixels + r * chunk_px,
-            r * chunk_px,
-            chunk_bytes);
-    }
-
+    render_into((color_t *)pixels);
     SDL_UnlockTexture(s_texture);
     SDL_RenderCopy(s_renderer, s_texture, NULL, NULL);
     SDL_RenderPresent(s_renderer);
@@ -103,11 +118,7 @@ esp_err_t display_screenshot_bmp(const char *path)
     color_t *fb = malloc((size_t)W * H * sizeof(color_t));
     if (!fb) return ESP_ERR_NO_MEM;
 
-    const int band_h   = display_band_height();
-    const int chunk_px = W * band_h;
-    for (int r = 0; r < H / band_h; r++)
-        display_render_chunk(fb + r * chunk_px, r * chunk_px,
-                             chunk_px * (int)sizeof(color_t));
+    render_into(fb);
 
     FILE *f = fopen(path, "wb");
     if (!f) { free(fb); return ESP_FAIL; }
@@ -147,6 +158,7 @@ esp_err_t display_screenshot_bmp(const char *path)
 
 void display_toggle_scale(void)
 {
+    if (!s_window) return;
     s_scale = (s_scale == 1) ? 2 : 1;
     SDL_SetWindowSize(s_window, DISPLAY_WIDTH * s_scale, DISPLAY_HEIGHT * s_scale);
     SDL_SetWindowPosition(s_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
@@ -158,7 +170,7 @@ void display_window_to_fb(int wx, int wy, uint16_t *fx, uint16_t *fy)
      * The mapping is therefore a straight rescale by the current window
      * size. */
     int win_w = DISPLAY_WIDTH, win_h = DISPLAY_HEIGHT;
-    SDL_GetWindowSize(s_window, &win_w, &win_h);
+    if (s_window) SDL_GetWindowSize(s_window, &win_w, &win_h);
     if (win_w <= 0) win_w = DISPLAY_WIDTH;
     if (win_h <= 0) win_h = DISPLAY_HEIGHT;
 
