@@ -34,6 +34,23 @@ bool ui_is_number(const char *w, int n);
  *  tail. */
 int ui_entry_first(int len, int caret, int room);
 
+#define UI_NOTE_MIN_GAP 16   /* a note needs this gap, else it takes the row */
+
+/* The text cells of a status note or hint: first cell and width. */
+typedef struct { int x, w; bool whole; } ui_note_span_t;
+
+/** Where a note goes on a status row. The chips end before @p chips_end,
+ *  the clock starts at @p clock_x, the first chip cell is @p left. Text
+ *  keeps one blank cell at each end. With @p take_row a gap under
+ *  UI_NOTE_MIN_GAP gives the note the whole row (@p whole: chips hidden). */
+ui_note_span_t ui_note_span(int left, int chips_end, int clock_x,
+                            bool take_row);
+
+/** Width of a toast box for @p len cells of text. It has a blank cell at
+ *  each end, and two more for a check mark. At most @p max_w. Zero when
+ *  it cannot hold text. */
+int ui_toast_w(int len, bool mark, int max_w);
+
 /** Insert printable ASCII @p ch at *@p caret of the NUL-terminated @p buf,
  *  which holds at most @p max characters. The caret moves past it.
  *  Returns whether the text changed. */

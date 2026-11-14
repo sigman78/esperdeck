@@ -213,6 +213,10 @@ span is now rarely contended.
 
 ### Layout
 
+**Look (2026-11).** The bar is a panel-tone row, not a blue strip. The
+kit part `ui_status` draws it from the polled chips. A toast is a plain
+note in the gap, with no taper. The cell rules below are unchanged.
+
 Left cluster = identity chips in priority order; right cluster = MEM +
 clock; the toast lives in the gap **without hiding the chips**
 (`⌨`/`☏` stand in for the two sprite icons below):

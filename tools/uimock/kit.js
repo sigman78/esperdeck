@@ -120,6 +120,98 @@ export function codePlan(len, expected, room) {
   return { bullets, dots, spaced, width: marks === 0 ? 0 : spaced ? marks * 2 - 1 : marks };
 }
 
+// Status row; ui_note_span, ui_toast_w, ui_status and ui_toast in C.
+// A chip is { accent, cells: [{ state, cp, accent, keep }] }. Its states:
+export const SB = Object.freeze({ ABSENT: 0, OFF: 1, ON: 2, BUSY: 3, ALERT: 4 });
+export const NOTE = Object.freeze({ NONE: 0, PLAIN: 1, GOOD: 2, ALERT: 3 });
+const NOTE_MIN_GAP = 16, SB_BLINK_FRAMES = 8;
+
+export function noteSpan(left, chipsEnd, clockX, takeRow) {
+  let gap = clockX - chipsEnd, x = chipsEnd + 1, whole = false;
+  if (takeRow && gap < NOTE_MIN_GAP) { whole = true; x = left + 1; gap = clockX - left; }
+  return { x, w: gap > 2 ? gap - 2 : 0, whole };
+}
+
+export function toastW(len, mark, maxW) {
+  const w = len + 2 + (mark ? 2 : 0);
+  return maxW < 4 ? 0 : Math.min(w, maxW);
+}
+
+function sbLook(c, accent, frame) {
+  let cp = c.cp;
+  switch (c.state) {
+    case SB.ON: return { cp, style: S.FOCUS, pen: c.accent || accent };
+    case SB.BUSY:
+      if (!c.keep) cp = spinnerGlyph(frame);
+      return { cp, style: Math.trunc(frame / SB_BLINK_FRAMES) & 1 ? S.WELL : S.FOCUS, pen: C.AMBER };
+    case SB.ALERT:
+      if (!c.keep) cp = G.CROSS;
+      return { cp, style: S.FOCUS, pen: C.RED };
+    default: return { cp, style: S.WELL, pen: c.accent || C.BLUE };
+  }
+}
+
+const notePen = (tone) => (tone === NOTE.GOOD ? C.GREEN : tone === NOTE.ALERT ? C.RED : C.DEFAULT);
+
+// `s` holds the chips, clock, note, tone, hintTouch, hintKeys and frame.
+export function statusBar(ui, r, s) {
+  const y = r.y, left = r.x + 1;
+  ui.pen(C.DEFAULT);
+  ui.fill(rect(r.x, y, r.w, 1), ' ', S.PANEL);
+  let clockX = r.x + r.w;
+  if (s.clock) {
+    const n = chars(s.clock).length;
+    clockX = r.x + r.w - (n + 2) - 1;
+    ui.pen(C.BLUE);
+    ui.putch(clockX, y, ' ', S.FOCUS | BOLD);
+    ui.text(rect(clockX + 1, y, n, 1), s.clock, S.FOCUS | BOLD, LEFT);
+    ui.putch(clockX + 1 + n, y, ' ', S.FOCUS | BOLD);
+    ui.pen(C.DEFAULT);
+  }
+  let x = left;
+  for (const c of s.chips || []) {
+    if (!c.cells.length || c.cells[0].state === SB.ABSENT) continue;
+    if (x > left) x++;
+    let last = null;
+    const put = (cell, ch) => {
+      const k = sbLook(cell, c.accent, s.frame || 0);
+      ui.pen(k.pen);
+      ui.putch(x++, y, ch === undefined ? k.cp : ch, k.style | BOLD);
+      last = k;
+    };
+    put(c.cells[0], ' ');
+    for (const cell of c.cells) put(cell);
+    ui.putch(x++, y, ' ', last.style | BOLD);
+    ui.pen(C.DEFAULT);
+  }
+  const sp = noteSpan(left, x, clockX, !!s.note);
+  if (s.note) {
+    if (sp.whole) ui.fill(rect(left, y, clockX - left, 1), ' ', S.PANEL);
+    ui.pen(notePen(s.tone));
+    ui.text(rect(sp.x, y, sp.w, 1), s.note, S.PANEL | BOLD, LEFT);
+  } else {
+    const hint = ui.inter.ring && s.hintKeys ? s.hintKeys : s.hintTouch;
+    if (hint) {
+      ui.pen(C.DEFAULT);
+      ui.text(rect(sp.x, y, sp.w, 1), hint, S.PANEL_MUTED, LEFT);
+    }
+  }
+  ui.pen(C.DEFAULT);
+}
+
+export function toast(ui, r, text, tone) {
+  const mark = tone === NOTE.GOOD, w = toastW(chars(text).length, mark, r.w);
+  if (!w) return;
+  const x = r.x + r.w - w;
+  ui.pen(C.DEFAULT);
+  ui.fill(rect(x, r.y, w, 1), ' ', S.PANEL);
+  ui.pen(notePen(tone));
+  let tx = x + 1;
+  if (mark) { ui.putch(tx, r.y, G.CHECK, S.PANEL | BOLD); tx += 2; }
+  ui.text(rect(tx, r.y, x + w - 1 - tx, 1), text, S.PANEL | BOLD, LEFT);
+  ui.pen(C.DEFAULT);
+}
+
 // The QR panel: half blocks, a quiet zone, a caption row. ui_qr in C.
 export const QR_ZONE = 2;
 export const qrW = (size) => size + 2 * QR_ZONE;

@@ -58,7 +58,7 @@ struct app_state {
     /* SESSION alone uses the toast; other UI states draw status inline. */
     char     toast[64];
     uint64_t toast_until;
-    bool     toast_ok;     /* success toast: spinner-to-checkmark garnish */
+    bool     toast_ok;     /* success toast: green, with a check mark */
 
     /* link watcher: last states seen, for connect/disconnect toasts */
     uint8_t  prev_wifi;    /* wifi_mgr_state_t */

@@ -443,6 +443,127 @@ void ui_onboard(ui_rect_t body, const ui_onboard_t *o)
     ui_info(ui_cut_top(&left, ns + 2), rows, ns, o->pen);
 }
 
+#define SB_BLINK_FRAMES 8        /* BUSY blink half-period                */
+#define SB_ALERT_ICON   0x2718u  /* heavy ballot x                        */
+
+/* One chip cell's look. Blink swaps whole styles: OR-ing two would alias
+ * to a third (docs/overlay-style.md). */
+static void sb_look(const ui_sb_cell_t *c, uint8_t accent, uint32_t frame,
+                    uint16_t *cp, uint8_t *style, uint8_t *pen)
+{
+    *cp = c->cp;
+    switch (c->state) {
+    case UI_SB_ON:
+        *style = UI_FOCUS;
+        *pen   = c->accent ? c->accent : accent;
+        break;
+    case UI_SB_BUSY:
+        if (!c->keep) *cp = spinner_glyph(frame);
+        *style = (frame / SB_BLINK_FRAMES) & 1 ? UI_WELL : UI_FOCUS;
+        *pen   = OVERLAY_COL_AMBER;
+        break;
+    case UI_SB_ALERT:
+        if (!c->keep) *cp = SB_ALERT_ICON;
+        *style = UI_FOCUS;
+        *pen   = OVERLAY_COL_RED;
+        break;
+    default:
+        *style = UI_WELL;
+        *pen   = c->accent ? c->accent : OVERLAY_COL_BLUE;
+        break;
+    }
+}
+
+/* A chip: an opening pad, its cells, a closing pad. The pads borrow the
+ * look of the cell they touch, so the run reads as one wash. */
+static int sb_chip(int x, int y, const ui_sb_chip_t *c, uint32_t frame)
+{
+    uint16_t cp;
+    uint8_t  style, pen;
+
+    sb_look(&c->cell[0], c->accent, frame, &cp, &style, &pen);
+    ui_pen(pen);
+    ui_putch(x++, y, ' ', style | UI_BOLD);
+    for (int i = 0; i < c->n; i++) {
+        sb_look(&c->cell[i], c->accent, frame, &cp, &style, &pen);
+        ui_pen(pen);
+        ui_putch(x++, y, cp, style | UI_BOLD);
+    }
+    ui_putch(x++, y, ' ', style | UI_BOLD);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    return x;
+}
+
+static uint8_t note_pen(uint8_t tone)
+{
+    return tone == UI_NOTE_GOOD  ? OVERLAY_COL_GREEN
+         : tone == UI_NOTE_ALERT ? OVERLAY_COL_RED : OVERLAY_COL_DEFAULT;
+}
+
+void ui_status(ui_rect_t r, const ui_status_t *s)
+{
+    const int y = r.y, left = r.x + 1;
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_fill(r.x, y, r.w, 1, UI_PANEL);
+
+    int clock_x = r.x + r.w;
+    if (has(s->clock)) {
+        const int n = ui_len(s->clock);
+        clock_x = r.x + r.w - (n + 2) - 1;
+        ui_pen(OVERLAY_COL_BLUE);
+        ui_putch(clock_x, y, ' ', UI_FOCUS | UI_BOLD);
+        ui_text(ui_rect(clock_x + 1, y, n, 1), s->clock, UI_FOCUS | UI_BOLD,
+                UI_LEFT);
+        ui_putch(clock_x + 1 + n, y, ' ', UI_FOCUS | UI_BOLD);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
+
+    int x = left;
+    for (int i = 0; i < s->nchips; i++) {
+        const ui_sb_chip_t *c = &s->chips[i];
+        if (c->n == 0 || c->cell[0].state == UI_SB_ABSENT) continue;
+        if (x > left) x++;
+        x = sb_chip(x, y, c, s->frame);
+    }
+
+    const bool note = has(s->note);
+    const ui_note_span_t sp = ui_note_span(left, x, clock_x, note);
+    if (note) {
+        if (sp.whole) ui_fill(left, y, clock_x - left, 1, UI_PANEL);
+        ui_pen(note_pen(s->tone));
+        ui_text(ui_rect(sp.x, y, sp.w, 1), s->note, UI_PANEL | UI_BOLD,
+                UI_LEFT);
+    } else {
+        const bool ring = ui_focused(ui_focus_get());
+        const char *hint = ring && has(s->hint_keys) ? s->hint_keys
+                                                     : s->hint_touch;
+        if (has(hint)) {
+            ui_pen(OVERLAY_COL_DEFAULT);
+            ui_text(ui_rect(sp.x, y, sp.w, 1), hint, UI_PANEL_MUTED, UI_LEFT);
+        }
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
+void ui_toast(ui_rect_t r, const char *text, uint8_t tone)
+{
+    const bool mark = tone == UI_NOTE_GOOD;
+    const int w = ui_toast_w(ui_len(text), mark, r.w);
+    if (w == 0) return;
+    const int x = r.x + r.w - w;
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_fill(x, r.y, w, 1, UI_PANEL);
+    ui_pen(note_pen(tone));
+    int tx = x + 1;
+    if (mark) {
+        ui_putch(tx, r.y, 0x2713, UI_PANEL | UI_BOLD);
+        tx += 2;
+    }
+    ui_text(ui_rect(tx, r.y, x + w - 1 - tx, 1), text, UI_PANEL | UI_BOLD,
+            UI_LEFT);
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
 void ui_entry(ui_rect_t r, ui_id_t id, const char *label, const char *value,
               int label_w, uint8_t flags)
 {

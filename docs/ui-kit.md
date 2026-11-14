@@ -5,8 +5,9 @@ decided: plain slabs on a slate screen (see *Parts*). The parts are
 built and gated against their design sketches. HOME, the host page,
 the question page, the setup hub, its sections, the session sheet, the
 host form, the code pad, the connect screen, the host-key page, keyboard
-pairing, Wi-Fi onboarding and host import draw with them. Only the old
-helpers themselves, and the status row, are still to go.
+pairing, Wi-Fi onboarding and host import draw with them. The status
+row and the in-session toast draw with `ui_status` and `ui_toast`. Only
+the old helpers themselves are still to go.
 The whole shell uses the slate colour pair.
 Companion to
 [`ui-spec.md`](ui-spec.md) (what each part must do) and
@@ -143,6 +144,8 @@ port those sketches line by line.
 | `ui_pages`, `ui_rail` | Page stepper in the header; position rail at the side of a paged list. |
 | `ui_info`, `ui_panel` | Text panels. They hold text only and are never touch targets. |
 | `ui_slate_page` | Paints the background and returns header, body, status and the whole area. |
+| `ui_status` | The status row: a panel-tone bar, the chips (`ui_sb_chip_t`, one state per cell), the clock, then a note (plain, good or alert) or a hint pair in the gap. `ui_note_span` places the text. |
+| `ui_toast` | The in-session toast: a panel-tone box as wide as its text. The good tone adds a check mark. |
 | `ui_qr` | A QR code on a white panel: half blocks, a quiet zone and a caption row. `ui_qr_w` and `ui_qr_h` give its size. |
 | `ui_onboard` | The page of a phone or PC flow: numbered steps on a text panel (`ui_steps_wrap` wraps them), a `ui_qr` beside them when it fits, a state line (`ui_state`) or a striped state panel under them. With no steps it is a centered result card. |
 
@@ -211,8 +214,9 @@ path with example data.
   Its two checks compare the model with the lab's screenshots and
   cells; see `tools/uimock/README.md`.
 
-The lab status bar is a stand-in. The shell's bar is specified in
-[`status-bar.md`](status-bar.md).
+The lab draws the status row with the same `ui_status` as the shell, so
+the gate covers the bar (`mo-status-*` frames). The bar's chips and
+states are specified in [`status-bar.md`](status-bar.md).
 
 **The parity gate.** `tools/uimock/sketches-mo.js` lists the frames the
 parts must match (`MO_GATE`): each screen in its states, with a focus
@@ -276,7 +280,7 @@ above its action row while storage holds eight.
 | Values | A switch for two states, chips for a choice. No value hides behind a cycling tile. |
 | Questions | A page of their own; the safe answer holds the first focus. |
 | Lists | Paged, with the page in the header and a rail at the side. |
-| Status row | The adopted chips on a panel-tone bar. |
+| Status row | The adopted chips on a panel-tone bar, drawn by `ui_status`. |
 | Widths | Stretched buttons look odd. A button, switch or action keeps its own width and rows pack from the left; tile grids gain columns instead. |
 
 ## Still open
@@ -321,7 +325,7 @@ one moves.
    A failed connect stays on that screen as the failed page (Back, Try
    again, Edit host), and `ui_wrap2` wraps its reason. `app_hostkey.c`
    draws `draw_hostkey` with `ui_group4` for the fingerprint. A changed
-   key asks on the question page. Status row still open.
+   key asks on the question page.
    Keyboard pairing, Wi-Fi onboarding and host import (done).
    `app_pairing.c` shows the found keyboards as tiles, with Forget bonds
    at the bottom. It asks on the question page, which stops the scan
@@ -330,4 +334,8 @@ one moves.
    drops out where it does not fit beside the steps (the Wi-Fi code at
    66x20). The old radar sweep, comet and RAM readout are gone. A touch
    away from the header bar no longer cancels either page.
+   The status row and the session toast (done). `app_statusbar.c` keeps
+   the polls and passes chips, clock and note to `ui_status`. The
+   session toast is a `ui_toast` box with no taper or spinner. Whether
+   the shipped screens show key hints is still open.
 7. Delete the Slab widgets and the old tile, field and header helpers.

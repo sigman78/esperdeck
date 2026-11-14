@@ -118,6 +118,27 @@ int ui_entry_first(int len, int caret, int room)
     return first < 0 ? 0 : first;
 }
 
+ui_note_span_t ui_note_span(int left, int chips_end, int clock_x,
+                            bool take_row)
+{
+    ui_note_span_t s = { .whole = false, .x = chips_end + 1 };
+    int gap = clock_x - chips_end;
+    if (take_row && gap < UI_NOTE_MIN_GAP) {
+        s.whole = true;
+        s.x     = left + 1;
+        gap     = clock_x - left;
+    }
+    s.w = gap > 2 ? gap - 2 : 0;
+    return s;
+}
+
+int ui_toast_w(int len, bool mark, int max_w)
+{
+    const int w = len + 2 + (mark ? 2 : 0);
+    if (max_w < 4) return 0;
+    return w < max_w ? w : max_w;
+}
+
 ui_code_t ui_code_plan(int len, int expected, int room)
 {
     ui_code_t c = { 0 };

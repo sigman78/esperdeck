@@ -13,6 +13,7 @@ import {
   S, C, G, BOLD, LEFT, CENTER, RIGHT, WIDE, COMPACT, ID_BACK,
   rect, cutTop, cutBottom, cutLeft, cutRight, inset, center,
   grid, gridCell, gridCapacity, pageCount, pageClamp, spinnerGlyph, profAccent,
+  statusBar, toast, SB, NOTE,
   entryFirst, codePlan, qrW, qrH, qrRows, qrGlyph, QR_ZONE, fakeQr, wrapLines, stepLines,
 } from './kit.js';
 import { PROFILES, TERM_LINES } from './baseline.js';
@@ -230,41 +231,54 @@ function moRail(ui, r, page, pages) {
 }
 
 
-// Status row: the adopted chips on a panel-tone bar, then a hint.
-// The hint names keys after the first key press.
-// `alert` replaces the hint with a red line: what is wrong now.
-function moStatus(ui, r, touchHint, keyHint, alert) {
-  const y = r.y;
-  ui.pen(C.DEFAULT);
-  ui.fill(r, ' ', S.PANEL);
-  let x = r.x + 1;
-  ui.pen(C.GREEN);
-  ui.puts(x, y, ' NET ', S.FOCUS | BOLD);
-  x += 5;
-  for (const g of [0x2582, 0x2584, 0x2586]) ui.putch(x++, y, g, S.FOCUS | BOLD);
-  ui.putch(x++, y, ' ', S.FOCUS);
-  x += 1;
-  ui.pen(C.CYAN);
-  ui.puts(x, y, ' KBD ', S.FOCUS | BOLD);
-  x += 5;
-  ui.pen(C.AMBER);
-  ui.putch(x++, y, 'C', S.FOCUS | BOLD);
-  ui.pen(C.CYAN);
-  ui.puts(x, y, 'N ', S.FOCUS);
-  x += 2;
-  const clock = r.x + r.w - 8, room = rect(x + 2, y, clock - x - 3, 1);
-  const hint = ui.inter.ring && keyHint ? keyHint : touchHint;
-  if (alert) {
-    ui.pen(C.RED);
-    ui.text(room, alert, S.PANEL | BOLD, LEFT);
-  } else if (hint) {
-    ui.pen(C.DEFAULT);
-    ui.text(room, hint, S.PANEL_MUTED, LEFT);
-  }
-  ui.pen(C.BLUE);
-  ui.puts(clock, y, ' 14:07 ', S.FOCUS | BOLD);
-  ui.pen(C.DEFAULT);
+// The chips of the real bar, as app_statusbar.c polls them. One cell
+// each; a lit lock sits inside a plain chip.
+const SB_STAIR = [0x2582, 0x2584, 0x2586, 0x2588];
+const sbCell = (state, cp, accent, keep) => ({ state, cp, accent, keep });
+const sbText = (s, st) => [...Array.from(s), ' '].map((ch) => sbCell(st, ch.codePointAt(0), 0, true));
+
+function sbNet(st, level) {
+  const cells = sbText('NET', st);
+  for (let i = 0; i < 4; i++) cells.push(sbCell(st, i < level ? SB_STAIR[i] : 0x20, 0, i > 0));
+  return { accent: C.GREEN, cells };
 }
+
+function sbKbd(st, locks) {
+  const up = st === SB.ON, cells = sbText('KBD', st);
+  ['C', 'N'].forEach((ch, i) => {
+    const lit = up && locks[i];
+    cells.push(sbCell(lit ? SB.ON : up ? SB.OFF : st, up ? ch.codePointAt(0) : 0x20,
+                      !up ? 0 : lit ? C.AMBER : C.CYAN, up || i > 0));
+  });
+  return { accent: C.CYAN, cells };
+}
+
+function sbSync(n) {
+  const cells = sbText('SYNC', SB.ALERT);
+  cells.push(sbCell(SB.ALERT, 0x30 + n, 0, true));
+  return { accent: C.AMBER, cells };
+}
+
+// The bar of a screen: the fixed chips and clock, plus its hints. `v`
+// names a variant of the data for the mo-status-* gate frames.
+function moBarData(touch, keys, v) {
+  const s = { chips: [sbNet(SB.ON, 3), sbKbd(SB.ON, [true, false])], clock: '14:07',
+              hintTouch: touch, hintKeys: keys, frame: 3 };
+  switch (v) {
+    case 'busy': s.chips = [sbNet(SB.BUSY, 0), sbKbd(SB.BUSY, [])]; break;
+    case 'busy-blink': s.chips = [sbNet(SB.BUSY, 0), sbKbd(SB.BUSY, [])]; s.frame = 11; break;
+    case 'alert': s.chips = [sbNet(SB.ALERT, 0), sbKbd(SB.ON, [true, false]), sbSync(2)]; break;
+    case 'off': s.chips = [sbNet(SB.OFF, 0), sbKbd(SB.OFF, [])]; break;
+    case 'note': Object.assign(s, { note: 'Host saved', tone: NOTE.PLAIN }); break;
+    case 'note-good': Object.assign(s, { note: 'Connected to homelab', tone: NOTE.GOOD }); break;
+    case 'note-alert': Object.assign(s, { note: 'Could not save.', tone: NOTE.ALERT }); break;
+    case 'hint': s.hintTouch = 'Tap a host to connect. Hold a host for its options and more.'; break;
+    default: break;
+  }
+  return s;
+}
+
+const moBarRow = (ui, r, touch, keys, v) => statusBar(ui, r, moBarData(touch, keys, v));
 
 // Page header. With `back` the whole slab is the back target.
 // o: { path, title, note, back }. Cut pills and the pager off first.
@@ -328,7 +342,7 @@ function moParts(ui) {
     moBtn(ui, rect(rest.x + h + 1, y, rest.w - h - 1, 3), 42, 'Delete', { tone: 'tint', accent: C.RED });
     y += 3;
   }
-  if (ui.rows - y >= 1) moStatus(ui, rect(0, ui.rows - 1, ui.cols, 1), 'Hold a host for options', '');
+  if (ui.rows - y >= 1) moBarRow(ui, rect(0, ui.rows - 1, ui.cols, 1), 'Hold a host for options', '');
 }
 
 // Slate screen, then header, body and status rects. Header and body
@@ -440,7 +454,8 @@ function moHome(ui, app) {
       stripe: profAccent(p.name), right: String(n + 1) }, act);
     ui.key(String(n + 1), act.tap);
   }
-  moStatus(ui, pg.status, 'Tap to connect. Hold for options.', '↵ connect  Space options  1-8');
+  moBarRow(ui, pg.status, 'Tap to connect. Hold for options.', '↵ connect  Space options  1-8',
+    st.bar);
 }
 
 // The host page: what a hold on a tile opens.
@@ -462,7 +477,7 @@ function moHost(ui, app) {
   moFlowBreak(f);
   btn(3, '↑ Move earlier', {}, () => { app.note = 'moved'; });
   btn(4, '↓ Move later', {}, () => { app.note = 'moved'; });
-  moStatus(ui, pg.status, app.note || 'The bar at the top goes back.', '↵ choose  Esc back');
+  moBarRow(ui, pg.status,app.note || 'The bar at the top goes back.', '↵ choose  Esc back');
 }
 
 // A question as its own page: a text panel, then the two answers.
@@ -483,7 +498,7 @@ function moConfirm(ui, app) {
   const f = moFlow(box, pg.m.gutter, 3);
   moBtn(ui, moFlowNext(f, moBtnW('Cancel')), MO_ID.BTN, 'Cancel', {}, { tap: () => app.back() });
   moBtn(ui, moFlowNext(f, moBtnW(ask.verb)), MO_ID.BTN + 1, ask.verb, { tone: 'solid', accent }, { tap: yes });
-  moStatus(ui, pg.status, '', '←→ move  ↵ choose  Esc cancel');
+  moBarRow(ui, pg.status,'', '←→ move  ↵ choose  Esc cancel');
 }
 
 const MO_FIELDS = [
@@ -612,7 +627,7 @@ function moEdit(ui, app) {
     ui.key('ArrowLeft', () => { st.caret = Math.max(0, caret - 1); });
     ui.key('ArrowRight', () => { st.caret = Math.min(cs.length, caret + 1); });
   }
-  moStatus(ui, pg.status, st.edit >= 0 ? 'Type on the keyboard.' : 'Tap a field to change it.',
+  moBarRow(ui, pg.status,st.edit >= 0 ? 'Type on the keyboard.' : 'Tap a field to change it.',
     st.edit >= 0 ? 'type  ↵ done  ↑↓ leave' : '↵ change  Esc cancel');
 }
 
@@ -656,7 +671,7 @@ function moSetup(ui, app) {
   MO_SETUP.forEach((c, i) => moPart(ui, gridCell(g, i), MO_ID.HUB + i,
     { title: c.name, detail: c.note, right: '›' },
     { tap: () => { st.cat = i; st.spage = 0; app.go('mo-section'); } }));
-  moStatus(ui, pg.status, 'The bar at the top goes back.', '↵ open  Esc back');
+  moBarRow(ui, pg.status,'The bar at the top goes back.', '↵ open  Esc back');
 }
 
 // One section. A choice takes a row and shows every option, so no value
@@ -722,7 +737,7 @@ function moSection(ui, app) {
       } });
     });
   });
-  moStatus(ui, pg.status, app.note || 'A change applies at once.', '↵ change  Esc back');
+  moBarRow(ui, pg.status,app.note || 'A change applies at once.', '↵ change  Esc back');
 }
 
 const MO_NETS = [
@@ -758,7 +773,7 @@ function moList(ui, app) {
   }
   ui.key('PageUp', () => { if (st.lpage > 0) st.lpage--; });
   ui.key('PageDown', () => { if (st.lpage < pages - 1) st.lpage++; });
-  moStatus(ui, pg.status, 'Tap a network to join it.', '↵ join  PgUp PgDn page  Esc back');
+  moBarRow(ui, pg.status,'Tap a network to join it.', '↵ join  PgUp PgDn page  Esc back');
 }
 
 // Title and note of the pad for its phase; phase_head in app_unlock.c.
@@ -846,7 +861,7 @@ function moUnlock(ui, app) {
   });
   ui.key('Backspace', erase);
   if (code) ui.key('Enter', enter);
-  moStatus(ui, pg.status, 'Tap digits, or type the code.', '0-9 type  ↵ unlock');
+  moBarRow(ui, pg.status,'Tap digits, or type the code.', '0-9 type  ↵ unlock');
 }
 
 // Wrap text into at most two lines of `w` cells. The first line breaks at
@@ -884,7 +899,7 @@ function moConnect(ui, app, fail) {
       { tap: () => app.go('mo-connect') });
     moBtn(ui, moFlowNext(f, moBtnW('Edit host')), MO_ID.BTN + 2, 'Edit host',
       { tone: 'solid', accent: C.BLUE }, { tap: () => app.go('mo-edit') });
-    moStatus(ui, pg.status, '', '←→ move  ↵ choose');
+    moBarRow(ui, pg.status,'', '←→ move  ↵ choose');
     return;
   }
   const box = center(area, Math.min(area.w, 46), 10), card = cutTop(box, 7);
@@ -898,7 +913,7 @@ function moConnect(ui, app, fail) {
   ], profAccent(p.name));
   moBtn(ui, rect(box.x, box.y, moBtnW('Cancel'), 3), MO_ID.BTN, 'Cancel', {}, { tap: () => app.back() });
   ui.hot(card, MO_ID.ROW, { tap: () => app.go('mo-menu') });
-  moStatus(ui, pg.status, 'Mock: tap the panel to finish.', '↵ cancel');
+  moBarRow(ui, pg.status,'Mock: tap the panel to finish.', '↵ cancel');
 }
 
 const MO_FP = '3f9a1c7e5b02d84a6c19e7f30b5d28a41e6c7f902ab3d5c8e1f4067a9b2d3c58';
@@ -948,7 +963,7 @@ function moHostKey(ui, app, changed) {
       { tone: 'solid', accent: C.GREEN }, { tap: () => app.go('mo-connect') });
     moBtn(ui, moFlowNext(f, moBtnW('Cancel')), MO_ID.BTN + 1, 'Cancel', {}, { tap: () => app.back() });
   }
-  moStatus(ui, pg.status, 'The bar at the top goes back.', '←→ move  ↵ choose  Esc cancel');
+  moBarRow(ui, pg.status,'The bar at the top goes back.', '←→ move  ↵ choose  Esc cancel');
 }
 
 // A QR code on a white panel, as half blocks. `r` is qrW by qrH cells.
@@ -1050,7 +1065,7 @@ function moPair(ui, app) {
         lines: ['Every bond is deleted from the deck.', 'Pair again from this page.'] };
       app.go('mo-confirm');
     } });
-  moStatus(ui, pg.status, '', '');
+  moBarRow(ui, pg.status,'', '');
 }
 
 const MO_QR_WIFI = fakeQr(33, 0x5EED0001), MO_QR_HOST = fakeQr(25, 0x5EED0002);
@@ -1075,7 +1090,7 @@ function moWifi(ui, app) {
     Object.assign(o, { steps: [], qr: null, mark: String.fromCodePoint(G.CHECK), pen: C.GREEN,
       state: 'Joined HomeAP. Saved.', state2: 'Back to HOME in 2 s' });
   moOnboard(ui, pg.body, o);
-  moStatus(ui, pg.status, '', '');
+  moBarRow(ui, pg.status,'', '');
 }
 
 // Import hosts. st.mode 'phone' (the deck's own Wi-Fi) or 'pc' (the
@@ -1109,7 +1124,7 @@ function moImport(ui, app) {
   else Object.assign(o, { mark: String.fromCodePoint(spinnerGlyph(ui.frameNo + 2)), pen: C.GREEN,
     state: 'Waiting for a browser' });
   moOnboard(ui, pg.body, o);
-  moStatus(ui, pg.status, '', '');
+  moBarRow(ui, pg.status,'', '');
 }
 
 // Session menu: a slate sheet at the right over the dimmed terminal.
@@ -1128,6 +1143,13 @@ function moMenu(ui, app) {
   moPart(ui, cutTop(inn, 3), MO_ID.BTN + 1, { title: 'Setup', right: '›' }, { tap: () => app.go('mo-setup') });
   moBtn(ui, cutTop(inn, 3), MO_ID.BTN + 2, 'Disconnect', { tone: 'tint', accent: C.RED },
     { tap: () => app.home() });
+}
+
+// In-session toast: a panel-tone box at the top right of the terminal.
+function moSession(ui, app) {
+  const t = app.state.toast || { text: 'session dropped - reconnecting', tone: NOTE.PLAIN };
+  ui.term(TERM_LINES, MO_TERM_FG, 0);
+  toast(ui, rect(0, 0, ui.cols - 1, 1), t.text, t.tone);
 }
 
 // A host form in a known state, for a gate frame. `more` adds state: the
@@ -1164,6 +1186,17 @@ export const MO_GATE = [
   { name: 'mo-edit-nokey', sketch: 'mo-edit', state: moFormState({ auth: 1 }, -1, { keys: [] }) },
   { name: 'mo-edit-caret', sketch: 'mo-edit', state: moFormState({ host: MO_LONG_HOST }, 2, { caret: 24 }) },
   { name: 'mo-edit-secret', sketch: 'mo-edit', state: moFormState({}, 4, { caret: 3 }) },
+  { name: 'mo-status-busy', sketch: 'mo-home', state: () => ({ bar: 'busy' }) },
+  { name: 'mo-status-busy-blink', sketch: 'mo-home', state: () => ({ bar: 'busy-blink' }) },
+  { name: 'mo-status-alert', sketch: 'mo-home', state: () => ({ bar: 'alert' }) },
+  { name: 'mo-status-off', sketch: 'mo-home', state: () => ({ bar: 'off' }) },
+  { name: 'mo-status-note', sketch: 'mo-home', state: () => ({ bar: 'note' }) },
+  { name: 'mo-status-note-good', sketch: 'mo-home', state: () => ({ bar: 'note-good' }) },
+  { name: 'mo-status-note-alert', sketch: 'mo-home', state: () => ({ bar: 'note-alert' }) },
+  { name: 'mo-status-hint', sketch: 'mo-home', state: () => ({ bar: 'hint' }) },
+  { name: 'mo-session-toast', sketch: 'mo-session' },
+  { name: 'mo-session-toast-ok', sketch: 'mo-session',
+    state: () => ({ toast: { text: 'homelab - F12 or long-press for menu', tone: NOTE.GOOD } }) },
   { name: 'mo-setup', sketch: 'mo-setup', pose: { focus: MO_ID.HUB + 3 } },
   { name: 'mo-section-wifi', sketch: 'mo-section', state: () => ({ cat: 1 }) },
   { name: 'mo-section-fx', sketch: 'mo-section', state: () => ({ cat: 3 }) },
@@ -1232,5 +1265,6 @@ export const MO_SKETCHES = [
   { name: 'mo-wifi', title: 'Add a network from the phone', theme: 'slate', draw: moWifi },
   { name: 'mo-import', title: 'Import hosts', theme: 'slate', draw: moImport },
   { name: 'mo-menu', title: 'Session menu sheet', theme: 'slate', draw: moMenu },
+  { name: 'mo-session', title: 'Session toast', theme: 'slate', draw: moSession },
   { name: 'mo-parts', title: 'Parts in every state', theme: 'slate', draw: moParts },
 ];

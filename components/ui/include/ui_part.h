@@ -223,7 +223,48 @@ typedef struct {
 /** Draw the page into @p body (the slate page body, header cut off). */
 void ui_onboard(ui_rect_t body, const ui_onboard_t *o);
 
-#define UI_ENTRY_MASK 0x01   /* draw the value as bullets                */
+/* The status row. A chip is a run of cells; each cell has its own state,
+ * so a lit lock sits inside a plain chip. Docs: docs/status-bar.md. */
+#define UI_SB_CELLS 10          /* cells in one chip, label included     */
+
+enum { UI_SB_ABSENT = 0, UI_SB_OFF, UI_SB_ON, UI_SB_BUSY, UI_SB_ALERT };
+
+typedef struct {
+    uint8_t  state;             /* UI_SB_*                               */
+    uint8_t  accent;            /* OVERLAY_COL_*; 0 takes the chip's own */
+    bool     keep;              /* never swap in the spinner or the mark */
+    uint16_t cp;
+} ui_sb_cell_t;
+
+typedef struct {
+    uint8_t      accent;        /* the ON accent of its cells            */
+    uint8_t      n;             /* cells used                            */
+    ui_sb_cell_t cell[UI_SB_CELLS];
+} ui_sb_chip_t;
+
+enum { UI_NOTE_NONE = 0, UI_NOTE_PLAIN, UI_NOTE_GOOD, UI_NOTE_ALERT };
+
+typedef struct {
+    const ui_sb_chip_t *chips;  /* drawn left to right                   */
+    int         nchips;
+    const char *clock;          /* "14:07", or empty to hide it          */
+    const char *note;           /* a live message, or NULL               */
+    uint8_t     tone;           /* UI_NOTE_* of the note                 */
+    const char *hint_touch;     /* shown while no note is live           */
+    const char *hint_keys;      /* instead, once a key lit the focus     */
+    uint32_t    frame;          /* animation clock: BUSY blink, spinner  */
+} ui_status_t;
+
+/** Draw a status row in the one-row rect @p r. It paints a panel-tone
+ *  bar, the chips and the clock at the right. The note or the hint fills
+ *  the gap between them. */
+void ui_status(ui_rect_t r, const ui_status_t *s);
+
+/** A toast: a panel-tone box, as wide as its text, at the right end of
+ *  the one-row rect @p r. Tone UI_NOTE_GOOD puts a check mark first. */
+void ui_toast(ui_rect_t r, const char *text, uint8_t tone);
+
+#define UI_ENTRY_MASK 0x01  /* draw the value as bullets                */
 #define UI_ENTRY_EDIT 0x02   /* lit, with a caret after the value        */
 #define UI_ENTRY_BAD  0x04   /* invalid: red stripe, red value, a mark   */
 

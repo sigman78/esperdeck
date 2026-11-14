@@ -1,9 +1,9 @@
 /*
  * app_connect.c — the thin connect/session screens. CONNECTING renders
- * controller state (armed / worker / retry countdown) and, after a failed
- * connect, a page with the reason and three ways on. SESSION owns the
- * live chrome (toast chip, scrollback bar) and input. Connect policy —
- * retry, key resolution, hostkey stops — lives in ssh_session.c
+ * the controller state (armed, worker, retry countdown). After a failed
+ * connect it shows a page with the reason and three ways on. SESSION
+ * owns the live chrome (toast box, scrollback bar) and input. Connect
+ * policy lives in ssh_session.c: retry, key resolution, hostkey stops
  * (extensibility item 7).
  */
 
@@ -213,23 +213,9 @@ static void render_session_chrome(uint64_t now)
         return;
     }
 
-    /* Amber chip with a powerline taper — same ui_chip as the HOME toast,
-     * so the one element shown on both screens renders identically. */
-    int x = ui_cols() - ((int)strlen(app.toast) + 2) - 1;
-    ui_pen(OVERLAY_COL_AMBER);
-    if (app.toast_ok) {
-        /* Success garnish: braille spinner for ~0.8 s, then a checkmark —
-         * the connect toast "completes" in front of you. */
-        uint32_t el = (uint32_t)(TOAST_MS - (app.toast_until - now));
-        char pad[68];
-        snprintf(pad, sizeof(pad), "  %s", app.toast);
-        ui_chip(x - 3, 0, UI_PL_L, pad, 0, 0);
-        ui_putch(x - 1, 0, el < 800 ? spinner_glyph(app.anim_frame) : 0x2713,
-                 UI_BAR);
-    } else {
-        ui_chip(x - 1, 0, UI_PL_L, app.toast, 0, 0);
-    }
-    ui_pen(OVERLAY_COL_DEFAULT);
+    /* The status row's note look: a plain panel-tone box. */
+    ui_toast(ui_rect(0, 0, ui_cols() - 1, 1), app.toast,
+             app.toast_ok ? UI_NOTE_GOOD : UI_NOTE_PLAIN);
     ui_present();
 }
 
@@ -333,7 +319,7 @@ static void session_enter(intptr_t arg, uint64_t now)
     };
     toast(now, "%s - F12 or long-press for menu",
           HELLO[app.anim_frame % (sizeof(HELLO) / sizeof(HELLO[0]))]);
-    app.toast_ok = true;       /* garnish with the spinner-to-checkmark */
+    app.toast_ok = true;       /* the toast shows a check mark */
     render_session_chrome(now);
 }
 

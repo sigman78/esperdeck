@@ -171,9 +171,11 @@ Pacman: a decorative strip on HOME.
 
 Bottom row. NET chip with a four-step signal ladder (on, busy, alert,
 off). KBD chip with caps and num cells. A temporary SYNC diagnostic
-chip. Clock at the right once time is known. Toasts draw in the gap
-between chips and clock: about 36 characters at 66 columns. Chips are
-not touch targets. Designed but not built: phone chip, memory chip,
+chip. Clock at the right once time is known. A panel-tone bar drawn by
+the kit's `ui_status` (twin: `statusBar` in `kit.js`). Toasts draw as
+a note in the gap between chips and clock: about 36 characters at 66
+columns. The in-session toast is a `ui_toast` box at the top right.
+Chips are not touch targets. Designed but not built: phone chip, memory chip,
 chip expansion, a status page, a keystore chip, a summon in session.
 
 ## Layout literals that assume a grid

@@ -844,9 +844,59 @@ static void test_qr_drops_its_caption_before_the_code(void)
     TEST_ASSERT_EQUAL(0, ui_qr_rows(0, 96, 20));
 }
 
+static void test_note_span_sits_in_the_gap(void)
+{
+    /* chips end at 20, clock at 58: text from 21, two cells of margin */
+    ui_note_span_t s = ui_note_span(1, 20, 58, true);
+    TEST_ASSERT_FALSE(s.whole);
+    TEST_ASSERT_EQUAL(21, s.x);
+    TEST_ASSERT_EQUAL(36, s.w);
+}
+
+static void test_note_span_takes_the_row_in_a_tight_gap(void)
+{
+    ui_note_span_t s = ui_note_span(1, 50, 58, true);
+    TEST_ASSERT_TRUE(s.whole);
+    TEST_ASSERT_EQUAL(2, s.x);
+    TEST_ASSERT_EQUAL(55, s.w);
+    s = ui_note_span(1, 43, 58, true);            /* gap 15: whole */
+    TEST_ASSERT_TRUE(s.whole);
+    s = ui_note_span(1, 42, 58, true);            /* gap 16: stays  */
+    TEST_ASSERT_FALSE(s.whole);
+}
+
+static void test_note_span_hint_never_takes_the_row(void)
+{
+    ui_note_span_t s = ui_note_span(1, 50, 58, false);
+    TEST_ASSERT_FALSE(s.whole);
+    TEST_ASSERT_EQUAL(51, s.x);
+    TEST_ASSERT_EQUAL(6, s.w);
+}
+
+static void test_note_span_is_never_negative(void)
+{
+    ui_note_span_t s = ui_note_span(1, 70, 58, false);
+    TEST_ASSERT_EQUAL(0, s.w);
+    s = ui_note_span(1, 5, 4, true);
+    TEST_ASSERT_TRUE(s.w >= 0);
+}
+
+static void test_toast_width_counts_pads_and_mark(void)
+{
+    TEST_ASSERT_EQUAL(12, ui_toast_w(10, false, 60));
+    TEST_ASSERT_EQUAL(14, ui_toast_w(10, true, 60));
+    TEST_ASSERT_EQUAL(30, ui_toast_w(90, false, 30));    /* clipped */
+    TEST_ASSERT_EQUAL(0, ui_toast_w(5, false, 2));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_note_span_sits_in_the_gap);
+    RUN_TEST(test_note_span_takes_the_row_in_a_tight_gap);
+    RUN_TEST(test_note_span_hint_never_takes_the_row);
+    RUN_TEST(test_note_span_is_never_negative);
+    RUN_TEST(test_toast_width_counts_pads_and_mark);
     RUN_TEST(test_cuts_partition_the_rect);
     RUN_TEST(test_oversized_cut_takes_all_and_no_more);
     RUN_TEST(test_center_and_inset_stay_inside);

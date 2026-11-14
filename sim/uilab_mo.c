@@ -17,45 +17,97 @@ enum {
     MO_OPT = 2400, MO_BTN = 2600, MO_KEY = 2700, MO_FIELD = 2800, MO_ROW = 2900,
 };
 
-/* Status row: the chips on a panel-tone bar, then a hint. The hint names
- * keys once a key press has shown the focus ring. A red alert replaces it. */
-static void mo_status(ui_rect_t r, const char *touch, const char *keys,
-                      const char *alert)
+/* The chips of the real bar, as app_statusbar.c polls them. */
+static const uint16_t SB_STAIR[4] = { 0x2582, 0x2584, 0x2586, 0x2588 };
+
+static int sb_text(ui_sb_chip_t *c, const char *s, uint8_t st)
 {
-    static const uint16_t STAIR[3] = { 0x2582, 0x2584, 0x2586 };
-    const int y = r.y;
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_fill(r.x, r.y, r.w, r.h, UI_PANEL);
-    int x = r.x + 1;
-    ui_pen(OVERLAY_COL_GREEN);
-    ui_puts(x, y, " NET ", UI_FOCUS | UI_BOLD);
-    x += 5;
-    for (int i = 0; i < 3; i++) ui_putch(x++, y, STAIR[i], UI_FOCUS | UI_BOLD);
-    ui_putch(x++, y, ' ', UI_FOCUS);
-    x += 1;
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_puts(x, y, " KBD ", UI_FOCUS | UI_BOLD);
-    x += 5;
-    ui_pen(OVERLAY_COL_AMBER);
-    ui_putch(x++, y, 'C', UI_FOCUS | UI_BOLD);
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_puts(x, y, "N ", UI_FOCUS);
-    x += 2;
-    const int clock = r.x + r.w - 8;
-    const ui_rect_t room = ui_rect(x + 2, y, clock - x - 3, 1);
-    const bool ring = ui_focused(ui_focus_get());
-    const char *hint = ring && keys && *keys ? keys : touch;
-    if (alert && *alert) {
-        ui_pen(OVERLAY_COL_RED);
-        ui_text(room, alert, UI_PANEL | UI_BOLD, UI_LEFT);
-    } else if (hint && *hint) {
-        ui_pen(OVERLAY_COL_DEFAULT);
-        ui_text(room, hint, UI_PANEL_MUTED, UI_LEFT);
-    }
-    ui_pen(OVERLAY_COL_BLUE);
-    ui_puts(clock, y, " 14:07 ", UI_FOCUS | UI_BOLD);
-    ui_pen(OVERLAY_COL_DEFAULT);
+    int n = 0;
+    for (; *s; s++, n++)
+        c->cell[n] = (ui_sb_cell_t){ .state = st, .cp = (uint8_t)*s,
+                                     .keep = true };
+    c->cell[n++] = (ui_sb_cell_t){ .state = st, .cp = ' ', .keep = true };
+    return n;
 }
+
+static ui_sb_chip_t sb_net(uint8_t st, int level)
+{
+    ui_sb_chip_t c = { .accent = OVERLAY_COL_GREEN };
+    int n = sb_text(&c, "NET", st);
+    for (int i = 0; i < 4; i++, n++)
+        c.cell[n] = (ui_sb_cell_t){ .state = st, .keep = i > 0,
+                                    .cp = i < level ? SB_STAIR[i] : ' ' };
+    c.n = (uint8_t)n;
+    return c;
+}
+
+static ui_sb_chip_t sb_kbd(uint8_t st, bool caps, bool num)
+{
+    static const char LOCK[2] = { 'C', 'N' };
+    const bool lock[2] = { caps, num };
+    const bool up = st == UI_SB_ON;
+    ui_sb_chip_t c = { .accent = OVERLAY_COL_CYAN };
+    int n = sb_text(&c, "KBD", st);
+    for (int i = 0; i < 2; i++, n++) {
+        const bool lit = up && lock[i];
+        c.cell[n] = (ui_sb_cell_t){
+            .state  = lit ? UI_SB_ON : up ? UI_SB_OFF : st,
+            .accent = !up ? 0 : lit ? OVERLAY_COL_AMBER : OVERLAY_COL_CYAN,
+            .cp     = up ? (uint16_t)LOCK[i] : ' ',
+            .keep   = up || i > 0 };
+    }
+    c.n = (uint8_t)n;
+    return c;
+}
+
+static ui_sb_chip_t sb_sync(int count)
+{
+    ui_sb_chip_t c = { .accent = OVERLAY_COL_AMBER };
+    int n = sb_text(&c, "SYNC", UI_SB_ALERT);
+    c.cell[n++] = (ui_sb_cell_t){ .state = UI_SB_ALERT,
+                                  .cp = (uint16_t)('0' + count), .keep = true };
+    c.n = (uint8_t)n;
+    return c;
+}
+
+/* The bar of a screen: the fixed chips and clock plus its hints. A variant
+ * name picks the data of an mo-status-* gate frame. */
+static void mo_bar(ui_rect_t r, const char *touch, const char *keys,
+                   const char *v)
+{
+    if (!v) v = "";
+    ui_sb_chip_t chips[3] = { sb_net(UI_SB_ON, 3),
+                              sb_kbd(UI_SB_ON, true, false) };
+    ui_status_t s = { .chips = chips, .nchips = 2, .clock = "14:07",
+                      .hint_touch = touch, .hint_keys = keys, .frame = 3 };
+    if (!strcmp(v, "busy") || !strcmp(v, "busy-blink")) {
+        chips[0] = sb_net(UI_SB_BUSY, 0);
+        chips[1] = sb_kbd(UI_SB_BUSY, false, false);
+        if (v[4]) s.frame = 11;
+    } else if (!strcmp(v, "alert")) {
+        chips[0] = sb_net(UI_SB_ALERT, 0);
+        chips[2] = sb_sync(2);
+        s.nchips = 3;
+    } else if (!strcmp(v, "off")) {
+        chips[0] = sb_net(UI_SB_OFF, 0);
+        chips[1] = sb_kbd(UI_SB_OFF, false, false);
+    } else if (!strcmp(v, "note")) {
+        s.note = "Host saved";
+        s.tone = UI_NOTE_PLAIN;
+    } else if (!strcmp(v, "note-good")) {
+        s.note = "Connected to homelab";
+        s.tone = UI_NOTE_GOOD;
+    } else if (!strcmp(v, "note-alert")) {
+        s.note = "Could not save.";
+        s.tone = UI_NOTE_ALERT;
+    } else if (!strcmp(v, "hint")) {
+        s.hint_touch = "Tap a host to connect. Hold a host for its options "
+                       "and more.";
+    }
+    ui_status(r, &s);
+}
+
+static const char *s_bar_variant;     /* set by the mo-status-* frames */
 
 /* Every part in its states: normal, finger down, key focus, off. */
 static void scr_parts(void)
@@ -115,8 +167,8 @@ static void scr_parts(void)
         y += 3;
     }
     if (rows - y >= 1)
-        mo_status(ui_rect(0, rows - 1, cols, 1), "Hold a host for options", "",
-                  NULL);
+        mo_bar(ui_rect(0, rows - 1, cols, 1), "Hold a host for options", "",
+               NULL);
 #undef COL
 }
 
@@ -293,11 +345,11 @@ static void draw_edit(const edit_t *st)
         ui_pen(OVERLAY_COL_DEFAULT);
     }
     if (st->edit >= 0)
-        mo_status(pg.status, "Type on the keyboard.",
+        mo_bar(pg.status,"Type on the keyboard.",
                   "type  " UI_S_ENTER " done  " UI_S_UP UI_S_DOWN " leave",
                   NULL);
     else
-        mo_status(pg.status, "Tap a field to change it.",
+        mo_bar(pg.status,"Tap a field to change it.",
                   UI_S_ENTER " change  Esc cancel", NULL);
 }
 
@@ -415,8 +467,37 @@ static void scr_home(void)
                               .stripe = prof_accent(PROFILES[i].name),
                               .right = num }, NULL);
     }
-    mo_status(pg.status, "Tap to connect. Hold for options.",
-              UI_S_ENTER " connect  Space options  1-8", NULL);
+    mo_bar(pg.status, "Tap to connect. Hold for options.",
+           UI_S_ENTER " connect  Space options  1-8", s_bar_variant);
+}
+
+static void home_bar(const char *variant)
+{
+    s_bar_variant = variant;
+    scr_home();
+    s_bar_variant = NULL;
+}
+
+static void scr_status_busy(void)       { home_bar("busy"); }
+static void scr_status_busy_blink(void) { home_bar("busy-blink"); }
+static void scr_status_alert(void)      { home_bar("alert"); }
+static void scr_status_off(void)        { home_bar("off"); }
+static void scr_status_note(void)       { home_bar("note"); }
+static void scr_status_note_good(void)  { home_bar("note-good"); }
+static void scr_status_note_alert(void) { home_bar("note-alert"); }
+static void scr_status_hint(void)       { home_bar("hint"); }
+
+/* The in-session toast over the terminal. */
+static void scr_session_toast(void)
+{
+    ui_toast(ui_rect(0, 0, ui_cols() - 1, 1), "session dropped - reconnecting",
+             UI_NOTE_PLAIN);
+}
+
+static void scr_session_toast_ok(void)
+{
+    ui_toast(ui_rect(0, 0, ui_cols() - 1, 1),
+             "homelab - F12 or long-press for menu", UI_NOTE_GOOD);
 }
 
 /* The host page: what a hold on a tile opens. */
@@ -447,7 +528,7 @@ static void draw_host(int n)
     BTN(3, UI_S_UP " Move earlier", UI_TONE_CARD, 0);
     BTN(4, UI_S_DOWN " Move later", UI_TONE_CARD, 0);
 #undef BTN
-    mo_status(pg.status, "The bar at the top goes back.",
+    mo_bar(pg.status,"The bar at the top goes back.",
               UI_S_ENTER " choose  Esc back", NULL);
 }
 
@@ -477,7 +558,7 @@ static void draw_confirm(const ask_t *ask)
             UI_TONE_CARD, 0, 0);
     ui_push(ui_flow_next(&f, ui_push_w(ask->verb)), MO_BTN + 1, ask->verb,
             UI_TONE_SOLID, ask->accent, 0);
-    mo_status(pg.status, "",
+    mo_bar(pg.status,"",
               UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER " choose  Esc cancel",
               NULL);
 }
@@ -565,7 +646,7 @@ static void scr_setup(void)
                 &(ui_part_t){ .title = MO_SETUP[i].name,
                               .detail = MO_SETUP[i].note,
                               .right = UI_S_CHEVRON }, NULL);
-    mo_status(pg.status, "The bar at the top goes back.",
+    mo_bar(pg.status,"The bar at the top goes back.",
               UI_S_ENTER " open  Esc back", NULL);
 }
 
@@ -662,7 +743,7 @@ static void draw_section(int cat)
                                       .flags = UI_PART_ROOMY }, NULL);
         }
     }
-    mo_status(pg.status, "A change applies at once.",
+    mo_bar(pg.status,"A change applies at once.",
               UI_S_ENTER " change  Esc back", NULL);
 }
 
@@ -717,7 +798,7 @@ static void draw_list(int lpage, int joined)
                               .accent = on ? OVERLAY_COL_GREEN : 0,
                               .flags = on ? UI_PART_RIGHT_BOLD : 0 }, NULL);
     }
-    mo_status(pg.status, "Tap a network to join it.",
+    mo_bar(pg.status,"Tap a network to join it.",
               UI_S_ENTER " join  PgUp PgDn page  Esc back", NULL);
 }
 
@@ -842,7 +923,7 @@ static void draw_unlock(const unlock_t *u)
         else
             ui_push(r, (ui_id_t)(MO_KEY + i), KEYS[i], UI_TONE_CARD, 0, 0);
     }
-    mo_status(pg.status, "Tap digits, or type the code.",
+    mo_bar(pg.status,"Tap digits, or type the code.",
               "0-9 type  " UI_S_ENTER " unlock", NULL);
 }
 
@@ -915,7 +996,7 @@ static void draw_connect(bool fail, bool retry, bool lng)
                 "Try again", UI_TONE_CARD, 0, 0);
         ui_push(ui_flow_next(&f, ui_push_w("Edit host")), MO_BTN + 2,
                 "Edit host", UI_TONE_SOLID, OVERLAY_COL_BLUE, 0);
-        mo_status(pg.status, "", UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER
+        mo_bar(pg.status,"", UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER
                   " choose", NULL);
         return;
     }
@@ -936,7 +1017,7 @@ static void draw_connect(bool fail, bool retry, bool lng)
     ui_push(ui_rect(box.x, box.y, ui_push_w("Cancel"), 3), MO_BTN, "Cancel",
             UI_TONE_CARD, 0, 0);
     ui_hot(card, MO_ROW);
-    mo_status(pg.status, "Mock: tap the panel to finish.",
+    mo_bar(pg.status,"Mock: tap the panel to finish.",
               UI_S_ENTER " cancel", NULL);
 }
 
@@ -1005,7 +1086,7 @@ static void draw_hostkey(bool changed)
         ui_push(ui_flow_next(&f, ui_push_w("Cancel")), MO_BTN + 1, "Cancel",
                 UI_TONE_CARD, 0, 0);
     }
-    mo_status(pg.status, "The bar at the top goes back.",
+    mo_bar(pg.status,"The bar at the top goes back.",
               UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER " choose  Esc cancel",
               NULL);
 }
@@ -1071,7 +1152,7 @@ static void draw_pair(int n, int left, int page)
             "Put the keyboard in pairing mode.", UI_MUTED, UI_LEFT);
     ui_push(ui_rect(body.x, body.y + body.h - 3, ui_push_w("Forget bonds"), 3),
             MO_BTN, "Forget bonds", UI_TONE_TINT, OVERLAY_COL_RED, 0);
-    mo_status(pg.status, "", "", NULL);
+    mo_bar(pg.status,"", "", NULL);
 }
 
 static void scr_pair_scan(void)    { draw_pair(0, 0, 0); }
@@ -1155,7 +1236,7 @@ static void draw_wifi(int phase)
         break;
     }
     ui_onboard(pg.body, &o);
-    mo_status(pg.status, "", "", NULL);
+    mo_bar(pg.status,"", "", NULL);
 }
 
 static void scr_wifi(void)      { draw_wifi(PH_WAIT); }
@@ -1224,7 +1305,7 @@ static void draw_import(const import_t *im)
         snprintf(state, sizeof state, "Waiting for a browser");
     }
     ui_onboard(pg.body, &o);
-    mo_status(pg.status, "", "", NULL);
+    mo_bar(pg.status,"", "", NULL);
 }
 
 static void scr_import_phone(void)  { draw_import(&(import_t){ 0 }); }
@@ -1296,6 +1377,17 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-edit-nokey",  scr_edit_nokey,  .slate = true },
     { "mo-edit-caret",  scr_edit_caret,  .slate = true },
     { "mo-edit-secret", scr_edit_secret, .slate = true },
+    { "mo-status-busy", scr_status_busy, .slate = true },
+    { "mo-status-busy-blink", scr_status_busy_blink, .slate = true },
+    { "mo-status-alert", scr_status_alert, .slate = true },
+    { "mo-status-off",  scr_status_off,  .slate = true },
+    { "mo-status-note", scr_status_note, .slate = true },
+    { "mo-status-note-good", scr_status_note_good, .slate = true },
+    { "mo-status-note-alert", scr_status_note_alert, .slate = true },
+    { "mo-status-hint", scr_status_hint, .slate = true },
+    { "mo-session-toast", scr_session_toast, .slate = true, .term = true },
+    { "mo-session-toast-ok", scr_session_toast_ok, .slate = true,
+      .term = true },
     { "mo-setup",       scr_setup,       .slate = true,
       .focus = MO_HUB + 3 },
     { "mo-section-wifi",   scr_section_wifi,   .slate = true },
