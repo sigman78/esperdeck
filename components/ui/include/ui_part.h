@@ -12,6 +12,7 @@
 
 #include "ui_hot.h"
 #include "ui_layout.h"
+#include "ui_pure.h"
 
 /* UTF-8 forms of the kit glyphs, for string literals. C sources stay
  * ASCII: write UI_S_CHECK " joined". */
@@ -189,6 +190,37 @@ typedef struct {
 
 /** A text panel: not a touch target. @p r must hold @p n + 2 rows. */
 void ui_info(ui_rect_t r, const ui_info_row_t *rows, int n, uint8_t stripe);
+
+/** Cells wide and high of the QR panel for @p size modules, caption row
+ *  included. Zero for no code. */
+int ui_qr_w(int size);
+int ui_qr_h(int size);
+
+/** A QR code on a white panel, as half blocks. @p r is ui_qr_w by ui_qr_h
+ *  cells. @p mod answers one module and gives false outside the code. */
+void ui_qr(ui_rect_t r, int size, bool (*mod)(int x, int y),
+           const char *caption);
+
+/** A state line: @p mark and @p text in @p pen. It wraps to two lines and
+ *  stops at @p r's height. Returns the rows it took. */
+int ui_state(ui_rect_t r, const char *mark, uint8_t pen, const char *text);
+
+/* The onboarding page: steps on a text panel, then a state. A QR code
+ * sits at the right if it fits. With no steps it is a result card. */
+typedef struct {
+    const ui_step_t *steps;
+    int         nsteps;
+    int         qr_size;            /* modules; 0 for no code              */
+    bool      (*qr_mod)(int x, int y);
+    const char *qr_caption;
+    const char *mark;               /* UTF-8 glyph before the state        */
+    uint8_t     pen;                /* state colour                        */
+    const char *state;              /* one line, wrapped to two            */
+    const char *state2;             /* set: the state is a striped panel   */
+} ui_onboard_t;
+
+/** Draw the page into @p body (the slate page body, header cut off). */
+void ui_onboard(ui_rect_t body, const ui_onboard_t *o);
 
 #define UI_ENTRY_MASK 0x01   /* draw the value as bullets                */
 #define UI_ENTRY_EDIT 0x02   /* lit, with a caret after the value        */

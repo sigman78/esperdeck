@@ -215,6 +215,9 @@ cmake --build build-sim
   milliseconds.
 - **`--no-fx`** turns the display effects off, so a `shot:` shows the
   layout and not a wipe or a static burst in mid-flight.
+- **`--fake-ble`** registers a canned BLE keyboard service: two keyboards
+  show up 3 s after the pairing scan starts. Without it the sim has no
+  keyboard service and the pairing page is out of reach.
 - **Alt+Enter** toggles window scale; **F12** opens the in-session menu.
 - **MSVC toolchain.** On Windows the sim links against MSVC. Build from
   an environment where `cl` is available (a VS developer prompt, for

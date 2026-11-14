@@ -181,6 +181,65 @@ int ui_wrap2(const char *text, int w, char *l1, char *l2, size_t sz)
     return 2;
 }
 
+int ui_wrap_n(const char *text, int w, char (*lines)[UI_STEP_TEXT],
+              int max_lines)
+{
+    char rest[UI_STEP_TEXT], next[UI_STEP_TEXT];
+    int n = 0;
+    if (w < 1) w = 1;
+    put_n(rest, sizeof rest, text, strlen(text));
+    while ((int)strlen(rest) > w && n < max_lines - 1) {
+        ui_wrap2(rest, w, lines[n++], next, UI_STEP_TEXT);
+        memcpy(rest, next, sizeof rest);
+    }
+    put_n(lines[n++], UI_STEP_TEXT, rest, strlen(rest));
+    return n;
+}
+
+int ui_steps_wrap(const ui_step_t *steps, int n, int w, ui_step_line_t *out,
+                  int max)
+{
+    char lines[UI_STEP_WRAP][UI_STEP_TEXT];
+    int rows = 0;
+
+    for (int i = 0; i < n; i++) {
+        const ui_step_t *s = &steps[i];
+        const bool has_value = s->value && s->value[0];
+        const int nl = ui_wrap_n(s->text, w, lines, UI_STEP_WRAP);
+        for (int l = 0; l < nl && rows < max; l++) {
+            ui_step_line_t *o = &out[rows++];
+            o->label[0] = l ? '\0' : s->mark;
+            o->label[1] = '\0';
+            put_n(o->text, sizeof o->text, lines[l], strlen(lines[l]));
+            o->pen = has_value ? 0 : s->pen;
+            o->label_pen = (s->mark == '!' && !l) ? s->pen : 0;
+        }
+        if (has_value && rows < max) {
+            ui_step_line_t *o = &out[rows++];
+            o->label[0] = o->label[1] = '\0';
+            put_n(o->text, sizeof o->text, s->value, strlen(s->value));
+            o->pen = s->pen;
+            o->label_pen = 0;
+        }
+    }
+    return rows;
+}
+
+uint16_t ui_qr_glyph(bool top, bool bottom)
+{
+    return top && bottom ? 0x2588 : top ? 0x2580 : bottom ? 0x2584 : ' ';
+}
+
+int ui_qr_w(int size)
+{
+    return size > 0 ? size + 2 * UI_QR_ZONE : 0;
+}
+
+int ui_qr_h(int size)
+{
+    return size > 0 ? (ui_qr_w(size) + 1) / 2 + 1 : 0;
+}
+
 void ui_group4(const char *s, int n, char *out, size_t sz)
 {
     size_t o = 0;

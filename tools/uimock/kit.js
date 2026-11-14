@@ -120,6 +120,65 @@ export function codePlan(len, expected, room) {
   return { bullets, dots, spaced, width: marks === 0 ? 0 : spaced ? marks * 2 - 1 : marks };
 }
 
+// The QR panel: half blocks, a quiet zone, a caption row. ui_qr in C.
+export const QR_ZONE = 2;
+export const qrW = (size) => size + 2 * QR_ZONE;
+export const qrH = (size) => ((qrW(size) + 1) >> 1) + 1;
+export function qrGlyph(top, bot) {
+  return top && bot ? 0x2588 : top ? 0x2580 : bot ? 0x2584 : 0x20;
+}
+
+// A fixed fake code for the sketches and the lab: finder squares, timing
+// lines and hashed modules. It is not scannable. The seed picks the data.
+export function fakeQr(size, seed) {
+  const finder = (x, y) => {
+    for (let c = 0; c < 3; c++) {
+      const dx = x - (c === 1 ? size - 7 : 0), dy = y - (c === 2 ? size - 7 : 0);
+      if (dx < 0 || dx > 6 || dy < 0 || dy > 6) continue;
+      return dx === 0 || dx === 6 || dy === 0 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
+    }
+    return false;
+  };
+  return (x, y) => {
+    if (x < 0 || y < 0 || x >= size || y >= size) return false;
+    if ((x < 8 && y < 8) || (x >= size - 8 && y < 8) || (x < 8 && y >= size - 8)) return finder(x, y);
+    if (x === 6 || y === 6) return ((x + y) & 1) === 0;
+    let h = Math.imul(((x * 31 + y) ^ seed) >>> 0, 2654435761) >>> 0;
+    h = (h ^ (h >>> 15)) >>> 0;
+    return ((h >>> 3) & 1) === 1;
+  };
+}
+
+// Text wrapped into at most `max` lines of `w` cells. A break falls at the
+// last space that fits. The last line keeps the rest. ui_wrap_n in C.
+export function wrapLines(text, w, max = 3) {
+  const out = [];
+  let rest = String(text);
+  while (rest.length > w && out.length < max - 1) {
+    let cut = rest.lastIndexOf(' ', w);
+    if (cut <= 0) cut = w;
+    out.push(rest.slice(0, cut));
+    rest = rest.slice(cut).replace(/^ +/, '');
+  }
+  out.push(rest);
+  return out;
+}
+
+// The rows of a steps panel. A step is { mark, text, value, pen }. Its
+// text wraps to `w` cells under the mark. A value takes the next row, in
+// its pen. A text with no value takes the pen itself. Mark '!' is a
+// caution: its mark takes the pen too.
+export function stepLines(steps, w) {
+  const rows = [];
+  for (const s of steps) {
+    wrapLines(s.text, w).forEach((t, i) => rows.push({
+      label: i ? '' : s.mark, text: t, pen: s.value ? 0 : s.pen | 0,
+      labelPen: s.mark === '!' && !i ? s.pen | 0 : 0 }));
+    if (s.value) rows.push({ label: '', text: s.value, pen: s.pen | 0, labelPen: 0 });
+  }
+  return rows;
+}
+
 export function profAccent(name) {
   const pal = [C.GREEN, C.CYAN, C.MAGENTA, C.AMBER, C.BLUE];
   let h = 5381;

@@ -348,6 +348,98 @@ void ui_info(ui_rect_t r, const ui_info_row_t *rows, int n, uint8_t stripe)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
+void ui_qr(ui_rect_t r, int size, bool (*mod)(int x, int y),
+           const char *caption)
+{
+    const int span = ui_qr_w(size), crows = ui_qr_h(size) - 1;
+    ui_pen(OVERLAY_COL_WHITE);
+    ui_fill(r.x, r.y, r.w, r.h, UI_BAR);
+    for (int cr = 0; cr < crows; cr++) {
+        for (int cc = 0; cc < span; cc++) {
+            const int my = 2 * cr - UI_QR_ZONE;
+            const uint16_t g = ui_qr_glyph(mod(cc - UI_QR_ZONE, my),
+                                           mod(cc - UI_QR_ZONE, my + 1));
+            if (g != ' ') ui_putch(r.x + cc, r.y + cr, g, UI_BAR);
+        }
+    }
+    ui_text(ui_rect(r.x, r.y + crows, r.w, 1), str(caption), UI_BAR, UI_CENTER);
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
+int ui_state(ui_rect_t r, const char *mark, uint8_t pen, const char *text)
+{
+    char lines[2][UI_STEP_TEXT];
+    int n = ui_wrap_n(str(text), r.w - 4, lines, 2);
+    if (n > r.h) n = r.h < 0 ? 0 : r.h;
+    ui_pen(pen);
+    if (n > 0)
+        ui_text(ui_rect(r.x + 2, r.y, 1, 1), str(mark), UI_TEXT | UI_BOLD,
+                UI_LEFT);
+    for (int i = 0; i < n; i++)
+        ui_text(ui_rect(r.x + 4, r.y + i, r.w - 4, 1), lines[i], UI_TEXT,
+                UI_LEFT);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    return n;
+}
+
+/* Rows of a panel: the first lines of @p text, then plain @p text2. */
+static int state_rows(ui_info_row_t *rows, char (*a)[UI_STEP_TEXT],
+                      char (*b)[UI_STEP_TEXT], const ui_onboard_t *o, int vw)
+{
+    const int na = ui_wrap_n(str(o->state), vw, a, 2);
+    for (int i = 0; i < na; i++)
+        rows[i] = (ui_info_row_t){ .label = i ? "" : str(o->mark),
+                                   .value = a[i], .value_pen = OVERLAY_COL_WHITE,
+                                   .label_pen = i ? 0 : o->pen };
+    int n = na;
+    if (has(o->state2)) {
+        const int nb = ui_wrap_n(o->state2, vw, b, 2);
+        for (int i = 0; i < nb; i++)
+            rows[n++] = (ui_info_row_t){ .label = "", .value = b[i] };
+    }
+    return n;
+}
+
+void ui_onboard(ui_rect_t body, const ui_onboard_t *o)
+{
+    ui_rect_t left = body;
+    const int qw = ui_qr_w(o->qr_size), qh = ui_qr_h(o->qr_size);
+    char a[2][UI_STEP_TEXT], b[2][UI_STEP_TEXT];
+    ui_info_row_t rows[16];
+
+    if (qw && o->qr_mod && qh <= body.h && body.w - qw - 2 >= 30) {
+        ui_qr(ui_rect(body.x + body.w - qw, body.y, qw, qh), o->qr_size,
+              o->qr_mod, o->qr_caption);
+        left.w = body.w - qw - 2;
+    }
+    if (o->nsteps <= 0) {
+        const int w = left.w < 46 ? left.w : 46;
+        ui_onboard_t head = *o;
+        head.state2 = NULL;
+        int n = state_rows(rows, a, b, &head, w - 4 - 3);
+        rows[n++] = (ui_info_row_t){ .label = "", .value = "" };
+        rows[n++] = (ui_info_row_t){ .label = "", .value = str(o->state2) };
+        ui_info(ui_center(left, w, n + 2), rows, n, o->pen);
+        return;
+    }
+
+    ui_step_line_t lines[16];
+    const int n = ui_steps_wrap(o->steps, o->nsteps, left.w - 4 - 3, lines, 16);
+    for (int i = 0; i < n; i++)
+        rows[i] = (ui_info_row_t){ .label = lines[i].label,
+                                   .value = lines[i].text,
+                                   .value_pen = lines[i].pen,
+                                   .label_pen = lines[i].label_pen };
+    ui_info(ui_cut_top(&left, n + 2), rows, n, 0);
+    ui_cut_top(&left, 1);
+    if (!has(o->state2)) {
+        ui_state(left, o->mark, o->pen, o->state);
+        return;
+    }
+    const int ns = state_rows(rows, a, b, o, left.w - 4 - 3);
+    ui_info(ui_cut_top(&left, ns + 2), rows, ns, o->pen);
+}
+
 void ui_entry(ui_rect_t r, ui_id_t id, const char *label, const char *value,
               int label_w, uint8_t flags)
 {

@@ -266,62 +266,6 @@ uint8_t prof_accent(const char *name)
     return pal[h % (sizeof(pal) / sizeof(pal[0]))];
 }
 
-/* Draw a QR top-right as half-block cells (two QR rows per cell), dark-on-
- * white via the white-pen UI_BAR entry. Fits itself to the grid, dropping
- * caption/QR when the space runs out. Returns the QR's first column (the
- * caller's text limit), or ui_cols() when no QR was drawn. */
-int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption)
-{
-    if (qsz <= 0) return ui_cols();
-    const int QZ = 2;                        /* quiet-zone modules */
-    int span  = qsz + 2 * QZ;
-    int crows = (span + 1) / 2;
-    int qy = ui_rows() >= 28 ? 6 : 4;
-    if (qy + crows > ui_rows() - 1) return ui_cols();
-    int qx = ui_cols() - span - 2;
-    ui_pen(OVERLAY_COL_WHITE);
-    for (int cr = 0; cr < crows; cr++) {
-        for (int cc = 0; cc < span; cc++) {
-            bool top = mod(cc - QZ, 2 * cr - QZ);
-            bool bot = mod(cc - QZ, 2 * cr - QZ + 1);
-            uint16_t g = (top && bot) ? UI_BLOCK
-                       : top ? 0x2580u              /* upper half block */
-                       : bot ? 0x2584u              /* lower half block */
-                       : ' ';
-            ui_putch(qx + cc, qy + cr, g, UI_BAR);
-        }
-    }
-    if (caption && qy + crows <= ui_rows() - 3) {
-        ui_pen(OVERLAY_COL_CYAN);
-        ui_puts(qx + (span - (int)strlen(caption)) / 2, qy + crows, caption, 0);
-    }
-    ui_pen(OVERLAY_COL_DEFAULT);
-    return qx;
-}
-
-/* Numbered onboarding step at row @p y: number + label, then the value as a
- * UI_BAR chip — inline after the label when it fits left of @p xlimit
- * (the QR column), else indented on the next row. Returns the next step row. */
-int draw_step(int y, char num, const char *label,
-                     const char *value, uint8_t value_pen, int xlimit)
-{
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_putch(4, y, (uint16_t)(uint8_t)num, 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_printf(6, y, 0, "%.*s", xlimit > 6 ? xlimit - 6 : 0, label);
-    if (!value || !*value) return y + 2;
-    int vx = 6 + (int)strlen(label) + 1;
-    ui_pen(value_pen);
-    if (vx + (int)strlen(value) + 2 <= xlimit) {
-        ui_printf(vx, y, UI_BAR, " %s ", value);
-        ui_pen(OVERLAY_COL_DEFAULT);
-        return y + 2;
-    }
-    ui_printf(8, y + 1, UI_BAR, " %s ", value);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    return y + 3;
-}
-
 /* U+2581..U+2588 fill the bottom n/8 of a cell. Terminus has no
  * upper-eighth glyphs, so the fill anchors to the bottom. */
 #define BLK_LOWER(n)  ((uint16_t)(0x2580u + (n)))

@@ -10,8 +10,8 @@ The run fails on a simulator error or a "layout faults" log line.
         "key:esc|wait:300|expect:home|shot:home|key: |wait:300|shot:host"
 
 Options: --font picks the fonts (default: all three). --hosts N stores N
-example hosts first. --fx keeps the display effects. --sim names the
-simulator binary.
+example hosts first. --fx keeps the display effects. --ble adds the fake
+BLE keyboard service. --sim names the simulator binary.
 """
 
 import argparse
@@ -47,7 +47,7 @@ def profiles_ini(count):
         for name, user, host, port in HOSTS[:count])
 
 
-def shoot(sim, font, script, hosts, fx, out):
+def shoot(sim, font, script, hosts, fx, out, ble=False):
     """Run the script at one font. Returns (ok, log lines worth showing)."""
     with tempfile.TemporaryDirectory(prefix="deck-shots-") as tmp:
         fixture = Path(tmp) / "storage"
@@ -58,7 +58,8 @@ def shoot(sim, font, script, hosts, fx, out):
         steps = re.sub(r"(^|\|)shot:([^|]+)",
                        lambda m: f"{m.group(1)}shot:{m.group(2)}-{font}.bmp",
                        script)
-        mode = ["--headless"] + ([] if fx else ["--no-fx"])
+        mode = (["--headless"] + ([] if fx else ["--no-fx"]) +
+                (["--fake-ble"] if ble else []))
         try:
             r = subprocess.run(
                 [str(sim), *mode, "--font", font, "--storage-dir",
@@ -97,6 +98,8 @@ def main():
                     metavar="N", help="store N example hosts first")
     ap.add_argument("--fx", action="store_true",
                     help="keep the display effects on")
+    ap.add_argument("--ble", action="store_true",
+                    help="run with the simulator's fake BLE keyboard service")
     ap.add_argument("--sim", default=str(SIM_DEFAULT))
     args = ap.parse_args()
 
@@ -110,7 +113,8 @@ def main():
 
     with ThreadPoolExecutor(len(fonts)) as pool:
         results = list(pool.map(
-            lambda f: shoot(sim, f, args.script, args.hosts, args.fx, out),
+            lambda f: shoot(sim, f, args.script, args.hosts, args.fx, out,
+                            args.ble),
             fonts))
     bad = 0
     for ok, notes in results:

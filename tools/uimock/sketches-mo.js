@@ -13,7 +13,7 @@ import {
   S, C, G, BOLD, LEFT, CENTER, RIGHT, WIDE, COMPACT, ID_BACK,
   rect, cutTop, cutBottom, cutLeft, cutRight, inset, center,
   grid, gridCell, gridCapacity, pageCount, pageClamp, spinnerGlyph, profAccent,
-  entryFirst, codePlan,
+  entryFirst, codePlan, qrW, qrH, qrGlyph, QR_ZONE, fakeQr, wrapLines, stepLines,
 } from './kit.js';
 import { PROFILES, TERM_LINES } from './baseline.js';
 
@@ -951,6 +951,166 @@ function moHostKey(ui, app, changed) {
   moStatus(ui, pg.status, 'The bar at the top goes back.', '←→ move  ↵ choose  Esc cancel');
 }
 
+// A QR code on a white panel, as half blocks. `r` is qrW by qrH cells.
+function moQr(ui, r, size, mod, caption) {
+  const span = qrW(size), crows = qrH(size) - 1;
+  ui.pen(C.WHITE);
+  ui.fill(r, ' ', S.BAR);
+  for (let cr = 0; cr < crows; cr++)
+    for (let cc = 0; cc < span; cc++) {
+      const my = 2 * cr - QR_ZONE;
+      const g = qrGlyph(mod(cc - QR_ZONE, my), mod(cc - QR_ZONE, my + 1));
+      if (g !== 0x20) ui.putch(r.x + cc, r.y + cr, g, S.BAR);
+    }
+  ui.text(rect(r.x, r.y + crows, r.w, 1), caption, S.BAR, CENTER);
+  ui.pen(C.DEFAULT);
+}
+
+// One state line on the slate: a mark and a text in one pen, wrapped to
+// two lines. Returns the rows it took.
+function moState(ui, r, mark, pen, text) {
+  const lines = wrapLines(text, r.w - 4, 2).slice(0, Math.max(0, r.h));
+  ui.pen(pen);
+  if (lines.length) ui.text(rect(r.x + 2, r.y, 1, 1), mark, S.TEXT | BOLD, LEFT);
+  lines.forEach((t, i) => ui.text(rect(r.x + 4, r.y + i, r.w - 4, 1), t, S.TEXT, LEFT));
+  ui.pen(C.DEFAULT);
+  return lines.length;
+}
+
+// The onboarding page: steps on a text panel, then a state. A QR code
+// sits at the right if it fits. A state2 makes the state a striped panel.
+// With no steps it is a result card. o: { steps, qr, mark, pen, state, state2 }.
+function moOnboard(ui, body, o) {
+  let left = rect(body.x, body.y, body.w, body.h);
+  const qr = o.qr, qw = qr ? qrW(qr.size) : 0, qh = qr ? qrH(qr.size) : 0;
+  if (qr && qh <= body.h && body.w - qw - 2 >= 30) {
+    moQr(ui, rect(body.x + body.w - qw, body.y, qw, qh), qr.size, qr.mod, qr.caption);
+    left = rect(body.x, body.y, body.w - qw - 2, body.h);
+  }
+  if (!o.steps.length) {
+    const w = Math.min(left.w, 46);
+    const rows = [...wrapLines(o.state, w - 4 - 3, 2).map((t, i) => [i ? '' : o.mark, t, C.WHITE, i ? 0 : o.pen]),
+      ['', ''], ['', o.state2]];
+    moInfo(ui, center(left, w, rows.length + 2), rows, o.pen);
+    return;
+  }
+  const lines = stepLines(o.steps, left.w - 4 - 3);
+  moInfo(ui, cutTop(left, lines.length + 2),
+    lines.map((l) => [l.label, l.text, l.pen, l.labelPen]), 0);
+  cutTop(left, 1);
+  if (!o.state2) {
+    moState(ui, left, o.mark, o.pen, o.state);
+    return;
+  }
+  const vw = left.w - 4 - 3;
+  const rows = [...wrapLines(o.state, vw, 2).map((t, i) => [i ? '' : o.mark, t, C.WHITE, i ? 0 : o.pen]),
+    ...wrapLines(o.state2, vw, 2).map((t) => ['', t])];
+  moInfo(ui, cutTop(left, rows.length + 2), rows, o.pen);
+}
+
+const MO_KBDS = [['Keychron K2', 0], ['Logitech K380', 1], ['MX Keys Mini', 1],
+  ['Apple Magic Keyboard', 0], ['Kinesis Adv360', 1], ['ZSA Moonlander', 0],
+  ['HHKB Hybrid', 1], ['Ducky One 3', 0]];
+
+// Pair a keyboard. st.n keyboards found, st.left seconds before the scan
+// closes (shown in the last ten). Forget bonds sits at the bottom, so
+// it stays put while the list changes.
+function moPair(ui, app) {
+  const st = app.state, pg = moPage(ui), body = pg.body, n = Math.min(st.n | 0, MO_KBDS.length);
+  const g = grid(rect(body.x, body.y + 1, body.w, body.h - 5), moCols(body.w, 30, pg.m.gutter), 4, pg.m.gutter, 0);
+  const per = gridCapacity(g), pages = pageCount(n, per);
+  st.page = pageClamp(st.page | 0, n, per);
+  const head = moPager(ui, pg.header, st.page, pages,
+    { prev: { tap: () => st.page-- }, next: { tap: () => st.page++ } });
+  moHeader(ui, head, { path: 'Keyboard', title: 'Pair keyboard', back: { tap: () => app.back() } });
+  const first = st.page * per, shown = Math.max(0, Math.min(per, n - first));
+  moFirst(ui, shown ? MO_ID.HOST + first : MO_ID.BTN);
+  moState(ui, rect(body.x, body.y, body.w, 1),
+    n ? String.fromCodePoint(G.CHECK) : String.fromCodePoint(spinnerGlyph(ui.frameNo + 2)),
+    n ? C.GREEN : C.AMBER, n ? `${n} found. Tap yours.` : 'Scanning for keyboards');
+  if (st.left) {
+    ui.pen(C.AMBER);
+    ui.text(rect(body.x, body.y, body.w - 2, 1), `closes in ${st.left} s`, S.TEXT, RIGHT);
+    ui.pen(C.DEFAULT);
+  }
+  for (let i = 0; i < shown; i++) {
+    const k = first + i;
+    moPart(ui, gridCell(g, i), MO_ID.HOST + k, {
+      title: MO_KBDS[k][0], detail: MO_KBDS[k][1] ? 'random address' : 'public address',
+      stripe: C.GREEN }, { tap: () => app.back() });
+  }
+  ui.key('PageUp', () => { if (st.page > 0) st.page--; });
+  ui.key('PageDown', () => { if (st.page < pages - 1) st.page++; });
+  ui.text(rect(body.x + 2, body.y + body.h - 4, body.w - 2, 1), 'Put the keyboard in pairing mode.',
+    S.MUTED, LEFT);
+  moBtn(ui, rect(body.x, body.y + body.h - 3, moBtnW('Forget bonds'), 3), MO_ID.BTN, 'Forget bonds',
+    { tone: 'tint', accent: C.RED }, { tap: () => {
+      st.ask = { title: 'Forget every paired keyboard?', verb: 'Forget', accent: C.RED,
+        lines: ['Every bond is deleted from the deck.', 'Pair again from this page.'] };
+      app.go('mo-confirm');
+    } });
+  moStatus(ui, pg.status, '', '');
+}
+
+const MO_QR_WIFI = fakeQr(33, 0x5EED0001), MO_QR_HOST = fakeQr(25, 0x5EED0002);
+
+// Add a network from the phone. st.phase: 'wait', 'test', 'ok' or 'fail'.
+function moWifi(ui, app) {
+  const st = app.state, pg = moPage(ui), phase = st.phase || 'wait';
+  moHeader(ui, pg.header, { path: 'Wi-Fi', title: 'Add network (phone)', back: { tap: () => app.back() } });
+  const spin = String.fromCodePoint(spinnerGlyph(ui.frameNo + 2));
+  const o = { steps: [
+    { mark: '1', text: 'Get the "ESP SoftAP Provisioning" app' },
+    { mark: '2', text: 'Join this Wi-Fi:', value: 'CYBERDECK-SIM', pen: C.GREEN },
+    { mark: '3', text: 'Proof code:', value: '1A2B3C4D', pen: C.AMBER },
+    { mark: '4', text: 'Pick your Wi-Fi and password in the app.' },
+  ], qr: { size: 33, mod: MO_QR_WIFI, caption: 'scan with the app' } };
+  if (phase === 'wait') Object.assign(o, { mark: spin, pen: C.GREEN, state: 'Waiting for the phone' });
+  if (phase === 'test') Object.assign(o, { mark: spin, pen: C.AMBER, state: 'Testing the network' });
+  if (phase === 'fail')
+    Object.assign(o, { mark: String.fromCodePoint(G.CROSS), pen: C.RED, state: 'Wrong password, or the network was not found.',
+      state2: 'Try again from the app. Back cancels.' });
+  if (phase === 'ok')
+    Object.assign(o, { steps: [], qr: null, mark: String.fromCodePoint(G.CHECK), pen: C.GREEN,
+      state: 'Joined HomeAP. Saved.', state2: 'Back to HOME in 2 s' });
+  moOnboard(ui, pg.body, o);
+  moStatus(ui, pg.status, '', '');
+}
+
+// Import hosts. st.mode 'phone' (the deck's own Wi-Fi) or 'pc' (the
+// network). st.pop false: the proof code is off. st.saved, st.removed:
+// the counts. st.err: the last rejection.
+function moImport(ui, app) {
+  const st = app.state, pg = moPage(ui), pc = st.mode === 'pc';
+  moHeader(ui, pg.header, { path: 'Hosts', title: pc ? 'Import from PC' : 'Import from phone',
+    back: { tap: () => app.back() } });
+  const steps = pc ? [
+    { mark: '1', text: 'Open on your PC:', value: 'http://192.168.1.158', pen: C.WHITE },
+    st.pop === false
+      ? { mark: '2', text: 'Proof code is off in this build. The page is open.', pen: C.AMBER }
+      : { mark: '2', text: 'Proof code:', value: '1A2B3C4D', pen: C.AMBER },
+    { mark: '3', text: 'Fill the form and save.' },
+    { mark: '!', text: 'Plain HTTP. Use it on a network you trust.', pen: C.AMBER },
+  ] : [
+    { mark: '1', text: 'Join this Wi-Fi:', value: 'DECK-SETUP-SIM', pen: C.GREEN },
+    { mark: '2', text: 'Wi-Fi password:', value: '1A2B3C4D', pen: C.AMBER },
+    { mark: '3', text: 'Open in a browser:', value: 'http://192.168.4.1', pen: C.WHITE },
+    { mark: '4', text: 'Fill the form and save. Repeat for more.' },
+  ];
+  const o = { steps, qr: { size: 25, mod: MO_QR_HOST, caption: pc ? 'scan to open' : 'scan to join' } };
+  const saved = st.saved | 0, removed = st.removed | 0, name = st.name || 'nas';
+  const tick = String.fromCodePoint(G.CHECK);
+  if (st.err) Object.assign(o, { mark: String.fromCodePoint(G.CROSS), pen: C.RED, state: `Rejected: ${st.err}` });
+  else if (saved && removed)
+    Object.assign(o, { mark: tick, pen: C.GREEN, state: `Last: ${name} (${saved} saved, ${removed} removed)` });
+  else if (removed) Object.assign(o, { mark: tick, pen: C.GREEN, state: `Removed ${name} (${removed} removed)` });
+  else if (saved) Object.assign(o, { mark: tick, pen: C.GREEN, state: `Imported ${name} (${saved} saved)` });
+  else Object.assign(o, { mark: String.fromCodePoint(spinnerGlyph(ui.frameNo + 2)), pen: C.GREEN,
+    state: 'Waiting for a browser' });
+  moOnboard(ui, pg.body, o);
+  moStatus(ui, pg.status, '', '');
+}
+
 // Session menu: a slate sheet at the right over the dimmed terminal.
 // Its parts are the same parts, because the sheet is screen background.
 function moMenu(ui, app) {
@@ -1032,6 +1192,26 @@ export const MO_GATE = [
     state: () => ({ ask: { title: 'Replace the pinned key?', verb: 'Replace', accent: C.RED,
                            lines: ['A changed key can mean an attack.', 'The old pin is lost.'] } }) },
   { name: 'mo-menu', sketch: 'mo-menu', pose: { focus: MO_ID.BTN } },
+  { name: 'mo-pair-scan', sketch: 'mo-pair' },
+  { name: 'mo-pair', sketch: 'mo-pair', state: () => ({ n: 2 }), pose: { focus: MO_ID.HOST } },
+  { name: 'mo-pair-closing', sketch: 'mo-pair', state: () => ({ n: 1, left: 9 }), pose: { focus: MO_ID.BTN } },
+  { name: 'mo-pair-many', sketch: 'mo-pair', state: () => ({ n: 8 }), pose: { down: MO_ID.HOST + 1 } },
+  { name: 'mo-pair-many-2', sketch: 'mo-pair', state: () => ({ n: 8, page: 1 }), pose: { focus: MO_ID.HOST + 6 } },
+  { name: 'mo-confirm-forget', sketch: 'mo-confirm', pose: { focus: MO_ID.BTN },
+    state: () => ({ ask: { title: 'Forget every paired keyboard?', verb: 'Forget', accent: C.RED,
+                           lines: ['Every bond is deleted from the deck.', 'Pair again from this page.'] } }) },
+  { name: 'mo-wifiprov', sketch: 'mo-wifi' },
+  { name: 'mo-wifiprov-test', sketch: 'mo-wifi', state: () => ({ phase: 'test' }) },
+  { name: 'mo-wifiprov-fail', sketch: 'mo-wifi', state: () => ({ phase: 'fail' }) },
+  { name: 'mo-wifiprov-ok', sketch: 'mo-wifi', state: () => ({ phase: 'ok' }) },
+  { name: 'mo-import-phone', sketch: 'mo-import' },
+  { name: 'mo-import-pc', sketch: 'mo-import', state: () => ({ mode: 'pc' }) },
+  { name: 'mo-import-pc-off', sketch: 'mo-import', state: () => ({ mode: 'pc', pop: false }) },
+  { name: 'mo-import-saved', sketch: 'mo-import', state: () => ({ mode: 'pc', saved: 2, name: 'nas' }) },
+  { name: 'mo-import-both', sketch: 'mo-import', state: () => ({ saved: 2, removed: 1, name: 'homelab' }) },
+  { name: 'mo-import-removed', sketch: 'mo-import', state: () => ({ removed: 1, name: 'old-box' }) },
+  { name: 'mo-import-rejected', sketch: 'mo-import',
+    state: () => ({ mode: 'pc', err: 'a host needs an address' }) },
 ];
 
 export const MO_SKETCHES = [
@@ -1047,6 +1227,9 @@ export const MO_SKETCHES = [
   { name: 'mo-fail', title: 'Connect failed', theme: 'slate', draw: (u, a) => moConnect(u, a, true) },
   { name: 'mo-hostkey', title: 'Host key, first contact', theme: 'slate', draw: (u, a) => moHostKey(u, a, false) },
   { name: 'mo-hostkey-changed', title: 'Host key changed', theme: 'slate', draw: (u, a) => moHostKey(u, a, true) },
+  { name: 'mo-pair', title: 'Pair a keyboard', theme: 'slate', draw: moPair },
+  { name: 'mo-wifi', title: 'Add a network from the phone', theme: 'slate', draw: moWifi },
+  { name: 'mo-import', title: 'Import hosts', theme: 'slate', draw: moImport },
   { name: 'mo-menu', title: 'Session menu sheet', theme: 'slate', draw: moMenu },
   { name: 'mo-parts', title: 'Parts in every state', theme: 'slate', draw: moParts },
 ];

@@ -175,6 +175,28 @@ static void test_profile_limit_fits_or_pages(void)
     TEST_ASSERT_EQUAL(2, ui_page_count(8, 6));
 }
 
+static void test_pairing_tiles_page_to_hold_every_keyboard(void)
+{
+    static const int GRIDS[3][2] = { { 66, 20 }, { 80, 24 }, { 100, 30 } };
+    for (int i = 0; i < 3; i++) {
+        const ui_metrics_t m = ui_metrics_for(GRIDS[i][0], GRIDS[i][1]);
+        const ui_rect_t body = ui_rect(m.margin, m.header,
+                                       GRIDS[i][0] - 2 * m.margin,
+                                       GRIDS[i][1] - m.header - 1);
+        const ui_grid_t g = ui_grid(ui_rect(body.x, body.y + 1, body.w,
+                                            body.h - 5),
+                                    ui_cols_for(body.w, 30, m.gutter), 4,
+                                    m.gutter, 0);
+        const int cap = ui_grid_capacity(&g);
+        const int pages = ui_page_count(8, cap);
+        TEST_ASSERT_TRUE(cap >= 1);
+        TEST_ASSERT_TRUE(pages * cap >= 8);
+        TEST_ASSERT_TRUE(8 - (pages - 1) * cap >= 1);
+        TEST_ASSERT_EQUAL(pages - 1, ui_page_clamp(pages + 3, 8, cap));
+    }
+    TEST_ASSERT_TRUE(ui_page_count(8, 4) == 2);
+}
+
 static void test_paging_counts_and_clamps(void)
 {
     TEST_ASSERT_EQUAL(1, ui_page_count(0, 6));
@@ -721,6 +743,95 @@ static void test_group4_spaces_every_fourth_character(void)
     TEST_ASSERT_EQUAL_STRING("0123 45", small);
 }
 
+static void test_qr_glyph_holds_two_modules(void)
+{
+    TEST_ASSERT_EQUAL_HEX16(0x2588, ui_qr_glyph(true, true));
+    TEST_ASSERT_EQUAL_HEX16(0x2580, ui_qr_glyph(true, false));
+    TEST_ASSERT_EQUAL_HEX16(0x2584, ui_qr_glyph(false, true));
+    TEST_ASSERT_EQUAL_HEX16(' ', ui_qr_glyph(false, false));
+}
+
+static void test_qr_panel_adds_zone_and_caption(void)
+{
+    TEST_ASSERT_EQUAL(29, ui_qr_w(25));
+    TEST_ASSERT_EQUAL(16, ui_qr_h(25));
+    TEST_ASSERT_EQUAL(37, ui_qr_w(33));
+    TEST_ASSERT_EQUAL(20, ui_qr_h(33));
+    TEST_ASSERT_EQUAL(0, ui_qr_w(0));
+    TEST_ASSERT_EQUAL(0, ui_qr_h(0));
+}
+
+static void test_wrap_n_stops_at_the_line_limit(void)
+{
+    char l[4][UI_STEP_TEXT];
+    TEST_ASSERT_EQUAL(1, ui_wrap_n("short", 10, l, 3));
+    TEST_ASSERT_EQUAL_STRING("short", l[0]);
+    TEST_ASSERT_EQUAL(3, ui_wrap_n("aa bb cc dd ee ff", 5, l, 3));
+    TEST_ASSERT_EQUAL_STRING("aa bb", l[0]);
+    TEST_ASSERT_EQUAL_STRING("cc dd", l[1]);
+    TEST_ASSERT_EQUAL_STRING("ee ff", l[2]);
+    TEST_ASSERT_EQUAL(2, ui_wrap_n("aa bb cc dd ee ff", 5, l, 2));
+    TEST_ASSERT_EQUAL_STRING("cc dd ee ff", l[1]);
+}
+
+static void test_steps_wrap_keeps_marks_and_values_apart(void)
+{
+    const ui_step_t st[] = {
+        { '1', "Get the app", NULL, 0 },
+        { '2', "Join this Wi-Fi:", "NAME", 3 },
+        { '3', "Proof code is off here. The page is open.", NULL, 4 },
+        { '!', "Plain HTTP.", NULL, 4 },
+    };
+    ui_step_line_t r[12];
+    const int n = ui_steps_wrap(st, 4, 20, r, 12);
+    TEST_ASSERT_EQUAL(7, n);
+    TEST_ASSERT_EQUAL_STRING("1", r[0].label);
+    TEST_ASSERT_EQUAL_STRING("2", r[1].label);
+    TEST_ASSERT_EQUAL_STRING("NAME", r[2].text);
+    TEST_ASSERT_EQUAL_STRING("", r[2].label);
+    TEST_ASSERT_EQUAL(3, r[2].pen);
+    TEST_ASSERT_EQUAL(0, r[1].pen);
+    TEST_ASSERT_EQUAL_STRING("3", r[3].label);
+    TEST_ASSERT_EQUAL_STRING("", r[4].label);
+    TEST_ASSERT_EQUAL(4, r[3].pen);
+    TEST_ASSERT_EQUAL(0, r[3].label_pen);
+    TEST_ASSERT_EQUAL_STRING("!", r[6].label);
+    TEST_ASSERT_EQUAL(4, r[6].label_pen);
+    TEST_ASSERT_EQUAL(2, ui_steps_wrap(st, 4, 20, r, 2));
+}
+
+/* The real pages must fit the body of every grid: steps, a gap and a
+ * state. The QR code sits beside them when it fits. */
+static void test_onboard_steps_fit_every_grid(void)
+{
+    const ui_step_t wifi[] = {
+        { '1', "Get the \"ESP SoftAP Provisioning\" app", NULL, 0 },
+        { '2', "Join this Wi-Fi:", "CYBERDECK-SIM", 1 },
+        { '3', "Proof code:", "1A2B3C4D", 4 },
+        { '4', "Pick your Wi-Fi and password in the app.", NULL, 0 },
+    };
+    const ui_step_t host[] = {
+        { '1', "Open on your PC:", "http://192.168.1.158", 7 },
+        { '2', "Proof code is off in this build. The page is open.", NULL, 4 },
+        { '3', "Fill the form and save.", NULL, 0 },
+        { '!', "Plain HTTP. Use it on a network you trust.", NULL, 4 },
+    };
+    ui_step_line_t r[16];
+    for (int g = 0; g < NGRIDS; g++) {
+        const ui_metrics_t m = ui_metrics_for(GRIDS[g].cols, GRIDS[g].rows);
+        const int w = GRIDS[g].cols - 2 * m.margin, h = GRIDS[g].rows - 4;
+        for (int k = 0; k < 2; k++) {
+            const int size = k ? 25 : 33;
+            const bool qr = ui_qr_h(size) <= h && w - ui_qr_w(size) - 2 >= 30;
+            const int vw = (qr ? w - ui_qr_w(size) - 2 : w) - 4 - 3;
+            const int n = ui_steps_wrap(k ? host : wifi, 4, vw, r, 16);
+            TEST_ASSERT_TRUE(n + 2 + 1 + 6 <= h);
+        }
+    }
+    TEST_ASSERT_TRUE(ui_qr_h(25) <= 16 && 64 - ui_qr_w(25) - 2 >= 30);
+    TEST_ASSERT_FALSE(ui_qr_h(33) <= 16);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -743,6 +854,7 @@ int main(void)
     RUN_TEST(test_reset_drops_regions_and_focus);
     RUN_TEST(test_region_table_overflow_is_dropped_not_written);
     RUN_TEST(test_profile_limit_fits_or_pages);
+    RUN_TEST(test_pairing_tiles_page_to_hold_every_keyboard);
     RUN_TEST(test_paging_counts_and_clamps);
     RUN_TEST(test_len_counts_code_points);
     RUN_TEST(test_one_decoder_walks_a_string);
@@ -768,5 +880,10 @@ int main(void)
     RUN_TEST(test_wrap2_hard_cuts_a_word_and_keeps_the_rest);
     RUN_TEST(test_wrap2_never_writes_past_the_buffers);
     RUN_TEST(test_group4_spaces_every_fourth_character);
+    RUN_TEST(test_qr_glyph_holds_two_modules);
+    RUN_TEST(test_qr_panel_adds_zone_and_caption);
+    RUN_TEST(test_wrap_n_stops_at_the_line_limit);
+    RUN_TEST(test_steps_wrap_keeps_marks_and_values_apart);
+    RUN_TEST(test_onboard_steps_fit_every_grid);
     return UNITY_END();
 }

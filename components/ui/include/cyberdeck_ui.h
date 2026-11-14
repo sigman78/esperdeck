@@ -257,17 +257,6 @@ uint16_t braille_noise(uint32_t h);
  *  red/white/default stay reserved for alert/focus/body (ui-spec). */
 uint8_t prof_accent(const char *name);
 
-/** QR module sampler: true = dark module at (x,y). */
-typedef bool (*qr_module_fn)(int x, int y);
-
-/** Draw a QR top-right as half-block cells; returns its first column (the
- *  caller's text limit), or ui_cols() when it did not fit. */
-int draw_qr_panel(int qsz, qr_module_fn mod, const char *caption);
-
-/** Numbered onboarding step row; returns the next step row. */
-int draw_step(int y, char num, const char *label,
-              const char *value, uint8_t value_pen, int xlimit);
-
 /** Scrollback fill down the right edge, line count on gray above it.
  *  @p offset is rows back from live, @p total the history available. */
 void draw_scrollbar(int offset, int total);

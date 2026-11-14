@@ -20,9 +20,6 @@ void ui_statusbar(uint64_t now);
  *  share it. */
 int net_rssi(void);
 
-/** Free-RAM summary for the header (debug stat, dev screens only). */
-void ram_stats(char *buf, size_t sz);
-
 /** Wall-clock "HH:MM" once SNTP/host time exists; false until then. */
 bool clock_str(char *buf, size_t sz);
 

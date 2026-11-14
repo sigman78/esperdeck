@@ -4,8 +4,9 @@
 decided: plain slabs on a slate screen (see *Parts*). The parts are
 built and gated against their design sketches. HOME, the host page,
 the question page, the setup hub, its sections, the session sheet, the
-host form, the code pad, the connect screen and the host-key page draw
-with them. Every other screen still uses the old tile helpers.
+host form, the code pad, the connect screen, the host-key page, keyboard
+pairing, Wi-Fi onboarding and host import draw with them. Only the old
+helpers themselves, and the status row, are still to go.
 The whole shell uses the slate colour pair.
 Companion to
 [`ui-spec.md`](ui-spec.md) (what each part must do) and
@@ -142,6 +143,8 @@ port those sketches line by line.
 | `ui_pages`, `ui_rail` | Page stepper in the header; position rail at the side of a paged list. |
 | `ui_info`, `ui_panel` | Text panels. They hold text only and are never touch targets. |
 | `ui_slate_page` | Paints the background and returns header, body, status and the whole area. |
+| `ui_qr` | A QR code on a white panel: half blocks, a quiet zone and a caption row. `ui_qr_w` and `ui_qr_h` give its size. |
+| `ui_onboard` | The page of a phone or PC flow: numbered steps on a text panel (`ui_steps_wrap` wraps them), a `ui_qr` beside them when it fits, a state line (`ui_state`) or a striped state panel under them. With no steps it is a centered result card. |
 
 **Tone, not frames.** A part is a plain rectangle with half-height top
 and bottom edges. Three tones give depth: `CARD` is a neutral panel,
@@ -319,4 +322,12 @@ one moves.
    again, Edit host), and `ui_wrap2` wraps its reason. `app_hostkey.c`
    draws `draw_hostkey` with `ui_group4` for the fingerprint. A changed
    key asks on the question page. Status row still open.
+   Keyboard pairing, Wi-Fi onboarding and host import (done).
+   `app_pairing.c` shows the found keyboards as tiles, with Forget bonds
+   at the bottom. It asks on the question page, which stops the scan
+   when it opens, so the pairing page starts the scan again on return.
+   `app_wifiprov.c` and `app_sshimport.c` draw `ui_onboard`. The QR code
+   drops out where it does not fit beside the steps (the Wi-Fi code at
+   66x20). The old radar sweep, comet and RAM readout are gone. A touch
+   away from the header bar no longer cancels either page.
 7. Delete the Slab widgets and the old tile, field and header helpers.

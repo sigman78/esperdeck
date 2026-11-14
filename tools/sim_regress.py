@@ -40,6 +40,12 @@ PAD_OPEN = ("key:esc|wait:400|tap:744,24|wait:500|key:left|key:down|key:down"
 PAD_MAKE = (PAD_OPEN + "|type:1234|key:enter|wait:300|type:1234|sleep:2500"
             "|wait:700|expect:menu|expect-text:Lock deck")
 
+HUB = ("key:esc|wait:400|expect:home|key:up|key:right|key:enter|wait:500"
+       "|expect:menu")
+WIFI_OPEN = (HUB + "|key:right|key:enter|wait:300|expect-text:Setup / Wi-Fi"
+             "|key:right|key:enter|wait:400|expect:wifiprov")
+PAIR_OPEN = "key:esc|wait:400|expect:home|key:b|wait:200|expect:pairing"
+
 # Esc first: skips the boot splash, harmless if HOME is already up.
 # Never send a bare Enter on HOME - it would start a real SSH connect.
 SCENARIOS = {
@@ -256,6 +262,57 @@ SCENARIOS = {
         "key:esc|wait:400|expect:home|hold:130,64|wait:400|expect:host"
         "|release:130,64|wait:400|expect:host|expect-text:Connect"
         "|key:esc|wait:400|expect:home|quit",
+    # Points (8x16): 40,24 back bar; 400,300 empty; 100,90 tile; 100,448 Forget.
+    "wifiprov-esc":
+        WIFI_OPEN + "|expect-text:Add network (phone)|expect-text:Join this Wi-Fi:"
+        "|expect-text:CYBERDECK-SIM|expect-text:Proof code:|expect-text:1A2B3C4D"
+        "|expect-text:Waiting for the phone|expect-text:scan with the app"
+        "|key:esc|wait:400|expect:home|quit",
+    "wifiprov-back-tap":
+        WIFI_OPEN + "|tap:400,300|wait:300|expect:wifiprov"
+        "|tap:40,24|wait:400|expect:home|quit",
+    "import-phone":
+        HUB + "|key:enter|wait:300|expect-text:Setup / Hosts|key:enter|wait:400"
+        "|expect:sshimport|expect-text:Import from phone"
+        "|expect-text:Join this Wi-Fi:|expect-text:DECK-SETUP-SIM"
+        "|expect-text:Wi-Fi password:|expect-text:Open in a browser:"
+        "|expect-text:Waiting for a browser|expect-text:scan to join"
+        "|key:esc|wait:400|expect:home|quit",
+    "import-pc-back-tap":
+        HUB + "|key:enter|wait:300|key:right|key:enter|wait:400"
+        "|expect:sshimport|expect-text:Import from PC"
+        "|expect-text:Open on your PC:|expect-text:Proof code:"
+        "|expect-text:Plain HTTP. Use it on a network you trust."
+        "|expect-text:scan to open|tap:400,300|wait:300|expect:sshimport"
+        "|tap:40,24|wait:400|expect:home|quit",
+    "pair-esc":
+        PAIR_OPEN + "|expect-text:Pair keyboard|expect-text:Scanning for keyboards"
+        "|expect-text:Put the keyboard in pairing mode.|wait:3300"
+        "|expect-text:2 found. Tap yours.|expect-text:Keychron K2"
+        "|expect-text:public address|expect-text:random address"
+        "|key:esc|wait:400|expect:home|quit",
+    "pair-pill-tap":
+        "key:esc|wait:400|expect:home|tap:590,23|wait:300|expect:pairing"
+        "|expect-text:Pair keyboard|tap:40,24|wait:400|expect:home|quit",
+    "pair-back-tap":
+        PAIR_OPEN + "|wait:3300|expect-text:2 found|tap:40,24|wait:400"
+        "|expect:home|quit",
+    "pair-tap-device":
+        PAIR_OPEN + "|wait:3300|expect-text:2 found|tap:100,90|wait:400"
+        "|expect:home|expect-text:pairing Keychron K2|quit",
+    "pair-enter-device":
+        PAIR_OPEN + "|wait:3300|expect-text:2 found|key:enter|wait:400"
+        "|expect:home|expect-text:pairing Keychron K2|quit",
+    "pair-forget":
+        PAIR_OPEN + "|wait:3300|expect-text:2 found|key:down|key:enter|wait:300"
+        "|expect:ask|expect-text:Forget every paired keyboard?"
+        "|key:enter|wait:300|expect:pairing|expect-text:Scanning for keyboards"
+        "|wait:3300|expect-text:2 found|tap:100,448|wait:300|expect:ask"
+        "|key:left|key:right|key:enter|wait:300|expect:pairing"
+        "|expect-text:bonds cleared|expect-text:Scanning for keyboards|quit",
+    "pair-timeout":
+        PAIR_OPEN + "|wait:3300|expect-text:2 found|wait:20000"
+        "|expect-text:closes in|wait:11000|expect:home|quit",
 }
 
 # Per-scenario edits to the fixture's profiles.ini (old text, new text).
@@ -299,7 +356,8 @@ def run(sim, name, script, window):
                     return False, f"fixture lacks '{old}'"
                 text = text.replace(old, new, 1)
             ini.write_text(text, encoding="utf-8")
-            mode = [] if window else ["--headless"]
+            mode = ([] if window else ["--headless"]) + (
+                ["--fake-ble"] if name.startswith("pair-") else [])
             r = subprocess.run(
                 [str(sim), *mode, "--storage-dir", str(fixture),
                  "--drive", script],

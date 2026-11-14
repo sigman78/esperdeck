@@ -53,6 +53,42 @@ int ui_wrap2(const char *text, int w, char *l1, char *l2, size_t sz);
  *  as a fingerprint reads. Fills @p out of @p sz bytes, cut to fit. */
 void ui_group4(const char *s, int n, char *out, size_t sz);
 
+/** The cell that holds two QR modules, one above the other. */
+uint16_t ui_qr_glyph(bool top, bool bottom);
+
+#define UI_QR_ZONE 2       /* quiet zone, in modules                       */
+
+/* One step of an onboarding page. @p mark is its number, or '!' for a
+ * caution. @p value, when set, takes its own row in @p pen. A step with
+ * no value takes @p pen for its text. */
+typedef struct {
+    char        mark;
+    const char *text, *value;
+    uint8_t     pen;               /* OVERLAY_COL_*, 0 for plain           */
+} ui_step_t;
+
+#define UI_STEP_TEXT  96
+#define UI_STEP_WRAP  3            /* lines one step text wraps to, at most */
+
+/* One row of the steps panel. */
+typedef struct {
+    char    label[2];              /* the mark on a step's first row      */
+    char    text[UI_STEP_TEXT];
+    uint8_t pen, label_pen;
+} ui_step_line_t;
+
+/** Lay @p n steps out as rows for a value column @p w cells wide. Each
+ *  text wraps under its mark. A value takes the next row. Returns the
+ *  rows written to @p out, at most @p max. */
+int ui_steps_wrap(const ui_step_t *steps, int n, int w, ui_step_line_t *out,
+                  int max);
+
+/** Wrap @p text into at most @p max_lines of @p w cells; each line goes
+ *  into a row of @p lines. A cut word, or the last line, keeps the
+ *  rest whole. Returns the line count. */
+int ui_wrap_n(const char *text, int w, char (*lines)[UI_STEP_TEXT],
+              int max_lines);
+
 /* How a typed code shows in @p room cells: taken characters, then
  * dots for those still to come. */
 typedef struct {

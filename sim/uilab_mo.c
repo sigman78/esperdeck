@@ -1021,6 +1021,235 @@ static void scr_confirm_replace(void)
                            OVERLAY_COL_RED });
 }
 
+/* Pair a keyboard: @p n found, @p left seconds before the scan closes
+ * (0: no countdown). Forget bonds sits at the bottom, so it stays put
+ * while the list changes. */
+static const struct { const char *name; int random; } MO_KBDS[8] = {
+    { "Keychron K2", 0 }, { "Logitech K380", 1 }, { "MX Keys Mini", 1 },
+    { "Apple Magic Keyboard", 0 }, { "Kinesis Adv360", 1 },
+    { "ZSA Moonlander", 0 }, { "HHKB Hybrid", 1 }, { "Ducky One 3", 0 },
+};
+
+static void draw_pair(int n, int left, int page)
+{
+    ui_slate_t pg = ui_slate_page();
+    const ui_rect_t body = pg.body;
+    char spin[8];
+
+    ui_grid_t g = ui_grid(ui_rect(body.x, body.y + 1, body.w, body.h - 5),
+                          ui_cols_for(body.w, 30, pg.m.gutter), 4,
+                          pg.m.gutter, 0);
+    const int per = ui_grid_capacity(&g);
+    const int pages = ui_page_count(n, per);
+    page = ui_page_clamp(page, n, per);
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_title(head, "Keyboard", "Pair keyboard", NULL, true);
+    const int first = page * per;
+    const int shown = n - first < per ? n - first : per;
+    ui_focus_default(shown > 0 ? (ui_id_t)(MO_HOST + first) : MO_BTN);
+    char text[32];
+    snprintf(text, sizeof text, "%d found. Tap yours.", n);
+    ui_utf8_put(spin, spinner_glyph(lab_frame + 2));
+    ui_state(ui_rect(body.x, body.y, body.w, 1), n ? UI_S_CHECK : spin,
+             n ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER,
+             n ? text : "Scanning for keyboards");
+    if (left) {
+        char t[24];
+        snprintf(t, sizeof t, "closes in %d s", left);
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_text(ui_rect(body.x, body.y, body.w - 2, 1), t, UI_TEXT, UI_RIGHT);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
+    for (int i = 0; i < shown; i++)
+        ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + first + i),
+                &(ui_part_t){ .title = MO_KBDS[first + i].name,
+                              .detail = MO_KBDS[first + i].random
+                                            ? "random address"
+                                            : "public address",
+                              .stripe = OVERLAY_COL_GREEN }, NULL);
+    ui_text(ui_rect(body.x + 2, body.y + body.h - 4, body.w - 2, 1),
+            "Put the keyboard in pairing mode.", UI_MUTED, UI_LEFT);
+    ui_push(ui_rect(body.x, body.y + body.h - 3, ui_push_w("Forget bonds"), 3),
+            MO_BTN, "Forget bonds", UI_TONE_TINT, OVERLAY_COL_RED, 0);
+    mo_status(pg.status, "", "", NULL);
+}
+
+static void scr_pair_scan(void)    { draw_pair(0, 0, 0); }
+static void scr_pair(void)         { draw_pair(2, 0, 0); }
+static void scr_pair_closing(void) { draw_pair(1, 9, 0); }
+static void scr_pair_many(void)    { draw_pair(8, 0, 0); }
+static void scr_pair_many_2(void)  { draw_pair(8, 0, 1); }
+
+static void scr_confirm_forget(void)
+{
+    draw_confirm(&(ask_t){ "Forget every paired keyboard?", "Forget",
+                           { "Every bond is deleted from the deck.",
+                             "Pair again from this page." },
+                           OVERLAY_COL_RED });
+}
+
+/* Fake codes for the pages below: finder squares, timing lines and
+ * hashed modules, as the sim's stubs draw them. Not scannable. */
+static bool qr_fake(int x, int y, int size, uint32_t seed)
+{
+    if (x < 0 || y < 0 || x >= size || y >= size) return false;
+    if ((x < 8 && y < 8) || (x >= size - 8 && y < 8) ||
+        (x < 8 && y >= size - 8)) {
+        for (int c = 0; c < 3; c++) {
+            const int dx = x - (c == 1 ? size - 7 : 0);
+            const int dy = y - (c == 2 ? size - 7 : 0);
+            if (dx < 0 || dx > 6 || dy < 0 || dy > 6) continue;
+            return dx == 0 || dx == 6 || dy == 0 || dy == 6 ||
+                   (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
+        }
+        return false;
+    }
+    if (x == 6 || y == 6) return ((x + y) & 1) == 0;
+    uint32_t h = (((uint32_t)x * 31u + (uint32_t)y) ^ seed) * 2654435761u;
+    h ^= h >> 15;
+    return (h >> 3) & 1;
+}
+
+static bool qr_wifi(int x, int y) { return qr_fake(x, y, 33, 0x5EED0001u); }
+static bool qr_host(int x, int y) { return qr_fake(x, y, 25, 0x5EED0002u); }
+
+/* Add a network from the phone, in one of four phases. */
+enum { PH_WAIT, PH_TEST, PH_FAIL, PH_OK };
+
+static void draw_wifi(int phase)
+{
+    ui_slate_t pg = ui_slate_page();
+    const ui_step_t steps[4] = {
+        { .mark = '1', .text = "Get the \"ESP SoftAP Provisioning\" app" },
+        { .mark = '2', .text = "Join this Wi-Fi:", .value = "CYBERDECK-SIM",
+          .pen = OVERLAY_COL_GREEN },
+        { .mark = '3', .text = "Proof code:", .value = "1A2B3C4D",
+          .pen = OVERLAY_COL_AMBER },
+        { .mark = '4', .text = "Pick your Wi-Fi and password in the app." },
+    };
+    char spin[8];
+    ui_utf8_put(spin, spinner_glyph(lab_frame + 2));
+    ui_onboard_t o = { .steps = steps, .nsteps = 4, .qr_size = 33,
+                       .qr_mod = qr_wifi, .qr_caption = "scan with the app" };
+
+    ui_title(pg.header, "Wi-Fi", "Add network (phone)", NULL, true);
+    switch (phase) {
+    case PH_WAIT:
+        o.mark = spin; o.pen = OVERLAY_COL_GREEN;
+        o.state = "Waiting for the phone";
+        break;
+    case PH_TEST:
+        o.mark = spin; o.pen = OVERLAY_COL_AMBER;
+        o.state = "Testing the network";
+        break;
+    case PH_FAIL:
+        o.mark = UI_S_CROSS; o.pen = OVERLAY_COL_RED;
+        o.state = "Wrong password, or the network was not found.";
+        o.state2 = "Try again from the app. Back cancels.";
+        break;
+    default:
+        o.nsteps = 0; o.qr_size = 0; o.mark = UI_S_CHECK;
+        o.pen = OVERLAY_COL_GREEN;
+        o.state = "Joined HomeAP. Saved.";
+        o.state2 = "Back to HOME in 2 s";
+        break;
+    }
+    ui_onboard(pg.body, &o);
+    mo_status(pg.status, "", "", NULL);
+}
+
+static void scr_wifi(void)      { draw_wifi(PH_WAIT); }
+static void scr_wifi_test(void) { draw_wifi(PH_TEST); }
+static void scr_wifi_fail(void) { draw_wifi(PH_FAIL); }
+static void scr_wifi_ok(void)   { draw_wifi(PH_OK); }
+
+/* Import hosts from the phone (the deck's own Wi-Fi) or from a PC. */
+typedef struct {
+    bool        pc, pop_off;
+    int         saved, removed;
+    const char *name, *err;
+} import_t;
+
+static void draw_import(const import_t *im)
+{
+    ui_slate_t pg = ui_slate_page();
+    const ui_step_t pc_steps[4] = {
+        { .mark = '1', .text = "Open on your PC:",
+          .value = "http://192.168.1.158", .pen = OVERLAY_COL_WHITE },
+        im->pop_off
+            ? (ui_step_t){ .mark = '2', .pen = OVERLAY_COL_AMBER,
+                           .text = "Proof code is off in this build. "
+                                   "The page is open." }
+            : (ui_step_t){ .mark = '2', .text = "Proof code:",
+                           .value = "1A2B3C4D", .pen = OVERLAY_COL_AMBER },
+        { .mark = '3', .text = "Fill the form and save." },
+        { .mark = '!', .text = "Plain HTTP. Use it on a network you trust.",
+          .pen = OVERLAY_COL_AMBER },
+    };
+    const ui_step_t phone_steps[4] = {
+        { .mark = '1', .text = "Join this Wi-Fi:", .value = "DECK-SETUP-SIM",
+          .pen = OVERLAY_COL_GREEN },
+        { .mark = '2', .text = "Wi-Fi password:", .value = "1A2B3C4D",
+          .pen = OVERLAY_COL_AMBER },
+        { .mark = '3', .text = "Open in a browser:",
+          .value = "http://192.168.4.1", .pen = OVERLAY_COL_WHITE },
+        { .mark = '4', .text = "Fill the form and save. Repeat for more." },
+    };
+    char spin[8], state[96];
+    ui_utf8_put(spin, spinner_glyph(lab_frame + 2));
+    ui_onboard_t o = { .steps = im->pc ? pc_steps : phone_steps, .nsteps = 4,
+                       .qr_size = 25, .qr_mod = qr_host,
+                       .qr_caption = im->pc ? "scan to open" : "scan to join",
+                       .state = state };
+
+    ui_title(pg.header, "Hosts",
+             im->pc ? "Import from PC" : "Import from phone", NULL, true);
+    o.mark = UI_S_CHECK;
+    o.pen = OVERLAY_COL_GREEN;
+    if (im->err) {
+        o.mark = UI_S_CROSS;
+        o.pen = OVERLAY_COL_RED;
+        snprintf(state, sizeof state, "Rejected: %s", im->err);
+    } else if (im->saved && im->removed) {
+        snprintf(state, sizeof state, "Last: %s (%d saved, %d removed)",
+                 im->name, im->saved, im->removed);
+    } else if (im->removed) {
+        snprintf(state, sizeof state, "Removed %s (%d removed)", im->name,
+                 im->removed);
+    } else if (im->saved) {
+        snprintf(state, sizeof state, "Imported %s (%d saved)", im->name,
+                 im->saved);
+    } else {
+        o.mark = spin;
+        snprintf(state, sizeof state, "Waiting for a browser");
+    }
+    ui_onboard(pg.body, &o);
+    mo_status(pg.status, "", "", NULL);
+}
+
+static void scr_import_phone(void)  { draw_import(&(import_t){ 0 }); }
+static void scr_import_pc(void)     { draw_import(&(import_t){ .pc = true }); }
+static void scr_import_pc_off(void)
+{
+    draw_import(&(import_t){ .pc = true, .pop_off = true });
+}
+static void scr_import_saved(void)
+{
+    draw_import(&(import_t){ .pc = true, .saved = 2, .name = "nas" });
+}
+static void scr_import_both(void)
+{
+    draw_import(&(import_t){ .saved = 2, .removed = 1, .name = "homelab" });
+}
+static void scr_import_removed(void)
+{
+    draw_import(&(import_t){ .removed = 1, .name = "old-box" });
+}
+static void scr_import_rejected(void)
+{
+    draw_import(&(import_t){ .pc = true, .err = "a host needs an address" });
+}
+
 /* Session menu: a slate sheet at the right over the dimmed terminal. */
 static void scr_menu(void)
 {
@@ -1100,6 +1329,28 @@ static const lab_screen_t MO_SCREENS[] = {
       .focus = MO_BTN },
     { "mo-menu",        scr_menu,        .slate = true, .term = true,
       .focus = MO_BTN },
+    { "mo-pair-scan",   scr_pair_scan,   .slate = true },
+    { "mo-pair",        scr_pair,        .slate = true,
+      .focus = MO_HOST },
+    { "mo-pair-closing", scr_pair_closing, .slate = true,
+      .focus = MO_BTN },
+    { "mo-pair-many",   scr_pair_many,   .slate = true,
+      .down = MO_HOST + 1 },
+    { "mo-pair-many-2", scr_pair_many_2, .slate = true,
+      .focus = MO_HOST + 6 },
+    { "mo-confirm-forget", scr_confirm_forget, .slate = true,
+      .focus = MO_BTN },
+    { "mo-wifiprov",    scr_wifi,        .slate = true },
+    { "mo-wifiprov-test", scr_wifi_test, .slate = true },
+    { "mo-wifiprov-fail", scr_wifi_fail, .slate = true },
+    { "mo-wifiprov-ok", scr_wifi_ok,     .slate = true },
+    { "mo-import-phone", scr_import_phone, .slate = true },
+    { "mo-import-pc",   scr_import_pc,   .slate = true },
+    { "mo-import-pc-off", scr_import_pc_off, .slate = true },
+    { "mo-import-saved", scr_import_saved, .slate = true },
+    { "mo-import-both", scr_import_both, .slate = true },
+    { "mo-import-removed", scr_import_removed, .slate = true },
+    { "mo-import-rejected", scr_import_rejected, .slate = true },
 };
 
 const lab_screen_t *lab_mo_screens(int *n)

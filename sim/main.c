@@ -231,7 +231,8 @@ static void touch_tick(uint64_t now)
  * injects through the same paths as real input. Sim-only test hook.
  *
  * --headless: no window, virtual clock; sleep:N waits N real ms.
- * --no-fx: display effects off. Details: docs/DEVELOPMENT.md.
+ * --no-fx: display effects off. --fake-ble: a canned BLE keyboard service.
+ * Details: docs/DEVELOPMENT.md.
  * ---------------------------------------------------------------------- */
 static const char *s_drive      = NULL;
 static uint64_t    s_drive_next = 0;
@@ -244,6 +245,59 @@ static uint64_t sim_now(void)
 {
     return s_headless ? s_vnow : SDL_GetTicks64();
 }
+
+/* --fake-ble: a keyboard service with two canned keyboards, so the pairing
+ * page runs on the host. Results show 3 s after the scan starts. */
+static bool     s_fake_ble;
+static bool     s_fake_scan;
+static uint64_t s_fake_since;
+
+static cyberdeck_ble_state_t fake_ble_state(void)
+{
+    return s_fake_scan ? CYBERDECK_BLE_PAIRING_SCAN : CYBERDECK_BLE_IDLE;
+}
+
+static void fake_ble_enter(void)
+{
+    s_fake_scan = true;
+    s_fake_since = sim_now();
+}
+
+static void fake_ble_exit(void) { s_fake_scan = false; }
+
+static int fake_ble_results(ble_device_info_t *out, int max)
+{
+    static const char *const names[2] = { "Keychron K2", "Logitech K380" };
+    if (!s_fake_scan || sim_now() - s_fake_since < 3000) return 0;
+    const int n = max < 2 ? max : 2;
+    for (int i = 0; i < n; i++) {
+        memset(&out[i], 0, sizeof out[i]);
+        out[i].addr[0] = (uint8_t)(0xA0 + i);
+        out[i].addr_type = (uint8_t)i;
+        snprintf(out[i].name, sizeof out[i].name, "%s", names[i]);
+    }
+    return n;
+}
+
+static void fake_ble_select(const uint8_t addr[6], uint8_t addr_type)
+{
+    (void)addr; (void)addr_type;
+}
+
+static const char *fake_ble_name(void) { return ""; }
+static void fake_ble_forget(void) {}
+static uint8_t fake_ble_locks(void) { return 0; }
+
+static const cyberdeck_ble_ops_t s_fake_ble_ops = {
+    .get_state = fake_ble_state, .enter_pairing = fake_ble_enter,
+    .exit_pairing = fake_ble_exit, .get_scan_results = fake_ble_results,
+    .select_device = fake_ble_select, .get_name = fake_ble_name,
+    .forget = fake_ble_forget, .get_locks = fake_ble_locks,
+};
+
+static const cyberdeck_service_t s_fake_services[] = {
+    { CYBERDECK_SVC_BLE_KEYBOARD, &s_fake_ble_ops },
+};
 
 static void drive_key(const char *name, uint64_t now)
 {
@@ -380,9 +434,12 @@ static int sim_main(int argc, char *argv[])
     bool no_fx = false;
     for (int i = 1; i < argc; i++) {
         const bool headless = strcmp(argv[i], "--headless") == 0;
-        if (!headless && strcmp(argv[i], "--no-fx") != 0) continue;
-        if (headless) s_headless = true;
-        else          no_fx = true;
+        const bool fake_ble = strcmp(argv[i], "--fake-ble") == 0;
+        if (!headless && !fake_ble && strcmp(argv[i], "--no-fx") != 0)
+            continue;
+        if (headless)       s_headless = true;
+        else if (fake_ble)  s_fake_ble = true;
+        else                no_fx = true;
         memmove(&argv[i], &argv[i + 1], (size_t)(argc - i) * sizeof(*argv));
         argc--;
         i--;
@@ -455,7 +512,9 @@ static int sim_main(int argc, char *argv[])
         .fallback_password  = pass,
         .fallback_wifi_ssid     = "SIM",
         .fallback_wifi_password = "",
-        /* no .services: the sim has no BLE keyboard or phone presence */
+        /* no phone presence; the BLE keyboard exists only with --fake-ble */
+        .services   = s_fake_ble ? s_fake_services : NULL,
+        .n_services = s_fake_ble ? 1 : 0,
 #if CONFIG_INPUT_TOUCH_SCROLL
         .set_scroll_edge = sim_set_scroll_edge,
         .scroll_edge_px  = CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX,

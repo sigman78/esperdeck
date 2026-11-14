@@ -71,13 +71,21 @@ The deck joins stored networks automatically, in the order they are
 listed. To add a network without any cable:
 
 1. Open **Setup → Wi-Fi → Add network (phone)**.
-2. The screen shows a QR code and four numbered steps. Scan the code with
-   your phone: it joins the deck's own temporary WiFi hotspot.
-3. Your phone opens a small web page served by the deck. A short **proof
-   code** shown on the deck's screen confirms you are talking to *this*
-   deck and not a neighbor.
-4. Enter your network's name and password in the form. The deck tests the
-   credentials, saves them, and tears the hotspot down.
+2. The page lists four numbered steps: get the "ESP SoftAP Provisioning"
+   app, join the Wi-Fi the page names, enter the **proof code** it shows,
+   and pick your network in the app. The proof code confirms you are
+   talking to *this* deck and not a neighbor. A QR code sits beside the
+   steps when the screen has room for it. Scan it with the app.
+3. A line under the steps says what the deck is doing: waiting for the
+   phone, then testing the network.
+4. On success the page says "Joined <name>. Saved." and returns to HOME
+   after a moment. On failure it says the password was wrong or the
+   network was not found, and the steps stay on screen. Try again from the
+   app.
+
+The header bar or Esc cancels and turns the hotspot off. While the deck
+tests the network, only Esc or a long press on the header bar cancels, so
+a stray touch cannot break the phone's session.
 
 **Setup → Wi-Fi → Reconnect** retries the stored networks (same as
 pressing **W** on HOME).
@@ -89,12 +97,17 @@ Any Bluetooth Low Energy (BLE) keyboard should work.
 1. Put the keyboard in pairing mode.
 2. On the deck: tap **Pair**, press **B**, or long-press
    HOME away from the tiles.
-3. The PAIR KEYBOARD screen scans and lists what it finds; pick yours.
+3. The **Pair keyboard** page scans. A line under the header says
+   "Scanning for keyboards", then "2 found. Tap yours." Each keyboard is a
+   tile with its name and address type. Tap yours, or move to it and
+   press Enter. In the last ten seconds before the idle timeout, the
+   line adds "closes in 9 s". The header bar or Esc leaves without pairing.
 
 Once paired, the keyboard reconnects by itself — the `KBD` light tells you
 when it's linked. To unpair everything: **Setup → Keyboard →
-Forget bonds** (it asks first on its own page; Cancel is the default
-answer).
+Forget bonds**, or the **Forget bonds** button at the bottom of the
+pairing page. It asks first on its own page; Cancel is the default
+answer. After you confirm, the scan starts again from clean bonds.
 
 No keyboard at hand? The whole interface works by touch, and a USB cable
 into the same port used for flashing also delivers keystrokes.
@@ -111,12 +124,19 @@ Three ways, pick what's convenient:
   number from 1 to 65535. **Save**, at the top right, stays grey until
   the form is valid.
 - **From your phone.** **Setup → Hosts → Import from phone**: same
-  QR-plus-form flow as WiFi onboarding — join the deck's temporary
-  hotspot, fill in the form, done.
+  steps-and-QR page as WiFi onboarding. Join the deck's temporary
+  hotspot, enter the Wi-Fi password the page shows, open the address in a
+  browser, fill in the form and save. Repeat for more hosts.
 - **From your PC.** **Setup → Hosts → Import from PC**: the
-  deck (already on your WiFi) serves a form at the address it shows.
-  **Heads-up:** this runs over plain HTTP on your local network — the
-  screen says "LAN only — use on a network you trust", and it means it.
+  deck (already on your WiFi) serves a form at the address it shows,
+  with the proof code beside it. **Heads-up:** this runs over plain HTTP
+  on your local network. The page says "Plain HTTP. Use it on a network
+  you trust", and it means it.
+
+Both pages keep a line under the steps: "Waiting for a browser", then
+"Imported nas (2 saved)" or "Removed nas (1 removed)" after each save,
+or "Rejected: <reason>" in red. The header bar or Esc ends the session.
+Whatever you saved is already stored.
 
 To edit, delete, or move a profile, hold its tile on HOME (or press
 Space on it) for the host page. **+ New** on HOME adds one. Delete asks
