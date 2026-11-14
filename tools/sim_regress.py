@@ -211,6 +211,46 @@ SCENARIOS = {
         "|expect-text:192.168.1.10|key:down|key:enter"
         "|wait:400|expect:host|expect-text:192.168.1.10|key:esc|wait:400"
         "|expect:home|key: |wait:400|expect:host|expect-text:10.0.0.5|quit",
+    "connect-panel":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:150|expect:connecting"
+        "|expect-text:Connecting to example|expect-text:Wi-Fi  HomeAP"
+        "|expect-text:me@127.0.0.1 port 1|expect-text:Cancel"
+        "|tap:20,20|wait:200|expect:connecting|key:left"
+        "|sleep:4000|wait:700|expect-text:Retrying example"
+        "|expect-text:Next try in|key:esc|sleep:300|wait:700|expect:home|quit",
+    "connect-cancel-tap":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:150|expect:connecting"
+        "|tap:264,280|wait:200|expect-text:Cancelling"
+        "|sleep:300|wait:700|expect:home|quit",
+    "connect-cancel-enter":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:150|expect:connecting"
+        "|key:left|key:enter|wait:200|expect-text:Cancelling"
+        "|sleep:300|wait:700|expect:home|quit",
+    "connect-failed":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect:connecting"
+        "|expect-text:No session on example"
+        "|expect-text:Key 'id_missing' cannot be read"
+        "|expect-text:me@127.0.0.1 port 22|expect-text:Back"
+        "|expect-text:Try again|expect-text:Edit host|key:esc|wait:300"
+        "|expect:home|quit",
+    "connect-failed-back-tap":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect-text:Try again"
+        "|tap:256,280|wait:300|expect:home|expect-text:1 of 8|quit",
+    "connect-failed-again":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect-text:Try again"
+        "|key:left|key:enter|wait:300|expect:connecting"
+        "|expect-text:Key 'id_missing' cannot be read"
+        "|tap:372,280|wait:300|expect:connecting"
+        "|expect-text:Key 'id_missing' cannot be read|quit",
+    "connect-failed-edit":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect-text:Edit host"
+        "|tap:508,280|wait:300|expect:profile|expect-text:Edit example"
+        "|key:esc|wait:300|expect:home|expect-text:1 of 8|quit",
+    "connect-failed-edit-discard":
+        "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect-text:Edit host"
+        "|key:left|key:right|key:enter|wait:300|expect:profile|type:2"
+        "|key:esc|key:esc|wait:300|expect:ask|key:right|key:enter|wait:400"
+        "|expect:home|expect-text:example|quit",
     # The release after a hold must not connect.
     "hold-opens-host":
         "key:esc|wait:400|expect:home|hold:130,64|wait:400|expect:host"
@@ -223,7 +263,20 @@ SECOND_HOST = ("#[server]\n#host=server.local\n#port=22\n#user=me\n"
                "#auth=key\n#key_id=id_deck",
                "[server]\nhost=10.0.0.5\nport=22\nuser=ops\n"
                "auth=password\npassword=secret")
+LOOPBACK_CLOSED = [("host=192.168.1.10", "host=127.0.0.1"),
+                   ("port=22", "port=1")]
+KEY_MISSING = [("host=192.168.1.10", "host=127.0.0.1"),
+               ("auth=password\npassword=changeme",
+                "auth=key\nkey_id=id_missing")]
 FIXTURE_EDITS = {
+    "connect-panel": LOOPBACK_CLOSED,
+    "connect-cancel-tap": LOOPBACK_CLOSED,
+    "connect-cancel-enter": LOOPBACK_CLOSED,
+    "connect-failed": KEY_MISSING,
+    "connect-failed-back-tap": KEY_MISSING,
+    "connect-failed-again": KEY_MISSING,
+    "connect-failed-edit": KEY_MISSING,
+    "connect-failed-edit-discard": KEY_MISSING,
     "tap-connect": [("host=192.168.1.10", "host=127.0.0.1"),
                     ("port=22", "port=1")],
     "hold-opens-host": [("host=192.168.1.10", "host=127.0.0.1"),

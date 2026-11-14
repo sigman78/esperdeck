@@ -138,21 +138,34 @@ fingerprint stays; **Clear host keys** in Setup drops the pins.
 
 ## 6. Connecting, and the host-key question
 
-Tap a tile and the deck connects: "Connecting to user@host:port", with
-a retry countdown if the host is slow.
+Tap a tile and the deck connects. A panel shows the host, the Wi-Fi
+network, `user@host port` and a live line: the seconds of this try
+("Try 2, 14 s" from the second try on), or "Next try in 3 s" while it
+waits to retry. **Cancel** (tap it, or press **Esc** or **Enter**) stops
+the connect. A tap anywhere else does nothing.
 
-The first time you reach a new server, the deck stops and shows **NEW HOST
-KEY** with the server's fingerprint. This is *trust on first use*: you are
+When a connect fails for good, the panel turns red: "No session on
+*name*", the reason, and three buttons. **Try again** connects once more
+with the stored host. **Edit host** opens the host form; closing it
+returns to HOME. **Back** (or **Esc**) returns to HOME. The deck clears the
+password it held for that try as soon as the page opens. Try again reads
+it from storage again, and asks for the access code first if the keys
+are locked.
+
+The first time you reach a new server, the deck stops at **New host key**
+with the server's fingerprint. This is *trust on first use*: you are
 being asked "is this really my server?" If you can, compare the
 fingerprint with one shown on the server itself (`ssh-keygen -lf` on the
-host key). **Enter** trusts and connects; the fingerprint is then pinned.
+host key). **Trust and connect** pins the fingerprint and connects;
+**Cancel** (or **Esc**) returns to HOME.
 
-If a *known* server ever presents a **different** key, you get the
-hazard-striped **HOST KEY ALERT** instead. That either means the server
-was reinstalled — or someone is intercepting the connection. The safe
-answer (**Cancel**) is the default; overriding takes a deliberate
-double-activation. No password or key is ever sent before this check
-passes.
+If a *known* server ever presents a **different** key, the page reads
+**Host key changed**, with a red stripe. That either means the server
+was reinstalled, or someone is intercepting the connection. **Cancel**
+is the default. **Replace key** opens a second question, "Replace the
+pinned key?", and Cancel is the default there too. Only **Replace**
+there pins the new key. No password or key is ever sent before this
+check passes.
 
 ## 7. Using the terminal
 
@@ -286,9 +299,14 @@ own. **Cancel** is the default answer, so treat the red button as final.
 - **Import page rejected my proof code.** The code expires with the
   session — restart the import from the menu and use the freshly shown
   code.
-- **HOST KEY ALERT on a server that didn't change.** Did the server get
-  reinstalled or re-keyed? If genuinely yes, override (double-activate) or
-  clear host keys. If you can't explain it, don't connect.
+- **"Host key changed" on a server that didn't change.** Did the server
+  get reinstalled or re-keyed? If genuinely yes, choose **Replace key**
+  and then **Replace**, or clear host keys. If you can't explain it,
+  don't connect.
+- **"No session on ..." after a connect.** The page names the reason:
+  "Sign in refused" (check the password or key), a transport error such
+  as "Connection refused" (check the address and port), or a key file
+  that cannot be read. **Edit host** fixes the entry, then **Try again**.
 
 ## 13. Trying it on a PC first
 

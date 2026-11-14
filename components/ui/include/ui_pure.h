@@ -9,6 +9,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /** Next code point of a UTF-8 string; advances @p s past it. Beyond-BMP
@@ -41,6 +42,16 @@ bool ui_text_insert(char *buf, int max, int *caret, char ch);
 /** Delete the character before *@p caret. Returns whether the text
  *  changed. */
 bool ui_text_delete(char *buf, int *caret);
+
+/** Wrap ASCII @p text into two lines of @p w cells. Each line goes into
+ *  a buffer of @p sz bytes. The first line breaks at the last space that
+ *  fits, or cuts a word at @p w. The second line takes the rest whole.
+ *  Returns the line count; @p l2 is empty for one. */
+int ui_wrap2(const char *text, int w, char *l1, char *l2, size_t sz);
+
+/** The first @p n characters of @p s with a space after every fourth,
+ *  as a fingerprint reads. Fills @p out of @p sz bytes, cut to fit. */
+void ui_group4(const char *s, int n, char *out, size_t sz);
 
 /* How a typed code shows in @p room cells: taken characters, then
  * dots for those still to come. */

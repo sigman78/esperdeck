@@ -667,6 +667,60 @@ static void test_code_plan_spaces_then_packs_then_clips(void)
         }
 }
 
+static void test_wrap2_breaks_at_the_last_space_that_fits(void)
+{
+    char a[64], b[64];
+    TEST_ASSERT_EQUAL(1, ui_wrap2("wrong password", 20, a, b, sizeof a));
+    TEST_ASSERT_EQUAL_STRING("wrong password", a);
+    TEST_ASSERT_EQUAL_STRING("", b);
+    TEST_ASSERT_EQUAL(1, ui_wrap2("exactly ten", 11, a, b, sizeof a));
+    TEST_ASSERT_EQUAL(2, ui_wrap2("one two three four", 10, a, b, sizeof a));
+    TEST_ASSERT_EQUAL_STRING("one two", a);
+    TEST_ASSERT_EQUAL_STRING("three four", b);
+    TEST_ASSERT_EQUAL(2, ui_wrap2("abc  def  ghi", 8, a, b, sizeof a));
+    TEST_ASSERT_EQUAL_STRING("abc  def", a);
+    TEST_ASSERT_EQUAL_STRING("ghi", b);
+}
+
+static void test_wrap2_hard_cuts_a_word_and_keeps_the_rest(void)
+{
+    char a[64], b[64];
+    TEST_ASSERT_EQUAL(2, ui_wrap2("abcdefghijkl", 5, a, b, sizeof a));
+    TEST_ASSERT_EQUAL_STRING("abcde", a);
+    TEST_ASSERT_EQUAL_STRING("fghijkl", b);
+    TEST_ASSERT_EQUAL(2, ui_wrap2("a bcdefghij", 5, a, b, sizeof a));
+    TEST_ASSERT_EQUAL_STRING("a", a);
+    TEST_ASSERT_EQUAL_STRING("bcdefghij", b);
+}
+
+static void test_wrap2_never_writes_past_the_buffers(void)
+{
+    char a[8], b[8];
+    memset(a, 'x', sizeof a);
+    memset(b, 'x', sizeof b);
+    ui_wrap2("aaaa bbbb cccc dddd eeee", 9, a, b, sizeof a);
+    TEST_ASSERT_EQUAL(0, a[sizeof a - 1]);
+    TEST_ASSERT_EQUAL(0, b[sizeof b - 1]);
+    TEST_ASSERT_EQUAL(1, ui_wrap2("", 9, a, b, sizeof a));
+    TEST_ASSERT_EQUAL_STRING("", a);
+}
+
+static void test_group4_spaces_every_fourth_character(void)
+{
+    char o[32];
+    ui_group4("0123456789abcdef", 16, o, sizeof o);
+    TEST_ASSERT_EQUAL_STRING("0123 4567 89ab cdef", o);
+    ui_group4("0123456", 7, o, sizeof o);
+    TEST_ASSERT_EQUAL_STRING("0123 456", o);
+    ui_group4("abcdef", 2, o, sizeof o);
+    TEST_ASSERT_EQUAL_STRING("ab", o);
+    ui_group4("abcdefgh", 0, o, sizeof o);
+    TEST_ASSERT_EQUAL_STRING("", o);
+    char small[8];
+    ui_group4("0123456789abcdef", 16, small, sizeof small);
+    TEST_ASSERT_EQUAL_STRING("0123 45", small);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -710,5 +764,9 @@ int main(void)
     RUN_TEST(test_text_insert_respects_caret_and_max);
     RUN_TEST(test_text_delete_takes_the_char_before_the_caret);
     RUN_TEST(test_code_plan_spaces_then_packs_then_clips);
+    RUN_TEST(test_wrap2_breaks_at_the_last_space_that_fits);
+    RUN_TEST(test_wrap2_hard_cuts_a_word_and_keeps_the_rest);
+    RUN_TEST(test_wrap2_never_writes_past_the_buffers);
+    RUN_TEST(test_group4_spaces_every_fourth_character);
     return UNITY_END();
 }

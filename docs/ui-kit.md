@@ -3,9 +3,9 @@
 **Status: draft, 2026-11-14.** The kit and its lab exist. The look is
 decided: plain slabs on a slate screen (see *Parts*). The parts are
 built and gated against their design sketches. HOME, the host page,
-the question page, the setup hub, its sections, the session sheet and
-the host form draw with them. Every other screen still uses the old
-tile helpers.
+the question page, the setup hub, its sections, the session sheet, the
+host form, the code pad, the connect screen and the host-key page draw
+with them. Every other screen still uses the old tile helpers.
 The whole shell uses the slate colour pair.
 Companion to
 [`ui-spec.md`](ui-spec.md) (what each part must do) and
@@ -313,5 +313,10 @@ one moves.
    Touch goes through the hot regions; keys never do, and the screen
    parks focus on an unused id so no key lights while typing
    (`ui_code_plan` lays out the entry line).
-6. Connect progress, host-key prompt, status row.
+6. Connect progress and the host-key prompt (done). `app_connect.c`
+   draws the lab's `draw_connect`: a text panel with a Cancel button.
+   A failed connect stays on that screen as the failed page (Back, Try
+   again, Edit host), and `ui_wrap2` wraps its reason. `app_hostkey.c`
+   draws `draw_hostkey` with `ui_group4` for the fingerprint. A changed
+   key asks on the question page. Status row still open.
 7. Delete the Slab widgets and the old tile, field and header helpers.

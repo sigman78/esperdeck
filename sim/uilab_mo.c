@@ -877,27 +877,6 @@ static void scr_unlock_resume(void)
                              .resume = true });
 }
 
-/* Wrap @p text into at most two lines of @p w cells (ASCII). The first
- * line breaks at the last space that fits; the rest goes on the second
- * line whole. Returns the line count. */
-static int wrap2(const char *text, int w, char *l1, char *l2, size_t sz)
-{
-    const int n = (int)strlen(text);
-    if (n <= w) {
-        snprintf(l1, sz, "%s", text);
-        l2[0] = 0;
-        return 1;
-    }
-    int cut = w;
-    while (cut > 0 && text[cut] != ' ') cut--;
-    if (cut <= 0) cut = w;
-    snprintf(l1, sz, "%.*s", cut, text);
-    const char *rest = text + cut;
-    while (*rest == ' ') rest++;
-    snprintf(l2, sz, "%s", rest);
-    return 2;
-}
-
 /* Connecting: what the shell knows, and a way out. @p retry shows the
  * wait before the next try. The failed form is a red panel after a
  * refused sign-in; @p lng gives it a reason that wraps. */
@@ -915,7 +894,7 @@ static void draw_connect(bool fail, bool retry, bool lng)
         char refused[128], l1[128], l2[128];
         snprintf(refused, sizeof refused, "Sign in refused: %s", reason);
         /* The value column: the panel less 4, less the label column and its gap. */
-        const int nl = wrap2(refused, 46 - 4 - 3, l1, l2, sizeof l1);
+        const int nl = ui_wrap2(refused, 46 - 4 - 3, l1, l2, sizeof l1);
         snprintf(head, sizeof head, "No session on %s", p->name);
         ui_info_row_t rows[5] = {
             { UI_S_CROSS, head, OVERLAY_COL_WHITE, OVERLAY_COL_RED },

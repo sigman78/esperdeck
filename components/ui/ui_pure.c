@@ -154,6 +154,44 @@ bool ui_text_delete(char *buf, int *caret)
     return true;
 }
 
+/* Copy at most @p n bytes of @p src into @p dst of @p sz bytes. */
+static void put_n(char *dst, size_t sz, const char *src, size_t n)
+{
+    if (sz == 0) return;
+    if (n > sz - 1) n = sz - 1;
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+int ui_wrap2(const char *text, int w, char *l1, char *l2, size_t sz)
+{
+    const int n = (int)strlen(text);
+    if (n <= w) {
+        put_n(l1, sz, text, (size_t)n);
+        put_n(l2, sz, "", 0);
+        return 1;
+    }
+    int cut = w;
+    while (cut > 0 && text[cut] != ' ') cut--;
+    if (cut <= 0) cut = w;
+    put_n(l1, sz, text, (size_t)cut);
+    const char *rest = text + cut;
+    while (*rest == ' ') rest++;
+    put_n(l2, sz, rest, strlen(rest));
+    return 2;
+}
+
+void ui_group4(const char *s, int n, char *out, size_t sz)
+{
+    size_t o = 0;
+    if (sz == 0) return;
+    for (int i = 0; i < n && s[i]; i++) {
+        if (i && (i & 3) == 0 && o + 1 < sz) out[o++] = ' ';
+        if (o + 1 < sz) out[o++] = s[i];
+    }
+    out[o] = '\0';
+}
+
 static int s_faults;
 
 void ui_fault(void) { s_faults++; }

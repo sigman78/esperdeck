@@ -1,6 +1,7 @@
 /*
  * app_connect.c — the thin connect/session screens. CONNECTING renders
- * controller state (armed / worker / retry countdown). SESSION owns the
+ * controller state (armed / worker / retry countdown) and, after a failed
+ * connect, a page with the reason and three ways on. SESSION owns the
  * live chrome (toast chip, scrollback bar) and input. Connect policy —
  * retry, key resolution, hostkey stops — lives in ssh_session.c
  * (extensibility item 7).
@@ -15,14 +16,17 @@
 #include "keystore.h"
 #include "ssh_client.h"
 #include "ssh_session.h"
+#include "ui_pure.h"     /* line wrap, UTF-8 put */
 #include "vterm.h"
 #include "vtkeys.h"      /* the session encodes HIDKEY events at send */
+#include "wifi_manager.h"
+
+#include "esp_log.h"
 
 #include <stdio.h>
 #include <string.h>
 
 #ifdef CONFIG_DISPLAY_ISR_BENCH
-#include "esp_log.h"
 #include <inttypes.h>
 #endif
 
@@ -51,70 +55,125 @@ static ssh_session_policy_t conn_policy(void)
     return pol;
 }
 
+enum { ID_CANCEL = 1, ID_BACK, ID_AGAIN, ID_EDIT };
+
+static const char *TAG = "app_connect";
+
+/* The failed view lives on this screen. It keeps its own copy of the
+ * reason: the client's error buffer changes with the next attempt. */
+static struct {
+    bool failed;
+    char reason[128];
+    char name[sizeof(((conn_profile_t *)0)->name)];
+} s_conn;
+
+/* The stored host of that name, or -1. Retry and edit work on it. */
+static int stored_host(const char *name)
+{
+    for (int i = 0; i < app.stored_count; i++)
+        if (strcmp(app.profiles[i].name, name) == 0) return i;
+    return -1;
+}
+
+/* "Next try in 3 s" counts up to the whole second. */
+static void live_line(char *out, size_t sz, ssh_session_state_t st,
+                      uint64_t now)
+{
+    out[0] = '\0';
+    if (st == SSH_SESSION_ARMED && ssh_session_retry_at() > now) {
+        snprintf(out, sz, "Next try in %u s",
+                 (unsigned)((ssh_session_retry_at() - now + 999) / 1000));
+    } else if (st == SSH_SESSION_CONNECTING) {
+        const unsigned s = now > ssh_session_attempt_started()
+            ? (unsigned)((now - ssh_session_attempt_started()) / 1000) : 0;
+        if (ssh_session_attempt() > 0)
+            snprintf(out, sz, "Try %d, %u s", ssh_session_attempt() + 1, s);
+        else
+            snprintf(out, sz, "%u s", s);
+    }
+}
+
+static void render_failed(ui_slate_t *pg, const conn_profile_t *p)
+{
+    char head[64], addr[160], l1[128], l2[128];
+
+    snprintf(addr, sizeof addr, "%s@%s port %u", p->user, p->host,
+             (unsigned)p->port);
+    snprintf(head, sizeof head, "No session on %s", s_conn.name);
+    /* The value column: the panel less its margins and the label column. */
+    const int nl = ui_wrap2(s_conn.reason, 46 - 4 - 3, l1, l2, sizeof l1);
+    ui_info_row_t rows[5] = {
+        { .label = UI_S_CROSS, .value = head, .value_pen = OVERLAY_COL_WHITE,
+          .label_pen = OVERLAY_COL_RED },
+        { .label = "", .value = "" },
+        { .label = "", .value = l1 },
+    };
+    int n = 3;
+    if (nl == 2) rows[n++] = (ui_info_row_t){ .label = "", .value = l2 };
+    rows[n++] = (ui_info_row_t){ .label = "", .value = addr };
+
+    ui_rect_t box = ui_center(pg->area, 46, n + 5);
+    const ui_rect_t card = ui_cut_top(&box, n + 2);
+    ui_info(card, rows, n, OVERLAY_COL_RED);
+
+    const bool stored = stored_host(s_conn.name) >= 0;
+    ui_focus_default(stored ? ID_AGAIN : ID_BACK);
+    ui_flow_t f = ui_flow(box, pg->m.gutter, 3);
+    ui_push(ui_flow_next(&f, ui_push_w("Back")), ID_BACK, "Back",
+            UI_TONE_CARD, 0, 0);
+    if (stored) {
+        ui_push(ui_flow_next(&f, ui_push_w("Try again")), ID_AGAIN,
+                "Try again", UI_TONE_CARD, 0, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Edit host")), ID_EDIT,
+                "Edit host", UI_TONE_SOLID, OVERLAY_COL_BLUE, 0);
+    }
+}
+
 static void render_connecting(uint64_t now)
 {
-    /* The status word falls out of the controller state. */
-    ssh_session_state_t st = ssh_session_state();
-    const char *msg = st == SSH_SESSION_CANCELLING ? "Cancelling"
-        : (st == SSH_SESSION_ARMED && now < ssh_session_retry_at())
-            ? "Retrying" : "Connecting to";
-
-    ui_fill(0, 0, ui_cols(), ui_rows(), 0);
-
-    draw_screen_header("CONNECTING", "// SSH DECK");
-
+    const int faults = ui_faults();
+    ui_slate_t pg = ui_slate_page();
     const conn_profile_t *p = ssh_session_profile();
-    int cy = ui_rows() / 2;
-    int attempt = ssh_session_attempt();
 
-    char line[96];
-    size_t ll = (size_t)snprintf(line, sizeof(line), "%s  %s@%s:%u",
-                                 msg, p->user, p->host, (unsigned)p->port);
-    if (attempt > 0 && ll < sizeof(line))
-        snprintf(line + ll, sizeof(line) - ll, "  (attempt %d)", attempt);
-    /* A long host/user can outgrow a narrow grid: truncate and pin left so
-     * the leading status word always survives. */
-    int maxw = ui_cols() - 8;
-    if ((int)strlen(line) > maxw) line[maxw] = '\0';
-    int lx = (ui_cols() - (int)strlen(line)) / 2;
-    if (lx < 4) lx = 4;
-    ui_pen(prof_accent(p->name));   /* carries the tile's identity color */
-    ui_putch(lx - 2, cy - 1, UI_DIAMOND, 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_puts(lx, cy - 1, line, 0);
-
-    int bw = 42, bx = (ui_cols() - bw) / 2;
-    uint64_t retry_at = ssh_session_retry_at();
-    if (st == SSH_SESSION_ARMED && retry_at > now &&
-        app.cfg.ssh_retry_delay_ms) {
-        /* During the retry wait, an amber bar drains toward the reconnect
-         * moment. The delay reads as a countdown, not a stalled connect. */
-        uint64_t remain = retry_at - now;
-        if (remain > app.cfg.ssh_retry_delay_ms)
-            remain = app.cfg.ssh_retry_delay_ms;
-        int filled = (int)(remain * (uint64_t)bw / app.cfg.ssh_retry_delay_ms);
-        ui_pen(OVERLAY_COL_AMBER);
-        for (int i = 0; i < bw; i++)
-            ui_putch(bx + i, cy + 1, i < filled ? UI_BLOCK : UI_SHADE1, 0);
+    if (s_conn.failed) {
+        render_failed(&pg, p);
     } else {
-        /* Activity bar: ░▒▓█▓▒░ gradient scrolling with the animation frame. */
-        static const uint16_t grad[7] = {
-            UI_SHADE1, UI_SHADE2, UI_SHADE3, UI_BLOCK,
-            UI_SHADE3, UI_SHADE2, UI_SHADE1
+        /* The status word falls out of the controller state. */
+        const ssh_session_state_t st = ssh_session_state();
+        const bool cancelling = st == SSH_SESSION_CANCELLING;
+        const bool retry = ssh_session_attempt() > 0 ||
+            (st == SSH_SESSION_ARMED && now < ssh_session_retry_at());
+        char spin[8], head[64], wifi[64], addr[160], live[40];
+
+        ui_utf8_put(spin, spinner_glyph(app.anim_frame));
+        if (cancelling) snprintf(head, sizeof head, "Cancelling");
+        else snprintf(head, sizeof head, "%s %s",
+                      retry ? "Retrying" : "Connecting to", p->name);
+        const bool joined = wifi_manager_get_state() == WIFI_MGR_CONNECTED;
+        snprintf(wifi, sizeof wifi, "Wi-Fi  %s",
+                 joined ? wifi_manager_get_ssid() : wifi_status_str());
+        snprintf(addr, sizeof addr, "%s@%s port %u", p->user, p->host,
+                 (unsigned)p->port);
+        live_line(live, sizeof live, st, now);
+
+        const ui_info_row_t rows[5] = {
+            { .label = spin, .value = head, .label_pen = OVERLAY_COL_AMBER,
+              .value_pen = cancelling ? OVERLAY_COL_AMBER : OVERLAY_COL_WHITE },
+            { .label = "", .value = "" },
+            { .label = joined ? UI_S_CHECK : UI_S_CROSS, .value = wifi,
+              .label_pen = joined ? OVERLAY_COL_GREEN : OVERLAY_COL_RED },
+            { .label = "", .value = addr },
+            { .label = "", .value = live },
         };
-        ui_pen(st == SSH_SESSION_CANCELLING ? OVERLAY_COL_AMBER
-                                            : prof_accent(p->name));
-        for (int i = 0; i < bw; i++)
-            ui_putch(bx + i, cy + 1, grad[(i + app.anim_frame) % 7], 0);
-        if (st == SSH_SESSION_CONNECTING) {
-            /* Elapsed seconds right of the bar: a stalled handshake at 40 s
-             * should look different from one that just started. */
-            ui_pen(OVERLAY_COL_BLUE);
-            ui_printf(bx + bw + 2, cy + 1, 0, "%2us",
-                      (unsigned)((now - ssh_session_attempt_started()) / 1000));
-        }
+        ui_rect_t box = ui_center(pg.area, 46, 10);
+        const ui_rect_t card = ui_cut_top(&box, 7);
+        ui_info(card, rows, 5, prof_accent(p->name));
+        ui_focus_default(ID_CANCEL);
+        ui_push(ui_rect(box.x, box.y, ui_push_w("Cancel"), 3), ID_CANCEL,
+                "Cancel", UI_TONE_CARD, 0, 0);
     }
-    ui_pen(OVERLAY_COL_DEFAULT);
+    if (ui_faults() != faults)
+        ESP_LOGW(TAG, "layout faults +%d", ui_faults() - faults);
 }
 
 #define SCROLLBAR_LINGER_MS  1400
@@ -177,8 +236,15 @@ static void render_session_chrome(uint64_t now)
 /* Arm a connect screen-side: the controller is already armed. */
 static void show_connecting(uint64_t now)
 {
-    if (nav_current() == SCR_CONNECTING) nav_invalidate();
-    else nav_replace(SCR_CONNECTING, 0, now);
+    if (nav_current() != SCR_CONNECTING) {
+        nav_replace(SCR_CONNECTING, 0, now);
+        return;
+    }
+    if (s_conn.failed) {                  /* the failed view gives way */
+        s_conn.failed = false;
+        ui_hot_reset();
+    }
+    nav_invalidate();
 }
 
 /* Arm a connect to profile @p idx, snapshotting it into the controller. */
@@ -271,10 +337,27 @@ static void session_enter(intptr_t arg, uint64_t now)
     render_session_chrome(now);
 }
 
+/* Open the failed view. The snapshot's password goes first: the page
+ * stays open, and no idle lock runs on it. Try again re-reads the stored
+ * host instead. */
+static void conn_failed(const char *reason)
+{
+    conn_creds_wipe();
+    snprintf(s_conn.reason, sizeof s_conn.reason, "%s", reason);
+    snprintf(s_conn.name, sizeof s_conn.name, "%s",
+             ssh_session_profile()->name);
+    s_conn.failed = true;
+    ui_hot_reset();
+    nav_invalidate();
+}
+
 /* Route a controller event to navigation and toasts. True when the
  * event navigated away (the caller stops its tick). */
 static bool handle_session_event(ssh_session_event_t ev, uint64_t now)
 {
+    char why[128];
+    const char *err = ssh_client_last_error();
+
     switch (ev) {
     case SSH_SESSION_EV_CONNECTED:
         nav_replace(SCR_SESSION, 0, now);
@@ -283,8 +366,9 @@ static bool handle_session_event(ssh_session_event_t ev, uint64_t now)
         unlock_open(now, true);
         return true;
     case SSH_SESSION_EV_KEY_UNREADABLE:
-        toast(now, "key '%s' unreadable", ssh_session_profile()->key_id);
-        enter_home(now);
+        snprintf(why, sizeof why, "Key '%.31s' cannot be read",
+                 ssh_session_profile()->key_id);
+        conn_failed(why);
         return true;
     case SSH_SESSION_EV_HOSTKEY_UNKNOWN:
         hostkey_open(false, now);
@@ -293,21 +377,18 @@ static bool handle_session_event(ssh_session_event_t ev, uint64_t now)
         hostkey_open(true, now);
         return true;
     case SSH_SESSION_EV_AUTH_FAILED:
-        toast_for(now, ERR_TOAST_MS, "auth failed: %.40s",
-                  ssh_client_last_error());
-        enter_home(now);
+        if (err[0]) snprintf(why, sizeof why, "Sign in refused: %.100s", err);
+        else snprintf(why, sizeof why, "Sign in refused");
+        conn_failed(why);
         return true;
     case SSH_SESSION_EV_BUSY:
-        toast(now, "connect busy - try again");
-        enter_home(now);
+        conn_failed("Another connect is still running");
         return true;
     case SSH_SESSION_EV_RETRYING:
         toast(now, "connect failed - retrying");
         return false;                    /* countdown renders here */
     case SSH_SESSION_EV_FAILED:
-        toast_for(now, ERR_TOAST_MS, "failed: %.44s",
-                  ssh_client_last_error());
-        enter_home(now);
+        conn_failed(err[0] ? err : "The connection failed");
         return true;
     case SSH_SESSION_EV_CANCELLED:
         toast(now, "cancelled");
@@ -322,7 +403,8 @@ static void connecting_tick(uint64_t now)
 {
     if (handle_session_event(ssh_session_poll(now), now))
         return;
-    if (now >= app.next_anim) {          /* keep the bar/countdown alive */
+    if (s_conn.failed) return;           /* a still page */
+    if (now >= app.next_anim) {          /* keep the spinner/counters alive */
         app.next_anim = now + ANIM_PERIOD_MS;
         nav_invalidate();
     }
@@ -376,13 +458,49 @@ static void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                              uint64_t now)
 {
     (void)ch;
-    /* ESC (keyboard) or any tap/long-press (touch) cancels. The
-     * controller acks through EV_CANCELLED on the next tick. */
-    if (k == K_ESC || ev->type == CYBERDECK_INPUT_TAP ||
-        ev->type == CYBERDECK_INPUT_LONG_PRESS) {
-        ssh_session_cancel(now);
-        nav_invalidate();
+    if (k == K_ESC) {
+        /* Esc is Cancel while connecting and Back on the failed view. The
+         * controller acks a cancel through EV_CANCELLED on the next tick. */
+        if (s_conn.failed) {
+            enter_home(now);
+        } else {
+            ssh_session_cancel(now);
+            nav_invalidate();
+        }
+        return;
     }
+    const ui_act_t a = app_hot_input(ev, k);
+    if (a.kind == UI_ACT_NONE) return;
+    nav_invalidate();
+    if (a.kind != UI_ACT_PRESS) return;
+    const int idx = stored_host(s_conn.name);
+    switch (a.id) {
+    case ID_CANCEL:
+        ssh_session_cancel(now);
+        break;
+    case ID_BACK:
+        enter_home(now);
+        break;
+    case ID_AGAIN:
+        if (idx >= 0) connect_checked(idx, now);
+        break;
+    case ID_EDIT:
+        /* Home first: a finished edit pops back to the host list. */
+        if (idx >= 0) {
+            enter_home(now);
+            enter_profile(now, idx);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+/* Arrivals from other screens start on the connecting view. */
+static void connecting_enter(intptr_t arg, uint64_t now)
+{
+    (void)arg; (void)now;
+    s_conn.failed = false;
 }
 
 static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
@@ -435,10 +553,10 @@ static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 }
 
 const nav_screen_t connecting_screen = {
-    .name = "connecting", .tick = connecting_tick,
+    .name = "connecting", .enter = connecting_enter, .tick = connecting_tick,
     .input = connecting_input, .render = render_connecting,
     .chrome = NAV_CHROME_FULL,
-    /* No enter hook: callers arm the controller before navigating here. */
+    /* Callers arm the controller before navigating here. */
 };
 
 /* No render: the overlay belongs to the remote; the toast chip and the
