@@ -42,5 +42,19 @@ bool ui_text_insert(char *buf, int max, int *caret, char ch);
  *  changed. */
 bool ui_text_delete(char *buf, int *caret);
 
+/* How a typed code shows in @p room cells: taken characters, then
+ * dots for those still to come. */
+typedef struct {
+    int  bullets;    /* taken characters shown (the last ones)         */
+    int  dots;       /* characters still to come                       */
+    bool spaced;     /* one blank cell between marks                   */
+    int  width;      /* cells the row takes                            */
+} ui_code_t;
+
+/** Plan the code row for @p len typed characters and an @p expected
+ *  length (0 when unknown). Spaced when it fits, else packed, else it
+ *  keeps only the last marks that fit. */
+ui_code_t ui_code_plan(int len, int expected, int room);
+
 /** Count one layout fault. */
 void ui_fault(void);

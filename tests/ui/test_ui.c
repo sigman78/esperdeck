@@ -635,6 +635,38 @@ static void test_text_delete_takes_the_char_before_the_caret(void)
     TEST_ASSERT_EQUAL(1, c);
 }
 
+static void test_code_plan_spaces_then_packs_then_clips(void)
+{
+    ui_code_t c = ui_code_plan(0, 0, 25);
+    TEST_ASSERT_EQUAL(0, c.bullets + c.dots);
+    TEST_ASSERT_EQUAL(0, c.width);
+    c = ui_code_plan(3, 4, 25);                  /* three of four        */
+    TEST_ASSERT_TRUE(c.spaced);
+    TEST_ASSERT_EQUAL(3, c.bullets);
+    TEST_ASSERT_EQUAL(1, c.dots);
+    TEST_ASSERT_EQUAL(7, c.width);
+    c = ui_code_plan(5, 0, 25);                  /* free length          */
+    TEST_ASSERT_EQUAL(5, c.bullets);
+    TEST_ASSERT_EQUAL(0, c.dots);
+    TEST_ASSERT_EQUAL(9, c.width);
+    c = ui_code_plan(13, 0, 25);                 /* 25 spaced cells fit  */
+    TEST_ASSERT_TRUE(c.spaced);
+    TEST_ASSERT_EQUAL(25, c.width);
+    c = ui_code_plan(14, 0, 25);                 /* drop the spaces      */
+    TEST_ASSERT_FALSE(c.spaced);
+    TEST_ASSERT_EQUAL(14, c.width);
+    c = ui_code_plan(40, 0, 25);                 /* last bullets only    */
+    TEST_ASSERT_FALSE(c.spaced);
+    TEST_ASSERT_EQUAL(25, c.bullets);
+    TEST_ASSERT_EQUAL(25, c.width);
+    for (int len = 0; len <= 64; len++)
+        for (int exp = 0; exp <= 24; exp++) {
+            c = ui_code_plan(len, exp, 25);
+            TEST_ASSERT_TRUE(c.width <= 25);
+            TEST_ASSERT_TRUE(c.bullets <= len);
+        }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -677,5 +709,6 @@ int main(void)
     RUN_TEST(test_entry_window_keeps_the_caret_in_view);
     RUN_TEST(test_text_insert_respects_caret_and_max);
     RUN_TEST(test_text_delete_takes_the_char_before_the_caret);
+    RUN_TEST(test_code_plan_spaces_then_packs_then_clips);
     return UNITY_END();
 }

@@ -309,5 +309,9 @@ one moves.
    An entry types in place, with a movable caret (`ui_entry_at`). Tab
    walks the controls. A changed form asks before it discards. The
    paged lists are still open.
-6. Unlock pad, connect progress, host-key prompt, status row.
+   The unlock pad (done): `app_unlock.c` draws the lab's `draw_unlock`.
+   Touch goes through the hot regions; keys never do, and the screen
+   parks focus on an unused id so no key lights while typing
+   (`ui_code_plan` lays out the entry line).
+6. Connect progress, host-key prompt, status row.
 7. Delete the Slab widgets and the old tile, field and header helpers.

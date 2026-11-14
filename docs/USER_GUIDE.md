@@ -225,6 +225,16 @@ length; a keyboard-typed passphrase also works). From that moment:
   30 seconds, then 60, 120... up to 15 minutes per try. **Rebooting does
   not reset the wait.**
 
+**The code pad.** Tap the digits or type them on a keyboard. The entry
+line shows one dot per character; once the code length is known, the
+characters still to come show as small dots. While you choose a new code
+the newest character shows for a moment. The backspace key and **OK**
+are dimmed until something is typed. Typing on a keyboard never lights
+the pad keys, so nobody can read the code off the screen. A wrong code
+shows "wrong code" in red; after repeated failures the line also counts
+down the wait. The back arrow in the header (or **Esc**) cancels, except
+on the lock screen, which has no way out.
+
 **Change code** and **Remove code** are on the same menu page. Removing
 the code decrypts everything back to plain files — it asks you to prove
 the code first.

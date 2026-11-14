@@ -348,10 +348,10 @@ static const char *profile_commit(void)
             return "That name is in use.";
 
     /* A locked store keeps its passwords in the bundle and lists a marker.
-     * A draft with no password would replace that marker and orphan them. */
+     * Any other draft password would replace the marker and orphan them. */
     if (slot >= 0 && keystore_state() == KEYSTORE_LOCKED &&
-        !s_pf.draft.password[0] &&
-        strcmp(set[slot].password, STORAGE_PW_BUNDLED) == 0)
+        strcmp(set[slot].password, STORAGE_PW_BUNDLED) == 0 &&
+        strcmp(s_pf.draft.password, STORAGE_PW_BUNDLED) != 0)
         return "Unlock the deck first.";
 
     conn_profile_t old = { 0 };

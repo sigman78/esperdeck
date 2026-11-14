@@ -118,6 +118,19 @@ int ui_entry_first(int len, int caret, int room)
     return first < 0 ? 0 : first;
 }
 
+ui_code_t ui_code_plan(int len, int expected, int room)
+{
+    ui_code_t c = { 0 };
+    const int total = len > expected ? len : expected;
+    c.spaced = total > 0 && total * 2 - 1 <= room;
+    const int cap = total < room ? total : room;
+    c.bullets = len < cap ? len : cap;
+    c.dots = cap - c.bullets;
+    const int marks = c.bullets + c.dots;
+    c.width = marks == 0 ? 0 : c.spaced ? marks * 2 - 1 : marks;
+    return c;
+}
+
 bool ui_text_insert(char *buf, int max, int *caret, char ch)
 {
     const int len = (int)strlen(buf);

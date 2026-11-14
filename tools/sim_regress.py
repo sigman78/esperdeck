@@ -34,6 +34,12 @@ def timeout_s(script, window):
     A headless run takes a second or two."""
     return 8 + 0.6 * (script.count("|") + 1) if window else 30
 
+PAD_OPEN = ("key:esc|wait:400|tap:744,24|wait:500|key:left|key:down|key:down"
+            "|key:right|key:enter|wait:300|expect-text:Create keystore"
+            "|key:enter|wait:300|expect:unlock")
+PAD_MAKE = (PAD_OPEN + "|type:1234|key:enter|wait:300|type:1234|sleep:2500"
+            "|wait:700|expect:menu|expect-text:Lock deck")
+
 # Esc first: skips the boot splash, harmless if HOME is already up.
 # Never send a bare Enter on HOME - it would start a real SSH connect.
 SCENARIOS = {
@@ -158,6 +164,33 @@ SCENARIOS = {
     "tap-connect":
         "key:esc|wait:500|expect:home|tap:130,64|wait:150"
         "|expect:connecting|key:esc|sleep:300|wait:700|expect:home|quit",
+    "pad-create":
+        PAD_OPEN + "|expect-text:Choose a new code|type:1234|key:enter"
+        "|wait:300|expect-text:Enter the new code again|type:1234"
+        "|sleep:2500|wait:700|expect:menu|expect-text:Lock deck|quit",
+    "pad-lock-unlock":
+        PAD_MAKE + "|key:left|key:enter|wait:400|expect:unlock|expect-text:Deck locked"
+        "|key:esc|wait:200|expect:unlock|type:1234|sleep:2500|wait:700"
+        "|expect:home|quit",
+    "pad-wrong-code":
+        PAD_MAKE + "|key:left|key:enter|wait:400|expect:unlock|type:9999|sleep:2500"
+        "|wait:700|expect:unlock|expect-text:wrong code|quit",
+    "pad-mismatch":
+        PAD_OPEN + "|type:1234|key:enter|wait:300|type:1235|sleep:200|wait:300"
+        "|expect:unlock|expect-text:The codes do not match"
+        "|expect-text:Choose a new code|quit",
+    "pad-short":
+        PAD_OPEN + "|type:12|key:enter|wait:300"
+        "|expect-text:At least 4 characters|quit",
+    # Points (8x16 grid): 316,200 key 1; 396,200 key 2; 476,200 key 3;
+    # 316,248 key 4; 476,344 OK; 40,24 header back.
+    "pad-touch":
+        PAD_OPEN + "|tap:316,200|tap:396,200|tap:476,200|tap:316,248"
+        "|wait:300|tap:476,344|wait:300|expect-text:Enter the new code again"
+        "|tap:40,24|wait:400|expect:menu|expect-text:Create keystore|quit",
+    "pad-cancel":
+        PAD_OPEN + "|key:esc|wait:400|expect:menu|expect-text:Create keystore"
+        "|key:esc|wait:400|expect:menu|key:esc|wait:500|expect:home|quit",
     # Space opens the host page. Enter or a digit would connect.
     "host-page":
         "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
