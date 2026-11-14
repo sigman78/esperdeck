@@ -235,6 +235,7 @@ static ui_ann_t s_ann;
 static bool     s_primed;               /* a screen with a bar has been up   */
 static uint8_t  s_prev[SB_MAX_CHIPS];   /* last UI_SB_* state per table entry */
 static uint32_t s_sig;                  /* what the last tick saw drawn      */
+static uint32_t s_blink;                /* last frame drawn for a busy chip  */
 
 static uint32_t chips_sig(const ui_sb_chip_t *chips, int n)
 {
@@ -250,6 +251,14 @@ static uint32_t chips_sig(const ui_sb_chip_t *chips, int n)
     }
 #undef MIX
     return h;
+}
+
+static bool chips_busy(const ui_sb_chip_t *chips, int n)
+{
+    for (int i = 0; i < n; i++)
+        for (int k = 0; k < chips[i].n; k++)
+            if (chips[i].cell[k].state == UI_SB_BUSY) return true;
+    return false;
 }
 
 /* A session hides the bar. Its bad news goes to a toast. */
@@ -295,10 +304,17 @@ void status_tick(uint64_t now)
 
     ui_sb_chip_t chips[SB_MAX_CHIPS];
     int          slot[SB_MAX_CHIPS];
-    const uint32_t sig = chips_sig(chips, sb_poll(chips, slot));
+    const int nchips = sb_poll(chips, slot);
+    const uint32_t sig = chips_sig(chips, nchips);
     const bool moved = ui_ann_step(&s_ann, now);
     if ((moved || sig != s_sig) && bar) nav_invalidate();
     s_sig = sig;
+
+    /* A busy chip blinks and spins. A still page gets a frame for it. */
+    if (bar && app.anim_frame != s_blink && chips_busy(chips, nchips)) {
+        s_blink = app.anim_frame;
+        nav_invalidate();
+    }
 }
 
 bool status_idle(void)
