@@ -114,8 +114,9 @@ Three ways, pick what's convenient:
   **Heads-up:** this runs over plain HTTP on your local network — the
   screen says "LAN only — use on a network you trust", and it means it.
 
-Profiles can be edited, reordered, and deleted under **Configuration →
-Profiles** (delete asks you to activate it twice).
+To edit, delete, or move a profile, hold its tile on HOME (or press
+Space on it) for the host page. **+ New** on HOME adds one. Delete asks
+you to confirm.
 
 **Careful when deleting or re-keying a profile:** if no other profile
 still uses its private key or its pinned host fingerprint, those are
@@ -165,7 +166,7 @@ Configuration**). The pages:
 
 | Page | What's there |
 |---|---|
-| **Profiles** | Add / Edit / Reorder / Delete / Import ([section 5](#5-adding-an-ssh-connection)) |
+| **Profiles** | Import ([section 5](#5-adding-an-ssh-connection)) |
 | **WiFi** | Reconnect; Add network (phone) ([section 3](#3-getting-on-wifi)) |
 | **Keyboard** | Pair; Forget bonds ([section 4](#4-pairing-a-keyboard)) |
 | **Effects** | CRT look: scanlines, phosphor color (color/green/amber), bold pop, wobble, wipe-in, collapse, static. Changes apply live. |

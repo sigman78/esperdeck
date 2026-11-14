@@ -37,6 +37,9 @@ void connect_checked(int idx, uint64_t now);
 extern const nav_screen_t host_screen;
 /** Open the page of profile @p idx (stored or the built-in fallback). */
 void enter_host(uint64_t now, int idx);
+/** Delete stored profile @p idx with its key files; the host pin goes
+ *  too unless @p keep_pin. Reloads the profile list. */
+void profile_delete_at(int idx, bool keep_pin);
 
 /* ---- question page (app_ask.c) ---- */
 typedef struct {
@@ -110,13 +113,8 @@ extern const nav_screen_t menu_screen;
 void menu_open(uint64_t now);
 /** Open the config hub directly from HOME (no session behind it). */
 void menu_open_config(uint64_t now);
-/** Delete stored profile @p idx with its key files; the host pin goes
- *  too unless @p keep_pin. Reloads the profile list. */
-void profile_delete_at(int idx, bool keep_pin);
 /** Switch to menu screen @p sc (menu_screen_t), resetting selection/arm. */
 void menu_goto(int sc);
-/** Discard a grabbed-but-not-dropped reorder (session drop safety). */
-void menu_abort_reorder(void);
 /** Post an action-feedback line under the menu tiles (0 ms = sticky). */
 void menu_note(uint64_t now, uint32_t ms, bool live_wifi, const char *text);
 

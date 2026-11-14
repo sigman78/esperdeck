@@ -1,8 +1,6 @@
 /*
  * app_menu.c is the overlay menu screen. It renders generic pages and
- * dispatches input over the app_menu_defs.c item tables. It also drives
- * the dynamic profile pickers: delete, edit, reorder. These are the
- * future ListView consumers (extensibility item 4).
+ * dispatches input over the app_menu_defs.c item tables.
  */
 
 #include "app_internal.h"
@@ -16,13 +14,11 @@ static struct {
     bool     armed;                 /* a destructive item needs a 2nd hit   */
     bool     fresh;                 /* page switched, not drawn yet         */
     bool     note_wifi;             /* live-track wifi_status_str()         */
-    int      reorder_grab;          /* grabbed stored index, -1 = none      */
-} s_menu = { .reorder_grab = -1 };
+} s_menu;
 #include "app_screens.h"
 #include "app_settings.h"
 #include "app_widgets.h"
 #include "app_menu_defs.h"
-#include "font.h"        /* font_height() — breadcrumb tap zone */
 #include "ssh_client.h"
 #include "wifi_manager.h"
 
@@ -37,9 +33,6 @@ static struct {
 static const menu_item_t *s_slot[MENU_MAX_TILES];
 static int s_slot_count;
 
-/* The profile pickers' scrolling list (geometry refreshed per render). */
-static ui_list_t s_pick;
-
 static int build_slots(const menu_page_t *p)
 {
     int n = 0;
@@ -51,21 +44,6 @@ static int build_slots(const menu_page_t *p)
     return s_slot_count = n;
 }
 
-/* Build a stored-profile picker's rows. Bodies "user@host" keep
- * same-named entries tellable. (No Back row — the breadcrumb is back.) */
-static int picker_items(const char *out[], const char *bodies[],
-                        char (*bodybuf)[28], int cap)
-{
-    int n = 0;
-    for (int i = 0; i < app.stored_count && n < cap; i++) {
-        snprintf(bodybuf[i], sizeof(bodybuf[i]), "%s@%s",
-                 app.profiles[i].user, app.profiles[i].host);
-        bodies[n] = bodybuf[i];
-        out[n++]  = app.profiles[i].name;
-    }
-    return n;
-}
-
 /* The header: the page title, the pages above it as a muted path (at
  * most two; the in-session MENU root drops off a depth-3 chain). The
  * whole bar is the back target. */
@@ -74,13 +52,6 @@ static void draw_header(ui_rect_t r, int sc)
     const char *seg[3];
     int n = 0, cur = sc;
     while (n < 3) {
-        if (menu_is_picker(cur)) {
-            seg[n++] = cur == MS_DELPROFILE  ? "DELETE"
-                     : cur == MS_EDITPROFILE ? "EDIT"
-                                             : "REORDER";
-            cur = MS_PROFILES;
-            continue;
-        }
         const menu_page_t *p = menu_page(cur);
         seg[n++] = p->title;
         if (cur == s_menu.root || p->back_to < 0) break;
@@ -100,106 +71,61 @@ static void render_menu(uint64_t now)
     ui_dim();   /* dim the live session behind the menu so it pops */
 
     const int sc = s_menu.screen;
-    const bool picker = menu_is_picker(sc);
-    const menu_page_t *p = picker ? NULL : menu_page(sc);
+    const menu_page_t *p = menu_page(sc);
 
     const ui_metrics_t m = ui_metrics();
     const ui_page_t pg = ui_page();
     draw_header(pg.header, sc);
     s_menu.fresh = false;
 
-    const char *pick_titles[MAX_PROFILES];
-    const char *pick_bodies[MAX_PROFILES];
-    char pick_buf[MAX_PROFILES][28];
     char vbuf[MENU_MAX_TILES][16];
     const int note_row = ui_rows() - 1;
 
-    if (picker) {
-        /* Scrolling two-line list under the breadcrumb (variable length —
-         * the one menu surface that scrolls, per ui-spec ListView). */
-        const int count = picker_items(pick_titles, pick_bodies, pick_buf,
-                                       NELEM(pick_titles));
-        s_pick.x     = (ui_cols() - 40) / 2;
-        s_pick.y     = 4;
-        s_pick.w     = 40;
-        s_pick.h     = note_row - 1 - s_pick.y;
-        s_pick.row_h = 3;              /* 2-row tile + 1 gutter */
-        s_pick.count = count;
-        s_pick.sel   = s_menu.sel;
-        ui_list_clamp(&s_pick);
-        s_menu.sel = s_pick.sel;
-        app.grid = (tilegrid_t){ 0 };  /* taps route through the list */
+    /* Two columns of one-line cards. The whole section fits one
+     * screen at every grid (fit-one-screen contract, asserted in
+     * app_menu_defs.c and tests/ui). */
+    const int count = build_slots(p);
+    const ui_grid_t g = ui_grid(pg.body, 2, m.unit, m.gutter, 0);
+    app.grid = (tilegrid_t){ 0 };  /* taps route through ui_hot */
+    if (s_menu.sel >= count) s_menu.sel = count ? count - 1 : 0;
 
-        const int vis = ui_list_visible(&s_pick);
-        for (int i = s_pick.top; i < s_pick.top + vis && i < count; i++) {
-            const char *confirm = (sc == MS_DELPROFILE)
-                                ? "CONFIRM delete?" : NULL;
-            const bool armed   = i == s_menu.sel && s_menu.armed && confirm;
-            const bool grabbed = (sc == MS_REORDER) &&
-                                 (i == s_menu.reorder_grab);
-            ui_pen(armed               ? OVERLAY_COL_RED
-                 : sc == MS_DELPROFILE ? OVERLAY_COL_AMBER
-                 : grabbed             ? OVERLAY_COL_GREEN
-                                       : OVERLAY_COL_CYAN);
-            ui_tile(s_pick.x, ui_list_row_y(&s_pick, i), s_pick.w - 2, 2,
-                    armed ? confirm : pick_titles[i], pick_bodies[i],
-                    i == s_menu.sel || grabbed);
+    for (int i = 0; i < count; i++) {
+        const menu_item_t *it = s_slot[i];
+        const bool armed = i == s_menu.sel && s_menu.armed && it->confirm;
+        ui_card_t c = {
+            .title  = it->label_fn ? it->label_fn(it->arg) : it->label,
+            .accent = it->color_fn ? it->color_fn(it->arg) : it->color,
+        };
+        vbuf[i][0] = '\0';
+        if (armed) {
+            /* The armed confirm reads as the one action on the page. */
+            c.title  = it->confirm;
+            c.accent = OVERLAY_COL_RED;
+            c.flags  = UI_CARD_ACTION | UI_CARD_LIT;
+        } else if (it->dim && it->dim(it->arg)) {
+            /* Still a region: activating it explains why (dim_note). */
+            c.flags = UI_CARD_DISABLED;
+        } else if (it->value) {
+            c.value = it->value(it->arg, vbuf[i], sizeof(vbuf[i]));
         }
+        ui_card(ui_grid_cell(&g, i), SLOT_ID(i), &c);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+
+    if (sc == MS_MAIN) {
+        /* Mainframe flex: deck uptime + link time. */
+        uint64_t up = (uint64_t)app.anim_frame * ANIM_PERIOD_MS / 1000;
+        char flex[48];
+        uint64_t now_ms = (uint64_t)app.anim_frame * ANIM_PERIOD_MS;
+        uint64_t ss = conn_session_start();
+        uint64_t lk = now_ms > ss ? (now_ms - ss) / 1000 : 0;
+        snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u   LINK %02u:%02u",
+                 (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
+                 (unsigned)(up % 60), (unsigned)(lk / 60),
+                 (unsigned)(lk % 60));
         ui_pen(OVERLAY_COL_BLUE);
-        ui_list_draw_scroll(&s_pick);
+        ui_puts((ui_cols() - (int)strlen(flex)) / 2, note_row - 1, flex, 0);
         ui_pen(OVERLAY_COL_DEFAULT);
-
-        if (app.stored_count == 0) {
-            const char *m = "no stored profiles";
-            ui_puts((ui_cols() - (int)strlen(m)) / 2, 5, m, 0);
-        }
-    } else {
-        /* Two columns of one-line cards. The whole section fits one
-         * screen at every grid (fit-one-screen contract, asserted in
-         * app_menu_defs.c and tests/ui). */
-        const int count = build_slots(p);
-        const ui_grid_t g = ui_grid(pg.body, 2, m.unit, m.gutter, 0);
-        app.grid = (tilegrid_t){ 0 };  /* taps route through ui_hot */
-        if (s_menu.sel >= count) s_menu.sel = count ? count - 1 : 0;
-
-        for (int i = 0; i < count; i++) {
-            const menu_item_t *it = s_slot[i];
-            const bool armed = i == s_menu.sel && s_menu.armed && it->confirm;
-            ui_card_t c = {
-                .title  = it->label_fn ? it->label_fn(it->arg) : it->label,
-                .accent = it->color_fn ? it->color_fn(it->arg) : it->color,
-            };
-            vbuf[i][0] = '\0';
-            if (armed) {
-                /* The armed confirm reads as the one action on the page. */
-                c.title  = it->confirm;
-                c.accent = OVERLAY_COL_RED;
-                c.flags  = UI_CARD_ACTION | UI_CARD_LIT;
-            } else if (it->dim && it->dim(it->arg)) {
-                /* Still a region: activating it explains why (dim_note). */
-                c.flags = UI_CARD_DISABLED;
-            } else if (it->value) {
-                c.value = it->value(it->arg, vbuf[i], sizeof(vbuf[i]));
-            }
-            ui_card(ui_grid_cell(&g, i), SLOT_ID(i), &c);
-        }
-        ui_pen(OVERLAY_COL_DEFAULT);
-
-        if (sc == MS_MAIN) {
-            /* Mainframe flex: deck uptime + link time. */
-            uint64_t up = (uint64_t)app.anim_frame * ANIM_PERIOD_MS / 1000;
-            char flex[48];
-            uint64_t now_ms = (uint64_t)app.anim_frame * ANIM_PERIOD_MS;
-            uint64_t ss = conn_session_start();
-            uint64_t lk = now_ms > ss ? (now_ms - ss) / 1000 : 0;
-            snprintf(flex, sizeof(flex), "UP %02u:%02u:%02u   LINK %02u:%02u",
-                     (unsigned)(up / 3600), (unsigned)(up / 60 % 60),
-                     (unsigned)(up % 60), (unsigned)(lk / 60),
-                     (unsigned)(lk % 60));
-            ui_pen(OVERLAY_COL_BLUE);
-            ui_puts((ui_cols() - (int)strlen(flex)) / 2, note_row - 1, flex, 0);
-            ui_pen(OVERLAY_COL_DEFAULT);
-        }
     }
 
     /* Feedback renders on the StatusBar (the shared toast) — the shell
@@ -245,11 +171,6 @@ void menu_goto(int sc)
     s_menu.armed  = false;
     s_menu.fresh  = true;
     ui_hot_reset();
-    if (sc == MS_REORDER) s_menu.reorder_grab = -1;
-    if (menu_is_picker(sc)) {
-        s_pick.top = 0;
-        ui_drag_reset(&s_pick.drag);
-    }
     const menu_page_t *p = menu_page(sc);
     if (p && p->on_open) p->on_open();
     if (p) build_slots(p);
@@ -258,32 +179,12 @@ void menu_goto(int sc)
     nav_invalidate();
 }
 
-/* Discard a grabbed-but-not-dropped reorder. The pending moves only
- * live in app.profiles until a drop saves them. A session drop can
- * yank the user out mid-drag; a later save would then silently
- * persist them. */
-void menu_abort_reorder(void)
-{
-    if (s_menu.screen == MS_REORDER && s_menu.reorder_grab >= 0) {
-        s_menu.reorder_grab = -1;
-        load_profiles();
-    }
-}
-
 /* Back one level. Every back path (Esc, tap-outside, Back tile) funnels here
  * so an armed confirm can never leak across pages. Back at the entry root
  * leaves the menu screen; anywhere else follows the page's back_to. */
 void menu_back(uint64_t now)
 {
-    if (s_menu.screen == MS_REORDER && s_menu.reorder_grab >= 0) {
-        menu_abort_reorder();
-        menu_clear_note();
-        nav_invalidate();
-        return;
-    }
-    const int to = menu_is_picker(s_menu.screen)
-                 ? MS_PROFILES
-                 : menu_page(s_menu.screen)->back_to;
+    const int to = menu_page(s_menu.screen)->back_to;
     if (s_menu.screen == s_menu.root || to == MENU_BACK_LEAVE) {
         s_menu.armed = false;
         nav_pop(now);
@@ -292,106 +193,13 @@ void menu_back(uint64_t now)
     }
 }
 
-/* Delete the stored profile at @p idx, plus its key files and TOFU
- * host pin. It deletes the files only if no other profile still
- * references them. @p keep_pin leaves the pin in place. This never
- * touches a live session, which runs on the connect module's snapshot
- * instead. */
-void profile_delete_at(int idx, bool keep_pin)
-{
-    if (idx < 0 || idx >= app.stored_count) return;
-    conn_profile_t doomed = app.profiles[idx];
-
-    conn_profile_t set[MAX_PROFILES];
-    int n = 0;
-    for (int i = 0; i < app.stored_count && n < MAX_PROFILES; i++)
-        if (i != idx) set[n++] = app.profiles[i];
-    storage_save_profiles(set, n);
-
-    if (doomed.auth == STORAGE_AUTH_KEY && doomed.key_id[0]) {
-        bool shared = false;
-        for (int i = 0; i < n; i++)
-            if (set[i].auth == STORAGE_AUTH_KEY &&
-                strcmp(set[i].key_id, doomed.key_id) == 0) { shared = true; break; }
-        if (!shared) storage_delete_key(doomed.key_id);
-    }
-
-    /* Drop the host's pin too when no surviving profile targets it — a
-     * re-added profile then gets a fresh TOFU prompt. */
-    bool host_shared = false;
-    for (int i = 0; i < n; i++)
-        if (set[i].port == doomed.port &&
-            strcmp(set[i].host, doomed.host) == 0) { host_shared = true; break; }
-    if (!host_shared && !keep_pin)
-        storage_known_host_delete(doomed.host, doomed.port);
-
-    load_profiles();
-}
-
-/* Persist the reorder picker's current in-RAM order and release the grab. */
-static void commit_reorder(uint64_t now)
-{
-    s_menu.reorder_grab = -1;
-    if (storage_save_profiles(app.profiles, app.stored_count) == ESP_OK)
-        menu_note(now, MENU_MSG_MS, false, "order saved");
-    else
-        menu_note(now, MENU_MSG_MS, false, "save failed");
-    load_profiles();
-}
-
-/* The three pickers share the profile-row shape but differ in what a
- * hit means. Back is the breadcrumb (no Back row). */
-static void picker_activate(int sc, int sel, bool was_armed, uint64_t now)
-{
-    if (sel < 0 || sel >= app.stored_count) return;   /* empty picker */
-
-    switch (sc) {
-    case MS_DELPROFILE:
-        if (!was_armed) {
-            s_menu.armed = true;
-            menu_note(now, 0, false, "activate again to delete");
-        } else {
-            profile_delete_at(sel, false);
-            if (s_menu.sel >= app.stored_count && s_menu.sel > 0) s_menu.sel--;
-            menu_note(now, MENU_MSG_MS, false, "profile deleted");
-        }
-        break;
-
-    case MS_EDITPROFILE:
-        enter_profile(now, sel);
-        return;
-
-    case MS_REORDER:
-        if (s_menu.reorder_grab < 0) {                         /* grab */
-            s_menu.reorder_grab = sel;
-            menu_note(now, 0, false, "arrows/tap move it - Enter drops");
-        } else {                                               /* drop */
-            if (sel != s_menu.reorder_grab) {
-                conn_profile_t t                  = app.profiles[sel];
-                app.profiles[sel]                 = app.profiles[s_menu.reorder_grab];
-                app.profiles[s_menu.reorder_grab] = t;
-                s_menu.sel = sel;
-            }
-            commit_reorder(now);
-        }
-        break;
-    }
-    nav_invalidate();
-}
-
 /* Generic activation: dim gates first, then the 2-step confirm arm, then
  * the item's own action. Replaces the per-page positional switch. */
 static void menu_activate(uint64_t now)
 {
-    const int sc  = s_menu.screen;
     const int sel = s_menu.sel;
     const bool was_armed = s_menu.armed;
     s_menu.armed = false;
-
-    if (menu_is_picker(sc)) {
-        picker_activate(sc, sel, was_armed, now);
-        return;
-    }
 
     const menu_item_t *it = (sel >= 0 && sel < s_slot_count) ? s_slot[sel]
                                                              : NULL;
@@ -525,84 +333,12 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                        uint64_t now)
 {
     (void)ch;
-    const bool picker = menu_is_picker(s_menu.screen);
     /* Esc / F12 / tap-outside all step back one level. */
     if (k == K_ESC || k == K_F12) {
         menu_back(now);
         return;
     }
-    if (!picker) {
-        page_input(ev, k, now);
-        return;
-    }
-    /* Right-edge drag scrolls a picker's list; selection follows the view. */
-    if (ev->type == CYBERDECK_INPUT_SCROLL) {
-        if (picker && ui_list_scroll(&s_pick, ev->dy)) {
-            s_menu.sel = s_pick.sel;
-            if (s_menu.armed) {
-                s_menu.armed = false;
-                menu_clear_note();
-            }
-            nav_invalidate();
-        }
-        return;
-    }
-    if (ev->type == CYBERDECK_INPUT_TAP) {
-        /* The BreadcrumbBar (rows 0-2) is the back target. */
-        if (ev->y / font_height() < 3) { menu_back(now); return; }
-        int slot = ui_list_hit(&s_pick, ev->x, ev->y);
-        if (slot < 0) { menu_back(now); return; }   /* tap outside: back */
-        /* Tapping a DIFFERENT tile than the armed one must disarm it
-         * first. Otherwise the stale arm fires this tile's destructive
-         * action unconfirmed. */
-        if (slot != s_menu.sel && s_menu.armed) {
-            s_menu.armed = false;
-            menu_clear_note();
-        }
-        s_menu.sel = s_pick.sel = slot;
-        menu_activate(now);                        /* == Enter */
-        return;
-    }
-    switch (k) {
-    case K_UP: case K_DOWN: case K_LEFT: case K_RIGHT:
-    case K_SCROLL_UP: case K_SCROLL_DOWN: {
-        /* A grabbed reorder row rides the arrows: each step swaps it
-         * with the neighbour (never with the trailing Back row). */
-        if (s_menu.screen == MS_REORDER && s_menu.reorder_grab >= 0) {
-            int ns = k == K_UP   ? s_menu.sel - 1
-                   : k == K_DOWN ? s_menu.sel + 1
-                                 : s_menu.sel;
-            if (ns != s_menu.sel && ns >= 0 && ns < app.stored_count &&
-                s_menu.sel < app.stored_count) {
-                conn_profile_t t         = app.profiles[ns];
-                app.profiles[ns]         = app.profiles[s_menu.sel];
-                app.profiles[s_menu.sel] = t;
-                s_menu.reorder_grab = ns;
-                s_menu.sel = s_pick.sel = ns;
-                ui_list_clamp(&s_pick);
-                nav_invalidate();
-            }
-            break;
-        }
-        int ns = s_menu.sel;
-        s_pick.sel = s_menu.sel;
-        if (ui_list_nav(&s_pick, k)) ns = s_pick.sel;
-        if (ns != s_menu.sel) {
-            s_menu.sel = ns;
-            if (s_menu.armed) {              /* moving away backs the arm down */
-                s_menu.armed = false;
-                menu_clear_note();
-            }
-            nav_invalidate();
-        }
-        break;
-    }
-    case K_ENTER:
-        menu_activate(now);
-        break;
-    default:
-        break;
-    }
+    page_input(ev, k, now);
 }
 
 const nav_screen_t menu_screen = {

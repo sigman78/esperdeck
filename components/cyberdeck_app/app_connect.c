@@ -222,9 +222,6 @@ void connect_arm_pinned(const char *fp, uint64_t now)
  * rattle. It shows link time and the drop reason ("" on a clean EOF). */
 void session_dropped(uint64_t now)
 {
-    /* A drop can yank the user out of a mid-drag reorder; discard the
-     * uncommitted permutation or a later delete would persist it. */
-    menu_abort_reorder();
     uint32_t dur = (uint32_t)((now - s_session_start) / 1000);
     const char *why = ssh_client_last_error();
     display_bell();

@@ -236,8 +236,8 @@ above its action row while storage holds eight.
 - `ui_pager()` puts the stepper in the header. No drag, no scroll
   track, no partial page.
 - A two-column picker of two-line cards holds all eight profiles at
-  every grid, so pickers do not page. The reorder picker has a ninth
-  row (Back) today; that step moves to the header first.
+  every grid, so pickers do not page. The shell has no profile picker
+  now; edit, delete and move live on the host page.
 - The stepper takes focus like any card. An arrow key does not turn the
   page at the edge of a grid yet.
 
@@ -282,8 +282,8 @@ one moves.
 1. Shell plumbing (done): `app_hot_input()` maps input events to
    `ui_hot_touch` / `ui_hot_key`; the navigation stack resets regions on
    every screen change. Focus restore per stack entry is still open.
-2. Menu hub and sections (done). The profile pickers still use the old
-   scrolling list; they move to a two-column card grid.
+2. Menu hub and sections (done). The profile pickers are gone; the host
+   page covers edit, delete and move.
 3. The parts and their gate (done): `ui_part.c`, the lab's slate
    screens, the parity gate.
 4. The slate colour pair, HOME, the host page and the question page

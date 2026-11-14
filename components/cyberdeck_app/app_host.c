@@ -144,6 +144,42 @@ static void host_move(int dir, uint64_t now)
     nav_invalidate();
 }
 
+/* Delete the stored profile at @p idx, plus its key files and TOFU
+ * host pin. It deletes the files only if no other profile still
+ * references them. @p keep_pin leaves the pin in place. This never
+ * touches a live session, which runs on the connect module's snapshot
+ * instead. */
+void profile_delete_at(int idx, bool keep_pin)
+{
+    if (idx < 0 || idx >= app.stored_count) return;
+    conn_profile_t doomed = app.profiles[idx];
+
+    conn_profile_t set[MAX_PROFILES];
+    int n = 0;
+    for (int i = 0; i < app.stored_count && n < MAX_PROFILES; i++)
+        if (i != idx) set[n++] = app.profiles[i];
+    storage_save_profiles(set, n);
+
+    if (doomed.auth == STORAGE_AUTH_KEY && doomed.key_id[0]) {
+        bool shared = false;
+        for (int i = 0; i < n; i++)
+            if (set[i].auth == STORAGE_AUTH_KEY &&
+                strcmp(set[i].key_id, doomed.key_id) == 0) { shared = true; break; }
+        if (!shared) storage_delete_key(doomed.key_id);
+    }
+
+    /* Drop the host's pin too when no surviving profile targets it; a
+     * re-added profile then gets a fresh TOFU prompt. */
+    bool host_shared = false;
+    for (int i = 0; i < n; i++)
+        if (set[i].port == doomed.port &&
+            strcmp(set[i].host, doomed.host) == 0) { host_shared = true; break; }
+    if (!host_shared && !keep_pin)
+        storage_known_host_delete(doomed.host, doomed.port);
+
+    load_profiles();
+}
+
 static void host_delete_yes(intptr_t arg, uint64_t now)
 {
     profile_delete_at((int)arg, true);      /* the pinned host key stays */

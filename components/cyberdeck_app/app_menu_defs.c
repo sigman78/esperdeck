@@ -1,7 +1,7 @@
 /*
  * app_menu_defs.c — the menu tree as data: page tables whose items carry
  * their own action/confirm/dim/value behavior. See app_menu_defs.h;
- * rendering and the dynamic pickers live in app_menu.c.
+ * rendering and input live in app_menu.c.
  */
 
 #include "app_menu_defs.h"
@@ -115,43 +115,8 @@ static const menu_item_t config_items[] = {
       .dim = dim_no_keystore, .dim_note = "not in this build" },
 };
 
-static void act_prof_add(intptr_t a, uint64_t now)
-{
-    (void)a;
-    if (app.stored_count >= MAX_PROFILES - 1) {
-        menu_note(now, MENU_MSG_MS, false, "profile list full");
-        return;
-    }
-    enter_profile(now, -1);
-}
-
-static void act_prof_edit(intptr_t a, uint64_t now)
-{
-    (void)a;
-    if (app.stored_count == 0) {
-        menu_note(now, MENU_MSG_MS, false, "no stored profiles");
-        return;
-    }
-    menu_goto(MS_EDITPROFILE);
-}
-
-static void act_prof_reorder(intptr_t a, uint64_t now)
-{
-    (void)a;
-    if (app.stored_count < 2) {
-        menu_note(now, MENU_MSG_MS, false, "nothing to reorder");
-        return;
-    }
-    menu_goto(MS_REORDER);   /* entering the picker resets the grab */
-}
-
 static const menu_item_t profiles_items[] = {
-    { .label = "Add (type here)", .color = OVERLAY_COL_CYAN, .action = act_prof_add },
-    { .label = "Edit",            .color = OVERLAY_COL_CYAN, .action = act_prof_edit },
-    { .label = "Reorder",         .color = OVERLAY_COL_CYAN, .action = act_prof_reorder },
-    { .label = "Delete",          .color = OVERLAY_COL_RED,  .action = act_goto,
-      .arg = MS_DELPROFILE },
-    { .label = "Import",          .color = OVERLAY_COL_CYAN, .action = act_goto,
+    { .label = "Import", .color = OVERLAY_COL_CYAN, .action = act_goto,
       .arg = MS_IMPORT },
 };
 
@@ -524,16 +489,10 @@ static const menu_page_t PAGES[] = {
     [MS_KEYSTORE]  = { .title = "KEYSTORE", .items = ks_items,
                        .count = NELEM(ks_items), .back_to = MS_CONFIG,
                        .on_open = ks_on_open },
-    /* MS_DELPROFILE / MS_EDITPROFILE / MS_REORDER: dynamic pickers. */
 };
 
 const menu_page_t *menu_page(int sc)
 {
     if (sc < 0 || sc >= (int)NELEM(PAGES) || !PAGES[sc].items) return NULL;
     return &PAGES[sc];
-}
-
-bool menu_is_picker(int sc)
-{
-    return sc == MS_DELPROFILE || sc == MS_EDITPROFILE || sc == MS_REORDER;
 }

@@ -65,20 +65,6 @@ SCENARIOS = {
         "|key:down|key:down|key:down|key:enter"
         "|wait:400|expect-text:SYSTEM|key:esc|wait:400"
         "|expect-text:CONFIGURATION|key:esc|wait:500|expect:home|quit",
-    # Profiles -> Edit picker: the scrolling ListView renders, arrow nav
-    # moves the selection, the breadcrumb chain unwinds picker ->
-    # PROFILES -> CONFIG -> HOME. Navigation only - Enter on a profile
-    # row would open the editor.
-    "profile-picker":
-        "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
-        "|wait:500|expect:menu"
-        "|expect-text:CONFIGURATION"
-        "|key:enter|wait:400|expect-text:Add (type here)"
-        "|key:right|key:enter|wait:400|expect-text:CONFIGURATION / PROFILES"
-        "|key:down|key:down|key:up|wait:300|expect-text:CONFIGURATION / PROFILES"
-        "|key:esc|wait:400|expect-text:Add (type here)"
-        "|key:esc|wait:400|expect-text:MOTION FX"
-        "|key:esc|wait:500|expect:home|quit",
     # Touch: a finger-down alone does nothing. A long press on a tile
     # opens its host page. Taps walk the menu; its header steps back.
     # Points (100x30 grid): 130,64 first HOME tile; 744,24 Setup pill;
@@ -89,7 +75,7 @@ SCENARIOS = {
         "|key:esc|wait:500|expect:home|tap:744,24|wait:500|expect:menu"
         "|expect-text:MOTION FX|press:150,90|wait:300|expect-text:MOTION FX"
         "|release:150,90|press:150,90|tap:150,90|wait:400"
-        "|expect-text:Add (type here)|tap:10,8|wait:400"
+        "|expect-text:Import|tap:10,8|wait:400"
         "|expect-text:MOTION FX|tap:10,8|wait:500|expect:home|quit",
     # One tap on a tile connects. The fixture edit points it at a closed
     # loopback port.

@@ -3,8 +3,8 @@
  *
  * A page is a table of menu_item_t. Behavior (action / confirm / dim /
  * value) rides the table, not a positional switch. Tables and their
- * action callbacks live in app_menu_defs.c; rendering, input and the
- * dynamic profile pickers in app_menu.c. (extensibility.md item 3)
+ * action callbacks live in app_menu_defs.c; rendering and input in
+ * app_menu.c. (extensibility.md item 3)
  */
 
 #pragma once
@@ -16,7 +16,7 @@
 typedef enum {
     MS_MAIN = 0,   /* in-session root: Resume / Disconnect / Configuration */
     MS_CONFIG,     /* hub: two-column section tiles (ui-spec rendition) */
-    MS_PROFILES,   /* Add / Edit / Reorder / Delete / Import > */
+    MS_PROFILES,   /* Import > */
     MS_IMPORT,     /* SoftAP from a phone, or web import from a PC */
     MS_WIFI,       /* Reconnect / Add network */
     MS_KEYBOARD,   /* Pair / Forget bonds */
@@ -25,9 +25,6 @@ typedef enum {
     MS_FX_MOTION,  /* value tiles: motion fx (wobble/wipe/collapse/static) */
     MS_FONT,       /* value tiles: terminal font size, applied on reboot     */
     MS_KEYSTORE,   /* contextual: lock now / set code / remove code          */
-    MS_DELPROFILE, /* dynamic: pick a stored profile to delete               */
-    MS_EDITPROFILE,/* dynamic: pick a stored profile to edit                 */
-    MS_REORDER,    /* dynamic: grab a profile, move it, drop it              */
 } menu_screen_t;
 
 /* One tile. Static parts sit inline. Dynamic parts are callbacks that
@@ -72,11 +69,8 @@ typedef struct {
  * checked against the tables by a static assert in app_menu_defs.c). */
 #define MENU_MAX_TILES 12
 
-/** The page table for @p sc, or NULL for the dynamic pickers. */
+/** The page table for @p sc, or NULL for an unknown page. */
 const menu_page_t *menu_page(int sc);
-
-/** True for the dynamically built stored-profile pickers. */
-bool menu_is_picker(int sc);
 
 /* app_menu.c internals the tables call back into. Shell-wide callers use
  * menu_goto/menu_note (app_screens.h); these stay menu-private. */
