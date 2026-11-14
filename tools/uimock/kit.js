@@ -1,6 +1,6 @@
 // kit.js — the UI kit's drawing surface in JS, for design work without a
-// C build. It ports layout and the Slab widgets from components/ui line
-// for line. kitcheck.mjs proves the port against the lab's dump.
+// C build. It ports layout, the status row and the text helpers from
+// components/ui. kitcheck.mjs proves the port against the lab's dump.
 // The surface enforces the device rules. A cell has one style and one
 // accent. The surface rejects a style outside the vocabulary.
 
@@ -24,13 +24,8 @@ export const G = Object.freeze({
   BULLET: 0x2022,
 });
 export const LEFT = 0, CENTER = 1, RIGHT = 2;
-export const CARD = Object.freeze({
-  CENTER: 0x01, DISABLED: 0x02, CHECKED: 0x04, NAV: 0x08, ACTION: 0x10, LIT: 0x20,
-});
-export const INPUT = Object.freeze({ MASK: 0x01, EDITING: 0x02, CYCLE: 0x04 });
 export const ID_BACK = 0xFFFF;
 export const COMPACT = 0, REGULAR = 1, WIDE = 2;
-export const PAGER_W = 15;
 
 const div = (a, b) => Math.trunc(a / b);
 const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
@@ -354,11 +349,6 @@ export class Ui {
     for (let y = r.y; y < r.y + r.h; y++)
       for (let x = r.x; x < r.x + r.w; x++) this.putch(x, y, cp, style);
   }
-  hline(col, row, width, l, f, r) {
-    this.putch(col, row, l, S.TEXT);
-    for (let i = 1; i < width - 1; i++) this.putch(col + i, row, f, S.TEXT);
-    this.putch(col + width - 1, row, r, S.TEXT);
-  }
   // Text in a one-row rect; an overlong string ends in an ellipsis.
   text(r, s, style, align = LEFT) {
     if (empty(r) || s == null) return;
@@ -407,217 +397,7 @@ export class Ui {
   focused(id) { return this.inter.ring && this.inter.focus === id; }
   pressed(id) { return this.inter.down === id; }
 
-  // -- page scaffolding (ui_widgets.c)
-
   metrics() { return metricsFor(this.cols, this.rows); }
-  page() {
-    const m = this.metrics(), r = rect(0, 0, this.cols, this.rows);
-    const header = cutTop(r, m.header), status = cutBottom(r, 1);
-    return { header, status, body: inset(r, m.margin, 0) };
-  }
-
-  // -- widgets, Slab rendition
-
-  _look(accent, flags, focus, down) {
-    const off = flags & CARD.DISABLED;
-    if (flags & CARD.LIT) down = true;
-    const k = { pen: accent, value: S.WELL, ring: false };
-    if (off && !focus) {
-      k.fill = k.title = k.detail = S.WELL;
-      k.edge = S.WELL_EDGE;
-    } else if (focus || down) {
-      k.fill = k.detail = S.FOCUS;
-      k.title = S.FOCUS | BOLD;
-      k.edge = S.FOCUS_EDGE;
-      k.ring = focus;
-    } else {
-      k.fill = k.detail = S.BAR;
-      k.title = S.BAR | BOLD;
-      k.edge = S.BAR_EDGE;
-    }
-    return k;
-  }
-
-  // Paint the surface; returns the rect its content may use.
-  _paint(r, k) {
-    const edged = r.h >= 3;
-    this.pen(k.pen);
-    for (let y = 0; y < r.h; y++) {
-      let cp = 0x20, st = k.fill;
-      if (edged && y === 0) { cp = G.HALF_DN; st = k.edge; }
-      if (edged && y === r.h - 1) { cp = G.HALF_UP; st = k.edge; }
-      for (let x = 0; x < r.w; x++) this.putch(r.x + x, r.y + y, cp, st);
-    }
-    const inn = edged ? inset(r, 0, 1) : { ...r };
-    if (k.ring) {
-      this.pen(C.WHITE);
-      for (let y = 0; y < r.h; y++) {
-        const cp = !edged ? G.LHALF : y === 0 ? G.QUAD_LL
-                 : y === r.h - 1 ? G.QUAD_UL : G.LHALF;
-        this.putch(r.x, r.y + y, cp, S.BAR_EDGE);
-      }
-      this.pen(k.pen);
-    }
-    return inset(inn, r.w >= 8 ? 2 : 1, 0);
-  }
-
-  // The one tappable surface. c: { title, detail, value, accent, flags }.
-  card(r, id, c, act = null) {
-    if (empty(r)) return;
-    const flags = c.flags | 0, accent = c.accent | 0;
-    const off = flags & CARD.DISABLED;
-    this.hot(r, id, act);
-    const k = this._look(accent, flags, this.focused(id), !off && this.pressed(id));
-    const inn = this._paint(r, k);
-    if (empty(inn)) return;
-    const title = c.title || '';
-
-    if (c.value) {
-      const vl = chars(c.value).length;
-      const room = inn.w + 1 - chars(title).length;
-      let ww = vl + 4 < 8 ? 8 : vl + 4;
-      if (ww > room) ww = room < 8 ? 8 : room;
-      const w = cutRight(inn, ww - 2);
-      for (let y = r.y; y < r.y + r.h; y++) {
-        const top = r.h >= 3 && y === r.y, bot = r.h >= 3 && y === r.y + r.h - 1;
-        for (let x = w.x; x < w.x + w.w + 2; x++)
-          this.putch(x, y, top ? G.HALF_DN : bot ? G.HALF_UP : 0x20,
-                     top || bot ? S.WELL_EDGE : S.WELL);
-      }
-      this.text(rect(w.x + 1, inn.y + div(inn.h - 1, 2), w.w - 1, 1), c.value, k.value, RIGHT);
-      cutRight(inn, 1);
-    } else if (flags & (CARD.NAV | CARD.CHECKED)) {
-      const w = cutRight(inn, 1), chk = flags & CARD.CHECKED;
-      this.putch(w.x, inn.y + div(inn.h - 1, 2), chk ? G.CHECK : G.CHEVRON,
-                 chk ? k.title : k.detail);
-      cutRight(inn, 1);
-    }
-
-    const two = !!c.detail && inn.h >= 2;
-    const ty = inn.y + div(inn.h - (two ? 2 : 1), 2);
-    const al = flags & CARD.CENTER ? CENTER : LEFT;
-    this.text(rect(inn.x, ty, inn.w, 1), title, k.title, al);
-    if (two) this.text(rect(inn.x, ty + 1, inn.w, 1), c.detail, k.detail, al);
-    this.pen(C.DEFAULT);
-  }
-
-  btn(r, id, label, accent, act = null) {
-    this.card(r, id, { title: label, accent, flags: CARD.CENTER | CARD.ACTION }, act);
-  }
-
-  // Page title bar. With `back`, the whole bar is the back target.
-  header(r, path, title, note, back, act = null) {
-    if (empty(r)) return;
-    const m = this.metrics().margin, row = r.y + div(r.h, 2);
-    const lit = back && (this.focused(ID_BACK) || this.pressed(ID_BACK));
-    if (back) this.hot(r, ID_BACK, act);
-    const k = this._look(C.BLUE, 0, false, lit);
-    let inn = this._paint({ ...r }, k);
-    inn = inset(inn, m - 1, 0);
-    if (back) {
-      this.putch(inn.x, row, G.POINT_L, k.title);
-      cutLeft(inn, 3);
-    }
-    if (note) {
-      const nl = chars(note).length;
-      const n = cutRight(inn, nl + 1 < inn.w ? nl + 1 : inn.w);
-      this.text(rect(n.x, row, n.w, 1), note, k.detail, RIGHT);
-    }
-    if (path) {
-      const pl = chars(path).length;
-      if (pl + 3 < div(inn.w, 2) + 3) {
-        this.text(rect(inn.x, row, pl, 1), path, k.detail, LEFT);
-        this.putch(inn.x + pl + 1, row, '/', k.detail);
-        cutLeft(inn, pl + 3);
-      }
-    }
-    this.text(rect(inn.x, row, inn.w, 1), title, k.title, LEFT);
-    this.pen(C.DEFAULT);
-  }
-
-  // Draws `< 1/2 >` at the right end of a header. Returns the rest.
-  pager(header, prev, next, page, pages, acts = {}) {
-    if (pages <= 1 || header.w < PAGER_W + 8) return header;
-    const r = cutRight(header, PAGER_W), n = cutRight(r, 5), p = cutLeft(r, 5);
-    this.card(p, prev, { title: '<', accent: C.BLUE,
-      flags: CARD.CENTER | (page > 0 ? 0 : CARD.DISABLED) }, acts.prev);
-    this.card(n, next, { title: '>', accent: C.BLUE,
-      flags: CARD.CENTER | (page < pages - 1 ? 0 : CARD.DISABLED) }, acts.next);
-    this.pen(C.BLUE);
-    this.fill(r, 0x20, S.TEXT);
-    this.text(rect(r.x, r.y + div(r.h, 2), r.w, 1), `${page + 1}/${pages}`,
-              S.TEXT | BOLD, CENTER);
-    this.pen(C.DEFAULT);
-    return header;
-  }
-
-  // A labeled value: plain, masked, editing (caret) or cycle.
-  input(r, id, label, text, cursor, flags, act = null) {
-    if (empty(r)) return;
-    this.hot(r, id, act);
-    const edit = flags & INPUT.EDITING;
-    const k = this._look(C.CYAN, 0, edit || this.focused(id), this.pressed(id));
-    const inn = this._paint(r, k);
-    if (empty(inn)) return;
-    const row = inn.y + div(inn.h - 1, 2);
-    if (flags & INPUT.CYCLE) {
-      this.putch(inn.x + inn.w - 1, row, G.CHEVRON, k.detail);
-      cutRight(inn, 2);
-    }
-    const ll = chars(label).length, lw = ll + 2 < 7 ? 7 : ll + 2;
-    this.text(rect(inn.x, row, lw - 1, 1), label, k.detail, LEFT);
-    cutLeft(inn, lw);
-    if (inn.w < 2) return;
-    const cs = chars(text), len = cs.length;
-    cursor = clamp(cursor, 0, len);
-    const start = edit && cursor > inn.w - 1 ? cursor - (inn.w - 1) : 0;
-    for (let i = 0; i < inn.w; i++) {
-      const idx = start + i;
-      const cp = idx < len ? (flags & INPUT.MASK ? '*' : cs[idx]) : ' ';
-      let st = k.title;
-      if (edit && idx === cursor) { this.pen(C.WHITE); st = S.BAR; }
-      this.putch(inn.x + i, row, cp, st);
-      this.pen(k.pen);
-    }
-    this.pen(C.DEFAULT);
-  }
-
-  // One-row gauge in eighths of a cell.
-  meter(r, value, max, accent) {
-    if (empty(r) || max <= 0) return;
-    value = clamp(value, 0, max);
-    const eighths = div(value * r.w * 8, max);
-    this.pen(accent);
-    for (let i = 0; i < r.w; i++) {
-      const f = eighths - i * 8;
-      this.putch(r.x + i, r.y, f >= 8 ? G.BLOCK : f > 0 ? 0x2590 - f : 0x20, S.WELL);
-    }
-    this.pen(C.DEFAULT);
-  }
-
-  // A window over a dimmed backdrop; returns its content rect.
-  dialog(w, h, title, accent) {
-    this.dim();
-    const r = center(rect(0, 0, this.cols, this.rows), w, h);
-    this.pen(accent);
-    const x1 = r.x + r.w - 1, y1 = r.y + r.h - 1;
-    for (let y = r.y; y <= y1; y++)
-      for (let x = r.x; x <= x1; x++) {
-        let cp = 0x20, st = S.TEXT;
-        if (y === r.y) { cp = G.HALF_DN; st = S.PANEL_EDGE; }
-        else if (y <= r.y + 2) st = S.PANEL;
-        else if (y === y1) { cp = x === r.x ? 0x2599 : x === x1 ? 0x259F : G.HALF_DN; st = S.PANEL_EDGE; }
-        else if (x === r.x) { cp = G.LHALF; st = S.PANEL_EDGE; }
-        else if (x === x1) { cp = G.RHALF; st = S.PANEL_EDGE; }
-        this.putch(x, y, cp, st);
-      }
-    this.putch(r.x + 2, r.y + 1, G.LHALF, S.PANEL);
-    this.text(rect(r.x + 4, r.y + 1, r.w - 6, 1), title, S.PANEL | BOLD, LEFT);
-    this.pen(C.DEFAULT);
-    const inn = inset(r, 2, 1);
-    cutTop(inn, 3);
-    return inn;
-  }
 }
 
 // Draw a screen in a fixed pose, as the lab does for a screenshot.

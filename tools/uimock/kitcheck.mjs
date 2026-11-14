@@ -1,9 +1,9 @@
 // kitcheck.mjs — proves the kit.js port and gates the C kit. It rebuilds
-// every baseline screen in the lab's screenshot pose. It compares cells
+// every frame of MO_GATE in the lab's screenshot pose. It compares cells
 // and hit regions with the lab's dump. A cell is codepoint, bold and
 // palette entry. It also rebuilds each dumped style table with theme.js.
-// For the mo-* frames the sketch is the reference. The lab must draw
-// every frame of MO_GATE, and no other mo-* frame.
+// The sketch is the reference. The lab must draw every frame of
+// MO_GATE, and no other mo-* frame.
 //
 //   node tools/uimock/kitcheck.mjs [data dir]
 
@@ -11,7 +11,6 @@ import { readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { drawPosed } from './kit.js';
-import { BASELINE } from './baseline.js';
 import { MO_SKETCHES, MO_GATE } from './sketches-mo.js';
 import { themeBuild, THEMES } from './theme.js';
 
@@ -49,22 +48,12 @@ for (const size of ['8x16', '10x20', '12x24']) {
   total++;
   if (!existsSync(labPath)) { fail(`${size}: no lab dump`, []); continue; }
   const lab = JSON.parse(readFileSync(labPath, 'utf8'));
-  const t = lab.themes.default;
   for (const [name, ref] of Object.entries(lab.themes)) {
     total++;
     const mine = themeBuild(ref.fg, ref.bg).table;
     const at = mine.findIndex((v, i) => v !== ref.table[i]);
     if (at >= 0 || mine.length !== ref.table.length)
       fail(`${size} theme ${name}`, [`entry ${at} is ${mine[at]}, lab has ${ref.table[at]}`]);
-  }
-  for (const scr of BASELINE) {
-    const ref = lab.screens.find((s) => s.name === scr.name);
-    if (!ref) continue;
-    total++;
-    const app = { state: {}, note: '', fg: t.fg, bg: t.bg,
-                  go() {}, back() {}, home() {} };
-    const errs = differences(drawPosed(scr, lab.cols, lab.rows, app), ref, lab);
-    if (errs.length) fail(`${size} ${scr.name}`, errs);
   }
 
   // The mo-* gate. A frame the lab does not draw fails, never skips.

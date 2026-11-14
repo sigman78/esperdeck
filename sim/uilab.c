@@ -1,8 +1,9 @@
 /*
- * uilab.c — the UI kit's gallery: mock screens composed only from kit
- * calls, rendered through the real display path. Headless, it writes one
- * BMP per screen (--out DIR); with a window, the mouse is the finger and
- * the arrow keys drive focus. Host-only tool; nothing here ships.
+ * uilab.c — the UI kit's lab driver. The mock screens (uilab_mo.c) use
+ * only kit calls and render through the real display path. Headless,
+ * it writes one BMP per screen (--out DIR). With a window, the mouse
+ * is the finger and the arrow keys drive focus. Host-only tool;
+ * nothing here ships.
  *
  *   cyberdeck_uilab [--font 8x16|10x20|12x24] [--out DIR] [--dump DIR]
  *                   [--screen NAME]
@@ -23,21 +24,6 @@
 #include <string.h>
 
 #define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
-
-/* Region ids. Each screen owns a base; list rows add their index. */
-enum {
-    ID_PROFILE = 100, ID_NEW = 150, ID_LOCK, ID_SETTINGS,
-    ID_HUB = 200, ID_VALUE = 300, ID_ROW = 400,
-    ID_FIELD = 500, ID_AUTH = 510, ID_SAVE, ID_CANCEL,
-    ID_KEY = 600, ID_PIN = 700, ID_OK = 800, ID_NO,
-    ID_PREV = 900, ID_NEXT,
-};
-
-static int s_page;   /* shared by the paged lab screens */
-
-static char s_note[48] = "";          /* last action, shown on the status row */
-static char s_osk[40]  = "192.168.1.";
-static bool s_shift    = false;
 
 /* ---- fake terminal backdrop for the modal screens ------------------- */
 
@@ -74,42 +60,6 @@ static void term_blank(int cols, int rows)
                                        .bg_color = LAB_BG };
 }
 
-/* Stand-in for the shell's StatusBar: chips left, clock right. */
-static void lab_status(ui_rect_t r)
-{
-    const uint8_t bar = UI_BAR;
-    ui_pen(OVERLAY_COL_BLUE);
-    for (int x = r.x; x < r.x + r.w; x++)
-        ui_putch(x, r.y, ' ', bar);
-
-    int x = r.x + 1;
-    ui_pen(OVERLAY_COL_GREEN);
-    ui_puts(x, r.y, " NET ", UI_FOCUS | UI_BOLD);
-    x += 5;
-    static const uint16_t STAIR[4] = { 0x2582, 0x2584, 0x2586, 0x2588 };
-    for (int i = 0; i < 4; i++)
-        ui_putch(x++, r.y, i < 3 ? STAIR[i] : ' ', UI_FOCUS | UI_BOLD);
-    ui_putch(x++, r.y, ' ', UI_FOCUS);
-    ui_pen(OVERLAY_COL_BLUE);
-    ui_putch(x++, r.y, ' ', bar);
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_puts(x, r.y, " KBD ", UI_FOCUS | UI_BOLD);
-    x += 5;
-    ui_pen(OVERLAY_COL_AMBER);
-    ui_putch(x++, r.y, 'C', UI_FOCUS | UI_BOLD);
-    ui_pen(OVERLAY_COL_CYAN);
-    ui_puts(x, r.y, "N ", UI_WELL | UI_BOLD);
-    x += 3;
-
-    if (s_note[0]) {
-        ui_pen(OVERLAY_COL_BLUE);
-        ui_text(ui_rect(x, r.y, r.x + r.w - 9 - x, 1), s_note, bar, UI_LEFT);
-    }
-    ui_pen(OVERLAY_COL_BLUE);
-    ui_puts(r.x + r.w - 8, r.y, " 14:07 ", UI_FOCUS | UI_BOLD);
-    ui_pen(OVERLAY_COL_DEFAULT);
-}
-
 const lab_profile_t PROFILES[LAB_NPROFILES] = {
     { "homelab",   "root@192.168.1.10:22" },
     { "build-box", "ci@build.lan:22  key" },
@@ -121,323 +71,6 @@ const lab_profile_t PROFILES[LAB_NPROFILES] = {
     { "bastion",   "ops@bastion.example.org:22  key" },
 };
 
-/* HOME at the storage limit (8 profiles), three ways. @p row: the
- * bottom action row, else Settings is one more tile. @p two: two-line
- * cards, else one line with the address as the value. */
-static void home_variant(bool row, bool two)
-{
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_rect_t body = p.body;
-    ui_rect_t acts = row ? ui_cut_bottom(&body, m.unit) : ui_rect(0, 0, 0, 0);
-    const ui_grid_t g = ui_grid(body, m.cls == UI_WIDE ? 3 : 2,
-                                two ? 4 : m.unit, m.gutter, 0);
-    const int count = NELEM(PROFILES) + (row ? 0 : 1);
-    const int per   = ui_grid_capacity(&g);
-    const int pages = ui_page_count(count, per);
-    s_page = ui_page_clamp(s_page, count, per);
-
-    ui_rect_t head = ui_pager(p.header, ID_PREV, ID_NEXT, s_page, pages);
-    ui_header(head, NULL, "CYBERDECK", pages > 1 ? NULL : "v0.9", false);
-
-    for (int slot = 0; slot < per; slot++) {
-        const int i = s_page * per + slot;
-        if (i >= count) break;
-        if (i == NELEM(PROFILES)) {
-            ui_card(ui_grid_cell(&g, slot), ID_SETTINGS, &(ui_card_t){
-                .title = "Settings",
-                .detail = two ? "wifi - profiles - keys" : NULL,
-                .accent = OVERLAY_COL_CYAN, .flags = UI_CARD_NAV });
-            continue;
-        }
-        ui_card(ui_grid_cell(&g, slot), (ui_id_t)(ID_PROFILE + i), &(ui_card_t){
-            .title  = PROFILES[i].name,
-            .detail = two ? PROFILES[i].where : NULL,
-            .value  = two ? NULL : PROFILES[i].where,
-            .accent = prof_accent(PROFILES[i].name) });
-    }
-    if (row) {
-        const ui_grid_t a = ui_grid(acts, 3, m.unit, m.gutter, 0);
-        ui_btn(ui_grid_cell(&a, 0), ID_NEW,      "+ New profile", OVERLAY_COL_GREEN);
-        ui_btn(ui_grid_cell(&a, 1), ID_LOCK,     "Lock deck",     OVERLAY_COL_AMBER);
-        ui_btn(ui_grid_cell(&a, 2), ID_SETTINGS, "Settings",      OVERLAY_COL_CYAN);
-    }
-    lab_status(p.status);
-}
-
-static void scr_home(void)       { home_variant(true,  true);  }
-static void scr_home_tile(void)  { home_variant(false, true);  }
-static void scr_home_1line(void) { home_variant(true,  false); }
-
-static void scr_hub(void)
-{
-    static const struct { const char *t, *d; } HUB[] = {
-        { "PROFILES", "add - edit - order" }, { "WIFI",      "HomeAP  -55 dBm" },
-        { "KEYBOARD", "K380 connected" },     { "CRT FX",    "scanlines - phosphor" },
-        { "MOTION FX", "glow - wipe" },       { "FONT",      "8x16  100x30" },
-        { "SYSTEM",   "saver - reset" },      { "KEYSTORE",  "unlocked" },
-    };
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_header(p.header, NULL, "SETTINGS", NULL, true);
-    ui_grid_t g = ui_grid(p.body, 2, 4, m.gutter, 0);
-    for (int i = 0; i < NELEM(HUB); i++)
-        ui_card(ui_grid_cell(&g, i), (ui_id_t)(ID_HUB + i), &(ui_card_t){
-            .title = HUB[i].t, .detail = HUB[i].d,
-            .accent = OVERLAY_COL_CYAN, .flags = UI_CARD_NAV });
-    lab_status(p.status);
-}
-
-static void scr_section(void)
-{
-    static const struct { const char *t, *v; uint8_t f; } ITEMS[] = {
-        { "Scanlines", "on", 0 },       { "Phosphor", "color", 0 },
-        { "Bold pop", "on", 0 },        { "Glow build", "strong", 0 },
-        { "Screen saver", "5 min", 0 }, { "Edge scroll", "off", UI_CARD_DISABLED },
-    };
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_header(p.header, "SETTINGS", "CRT FX", NULL, true);
-    ui_grid_t g = ui_grid(p.body, 2, m.unit, m.gutter, 0);
-    for (int i = 0; i < NELEM(ITEMS); i++)
-        ui_card(ui_grid_cell(&g, i), (ui_id_t)(ID_VALUE + i), &(ui_card_t){
-            .title = ITEMS[i].t, .value = ITEMS[i].v,
-            .accent = OVERLAY_COL_CYAN, .flags = ITEMS[i].f });
-    lab_status(p.status);
-}
-
-/* A profile picker at the storage limit: two columns hold all eight at
- * every grid, so it never pages. */
-static void scr_list(void)
-{
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_header(p.header, "PROFILES", "EDIT", NULL, true);
-    const ui_grid_t g = ui_grid(p.body, 2, 4, m.gutter, 0);
-    for (int i = 0; i < NELEM(PROFILES) && i < ui_grid_capacity(&g); i++)
-        ui_card(ui_grid_cell(&g, i), (ui_id_t)(ID_ROW + i), &(ui_card_t){
-            .title = PROFILES[i].name, .detail = PROFILES[i].where,
-            .accent = prof_accent(PROFILES[i].name), .flags = UI_CARD_NAV });
-    lab_status(p.status);
-}
-
-static void scr_form(void)
-{
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_header(p.header, "PROFILES", "NEW PROFILE", NULL, true);
-    ui_rect_t body = p.body;
-    ui_rect_t acts = ui_cut_bottom(&body, m.unit);
-
-    ui_grid_t g = ui_grid(body, 2, m.unit, m.gutter, 0);
-    ui_input(ui_grid_cell(&g, 0), ID_FIELD + 0, "Name", "homelab", 0, 0);
-    ui_input(ui_grid_cell(&g, 1), ID_FIELD + 1, "Host", "192.168.1.", 10,
-             UI_INPUT_EDITING);
-    ui_input(ui_grid_cell(&g, 2), ID_FIELD + 2, "Port", "22", 0, 0);
-    ui_input(ui_grid_cell(&g, 3), ID_FIELD + 3, "User", "root", 0, 0);
-    ui_input(ui_grid_cell(&g, 4), ID_AUTH, "Auth", "password", 0,
-             UI_INPUT_CYCLE);
-    ui_input(ui_grid_cell(&g, 5), ID_FIELD + 4, "Pass", "hunter2", 0,
-             UI_INPUT_MASK);
-
-    ui_grid_t a = ui_grid(ui_center(acts, acts.w * 2 / 3, m.unit), 2, m.unit,
-                          m.gutter, 0);
-    ui_btn(ui_grid_cell(&a, 0), ID_SAVE,   "Save",   OVERLAY_COL_GREEN);
-    ui_btn(ui_grid_cell(&a, 1), ID_CANCEL, "Cancel", OVERLAY_COL_BLUE);
-    lab_status(p.status);
-}
-
-/* On-screen keyboard rows; \b backspace, \t shift, \n done, \1 symbols. */
-static const char *const OSK_ROWS[4] = {
-    "qwertyuiop", "asdfghjkl\b", "\tzxcvbnm.-", "\1 @\n",
-};
-
-static void scr_osk(void)
-{
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_header(p.header, "NEW PROFILE", "HOST", NULL, true);
-    ui_rect_t body = p.body;
-    ui_input(ui_cut_top(&body, m.unit), ID_FIELD, "Host", s_osk,
-             (int)strlen(s_osk), UI_INPUT_EDITING);
-
-    const int kw = body.w / 10;
-    body = ui_center(body, kw * 10, 4 * m.unit);
-    for (int r = 0; r < 4; r++) {
-        ui_rect_t row = ui_cut_top(&body, m.unit);
-        for (const char *k = OSK_ROWS[r]; *k; k++) {
-            char label[8] = { *k, 0 };
-            uint8_t flags = UI_CARD_CENTER, accent = OVERLAY_COL_DEFAULT;
-            int w = kw;
-            if (*k >= 'a' && *k <= 'z' && s_shift) label[0] = (char)(*k - 32);
-            if (*k == '\b') { strcpy(label, "<-"); accent = OVERLAY_COL_AMBER; }
-            if (*k == '\t') { strcpy(label, "Aa"); accent = OVERLAY_COL_BLUE; }
-            if (*k == '\1') { strcpy(label, "123"); accent = OVERLAY_COL_BLUE; w = 2 * kw; }
-            if (*k == ' ')  { strcpy(label, "space"); w = 5 * kw; }
-            if (*k == '@')  { w = kw; }
-            if (*k == '\n') { strcpy(label, "Done"); accent = OVERLAY_COL_GREEN;
-                              flags |= UI_CARD_ACTION; w = 2 * kw; }
-            ui_rect_t key = ui_cut_left(&row, w);
-            key.w -= 1;                          /* 1-cell gap between keys */
-            ui_card(key, (ui_id_t)(ID_KEY + (uint8_t)*k),
-                    &(ui_card_t){ .title = label, .accent = accent,
-                                  .flags = flags });
-        }
-    }
-    lab_status(p.status);
-}
-
-static void scr_pin(void)
-{
-    static const char *PAD[12] = { "1", "2", "3", "4", "5", "6",
-                                   "7", "8", "9", "<-", "0", "OK" };
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_header(p.header, NULL, "UNLOCK DECK", "keystore", false);
-    ui_rect_t body = p.body;
-
-    /* Entry row: filled and empty slots, centered on a real row. */
-    ui_rect_t entry = ui_cut_top(&body, m.unit);
-    const int slots = 6, filled = 3;
-    int x = entry.x + (entry.w - (slots * 4 - 2)) / 2;
-    for (int i = 0; i < slots; i++, x += 4) {
-        ui_pen(i < filled ? OVERLAY_COL_CYAN : OVERLAY_COL_BLUE);
-        ui_putch(x, entry.y + 1, i < filled ? UI_LED_ON : UI_LED_OFF,
-                 i < filled ? UI_TEXT : UI_MUTED);
-        ui_putch(x + 1, entry.y + 1, ' ', UI_TEXT);
-    }
-    ui_pen(OVERLAY_COL_DEFAULT);
-
-    const int kw = m.cls == UI_WIDE ? 14 : 12;
-    ui_grid_t g = ui_grid(ui_center(body, 3 * kw + 2 * m.gutter, 4 * m.unit),
-                          3, m.unit, m.gutter, 0);
-    for (int i = 0; i < 12; i++) {
-        uint8_t accent = OVERLAY_COL_DEFAULT, flags = UI_CARD_CENTER;
-        if (i == 9)  accent = OVERLAY_COL_AMBER;
-        if (i == 11) { accent = OVERLAY_COL_GREEN; flags |= UI_CARD_ACTION; }
-        ui_card(ui_grid_cell(&g, i), (ui_id_t)(ID_PIN + i), &(ui_card_t){
-            .title = PAD[i], .accent = accent, .flags = flags });
-    }
-    lab_status(p.status);
-}
-
-static void scr_dialog(void)
-{
-    const ui_metrics_t m = ui_metrics();
-    const int w = m.cls == UI_COMPACT ? 50 : 56;
-    ui_rect_t in = ui_dialog(w, 11, "Disconnect session?", OVERLAY_COL_AMBER);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_text(ui_rect(in.x, in.y, in.w, 1), "homelab is still running htop.",
-            UI_TEXT, UI_LEFT);
-    ui_text(ui_rect(in.x, in.y + 1, in.w, 1), "The remote shell will be closed.",
-            UI_MUTED, UI_LEFT);
-    ui_rect_t acts = ui_cut_bottom(&in, m.unit);
-    ui_grid_t a = ui_grid(acts, 2, m.unit, m.gutter, 0);
-    ui_btn(ui_grid_cell(&a, 0), ID_OK, "Disconnect", OVERLAY_COL_RED);
-    ui_btn(ui_grid_cell(&a, 1), ID_NO, "Stay",       OVERLAY_COL_BLUE);
-}
-
-static void scr_connect(void)
-{
-    static const struct { const char *t; int done; } STEPS[] = {
-        { "wifi link", 1 }, { "tcp 192.168.1.10:22", 1 },
-        { "host key  SHA256:9fK2..Qm1c", 1 }, { "authenticating", 0 },
-    };
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_header(p.header, NULL, "CONNECTING", "homelab", true);
-    ui_rect_t body = ui_center(p.body, p.body.w * 3 / 4, p.body.h);
-    ui_rect_t acts = ui_cut_bottom(&body, m.unit);
-    ui_cut_top(&body, 1);
-    for (int i = 0; i < NELEM(STEPS); i++) {
-        ui_rect_t row = ui_cut_top(&body, 2);
-        ui_pen(STEPS[i].done ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER);
-        ui_putch(row.x, row.y, STEPS[i].done ? UI_CHECK : spinner_glyph(3),
-                 UI_TEXT | UI_BOLD);
-        ui_pen(OVERLAY_COL_DEFAULT);
-        ui_text(ui_rect(row.x + 3, row.y, row.w - 3, 1), STEPS[i].t,
-                STEPS[i].done ? UI_MUTED : UI_TEXT | UI_BOLD, UI_LEFT);
-    }
-    ui_meter(ui_cut_top(&body, 1), 7, 10, OVERLAY_COL_GREEN);
-    ui_btn(ui_center(acts, acts.w / 2, m.unit), ID_CANCEL, "Cancel",
-           OVERLAY_COL_BLUE);
-    lab_status(p.status);
-}
-
-/* Every card state side by side: the sheet that decides a rendition. */
-static void scr_kit(void)
-{
-    const ui_metrics_t m = ui_metrics();
-    ui_page_t p = ui_page();
-    ui_header(p.header, "KIT", "CARD STATES", "focus / press / off", true);
-    ui_grid_t g = ui_grid(p.body, m.cls == UI_WIDE ? 4 : 3, 4, m.gutter, 0);
-    static const struct { const char *t, *d; uint8_t a, f; } C[] = {
-        { "Normal",   "title + detail",  OVERLAY_COL_CYAN,    0 },
-        { "Focused",  "keyboard ring",   OVERLAY_COL_CYAN,    0 },
-        { "Pressed",  "finger down",     OVERLAY_COL_CYAN,    0 },
-        { "Disabled", "no input",        OVERLAY_COL_CYAN,    UI_CARD_DISABLED },
-        { "Checked",  "current choice",  OVERLAY_COL_GREEN,   UI_CARD_CHECKED },
-        { "Opens",    "another page",    OVERLAY_COL_MAGENTA, UI_CARD_NAV },
-        { "Amber",    "identity accent", OVERLAY_COL_AMBER,   0 },
-        { "Blue",     "identity accent", OVERLAY_COL_BLUE,    0 },
-    };
-    int n = 0;
-    for (; n < NELEM(C) && n < ui_grid_capacity(&g) - 3; n++)
-        ui_card(ui_grid_cell(&g, n), (ui_id_t)(ID_HUB + n), &(ui_card_t){
-            .title = C[n].t, .detail = C[n].d, .accent = C[n].a,
-            .flags = C[n].f });
-    ui_rect_t b = ui_grid_cell(&g, n++);
-    ui_btn(ui_rect(b.x, b.y, b.w, m.unit), ID_OK, "Confirm", OVERLAY_COL_GREEN);
-    b = ui_grid_cell(&g, n++);
-    ui_btn(ui_rect(b.x, b.y, b.w, m.unit), ID_NO, "Delete",  OVERLAY_COL_RED);
-    ui_card(ui_grid_cell(&g, n++), ID_VALUE, &(ui_card_t){
-        .title = "Scanlines", .value = "on", .accent = OVERLAY_COL_CYAN });
-    lab_status(p.status);
-}
-
-/* Block and box glyphs the half-cell look depends on, at this font. */
-static void scr_glyphs(void)
-{
-    ui_page_t p = ui_page();
-    ui_header(p.header, "KIT", "GLYPHS", "U+2580..259F / box / marks", true);
-    static const struct { uint16_t from, to; } RANGES[] = {
-        { 0x2580, 0x259F }, { 0x2500, 0x251F }, { 0x2550, 0x256F },
-        { 0x25A0, 0x25CF }, { 0x2190, 0x2195 }, { 0x2713, 0x2718 },
-        { 0x2039, 0x203A }, { 0x2026, 0x2026 }, { 0xE0B0, 0xE0B3 },
-    };
-    int x = p.body.x, y = p.body.y;
-    for (int i = 0; i < NELEM(RANGES); i++) {
-        for (unsigned cp = RANGES[i].from; cp <= RANGES[i].to; cp++) {
-            ui_pen(OVERLAY_COL_CYAN);
-            ui_putch(x, y, (uint16_t)cp, UI_TEXT);
-            ui_putch(x + 1, y, (uint16_t)cp, UI_BAR);
-            x += 3;
-            if (x + 3 > p.body.x + p.body.w) { x = p.body.x; y += 2; }
-        }
-        x = p.body.x;
-        y += 2;
-        if (y >= p.body.y + p.body.h) break;
-    }
-    ui_pen(OVERLAY_COL_DEFAULT);
-    lab_status(p.status);
-}
-
-static const lab_screen_t SCREENS[] = {
-    { "home",    scr_home },
-    { "home-tile",  scr_home_tile },
-    { "home-1line", scr_home_1line },
-    { "hub",     scr_hub,     .focus = ID_HUB + 3 },
-    { "section", scr_section, .down = ID_VALUE + 2 },
-    { "list",    scr_list },
-    { "form",    scr_form },
-    { "osk",     scr_osk,     .down = ID_KEY + 'g' },
-    { "pin",     scr_pin },
-    { "dialog",  scr_dialog,  .term = true },
-    { "connect", scr_connect },
-    { "kit",     scr_kit,     .focus = ID_HUB + 1, .down = ID_HUB + 2 },
-    { "glyphs",  scr_glyphs },
-};
-
 static int s_cols, s_rows;
 uint32_t lab_frame;
 static bool s_faulted;        /* a screen counted a layout fault     */
@@ -446,14 +79,13 @@ static int screen_count(void)
 {
     int n;
     lab_mo_screens(&n);
-    return NELEM(SCREENS) + n;
+    return n;
 }
 
 static const lab_screen_t *screen_at(int i)
 {
     int n;
-    const lab_screen_t *mo = lab_mo_screens(&n);
-    return i < NELEM(SCREENS) ? &SCREENS[i] : &mo[i - NELEM(SCREENS)];
+    return &lab_mo_screens(&n)[i];
 }
 
 /* Every render bakes its own theme: the dump and other screens leave
@@ -507,27 +139,6 @@ static void render_posed(const lab_screen_t *s)
         fprintf(stderr, "%s: layout faults\n", s->name);
         s_faulted = true;
     }
-}
-
-/* Apply a press in the interactive lab: enough behavior to feel it. */
-static void lab_press(ui_id_t id)
-{
-    if (id == ID_PREV) s_page--;
-    if (id == ID_NEXT) s_page++;
-    if (id >= ID_KEY && id < ID_KEY + 128) {
-        const char k = (char)(id - ID_KEY);
-        size_t n = strlen(s_osk);
-        if (k == '\b')      { if (n) s_osk[n - 1] = 0; }
-        else if (k == '\t') s_shift = !s_shift;
-        else if (k == '\n' || k == '\1') { /* no-op in the lab */ }
-        else if (n + 1 < sizeof s_osk) {
-            s_osk[n] = (k >= 'a' && k <= 'z' && s_shift) ? (char)(k - 32) : k;
-            s_osk[n + 1] = 0;
-            s_shift = false;
-        }
-    }
-    snprintf(s_note, sizeof s_note, id == UI_ID_BACK ? " back" : " press %u",
-             (unsigned)id);
 }
 
 /* ---- model dump for tools/uimock ------------------------------------- */
@@ -755,18 +366,17 @@ int main(int argc, char *argv[])
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             uint16_t fx_, fy_;
-            ui_act_t a = { 0 };
             switch (ev.type) {
             case SDL_QUIT: run = false; break;
             case SDL_MOUSEBUTTONDOWN:
                 display_window_to_fb(ev.button.x, ev.button.y, &fx_, &fy_);
-                a = ui_touch_px(ev.button.button == SDL_BUTTON_RIGHT
-                                ? UI_TOUCH_HOLD : UI_TOUCH_DOWN, fx_, fy_);
+                (void)ui_touch_px(ev.button.button == SDL_BUTTON_RIGHT
+                                  ? UI_TOUCH_HOLD : UI_TOUCH_DOWN, fx_, fy_);
                 break;
             case SDL_MOUSEBUTTONUP:
                 if (ev.button.button != SDL_BUTTON_LEFT) break;
                 display_window_to_fb(ev.button.x, ev.button.y, &fx_, &fy_);
-                a = ui_touch_px(UI_TOUCH_TAP, fx_, fy_);
+                (void)ui_touch_px(UI_TOUCH_TAP, fx_, fy_);
                 break;
             case SDL_KEYDOWN:
                 switch (ev.key.keysym.sym) {
@@ -775,19 +385,17 @@ int main(int argc, char *argv[])
                     cur = (cur + ((ev.key.keysym.mod & KMOD_SHIFT)
                                   ? screen_count() - 1 : 1)) % screen_count();
                     ui_hot_reset();
-                    s_note[0] = 0;
                     break;
-                case SDLK_UP:     a = ui_hot_key(K_UP);    break;
-                case SDLK_DOWN:   a = ui_hot_key(K_DOWN);  break;
-                case SDLK_LEFT:   a = ui_hot_key(K_LEFT);  break;
-                case SDLK_RIGHT:  a = ui_hot_key(K_RIGHT); break;
-                case SDLK_RETURN: a = ui_hot_key(K_ENTER); break;
+                case SDLK_UP:     (void)ui_hot_key(K_UP);    break;
+                case SDLK_DOWN:   (void)ui_hot_key(K_DOWN);  break;
+                case SDLK_LEFT:   (void)ui_hot_key(K_LEFT);  break;
+                case SDLK_RIGHT:  (void)ui_hot_key(K_RIGHT); break;
+                case SDLK_RETURN: (void)ui_hot_key(K_ENTER); break;
                 default: break;
                 }
                 break;
             default: break;
             }
-            if (a.kind == UI_ACT_PRESS) lab_press(a.id);
             dirty = true;
         }
         if (dirty || frame != last_frame || ui_hot_animating()) {

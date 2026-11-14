@@ -28,7 +28,7 @@ void ui_colors(color_t fg, color_t bg);
 /** Clear the whole overlay to transparent. */
 void ui_clear(void);
 
-/** Feed the ~10 fps animation frame counter (drives the tile marquee). */
+/** Feed the ~10 fps animation frame counter (drives hot-region animation). */
 void ui_frame(uint32_t frame);
 
 #ifdef BUILD_SIMULATOR

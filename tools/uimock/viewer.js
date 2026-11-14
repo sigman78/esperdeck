@@ -6,8 +6,7 @@ import { Font, render, toRGBA, css565, PANELS, rectMM } from './model.js';
 import {
   Ui, newInter, drawPosed, hotMove, rect, S, C, BOLD, ID_BACK, STYLE_COUNT, ACCENTS,
 } from './kit.js';
-import { BASELINE } from './baseline.js';
-import { SKETCHES } from './sketches.js';
+import { MO_SKETCHES } from './sketches-mo.js';
 import { THEMES } from './theme.js';
 
 const $ = (id) => document.getElementById(id);
@@ -121,8 +120,7 @@ function syncToolbar() {
 }
 
 const SCREEN_GROUPS = [
-  { id: 'sketches', label: 'Sketches', items: SKETCHES },
-  { id: 'baseline', label: "Baseline (today's kit)", items: BASELINE },
+  { id: 'sketches', label: 'Sketches', items: MO_SKETCHES },
 ];
 const findScreen = (name) => {
   for (const g of SCREEN_GROUPS) for (const s of g.items) if (s.name === name) return s;
@@ -610,7 +608,7 @@ function setTab(t) {
 }
 
 function init() {
-  const first = SKETCHES[0] || BASELINE[0];
+  const first = MO_SKETCHES[0];
   if (first) selectScreen(first);
   buildToolbar();
   buildPicker();

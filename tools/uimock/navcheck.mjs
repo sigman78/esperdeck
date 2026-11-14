@@ -5,7 +5,7 @@
 //   node navcheck.mjs [prefix]      default prefix: mo-
 
 import { Ui, newInter, hotMove, ID_BACK } from './kit.js';
-import { SKETCHES } from './sketches.js';
+import { MO_SKETCHES } from './sketches-mo.js';
 
 const GRIDS = [['12x24', 66, 20], ['10x20', 80, 24], ['8x16', 100, 30]];
 // States that show parts the first draw hides.
@@ -19,7 +19,7 @@ const STATES = {
 const prefix = process.argv[2] || 'mo-';
 
 let total = 0, bad = 0;
-for (const scr of SKETCHES.filter((s) => s.name.startsWith(prefix))) {
+for (const scr of MO_SKETCHES.filter((s) => s.name.startsWith(prefix))) {
   for (const [font, cols, rows] of GRIDS) {
     for (const state of STATES[scr.name] || [{}]) {
       total++;

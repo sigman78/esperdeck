@@ -351,7 +351,7 @@ bool cyberdeck_app_debug_status_idle(void)
 void cyberdeck_app_tick(uint64_t now)
 {
     app.anim_frame = (uint32_t)(now / ANIM_PERIOD_MS);
-    ui_frame(app.anim_frame);   /* marquee clock for ui_tile */
+    ui_frame(app.anim_frame);   /* clock for hot-region animation */
 
     status_tick(now);            /* toast expiry + chip announcements */
     app_settings_idle_flush();   /* deferred settings saves, once held pages close */

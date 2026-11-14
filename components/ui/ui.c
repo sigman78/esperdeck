@@ -34,42 +34,11 @@ static bool s_visible = false;
 static bool s_scrim   = false;   /* dim the terminal behind this frame */
 static uint8_t s_pen  = OVERLAY_COL_DEFAULT;   /* current accent color */
 
-/* Shell animation clock (~10 fps), fed each tick via ui_frame(); drives the
- * selected-tile body marquee. */
+/* Shell animation clock (~10 fps), fed each tick via ui_frame(); the
+ * hot-region model reads it for press and focus animation. */
 static uint32_t s_frame = 0;
 
 void ui_frame(uint32_t frame) { s_frame = frame; }
-
-/* Bounce marquee: park at the head, crawl to the tail, park, crawl back.
- * The marquee tracks one owner slot by tile origin. The epoch resets
- * when another tile, or the same tile after a gap, takes over. A
- * fresh selection then starts at the head. */
-#define MQ_STEP_FRAMES 3   /* frames per character step (~3 cells/s) */
-#define MQ_DWELL_STEPS 5   /* extra steps parked at each end (~1.5 s) */
-
-static int      s_mq_col = -1, s_mq_row = -1;  /* owner tile origin */
-static uint32_t s_mq_zero = 0;                 /* owner's epoch frame */
-static uint32_t s_mq_seen = 0;                 /* owner last drawn at */
-
-static int marquee_offset(int col, int row, int overflow)
-{
-    if (col != s_mq_col || row != s_mq_row ||
-            s_frame - s_mq_seen > MQ_STEP_FRAMES) {
-        s_mq_col  = col;
-        s_mq_row  = row;
-        s_mq_zero = s_frame;
-    }
-    s_mq_seen = s_frame;
-
-    uint32_t ph = ((s_frame - s_mq_zero) / MQ_STEP_FRAMES)
-                  % (2u * (uint32_t)(overflow + MQ_DWELL_STEPS));
-    if (ph < MQ_DWELL_STEPS) return 0;                 /* head dwell */
-    ph -= MQ_DWELL_STEPS;
-    if (ph < (uint32_t)overflow) return (int)ph + 1;   /* crawl to tail */
-    ph -= (uint32_t)overflow;
-    if (ph < MQ_DWELL_STEPS) return overflow;          /* tail dwell */
-    return overflow - 1 - (int)(ph - MQ_DWELL_STEPS);  /* crawl back */
-}
 
 esp_err_t ui_init(void)
 {
@@ -228,39 +197,11 @@ void ui_printf(int col, int row, uint8_t attrs, const char *fmt, ...)
     ui_puts(col, row, buf, attrs);
 }
 
-void ui_hline(int col, int row, int width,
-              uint16_t left_cp, uint16_t fill_cp, uint16_t right_cp)
-{
-    ui_putch(col, row, left_cp, 0);
-    for (int i = 1; i < width - 1; i++)
-        ui_putch(col + i, row, fill_cp, 0);
-    ui_putch(col + width - 1, row, right_cp, 0);
-}
-
 void ui_fill(int col, int row, int w, int h, uint8_t attrs)
 {
     for (int r = 0; r < h; r++)
         for (int c = 0; c < w; c++)
             ui_putch(col + c, row + r, ' ', attrs);
-}
-
-void ui_box(int col, int row, int w, int h, const char *title)
-{
-    ui_hline(col, row, w, UI_BOX_TL, UI_BOX_H, UI_BOX_TR);
-    for (int r = 1; r < h - 1; r++) {
-        ui_putch(col, row + r, UI_BOX_V, 0);
-        for (int c = 1; c < w - 1; c++)
-            ui_putch(col + c, row + r, ' ', 0);
-        ui_putch(col + w - 1, row + r, UI_BOX_V, 0);
-    }
-    ui_hline(col, row + h - 1, w, UI_BOX_BL, UI_BOX_H, UI_BOX_BR);
-
-    if (title && *title) {
-        int tlen = (int)strlen(title);
-        int toff = (w - 2 - tlen) / 2;
-        if (toff < 0) toff = 0;
-        ui_puts(col + 1 + toff, row, title, 0);
-    }
 }
 
 int ui_chip(int col, int row, uint16_t left_cp, const char *text,
@@ -277,79 +218,4 @@ int ui_chip(int col, int row, uint16_t left_cp, const char *text,
     ui_putch(x++, row, ' ', bar);
     if (right_cp) ui_putch(x++, row, right_cp, UI_TEXT);
     return x;
-}
-
-void ui_tile(int col, int row, int w, int h,
-             const char *title, const char *body, bool selected)
-{
-    /* DOS-style solid button: a BAR in the pen accent. Focus = the FOCUS
-     * wash + a lit left rail. */
-    uint8_t a = selected ? UI_FOCUS : UI_BAR;
-
-    for (int r = 0; r < h; r++)
-        for (int c = 0; c < w; c++)
-            ui_putch(col + c, row + r, ' ', a);
-
-    if (selected) {
-        /* ▐ on the white BAR entry: set pixels (right half) take the dark
-         * fg. Clear pixels (left half) take the white bg. The result is a
-         * white rail with a seam. */
-        uint8_t old_pen = s_pen;
-        s_pen = OVERLAY_COL_WHITE;
-        for (int r = 0; r < h; r++)
-            ui_putch(col, row + r, UI_RHALF, UI_BAR);
-        s_pen = old_pen;
-    }
-
-    /* Title (+ optional body) vertically centered; bold title, regular
-     * body — heading + detail. */
-    int tx    = col + 2;
-    int inner = w - 3;
-    if (inner < 1) return;
-    char t[80];
-    int lines = (body && *body && h >= 2) ? 2 : 1;
-    int ty    = row + (h - lines) / 2;
-    if (title && *title) {
-        snprintf(t, sizeof(t), "%-.*s", inner, title);
-        ui_puts(tx, ty, t, a | UI_BOLD);
-    }
-    if (lines == 2) {
-        /* An overlong body bounce-scrolls while selected; unselected tiles
-         * show the truncated head. */
-        int off = 0, blen = (int)strlen(body);
-        if (selected && blen > inner)
-            off = marquee_offset(col, row, blen - inner);
-        snprintf(t, sizeof(t), "%-.*s", inner, body + off);
-        ui_puts(tx, ty + 1, t, a);
-    }
-}
-
-void ui_field(int col, int row, int width, const char *text,
-              int cursor, bool focused, bool mask)
-{
-    if (width < 3) return;
-    int inner = width - 2;                 /* space between the [ ] brackets */
-    int len   = (int)strlen(text);
-    if (cursor < 0)   cursor = 0;
-    if (cursor > len) cursor = len;
-
-    /* Scroll so the caret stays visible — but ONLY for the focused field.
-     * An unfocused field always shows from its start. Otherwise every
-     * repaint would scroll it by the (focused) field's caret and hide
-     * its head. */
-    int start = 0;
-    if (focused && cursor > inner - 1) start = cursor - (inner - 1);
-
-    uint8_t in = focused ? UI_BAR : UI_TEXT;
-    ui_putch(col, row, '[', UI_TEXT);
-    ui_putch(col + width - 1, row, ']', UI_TEXT);
-    for (int i = 0; i < inner; i++) {
-        int idx = start + i;
-        uint16_t cp = ' ';
-        if (idx < len) cp = mask ? '*' : (uint8_t)text[idx];
-        /* Block cursor on the focused field's caret cell: the un-barred
-         * style inside the barred field. */
-        uint8_t a = (focused && idx == cursor) ? UI_TEXT : in;
-        ui_putch(col + 1 + i, row, cp, a);
-    }
 }

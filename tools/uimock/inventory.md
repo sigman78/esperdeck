@@ -11,21 +11,19 @@ SoftAP = the deck's own temporary Wi-Fi access point.
 ## Findings that shape the redesign
 
 - **Done on the slate parts:** HOME, the host page, the question page,
-  the setup hub with its sections, the session sheet, the host form and
-  the access code pad. Each has a frame in `MO_GATE`.
-- **Not yet ported:** boot, power-off, pairing, host key prompt,
-  connecting, the Wi-Fi and SSH import pages, the saver. The model has
-  sketches for connecting, connect failed and both host-key pages.
+  the setup hub with its sections, the session sheet, the host form, the
+  access code pad, connecting and connect failed, the host-key pages,
+  pairing, the Wi-Fi and SSH import pages and the status row. Each has a
+  frame in `MO_GATE`.
+- **Not slate parts:** boot, power-off and the saver. They draw their
+  own effects.
 - **All text entry needs the BLE keyboard.** Host name, address, port,
   user, password, and an access code with other characters than digits.
   There is no on-screen keyboard.
 - **No saved Wi-Fi management.** No list, delete or reorder; a network
   is added only from a phone.
-- **Pairing still arms in place.** "Forget bonds" there asks for a
-  second tap. The setup page uses the question page instead.
-- **Host key prompt and connecting still use the old tile helpers.**
-  Their hazard tape, decode reveal and activity bar are not in the new
-  look.
+- **Every irreversible action asks on the question page,** including
+  "Forget bonds" on the pairing page.
 
 ## Limits
 
@@ -81,14 +79,14 @@ Logo wipe and tagline; CRT collapse after a session. Any input skips.
   that cannot be undone, the font restart.
 
 ### CONNECTING (`app_connect.c`)
-- **Shows:** target, attempt count, activity bar, elapsed seconds; an
-  amber drain bar while waiting to retry. Old look.
-- **Input:** Esc, any tap or any long-press cancels. Nothing on screen
-  says so.
-- **Leads to:** session, host key prompt, unlock, or HOME with a toast.
-- **Model:** `mo-connect`, `mo-connect-retry` and `mo-fail` show what
-  the shell knows: Wi-Fi, address, try and seconds. The controller
-  reports no handshake steps.
+- **Shows:** a text panel: "Connecting to" or "Retrying" and the name,
+  the Wi-Fi network, `user@host port`, "Try n, s" or "Next try in s",
+  and a Cancel button. The controller reports no handshake steps.
+- **Input:** Esc or the Cancel button cancels.
+- **Failed:** the screen stays as the failed page: the refusal reason,
+  `user@host port`, then Back, Try again and Edit host.
+- **Leads to:** session, host key prompt, unlock, or HOME.
+- **Model:** `mo-connect`, `mo-connect-retry` and `mo-fail`.
 
 ### SESSION
 - **Shows:** the terminal only. A toast chip top right; a scrollback
@@ -97,15 +95,14 @@ Logo wipe and tagline; CRT collapse after a session. Any input skips.
   Shift+PgUp/PgDn scrolls back; everything else goes to the host.
 
 ### HOSTKEY (`app_hostkey.c`)
-- **Normal:** "NEW HOST KEY", host and port, fingerprint in a box
-  (2 x 32 hex), Trust &amp; Connect / Cancel. Trust is the default.
-  Old look.
-- **Mismatch:** red theme, hazard tape, "HOST KEY CHANGED", Replace key
-  / Cancel. Cancel is the default. Replace arms on the first tap and
-  fires on the second. The host name is not shown. `Y` replaces at once.
+- **Normal:** "New host key", a text panel with the name, host and
+  port, a fingerprint panel (2 lines of 8 groups of 4 hex digits),
+  Trust and connect / Cancel. Trust is the default.
+- **Mismatch:** "Host key changed", a red-striped text panel with the
+  host, Cancel / Replace key. Cancel is the default. Replace asks on the
+  question page.
 - The key type is not shown in either.
-- **Model:** `mo-hostkey` and `mo-hostkey-changed`. Replace asks on the
-  question page instead of arming.
+- **Model:** `mo-hostkey` and `mo-hostkey-changed`.
 
 ### UNLOCK (`app_unlock.c`)
 - **Flavours:** device gate (no back target), connect-time unlock, set
@@ -153,14 +150,14 @@ Edit, delete and reorder moved to the host page; the pickers are gone.
   the question page.
 
 ### PAIRING (`app_pairing.c`)
-Scan list (up to 8 found; 7 fit at 66 and 80 columns), Forget bonds
-(two-step), Cancel. Closes itself after 30 s idle. No passkey prompt
-ever appears. Old look.
+Found keyboards as tiles, paged, and Forget bonds (asks on the question
+page). Closes itself after 30 s idle. No passkey prompt ever appears.
 
 ### WIFIPROV, SSHIMPORT
-Instruction screens for a phone or a browser: a QR code, numbered
-steps, a proof code, a status line. Nothing is edited on the deck. Any
-tap cancels. Both land on HOME, even when opened from a session.
+Instruction screens for a phone or a browser: numbered steps, a QR code
+where it fits, a proof code, a status line. Nothing is edited on the
+deck. Esc or the header bar cancels. Both land on HOME, even when opened
+from a session.
 
 ### SAVER, PACMAN
 Saver: braille rain and a clock that needs 72 columns; 66x20 shows a
@@ -183,10 +180,10 @@ memory chip, a status page, a keystore chip, a summon in session.
 
 ## Layout literals that assume a grid
 
-`cols >= 97` and `rows >= 22/24/28` branches in `ui_parts.c`, hostkey,
-wifiprov and sshimport. Fixed columns and widths in hostkey (rows 5-11,
-box 43), connecting (bar 42), pairing and saver (`head[100]`).
+Only the saver branches on the grid size: its clock block needs 72
+columns. The slate screens take their sizes from the layout helpers.
 
 ## Not determined
 
-Whether the QR code fits at 66x20.
+Whether the QR code fits at 66x20: it does not beside the Wi-Fi steps,
+and the page drops it.

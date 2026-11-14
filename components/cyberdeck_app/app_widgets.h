@@ -1,8 +1,7 @@
 /*
  * app_widgets.h — shell-only widgets. cyberdeck_ui.h exposes the
- * reusable parts (tile grid, list, buttons, chrome helpers) publicly.
- * What stays here reads shell state, or the shell composites it
- * itself.
+ * reusable parts (ui_part.h) publicly. What stays here reads shell
+ * state, or the shell composites it itself.
  */
 
 #pragma once

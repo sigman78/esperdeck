@@ -477,9 +477,9 @@ published overlay contents, as well as clean exits.
 
 Design choices inside the shell:
 
-- **Tile-based UI.** `app_ui` builds a `tilegrid_t` and does two-axis
-  hit-testing, so touch and arrow-key navigation share one layout
-  (two-tap to connect).
+- **Region-based UI.** Each part registers a hit region while it draws
+  (`ui_hot`), so touch and arrow-key navigation resolve against the
+  same layout (one tap connects). See `docs/ui-kit.md`.
 - **Asynchronous SSH connect** (`ssh_client_connect_start`). The UI stays
   live and cancellable during DNS, TCP, handshake, and auth.
 - **Capability services.** The shell reaches optional platform

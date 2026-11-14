@@ -36,7 +36,7 @@ for (const [k, t] of Object.entries(themes))
 
 // ---- modules -----------------------------------------------------------------
 
-const MODULES = ['model.js', 'kit.js', 'theme.js', 'baseline.js', 'sketches-mo.js', 'sketches.js', 'viewer.js'];
+const MODULES = ['model.js', 'kit.js', 'theme.js', 'fixtures.js', 'sketches-mo.js', 'viewer.js'];
 
 // Names declared at column 0: `const a = 1, b = 2;` yields a and b.
 function topLevelNames(src) {

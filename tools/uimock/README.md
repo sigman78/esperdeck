@@ -34,11 +34,10 @@ focus, the arrow keys must reach every touch region of every screen.
 |------|-----|
 | `export.mjs` | Runs the lab for each font and fills `data/`. |
 | `model.js` | Cells to pixels: fonts, style table, scanlines, phosphor modes. |
-| `kit.js` | Layout, drawing surface, touch regions, Slab widgets. A port of `components/ui`. |
+| `kit.js` | Layout, drawing surface, touch regions, status row, text helpers. A port of `components/ui`. |
 | `theme.js` | The style table builder. A port of `ui_theme.c`. Also holds colour pairs the lab lacks, such as `slate`. |
-| `baseline.js` | Today's lab screens on `kit.js`. The starting point. |
-| `sketches.js` | Redesign proposals. Round 1, the DOS-utility look (`nu-*`). It also lists every round for the viewer. |
-| `sketches-mo.js` | Round 2, modern tiles (`mo-*`): the chosen look. It also holds `MO_GATE`, the frames the C parts must match. |
+| `fixtures.js` | The example hosts and terminal text the sketches draw with. |
+| `sketches-mo.js` | The screens (`mo-*`): the chosen look, modern tiles. It also holds `MO_GATE`, the frames the C parts must match. |
 | `navcheck.mjs` | Fails when the arrow keys cannot reach a region of a sketch. |
 | `shot.mjs` | Renders screens to PNG and prints clipped text, missing glyphs, parts with no room and small touch regions. |
 | `viewer.html`, `viewer.js`, `build.mjs` | The review page; `build.mjs` writes `dist/`. |
@@ -51,7 +50,7 @@ focus, the arrow keys must reach every touch region of every screen.
 1. Once, and after any change to the C kit, theme or fonts: build
    `cyberdeck_uilab`, then `node export.mjs`, `node check.mjs`,
    `node kitcheck.mjs`.
-2. Add or change a sketch. A new round gets its own `sketches-<round>.js`, listed in `sketches.js` and in `MODULES` in `build.mjs`.
+2. Add or change a sketch. A new file of sketches is listed in `MODULES` in `build.mjs` and imported by `viewer.js`.
 3. `node shot.mjs` for PNG files in `dist/shots/`, or `node build.mjs`
    and open `dist/preview.html` to tap through the screens.
 
@@ -83,7 +82,7 @@ paged list, typed text in a form field.
 - A glyph the font lacks is reported, and drawn as an error cell.
 - A touch region reports its size in millimetres on the chosen panel.
 - Text that does not fit its rect is reported as clipped.
-- A round 2 part with no room is reported. A label that cannot sit on
+- A part with no room is reported. A label that cannot sit on
   the centre row of its part stops the draw with an error.
 
 ## What it cannot judge

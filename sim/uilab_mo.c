@@ -518,6 +518,33 @@ static void scr_session_toast_ok(void)
              "homelab - F12 or long-press for menu", UI_NOTE_GOOD);
 }
 
+/* Block, box and mark glyphs the look draws with, at this font. Each
+ * shows on the slate and on a panel. */
+static void scr_glyphs(void)
+{
+    static const struct { uint16_t from, to; } RANGES[] = {
+        { 0x2580, 0x259F }, { 0x2500, 0x251F }, { 0x25A0, 0x25CF },
+        { 0x2190, 0x2195 }, { 0x2713, 0x2718 }, { 0x2039, 0x203A },
+        { 0x2026, 0x2026 },
+    };
+    const int cols = ui_cols(), rows = ui_rows();
+    int x = 1, y = 0;
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_fill(0, 0, cols, rows, UI_TEXT);
+    ui_pen(OVERLAY_COL_CYAN);
+    for (int i = 0; i < NELEM(RANGES) && y < rows; i++) {
+        for (unsigned cp = RANGES[i].from; cp <= RANGES[i].to && y < rows;
+             cp++) {
+            ui_putch(x, y, (uint16_t)cp, UI_TEXT);
+            ui_putch(x + 1, y, (uint16_t)cp, UI_PANEL);
+            x += 3;
+            if (x + 3 > cols) { x = 1; y++; }
+        }
+        if (x != 1) { x = 1; y++; }
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
 /* The host page: what a hold on a tile opens. */
 static void draw_host(int n)
 {
@@ -1411,6 +1438,7 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-session-toast", scr_session_toast, .slate = true, .term = true },
     { "mo-session-toast-ok", scr_session_toast_ok, .slate = true,
       .term = true },
+    { "mo-glyphs",      scr_glyphs,      .slate = true },
     { "mo-setup",       scr_setup,       .slate = true,
       .focus = MO_HUB + 3 },
     { "mo-section-wifi",   scr_section_wifi,   .slate = true },

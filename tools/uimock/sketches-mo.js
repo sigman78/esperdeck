@@ -16,7 +16,7 @@ import {
   statusBar, toast, SB, NOTE,
   entryFirst, codePlan, qrW, qrH, qrRows, qrGlyph, QR_ZONE, fakeQr, wrapLines, stepLines,
 } from './kit.js';
-import { PROFILES, TERM_LINES } from './baseline.js';
+import { PROFILES, TERM_LINES } from './fixtures.js';
 
 const MO_ID = {
   HOST: 2000, PILL: 2100, PREV: 2200, NEXT: 2201, HUB: 2300, OPT: 2400,
@@ -1163,6 +1163,27 @@ function moSession(ui, app) {
   toast(ui, rect(0, 0, ui.cols - 1, 1), t.text, t.tone);
 }
 
+// Block, box and mark glyphs the look draws with, at this font. Each
+// shows on the slate and on a panel. It checks the font, not a screen.
+function moGlyphs(ui) {
+  const RANGES = [[0x2580, 0x259F], [0x2500, 0x251F], [0x25A0, 0x25CF],
+    [0x2190, 0x2195], [0x2713, 0x2718], [0x2039, 0x203A], [0x2026, 0x2026]];
+  let x = 1, y = 0;
+  ui.pen(C.DEFAULT);
+  ui.fill(rect(0, 0, ui.cols, ui.rows), ' ', S.TEXT);
+  ui.pen(C.CYAN);
+  for (const [from, to] of RANGES) {
+    for (let cp = from; cp <= to && y < ui.rows; cp++) {
+      ui.putch(x, y, cp, S.TEXT);
+      ui.putch(x + 1, y, cp, S.PANEL);
+      x += 3;
+      if (x + 3 > ui.cols) { x = 1; y++; }
+    }
+    if (x !== 1) { x = 1; y++; }
+  }
+  ui.pen(C.DEFAULT);
+}
+
 // A host form in a known state, for a gate frame. `more` adds state: the
 // caret, or the stored keys.
 const moFormState = (over, edit = -1, more = {}) => () => {
@@ -1213,6 +1234,7 @@ export const MO_GATE = [
   { name: 'mo-session-toast', sketch: 'mo-session' },
   { name: 'mo-session-toast-ok', sketch: 'mo-session',
     state: () => ({ toast: { text: 'homelab - F12 or long-press for menu', tone: NOTE.GOOD } }) },
+  { name: 'mo-glyphs', sketch: 'mo-glyphs' },
   { name: 'mo-setup', sketch: 'mo-setup', pose: { focus: MO_ID.HUB + 3 } },
   { name: 'mo-section-wifi', sketch: 'mo-section', state: () => ({ cat: 1 }) },
   { name: 'mo-section-fx', sketch: 'mo-section', state: () => ({ cat: 3 }) },
@@ -1282,5 +1304,6 @@ export const MO_SKETCHES = [
   { name: 'mo-import', title: 'Import hosts', theme: 'slate', draw: moImport },
   { name: 'mo-menu', title: 'Session menu sheet', theme: 'slate', draw: moMenu },
   { name: 'mo-session', title: 'Session toast', theme: 'slate', draw: moSession },
+  { name: 'mo-glyphs', title: 'Block, box and mark glyphs', theme: 'slate', draw: moGlyphs },
   { name: 'mo-parts', title: 'Parts in every state', theme: 'slate', draw: moParts },
 ];

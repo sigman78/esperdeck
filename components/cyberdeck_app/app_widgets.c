@@ -1,6 +1,6 @@
 /*
  * app_widgets.c — shell-side status strings: the bits of chrome that
- * read shell or service state (wifi, BLE, heap, wall clock). The
+ * read shell or service state (wifi, BLE, wall clock). The
  * reusable parts live in components/ui.
  */
 

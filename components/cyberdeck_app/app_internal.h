@@ -52,9 +52,6 @@ struct app_state {
      * never has to be #ifdef'd at every read site. */
     bool touch_scroll;
 
-    /* Tile grid of the current screen, saved for touch hit-testing. */
-    tilegrid_t grid;
-
     /* SESSION alone uses the toast; other UI states draw status inline. */
     char     toast[64];
     uint64_t toast_until;

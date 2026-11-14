@@ -2,13 +2,12 @@
 
 **Status: draft, 2026-11-14.** The kit and its lab exist. The look is
 decided: plain slabs on a slate screen (see *Parts*). The parts are
-built and gated against their design sketches. HOME, the host page,
-the question page, the setup hub, its sections, the session sheet, the
-host form, the code pad, the connect screen, the host-key page, keyboard
-pairing, Wi-Fi onboarding and host import draw with them. The status
-row and the in-session toast draw with `ui_status` and `ui_toast`. Only
-the old helpers themselves are still to go.
-The whole shell uses the slate colour pair.
+gated against their design sketches. Every shell screen draws with
+them: HOME, the host page, the question page, the setup hub, its
+sections, the session sheet, the host form, the code pad, the connect
+screen, the host-key page, keyboard pairing, Wi-Fi onboarding and host
+import. The status row and the in-session toast draw with `ui_status`
+and `ui_toast`. The whole shell uses the slate colour pair.
 Companion to
 [`ui-spec.md`](ui-spec.md) (what each part must do) and
 [`overlay-style.md`](overlay-style.md) (how a look is named).
@@ -47,13 +46,13 @@ The kit moves all three concerns out of the screens.
   and the header height. A layout branches on the class, never on a
   column count.
 
-`ui_page()` is the standard split: header rows on top, one status row
-at the bottom, the body between them inset by the margin.
+`ui_slate_page()` is the standard split: header rows on top, one status
+row at the bottom, the body between them inset by the margin.
 
 ## Interaction: regions registered while drawing
 
 `ui_hot.h` holds the one interaction model. While a frame draws, each
-interactive widget registers its rect under an id (`ui_hot(rect, id)`).
+interactive part registers its rect under an id (`ui_hot(rect, id)`).
 Input resolves against the regions of the last finished frame.
 
 - **Touch.** `ui_hot_touch(kind, col, row)` hits a region. `DOWN` sets
@@ -65,15 +64,15 @@ Input resolves against the regions of the last finished frame.
   Rows count double in the distance, because a cell is twice as tall as
   it is wide. Enter presses the focused region.
 - **Focus ring.** Touch hides the ring. The first key after a touch only
-  reveals it. A touch screen with one lit card reads as "selected" and
+  reveals it. A touch screen with one lit part reads as "selected" and
   invites a wrong second tap.
 - **Back.** The header registers its whole bar as `UI_ID_BACK`. A
   screen maps that id to its own back step: the menu steps one page up,
   most screens pop. It never takes the default focus.
-- **Disabled.** A disabled card stays a region, so activating it can
-  say why it is unavailable. A card drawn with id 0 is inert.
+- **Disabled.** A part drawn `UI_PART_OFF`, or with id 0, registers no
+  region and is inert.
 
-A widget reads its own state with `ui_focused(id)` and `ui_pressed(id)`.
+A part reads its own state with `ui_focused(id)` and `ui_pressed(id)`.
 A screen never passes "selected" and keeps no selection index.
 
 Input and render run on the one shell task and never interleave, so one
@@ -82,55 +81,26 @@ navigation stack calls `ui_hot_reset()` on every screen change. A screen
 that swaps pages inside one stack entry (the menu) resets for itself and
 drops taps until the new page has drawn once.
 
-## Widgets: the card and what is built on it
+## Files
 
-`ui_widgets.h`. Every widget takes a rect and an id.
+| File | Job |
+|------|-----|
+| `ui.c` | Overlay primitives: pen, cells, strings, the double-buffered frame. |
+| `ui_theme.c` | The baked style table. `tests/theme` proves no entry has text equal to background. |
+| `ui_layout.c` | Rect-cut, grids, metrics, page counts. |
+| `ui_hot.c` | Regions, focus, touch and key resolution. |
+| `ui_pure.c` | Integer logic with no display: text fit, entry window, code plan, note spans, announcements. Unit-tested in `tests/ui`. |
+| `ui_part.c` | The parts below. |
+| `ui_widgets.c` | Helpers every part shares: `ui_text`, `ui_metrics`, `ui_touch_px`. |
+| `ui_parts.c` | The drag converter, the spinner and noise glyphs, the host accent and the session scrollbar. |
 
-| Widget | Job |
-|--------|-----|
-| `ui_card` | The one tappable surface. Three rows hold one line, four rows hold a title and a detail line. Optional right-aligned value, check mark, chevron. |
-| `ui_btn` | A centered card that commits something. |
-| `ui_header` | Page title, optional muted path, optional note. With `back`, the back target. |
-| `ui_input` | A labeled value. Masked, editing (caret) and cycle (fixed set) variants. |
-| `ui_meter` | One-row gauge in eighths of a cell. |
-| `ui_dialog` | A window centered over a dimmed backdrop. Returns its content rect. |
-| `ui_pager` | A `< 1/2 >` stepper at the right end of a header. Draws nothing for one page. |
-
-**Half-height edges.** A card's top row draws U+2584 (lower half block)
-and its bottom row U+2580 (upper half block) in the card colour. Two
-stacked cards then show a full row of gap without spending a gutter
-row. This is what lets eight two-line items fit the 16 body rows of
-the 66x20 grid. The font lacks U+2594 and U+2595 (one-eighth blocks),
-so thinner edges are not available.
-
-**Heights.** The one-line card is three rows, edge rows included, so
-its label sits on the true centre row. That keeps the odd-height rule
-from `ui-spec.md`. The two-line card is four rows: two edge rows and
-two text rows. It is even, and it bends that rule. The menu therefore
-uses one-line cards only, which also keeps the 2026-08-27 call that hub
-tiles carry the section name alone. Two-line cards are a proposal for
-profile cards on HOME and in lists, pending review.
-
-**Focus mark.** The focused card carries a white rail in the left half
-of its first column, over the full visible height of the card. Quadrant
-glyphs (U+2596, U+2598) end the rail on the half-height edge rows. The
-dark half of that column is the seam between rail and card.
-
-**Value well.** A card with a value keeps its title at full length. The
-value sits in a darker well that takes the rest of the row.
-
-**Colour.** All colour decisions sit in one function, `card_look()`. A
-widget asks for a look and paints cells. New palette rows for panels
-and edges are baked by `ui_theme.c` with the rest of the style table;
-`tests/theme` proves no entry has text equal to background on either
-theme.
+`cyberdeck_ui.h` pulls them together. A screen includes it alone.
 
 ## Parts: slabs on a slate screen
 
-`ui_part.h`. This is the look chosen on 2026-11-14; it replaces the
-widgets above screen by screen. The design was drawn first on the
-JavaScript model in `tools/uimock` (`sketches-mo.js`), and the C parts
-port those sketches line by line.
+`ui_part.h`. This is the look chosen on 2026-11-14. The design was drawn
+first on the JavaScript model in `tools/uimock` (`sketches-mo.js`), and
+the C parts port those sketches line by line.
 
 | Part | Job |
 |------|-----|
@@ -148,6 +118,12 @@ port those sketches line by line.
 | `ui_toast` | The in-session toast: a panel-tone box as wide as its text. The good tone adds a check mark. |
 | `ui_qr` | A QR code on a white panel: half blocks, a quiet zone and a caption row. `ui_qr_w` and `ui_qr_h` give its size. |
 | `ui_onboard` | The page of a phone or PC flow: numbered steps on a text panel (`ui_steps_wrap` wraps them), a `ui_qr` beside them when it fits, a state line (`ui_state`) or a striped state panel under them. With no steps it is a centered result card. |
+
+**Half-height edges.** A part's top row draws U+2584 (lower half block)
+and its bottom row U+2580 (upper half block). Two stacked parts show a
+full row of gap without spending a gutter row. This lets eight two-line
+items fit the 16 body rows of the 66x20 grid. The font lacks U+2594 and
+U+2595 (one-eighth blocks), so thinner edges are not available.
 
 **Tone, not frames.** A part is a plain rectangle with half-height top
 and bottom edges. Three tones give depth: `CARD` is a neutral panel,
@@ -201,7 +177,7 @@ tests. The production parts have no "draw as focused" option.
 path with example data.
 
 - `--out DIR` renders every screen to a BMP in a fixed pose (keyboard
-  focus on one card, a finger down on another) with animated effects
+  focus on one part, a finger down on another) with animated effects
   off, so two runs give the same image.
 - Without `--out` it opens a window. The mouse is the finger,
   right-click is a long press, arrows and Enter drive focus, Tab steps
@@ -233,11 +209,11 @@ of TAP, LONG_PRESS or RELEASE follows. RELEASE means the press ended as
 no gesture: a slow lift, or a drag that became a scroll. The simulator's
 mouse path posts the same sequence.
 
-- A screen acts on TAP only. PRESS and RELEASE change how a card looks.
+- A screen acts on TAP only. PRESS and RELEASE change how a part looks.
 - The screen saver ignores both. A wake on PRESS would hand the TAP of
   the same gesture to the screen under the saver.
 - The input queue drops an event when it is full. A dropped TAP leaves
-  the card lit until the next touch.
+  the part lit until the next touch.
 
 The device path is built but not yet judged on hardware. Touch is polled
 every 50 ms and the shell draws at about 10 frames a second.
@@ -250,12 +226,12 @@ above its action row while storage holds eight.
 
 - `ui_page_count(count, per)` and `ui_page_clamp()` give whole pages.
   `per` comes from `ui_grid_capacity()`.
-- `ui_pager()` puts the stepper in the header. No drag, no scroll
+- `ui_pages()` puts the stepper in the header. No drag, no scroll
   track, no partial page.
 - A two-column picker of two-line cards holds all eight profiles at
   every grid, so pickers do not page. The shell has no profile picker
   now; edit, delete and move live on the host page.
-- The stepper takes focus like any card. An arrow key does not turn the
+- The stepper takes focus like any part. An arrow key does not turn the
   page at the edge of a grid yet.
 
 ## Decisions, 2026-11-12
@@ -263,7 +239,7 @@ above its action row while storage holds eight.
 | Question | Verdict |
 |----------|---------|
 | Rendition | Slab. Wire was second. The first focus mark was rejected and redrawn as the rail above. |
-| On-screen keyboard | Wanted, not now. The lab keeps its letters-only screen as a sketch. `ui-spec.md` tier 2 stays keyboard-assumed. |
+| On-screen keyboard | Wanted, not now. The lab's letters-only screen is gone. `ui-spec.md` tier 2 stays keyboard-assumed. |
 | HOME taps | One tap connects. A long press on a profile opens its editor. A long press elsewhere still opens pairing. |
 | Focus ring | Shown only after a key. |
 | Press events | Adopted on trial; see *Press and release*. |
@@ -273,7 +249,7 @@ above its action row while storage holds eight.
 
 | Question | Verdict |
 |----------|---------|
-| Look | The slate parts above. The Panel and Wire renditions are deleted. The Slab widgets stay until the last shell screen moves. |
+| Look | The slate parts above. The Panel and Wire renditions and the first Slab widgets are deleted. |
 | HOME | Two-line host tiles, two columns. New, Setup and Lock are header buttons, so no action row and no Settings tile. Eight hosts fit at 66x20. |
 | Tap and hold | A tap connects. A hold opens the host page (connect, edit, delete, reorder). |
 | Keyboard | Every screen works from the keys alone. The kit has a hold key (`K_HOLD`) for the alternate action. |
@@ -290,55 +266,51 @@ above its action row while storage holds eight.
 2. **Label hue.** Teal comes from the accent table. A softer hue needs
    its own style row.
 3. **The right margin at 12x24.** 66 cells leave 8 px that stay black
-   beside a slate screen. The display side must fill or centre it.
+   beside a slate screen. The display side must fill or centre it. The
+   scanline code zeroes those pixels, so it is a display change with its
+   own timing check.
+4. **Focus restore.** The navigation stack keeps no focus per entry.
+5. **Key hints.** Whether the shipped screens show them.
+6. **Paged lists.** An arrow key does not turn the page at the edge.
 
-## Migration order
+## Screens
 
-One screen per change, old and new widgets side by side until the last
-one moves.
+| Screen | Source | Lab frames |
+|--------|--------|------------|
+| HOME, host page | `app_home.c`, `app_host.c` | `mo-home*`, `mo-host*` |
+| Question page | `app_ask.c` | `mo-confirm*` |
+| Setup hub, sections, session sheet | `app_menu.c` | `mo-setup*`, `mo-section*`, `mo-menu*` |
+| Host form | `app_profile.c` | `mo-edit*` |
+| Code pad | `app_unlock.c` | `mo-unlock*` |
+| Connecting, failed | `app_connect.c` | `mo-connect*`, `mo-fail*` |
+| Host key | `app_hostkey.c` | `mo-hostkey*` |
+| Keyboard pairing | `app_pairing.c` | `mo-pair*` |
+| Wi-Fi onboarding, host import | `app_wifiprov.c`, `app_sshimport.c` | `mo-wifiprov*`, `mo-import*` |
+| Status row, toast | `app_statusbar.c` | `mo-status-*` |
 
-1. Shell plumbing (done): `app_hot_input()` maps input events to
-   `ui_hot_touch` / `ui_hot_key`; the navigation stack resets regions on
-   every screen change. Focus restore per stack entry is still open.
-2. Menu hub and sections (done). The profile pickers are gone; the host
-   page covers edit, delete and move.
-3. The parts and their gate (done): `ui_part.c`, the lab's slate
-   screens, the parity gate.
-4. The slate colour pair, HOME, the host page and the question page
-   (done). The margin fill at 12x24 is still open: the scanline code
-   zeroes those pixels, so it is a display change with its own timing
-   check.
-5. Setup hub, sections and the session sheet (done): `app_menu.c` draws
-   the lab's `scr_setup`, `draw_section` and `scr_menu`. A section packs
-   its rows once; a long one pages with `ui_pages` and `ui_rail`. A
-   destructive action asks on the question page.
-   The host form (done): `app_profile.c` draws the lab's `draw_edit`.
-   An entry types in place, with a movable caret (`ui_entry_at`). Tab
-   walks the controls. A changed form asks before it discards. The
-   paged lists are still open.
-   The unlock pad (done): `app_unlock.c` draws the lab's `draw_unlock`.
-   Touch goes through the hot regions; keys never do, and the screen
-   parks focus on an unused id so no key lights while typing
-   (`ui_code_plan` lays out the entry line).
-6. Connect progress and the host-key prompt (done). `app_connect.c`
-   draws the lab's `draw_connect`: a text panel with a Cancel button.
-   A failed connect stays on that screen as the failed page (Back, Try
-   again, Edit host), and `ui_wrap2` wraps its reason. `app_hostkey.c`
-   draws `draw_hostkey` with `ui_group4` for the fingerprint. A changed
-   key asks on the question page.
-   Keyboard pairing, Wi-Fi onboarding and host import (done).
-   `app_pairing.c` shows the found keyboards as tiles, with Forget bonds
-   at the bottom. It asks on the question page, which stops the scan
-   when it opens, so the pairing page starts the scan again on return.
-   `app_wifiprov.c` and `app_sshimport.c` draw `ui_onboard`. The QR code
-   drops out where it does not fit beside the steps (the Wi-Fi code at
-   66x20). The old radar sweep, comet and RAM readout are gone. A touch
-   away from the header bar no longer cancels either page.
-   The status row and the session toast (done). `app_statusbar.c` keeps
-   the polls and passes chips, clock and note to `ui_status`. The
-   session toast is a `ui_toast` box with no taper or spinner. The
-   chips announce their own changes: the shell's status tick runs the
-   queue and expires the toast for every screen (`mo-status-net-up`,
-   `-kbd-up`, `-net-lost`, `-collapse` and `-up-note` frames). Whether
-   the shipped screens show key hints is still open.
-7. Delete the Slab widgets and the old tile, field and header helpers.
+Notes that cost time to learn:
+
+- A long section pages with `ui_pages` and `ui_rail`. A destructive
+  action asks on the question page.
+- The code pad takes touch through the hot regions. Keys never do, and
+  the screen parks focus on an unused id so no key lights while typing.
+- Pairing asks on the question page, which stops the scan. The pairing
+  page starts the scan again on return.
+- The QR code drops out where it does not fit beside the steps (the
+  Wi-Fi code at 66x20).
+- The shell's status tick runs the chip announcements and expires the
+  toast for every screen.
+
+## Adding a screen
+
+1. Sketch it in `tools/uimock/sketches-mo.js`: a draw function, an entry
+   in `MO_SKETCHES`, and gate frames in `MO_GATE` for each state.
+2. Port it into `sim/uilab_mo.c` with the parts. Run the gate
+   (`export.mjs`, `check.mjs`, `kitcheck.mjs`) until the lab matches.
+3. Write the pure helpers it needs in `ui_pure.c` with unit tests in
+   `tests/ui` first.
+4. Add `app_<name>.c`: a `nav_screen_t` with `input` and `render`, an
+   id in `app_screens.h` and a slot in `SCREENS[]` (`cyberdeck_app.c`).
+   Copy `app_ask.c`: it draws on `ui_slate_page()`, resolves input with
+   `app_hot_input()` and counts `ui_faults()`.
+5. Add a scenario to `tools/sim_regress.py`. Check all three fonts.

@@ -11,9 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateSync, crc32 } from 'node:zlib';
 import { Font, render, toRGBA, PANELS, rectMM } from './model.js';
 import { drawPosed } from './kit.js';
-import { BASELINE } from './baseline.js';
-import { SKETCHES } from './sketches.js';
-import { MO_GATE } from './sketches-mo.js';
+import { MO_SKETCHES, MO_GATE } from './sketches-mo.js';
 import { THEMES } from './theme.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -57,13 +55,13 @@ const lab = JSON.parse(readFileSync(join(here, 'data', `lab-${opt.font}.json`), 
 const themes = { ...lab.themes, ...THEMES };
 if (opt.theme && !themes[opt.theme]) { console.log(`no theme '${opt.theme}'`); process.exit(1); }
 const cols = Math.floor(panel.width / font.w), rows = Math.floor(panel.height / font.h);
-const all = [...SKETCHES, ...BASELINE];
+const all = MO_SKETCHES;
 // A gate frame name draws its sketch with the gate's state and pose.
 const gateFrame = (n) => {
   const g = MO_GATE.find((q) => q.name === n), base = g && all.find((s) => s.name === g.sketch);
   return base && { ...base, name: g.name, pose: g.pose, seed: g.state ? g.state() : null };
 };
-const list = names.length ? names.map((n) => gateFrame(n) || all.find((s) => s.name === n) || n) : SKETCHES;
+const list = names.length ? names.map((n) => gateFrame(n) || all.find((s) => s.name === n) || n) : MO_SKETCHES;
 mkdirSync(opt.out, { recursive: true });
 
 for (const scr of list) {
