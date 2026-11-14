@@ -1,0 +1,297 @@
+<title>Deck UI Model</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap');
+
+:root {
+  --sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, Menlo, monospace;
+  --bg: #eef2ee;
+  --surface: #f8faf8;
+  --surface-2: #e2e8e2;
+  --line: #cbd4cb;
+  --line-strong: #98a79b;
+  --text: #18211b;
+  --muted: #526057;
+  --accent: #2c6e52;
+  --accent-ink: #ffffff;
+  --accent-soft: #d3e5da;
+  --focus: #0b57d0;
+  --ok: #1d6b43;
+  --ok-soft: #d9eee2;
+  --warn: #7d5200;
+  --warn-soft: #f6e8c4;
+  --bad: #a3262a;
+  --bad-soft: #f6d9da;
+  --stage: #0e130f;
+  --ov-ok: #3ce6a0;
+  --ov-tight: #ffd400;
+  --ov-bad: #ff5470;
+  --ov-chip-bg: #0b0f0c;
+  --ov-chip-fg: #ffffff;
+  --ov-grid: rgba(255, 255, 255, 0.3);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101612;
+    --surface: #171f19;
+    --surface-2: #222c25;
+    --line: #2f3b33;
+    --line-strong: #566a5c;
+    --text: #e3ebe4;
+    --muted: #9aa89e;
+    --accent: #6cc79b;
+    --accent-ink: #0c1a12;
+    --accent-soft: #223a2d;
+    --focus: #8ab4ff;
+    --ok: #7bd6a1;
+    --ok-soft: #1b3326;
+    --warn: #e8b84a;
+    --warn-soft: #3a2f12;
+    --bad: #ff8a8d;
+    --bad-soft: #40191b;
+    --stage: #070a08;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101612;
+  --surface: #171f19;
+  --surface-2: #222c25;
+  --line: #2f3b33;
+  --line-strong: #566a5c;
+  --text: #e3ebe4;
+  --muted: #9aa89e;
+  --accent: #6cc79b;
+  --accent-ink: #0c1a12;
+  --accent-soft: #223a2d;
+  --focus: #8ab4ff;
+  --ok: #7bd6a1;
+  --ok-soft: #1b3326;
+  --warn: #e8b84a;
+  --warn-soft: #3a2f12;
+  --bad: #ff8a8d;
+  --bad-soft: #40191b;
+  --stage: #070a08;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.45;
+}
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+button, input { font: inherit; color: inherit; }
+
+.page {
+  max-width: 1440px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; }
+.top h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+.lede { margin: 0; color: var(--muted); font-size: 0.9375rem; }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
+.tabs a {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px;
+  color: var(--muted); text-decoration: none; border-bottom: 3px solid transparent;
+}
+.tabs a:hover { color: var(--text); }
+.tabs a[aria-current="page"] { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; }
+.group { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.group-label { font-size: 0.875rem; color: var(--muted); display: flex; gap: 10px; }
+.readout { font-family: var(--mono); color: var(--text); }
+.seg { display: flex; flex-wrap: wrap; gap: 4px; }
+.opt { position: relative; }
+.opt input {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1;
+}
+.opt label {
+  display: inline-flex; align-items: center; min-height: 40px; padding: 0 12px;
+  border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface);
+  font-size: 0.9375rem; white-space: nowrap;
+}
+.opt input:checked + label { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+.opt input[type="checkbox"]:checked + label::before { content: "\2713\00a0"; }
+.opt input:focus-visible + label { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+.btn {
+  min-height: 40px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 6px;
+  background: var(--surface); cursor: pointer; font-size: 0.9375rem;
+}
+.btn:hover { background: var(--surface-2); }
+
+.screen-layout { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+.picker { flex: 0 0 264px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.main-col { flex: 1 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.ph { margin: 8px 0 0; font-size: 0.875rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.ph:first-child { margin-top: 0; }
+.plist { display: flex; flex-direction: column; gap: 4px; }
+.pick {
+  display: flex; flex-direction: column; align-items: flex-start; min-height: 44px; width: 100%;
+  padding: 5px 10px; text-align: left; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); cursor: pointer; font-size: 0.9375rem; line-height: 1.25;
+}
+.pick small { font-family: var(--mono); font-size: 0.875rem; color: var(--muted); }
+.pick:hover { background: var(--surface-2); }
+.pick[aria-current="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.none { margin: 0; color: var(--muted); font-size: 0.9375rem; padding: 6px 2px; }
+
+@media (max-width: 800px) {
+  .picker { flex-basis: 100%; }
+  .plist { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+}
+
+.shead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
+.shead h2 { margin: 0; font-size: 1.0625rem; font-weight: 600; }
+.mono { font-family: var(--mono); }
+.muted { color: var(--muted); }
+
+.viewport { overflow: auto; background: var(--stage); border: 1px solid var(--line-strong); border-radius: 6px; min-width: 0; }
+.viewport { max-height: 82vh; }
+.stage { position: relative; touch-action: manipulation; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; }
+.stage:focus-visible { outline-offset: -4px; }
+.stage canvas { display: block; image-rendering: pixelated; }
+#ov { position: absolute; left: 0; top: 0; pointer-events: none; }
+
+.err {
+  margin: 0; padding: 10px 12px; border: 1px solid var(--bad); border-radius: 6px;
+  background: var(--bad-soft); color: var(--bad); font-family: var(--mono); font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
+.facts { border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.facts > * { padding: 12px 14px; border-top: 1px solid var(--line); min-width: 0; }
+.facts > :first-child { border-top: 0; }
+.facts h3 { margin: 0 0 6px; font-size: 0.875rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.facts dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; font-size: 0.9375rem; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+.facts ul { margin: 0; padding-left: 18px; font-family: var(--mono); font-size: 0.875rem; overflow-wrap: anywhere; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 0.9375rem; }
+.crumbs button { min-height: 40px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); cursor: pointer; font-family: var(--mono); font-size: 0.875rem; }
+.crumbs .here { font-family: var(--mono); font-weight: 600; padding: 0 6px; }
+.crumbs .sep { color: var(--muted); }
+.crumbs .btn { margin-left: auto; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border: 1px solid currentColor;
+  border-radius: 4px; font-family: var(--sans); font-size: 0.875rem; white-space: nowrap;
+}
+.badge.small { color: var(--bad); background: var(--bad-soft); border-style: dashed; border-width: 2px; font-weight: 600; }
+.badge.tight { color: var(--warn); background: var(--warn-soft); border-style: dotted; border-width: 2px; }
+.badge.ok { color: var(--ok); }
+
+.scroll { overflow-x: auto; min-width: 0; }
+.tbl { border-collapse: collapse; font-family: var(--mono); font-size: 0.875rem; }
+.tbl th, .tbl td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; white-space: nowrap; }
+.tbl th { font-weight: 600; color: var(--muted); }
+details > summary { cursor: pointer; min-height: 40px; display: flex; align-items: center; font-size: 0.9375rem; }
+
+.viewbar { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: flex-end; margin-bottom: 12px; }
+.viewbar p { margin: 0; color: var(--muted); font-size: 0.9375rem; flex: 1 1 280px; min-width: 0; }
+
+.cmp { display: grid; gap: 16px; overflow-x: auto; }
+.cmp.side { grid-auto-flow: column; grid-auto-columns: max-content; }
+.cmp figure { margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.cmp figcaption { font-family: var(--mono); font-size: 0.875rem; color: var(--muted); }
+.cmp canvas { display: block; align-self: flex-start; flex: none; image-rendering: pixelated; background: var(--stage); border: 1px solid var(--line-strong); border-radius: 4px; }
+
+.swatch-grid { margin-top: 12px; }
+.sw { display: inline-block; width: 14px; height: 14px; border: 1px solid var(--line-strong); background: var(--sw); vertical-align: -2px; margin-right: 6px; }
+.hexcell { display: block; line-height: 1.5; }
+
+.ginfo {
+  position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center;
+  padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface);
+}
+.ginfo canvas { background: var(--stage); image-rendering: pixelated; border: 1px solid var(--line); display: block; }
+.ginfo-text { font-family: var(--mono); font-size: 0.9375rem; min-width: 0; }
+.filter { display: flex; flex-direction: column; gap: 4px; margin-left: auto; }
+.filter label { font-size: 0.875rem; color: var(--muted); }
+.filter input { min-height: 40px; padding: 0 10px; width: 180px; max-width: 100%; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); font-family: var(--mono); }
+.ghead { margin: 16px 0 6px; font-size: 0.9375rem; font-weight: 600; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.ghead span { font-family: var(--mono); font-weight: 400; font-size: 0.875rem; color: var(--muted); }
+#glyph-groups { min-width: 0; }
+#glyph-groups canvas { display: block; image-rendering: pixelated; background: var(--stage); cursor: crosshair; }
+</style>
+
+<div class="page">
+  <header class="top">
+    <h1>Deck UI Model</h1>
+    <p class="lede">Pixel-exact model of the deck display and its UI kit. Tap through screens, check sizes.</p>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="Views">
+    <a id="tab-screen" href="#screen">Screen</a>
+    <a id="tab-compare" href="#compare">Compare</a>
+    <a id="tab-styles" href="#styles">Styles</a>
+    <a id="tab-glyphs" href="#glyphs">Glyphs</a>
+  </nav>
+
+  <div class="toolbar" id="toolbar" role="group" aria-label="Display options"></div>
+
+  <main>
+    <section id="view-screen" aria-label="Screen view">
+      <div class="screen-layout">
+        <aside class="picker" id="picker" aria-label="Screens"></aside>
+        <div class="main-col">
+          <div class="shead"><h2 id="screen-title"></h2><span class="mono muted" id="screen-name"></span></div>
+          <div class="viewport" id="viewport" data-zoom="1x">
+            <div class="stage" id="stage" tabindex="0" aria-label="Device screen. Click or tap regions. Arrow keys move focus, Enter taps, Space holds, Escape goes back.">
+              <canvas id="dev" role="img" aria-label="Rendered device screen"></canvas>
+              <canvas id="ov" aria-hidden="true"></canvas>
+            </div>
+          </div>
+          <p class="err" id="draw-error" role="alert" hidden></p>
+          <div class="facts" id="facts"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-compare" aria-label="Compare view" hidden>
+      <div class="viewbar">
+        <p>The current screen at all three fonts on the same panel. Not interactive.</p>
+        <div class="group"><span class="group-label">Layout</span><div class="seg" id="cmp-layout" role="radiogroup" aria-label="Compare layout"></div></div>
+      </div>
+      <div class="cmp" id="cmp-grid"></div>
+    </section>
+
+    <section id="view-styles" aria-label="Styles view" hidden>
+      <div class="viewbar">
+        <p>12 styles x 8 accents, each shown regular and bold: the complete colour vocabulary the device can draw. Bold picks the bold glyph, not another colour.</p>
+      </div>
+      <div class="scroll" id="styles-scroll"><canvas id="styles-canvas" style="display:block;image-rendering:pixelated" role="img" aria-label="Style and accent samples"></canvas></div>
+      <div class="scroll swatch-grid" id="styles-hex"></div>
+    </section>
+
+    <section id="view-glyphs" aria-label="Glyphs view" hidden>
+      <div class="ginfo" id="ginfo">
+        <canvas id="ginfo-canvas" width="1" height="1" aria-hidden="true"></canvas>
+        <div class="ginfo-text" id="ginfo-text">Hover or tap a glyph.</div>
+        <div class="filter">
+          <label for="glyph-filter">Codepoint starts with (hex)</label>
+          <input id="glyph-filter" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="25 or 2580">
+        </div>
+      </div>
+      <div id="glyph-groups"></div>
+    </section>
+  </main>
+</div>
+
+<!--BUNDLE-->
