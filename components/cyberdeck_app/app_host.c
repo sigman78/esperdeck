@@ -145,16 +145,9 @@ static void host_move(int dir, uint64_t now)
     nav_invalidate();
 }
 
-/* Delete the stored profile at @p idx, plus its key files and TOFU
- * host pin. It deletes the files only if no other profile still
- * references them. @p keep_pin leaves the pin in place. This never
- * touches a live session, which runs on the connect module's snapshot
- * instead. */
-/* True when deleting profile @p idx deletes its key files too. That is
- * a key sign-in whose key no other profile uses. The question page and
- * the delete share it. */
-static bool key_goes_with(int idx)
+bool profile_key_unshared(int idx)
 {
+    if (idx < 0 || idx >= app.stored_count) return false;
     const conn_profile_t *p = &app.profiles[idx];
     if (p->auth != STORAGE_AUTH_KEY || !p->key_id[0]) return false;
     for (int i = 0; i < app.stored_count; i++)
@@ -163,11 +156,16 @@ static bool key_goes_with(int idx)
     return true;
 }
 
+/* Delete the stored profile at @p idx, plus its key files and TOFU
+ * host pin. It deletes the files only if no other profile still
+ * references them. @p keep_pin leaves the pin in place. This never
+ * touches a live session, which runs on the connect module's snapshot
+ * instead. */
 void profile_delete_at(int idx, bool keep_pin)
 {
     if (idx < 0 || idx >= app.stored_count) return;
     conn_profile_t doomed = app.profiles[idx];
-    const bool key_goes = key_goes_with(idx);
+    const bool key_goes = profile_key_unshared(idx);
 
     conn_profile_t set[MAX_PROFILES];
     int n = 0;
@@ -198,13 +196,19 @@ static void host_delete_yes(intptr_t arg, uint64_t now)
 
 static void host_ask_delete(uint64_t now)
 {
+    /* A locked store wiped the passwords from the list. Do not save it. */
+    if (keystore_state() == KEYSTORE_LOCKED) {
+        toast(now, "unlock the deck first");
+        nav_invalidate();
+        return;
+    }
     const conn_profile_t *p = &app.profiles[s_host.idx];
     char title[64];
     snprintf(title, sizeof title, "Delete %s?", p->name);
     const char *what =
-        key_goes_with(s_host.idx)       ? "The entry and its SSH key files go."
-      : p->auth == STORAGE_AUTH_KEY     ? "The entry goes. Its key stays in use."
-                                        : "The entry and its stored password go.";
+        profile_key_unshared(s_host.idx) ? "The entry and its SSH key files go."
+      : p->auth == STORAGE_AUTH_KEY      ? "The entry goes. Its key stays in use."
+                                         : "The entry and its stored password go.";
     ask_open(&(ask_t){
         .title = title,
         .line1 = what,

@@ -40,6 +40,9 @@ void enter_host(uint64_t now, int idx);
 /** Delete stored profile @p idx with its key files; the host pin goes
  *  too unless @p keep_pin. Reloads the profile list. */
 void profile_delete_at(int idx, bool keep_pin);
+/** True when stored profile @p idx signs in with a key that no other
+ *  stored profile uses. Deleting the profile deletes that key's files. */
+bool profile_key_unshared(int idx);
 
 /* ---- question page (app_ask.c) ---- */
 typedef struct {
@@ -49,9 +52,14 @@ typedef struct {
     uint8_t     accent;           /* OVERLAY_COL_*; 0 = red                */
     void      (*yes)(intptr_t arg, uint64_t now);
     intptr_t    arg;
+    /* Optional second answer on the first button. Esc still only goes
+     * back. NULL: the button reads "Cancel" and only goes back. */
+    const char *no_verb;
+    void      (*no)(intptr_t arg, uint64_t now);
 } ask_t;
 extern const nav_screen_t ask_screen;
-/** Push the question page. The verb pops it, then calls yes(arg, now). */
+/** Push the question page. The verb pops it, then calls yes(arg, now);
+ *  the first button calls no(arg, now) the same way when set. */
 void ask_open(const ask_t *q, uint64_t now);
 
 /* ---- screensaver (app_saver.c, plugin) ---- */

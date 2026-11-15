@@ -311,7 +311,7 @@ void enter_profile(uint64_t now, int edit_idx)
 /* Validate the draft and persist it. Append for a new profile; replace
  * the original (found by its entry-time name) for an edit. Returns ""
  * on success or a short reason to show on the alert line on failure. */
-static const char *profile_commit(void)
+static const char *profile_commit(bool drop_key)
 {
     if (s_pf.draft.name[0] == '\0') return "A host needs a name.";
     /* A '[' or ']' in the name breaks the INI section header on save. It
@@ -364,9 +364,9 @@ static const char *profile_commit(void)
     set[slot] = s_pf.draft;
     if (storage_save_profiles(set, n) != ESP_OK) return "Could not save.";
 
-    /* The edit dropped or swapped a key reference: GC the old .pem when
-     * nothing references it anymore (mirrors profile_delete_at). */
-    if (old.auth == STORAGE_AUTH_KEY && old.key_id[0]) {
+    /* The edit dropped or swapped a key, and the user chose to delete it.
+     * The old key goes when nothing references it anymore. */
+    if (drop_key && old.auth == STORAGE_AUTH_KEY && old.key_id[0]) {
         bool shared = false;
         for (int i = 0; i < n; i++)
             if (set[i].auth == STORAGE_AUTH_KEY &&
@@ -406,9 +406,9 @@ static void pf_back(uint64_t now)
     }, now);
 }
 
-static void pf_save(uint64_t now)
+static void pf_store(uint64_t now, bool drop_key)
 {
-    const char *err = profile_commit();
+    const char *err = profile_commit(drop_key);
     if (err[0]) {
         snprintf(s_pf.err, sizeof(s_pf.err), "%s", err);
         nav_invalidate();
@@ -416,7 +416,39 @@ static void pf_save(uint64_t now)
     }
     load_profiles();
     pf_leave(now);
-    toast(now, "host saved");
+    toast(now, drop_key ? "host saved, key deleted" : "host saved");
+}
+
+static void pf_keep_key(intptr_t arg, uint64_t now) { (void)arg; pf_store(now, false); }
+static void pf_drop_key(intptr_t arg, uint64_t now) { (void)arg; pf_store(now, true); }
+
+/* True when the save leaves the host's old key with no host at all. */
+static bool pf_orphans_key(void)
+{
+    if (s_pf.edit_idx < 0 || !profile_key_unshared(s_pf.edit_idx)) return false;
+    const conn_profile_t *old = &app.profiles[s_pf.edit_idx];
+    return s_pf.draft.auth != STORAGE_AUTH_KEY ||
+           strcmp(s_pf.draft.key_id, old->key_id) != 0;
+}
+
+/* A key with no host left is the user's to delete. Keep is the default. */
+static void pf_save(uint64_t now)
+{
+    if (!pf_orphans_key()) {
+        pf_store(now, false);
+        return;
+    }
+    char title[64];
+    snprintf(title, sizeof title, "Delete key %s?",
+             app.profiles[s_pf.edit_idx].key_id);
+    ask_open(&(ask_t){
+        .title = title,
+        .line1 = "No host uses it after this save.",
+        .line2 = "Deleted key files cannot come back.",
+        .verb = "Delete key", .accent = OVERLAY_COL_RED,
+        .yes = pf_drop_key,
+        .no_verb = "Keep key", .no = pf_keep_key,
+    }, now);
 }
 
 /* Any change to the draft: the form is dirty and an old commit error goes. */
