@@ -150,10 +150,24 @@ static void host_move(int dir, uint64_t now)
  * references them. @p keep_pin leaves the pin in place. This never
  * touches a live session, which runs on the connect module's snapshot
  * instead. */
+/* True when deleting profile @p idx deletes its key files too. That is
+ * a key sign-in whose key no other profile uses. The question page and
+ * the delete share it. */
+static bool key_goes_with(int idx)
+{
+    const conn_profile_t *p = &app.profiles[idx];
+    if (p->auth != STORAGE_AUTH_KEY || !p->key_id[0]) return false;
+    for (int i = 0; i < app.stored_count; i++)
+        if (i != idx && app.profiles[i].auth == STORAGE_AUTH_KEY &&
+            strcmp(app.profiles[i].key_id, p->key_id) == 0) return false;
+    return true;
+}
+
 void profile_delete_at(int idx, bool keep_pin)
 {
     if (idx < 0 || idx >= app.stored_count) return;
     conn_profile_t doomed = app.profiles[idx];
+    const bool key_goes = key_goes_with(idx);
 
     conn_profile_t set[MAX_PROFILES];
     int n = 0;
@@ -161,13 +175,7 @@ void profile_delete_at(int idx, bool keep_pin)
         if (i != idx) set[n++] = app.profiles[i];
     storage_save_profiles(set, n);
 
-    if (doomed.auth == STORAGE_AUTH_KEY && doomed.key_id[0]) {
-        bool shared = false;
-        for (int i = 0; i < n; i++)
-            if (set[i].auth == STORAGE_AUTH_KEY &&
-                strcmp(set[i].key_id, doomed.key_id) == 0) { shared = true; break; }
-        if (!shared) storage_delete_key(doomed.key_id);
-    }
+    if (key_goes) storage_delete_key(doomed.key_id);
 
     /* Drop the host's pin too when no surviving profile targets it; a
      * re-added profile then gets a fresh TOFU prompt. */
@@ -190,11 +198,16 @@ static void host_delete_yes(intptr_t arg, uint64_t now)
 
 static void host_ask_delete(uint64_t now)
 {
+    const conn_profile_t *p = &app.profiles[s_host.idx];
     char title[64];
-    snprintf(title, sizeof title, "Delete %s?", app.profiles[s_host.idx].name);
+    snprintf(title, sizeof title, "Delete %s?", p->name);
+    const char *what =
+        key_goes_with(s_host.idx)       ? "The entry and its SSH key files go."
+      : p->auth == STORAGE_AUTH_KEY     ? "The entry goes. Its key stays in use."
+                                        : "The entry and its stored password go.";
     ask_open(&(ask_t){
         .title = title,
-        .line1 = "The entry and its stored password go.",
+        .line1 = what,
         .line2 = "The pinned host key stays.",
         .verb = "Delete", .accent = OVERLAY_COL_RED,
         .yes = host_delete_yes, .arg = s_host.idx,

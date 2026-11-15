@@ -53,6 +53,10 @@ typedef struct {
  *  clock; it times the pressed flash. */
 void ui_hot_begin(uint32_t frame);
 
+/** Move the animation clock between frames. A still page renders
+ *  rarely; input stamps the pressed flash with this clock. */
+void ui_hot_clock(uint32_t frame);
+
 /** Register an interactive rect for this frame. An empty rect or id 0
  *  registers nothing; a later rect wins where two overlap. With no focus
  *  yet, the first region takes it. */

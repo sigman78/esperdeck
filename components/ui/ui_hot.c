@@ -51,6 +51,8 @@ void ui_hot_begin(uint32_t frame)
     s.frame = frame;
 }
 
+void ui_hot_clock(uint32_t frame) { s.frame = frame; }
+
 void ui_hot(ui_rect_t r, ui_id_t id)
 {
     if (!id || ui_rect_empty(r) || s.count >= UI_HOT_MAX) return;

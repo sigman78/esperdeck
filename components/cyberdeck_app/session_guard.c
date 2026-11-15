@@ -45,8 +45,18 @@ bool session_guard_idle(uint64_t now)
     return now - s_guard.last_input > s_guard.idle_ms;
 }
 
+/* The vault goes cold along with the hydrated copies out in app state.
+ * No-op when locked or without a store. */
+void session_guard_idle_lock(void)
+{
+    s_guard.engaged = true;
+    keystore_lock();
+    app_creds_wipe();
+}
+
 /* Both policies run on HOME only. A live session holds the deck open
- * (v1 semantics), and the gate pad is already locked. */
+ * (v1 semantics), and the gate pad is already locked. A still page
+ * that holds no session calls session_guard_idle_lock itself. */
 void session_guard_tick(uint64_t now)
 {
     if (nav_current() != SCR_HOME) return;
@@ -70,11 +80,7 @@ void session_guard_tick(uint64_t now)
     }
 
     /* Idle auto-lock: a deck idle past the timeout is a deck someone
-     * walked away from. The vault goes cold along with the hydrated
-     * copies out in app state. No-op when locked or without a store. */
-    if (!s_guard.engaged && session_guard_idle(now)) {
-        s_guard.engaged = true;
-        keystore_lock();
-        app_creds_wipe();
-    }
+     * walked away from. */
+    if (!s_guard.engaged && session_guard_idle(now))
+        session_guard_idle_lock();
 }

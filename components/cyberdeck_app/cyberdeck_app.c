@@ -350,8 +350,12 @@ bool cyberdeck_app_debug_status_idle(void)
 
 void cyberdeck_app_tick(uint64_t now)
 {
-    app.anim_frame = (uint32_t)(now / ANIM_PERIOD_MS);
-    ui_frame(app.anim_frame);   /* clock for hot-region animation */
+    const uint32_t frame = (uint32_t)(now / ANIM_PERIOD_MS);
+    const bool next = frame != app.anim_frame;
+    app.anim_frame = frame;
+    ui_frame(frame);            /* clock for hot-region animation */
+    /* A pressed flash ends on its own. A still page draws that frame too. */
+    if (next && ui_hot_animating()) nav_invalidate();
 
     status_tick(now);            /* toast expiry + chip announcements */
     app_settings_idle_flush();   /* deferred settings saves, once held pages close */

@@ -312,6 +312,22 @@ static void test_pressed_follows_the_finger_and_the_flash_expires(void)
     TEST_ASSERT_FALSE(ui_pressed(1));
 }
 
+/* A still page last drew at frame 0. A tap at frame 50 still flashes. */
+static void test_flash_runs_on_the_clock_not_the_last_frame(void)
+{
+    lay_six();
+    ui_hot_clock(50);
+    ui_hot_touch(UI_TOUCH_TAP, 5, 4);
+    ui_hot_begin(50);
+    TEST_ASSERT_TRUE(ui_pressed(1));
+    ui_hot_clock(50 + UI_FLASH_FRAMES);
+    TEST_ASSERT_TRUE(ui_hot_animating());
+    ui_hot_begin(50 + UI_FLASH_FRAMES);
+    TEST_ASSERT_FALSE(ui_pressed(1));
+    ui_hot_clock(51 + UI_FLASH_FRAMES);
+    TEST_ASSERT_FALSE(ui_hot_animating());
+}
+
 static void test_reset_drops_regions_and_focus(void)
 {
     lay_six();
@@ -1100,6 +1116,7 @@ int main(void)
     RUN_TEST(test_tap_presses_and_hides_the_ring);
     RUN_TEST(test_tap_on_a_gutter_does_nothing);
     RUN_TEST(test_pressed_follows_the_finger_and_the_flash_expires);
+    RUN_TEST(test_flash_runs_on_the_clock_not_the_last_frame);
     RUN_TEST(test_reset_drops_regions_and_focus);
     RUN_TEST(test_region_table_overflow_is_dropped_not_written);
     RUN_TEST(test_profile_limit_fits_or_pages);

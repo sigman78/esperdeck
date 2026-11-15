@@ -257,6 +257,18 @@ SCENARIOS = {
         "|key:left|key:right|key:enter|wait:300|expect:profile|type:2"
         "|key:esc|key:esc|wait:300|expect:ask|key:right|key:enter|wait:400"
         "|expect:home|expect-text:example|quit",
+    "connect-failed-idle-locks":
+        PAD_MAKE + "|key:esc|wait:300|key:esc|wait:500|expect:home"
+        "|tap:130,64|wait:300|expect-text:Try again|wait:181000"
+        "|expect:home|tap:130,64|wait:300|expect:unlock|quit",
+    "host-delete-key":
+        "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
+        "|key:right|key:right|key:enter|wait:400|expect:ask"
+        "|expect-text:The entry and its SSH key files go.|quit",
+    "host-delete-shared-key":
+        "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
+        "|key:right|key:right|key:enter|wait:400|expect:ask"
+        "|expect-text:The entry goes. Its key stays in use.|quit",
     # The release after a hold must not connect.
     "hold-opens-host":
         "key:esc|wait:400|expect:home|hold:130,64|wait:400|expect:host"
@@ -353,6 +365,13 @@ FIXTURE_EDITS = {
     "connect-failed-edit": KEY_MISSING,
     "connect-failed-edit-discard": KEY_MISSING,
     "status-failed-page-toast": KEY_MISSING,
+    "connect-failed-idle-locks": KEY_MISSING,
+    "host-delete-key": KEY_MISSING,
+    "host-delete-shared-key": [
+        ("auth=password\npassword=changeme", "auth=key\nkey_id=id_deck"),
+        ("#[server]\n#host=server.local\n#port=22\n#user=me\n"
+         "#auth=key\n#key_id=id_deck",
+         "[server]\nhost=10.0.0.5\nport=22\nuser=ops\nauth=key\nkey_id=id_deck")],
     "tap-connect": [("host=192.168.1.10", "host=127.0.0.1"),
                     ("port=22", "port=1")],
     "hold-opens-host": [("host=192.168.1.10", "host=127.0.0.1"),

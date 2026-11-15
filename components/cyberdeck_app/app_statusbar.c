@@ -237,10 +237,12 @@ static uint8_t  s_prev[SB_MAX_CHIPS];   /* last UI_SB_* state per table entry */
 static uint32_t s_sig;                  /* what the last tick saw drawn      */
 static uint32_t s_blink;                /* last frame drawn for a busy chip  */
 
-static uint32_t chips_sig(const ui_sb_chip_t *chips, int n)
+/* What the row draws apart from the note: the chips and the clock. */
+static uint32_t chips_sig(const ui_sb_chip_t *chips, int n, const char *clk)
 {
     uint32_t h = 2166136261u;
 #define MIX(v) (h = (h ^ (uint32_t)(v)) * 16777619u)
+    for (; *clk; clk++) MIX(*clk);
     for (int i = 0; i < n; i++) {
         MIX(chips[i].n);
         for (int k = 0; k < chips[i].n; k++) {
@@ -304,8 +306,10 @@ void status_tick(uint64_t now)
 
     ui_sb_chip_t chips[SB_MAX_CHIPS];
     int          slot[SB_MAX_CHIPS];
+    char         clk[10] = "";
     const int nchips = sb_poll(chips, slot);
-    const uint32_t sig = chips_sig(chips, nchips);
+    if (bar && !clock_str(clk, sizeof(clk))) clk[0] = '\0';
+    const uint32_t sig = chips_sig(chips, nchips, clk);
     const bool moved = ui_ann_step(&s_ann, now);
     if ((moved || sig != s_sig) && bar) nav_invalidate();
     s_sig = sig;

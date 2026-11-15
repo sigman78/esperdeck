@@ -14,6 +14,7 @@
 #include "display_fx.h"
 #include "font.h"        /* font_height() — drag pixels to terminal rows */
 #include "keystore.h"
+#include "session_guard.h"
 #include "ssh_client.h"
 #include "ssh_session.h"
 #include "ui_pure.h"     /* line wrap, UTF-8 put */
@@ -324,8 +325,8 @@ static void session_enter(intptr_t arg, uint64_t now)
 }
 
 /* Open the failed view. The snapshot's password goes first: the page
- * stays open, and no idle lock runs on it. Try again re-reads the stored
- * host instead. */
+ * can stay open. Try again re-reads the stored host instead. Once the
+ * deck idles, the page locks the store and gives way to HOME. */
 static void conn_failed(const char *reason)
 {
     conn_creds_wipe();
@@ -389,7 +390,14 @@ static void connecting_tick(uint64_t now)
 {
     if (handle_session_event(ssh_session_poll(now), now))
         return;
-    if (s_conn.failed) return;           /* a still page */
+    if (s_conn.failed) {
+        /* An idle failed page locks like HOME, then goes there. */
+        if (session_guard_idle(now)) {
+            session_guard_idle_lock();
+            enter_home(now);
+        }
+        return;
+    }
     if (now >= app.next_anim) {          /* keep the spinner/counters alive */
         app.next_anim = now + ANIM_PERIOD_MS;
         nav_invalidate();

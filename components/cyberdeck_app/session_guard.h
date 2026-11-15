@@ -14,6 +14,7 @@ void session_guard_init(uint64_t now);      /* load [saver], start timer */
 void session_guard_activity(uint64_t now);  /* any input or HOME entry   */
 void session_guard_tick(uint64_t now);      /* idle + walk-away lock     */
 bool session_guard_idle(uint64_t now);      /* idle timeout crossed      */
+void session_guard_idle_lock(void);         /* the idle lock, off HOME   */
 
 uint32_t session_guard_idle_min(void);      /* SYSTEM menu knob          */
 void     session_guard_set_idle_min(uint32_t min);

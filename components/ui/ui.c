@@ -38,7 +38,11 @@ static uint8_t s_pen  = OVERLAY_COL_DEFAULT;   /* current accent color */
  * hot-region model reads it for press and focus animation. */
 static uint32_t s_frame = 0;
 
-void ui_frame(uint32_t frame) { s_frame = frame; }
+void ui_frame(uint32_t frame)
+{
+    s_frame = frame;
+    ui_hot_clock(frame);
+}
 
 esp_err_t ui_init(void)
 {
