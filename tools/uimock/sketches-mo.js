@@ -837,13 +837,15 @@ function moEntryPanel(ui, entry, st, len) {
   ui.pen(C.DEFAULT);
 }
 
-// Access code pad. Keys are three rows high, so a digit sits centred.
+// Access code pad. Keys are five rows high where they fit, else three:
+// an odd height keeps the digit centred.
 function moUnlock(ui, app) {
   const st = app.state, pg = moPage(ui), code = st.code || '', len = moLen(code);
   const [title, note] = moUnlockHead(st);
   moHeader(ui, pg.header, { title, note, back: st.flow ? { tap: () => app.back() } : undefined });
   if (st.flow) ui.key('Escape', () => app.back());
-  const kw = 9, w = 3 * kw + 2, pad = center(pg.body, w, 15);
+  const kh = pg.body.h >= 3 + 4 * 5 ? 5 : 3;
+  const kw = 9, w = 3 * kw + 2, pad = center(pg.body, w, 3 + 4 * kh);
   if (pg.body.h < 15) { ui.issues.push({ kind: 'drop', text: 'code pad' }); return; }
   moEntryPanel(ui, cutTop(pad, 3), st, len);
   const submit = (c) => {
@@ -864,7 +866,7 @@ function moUnlock(ui, app) {
   const erase = () => { st.code = code.slice(0, -1); st.note = ''; };
   const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '←', '0', 'OK'];
   KEYS.forEach((label, i) => {
-    const r = rect(pad.x + (i % 3) * (kw + 1), pad.y + Math.trunc(i / 3) * 3, kw, 3);
+    const r = rect(pad.x + (i % 3) * (kw + 1), pad.y + Math.trunc(i / 3) * kh, kw, kh);
     if (label === '←') moBtn(ui, r, MO_ID.KEY + i, label, { off: !code }, { tap: erase });
     else if (label === 'OK')
       moBtn(ui, r, MO_ID.KEY + i, label, { tone: 'solid', accent: C.GREEN, off: !code }, { tap: enter });

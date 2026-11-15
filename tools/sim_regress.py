@@ -199,11 +199,11 @@ SCENARIOS = {
     "pad-short":
         PAD_OPEN + "|type:12|key:enter|wait:300"
         "|expect-text:At least 4 characters|quit",
-    # Points (8x16 grid): 316,200 key 1; 396,200 key 2; 476,200 key 3;
-    # 316,248 key 4; 476,344 OK; 40,24 header back.
+    # Points (8x16 grid): 316,152 key 1; 396,152 key 2; 476,152 key 3;
+    # 316,232 key 4; 476,392 OK; 40,24 header back.
     "pad-touch":
-        PAD_OPEN + "|tap:316,200|tap:396,200|tap:476,200|tap:316,248"
-        "|wait:300|tap:476,344|wait:300|expect-text:Enter the new code again"
+        PAD_OPEN + "|tap:316,152|tap:396,152|tap:476,152|tap:316,232"
+        "|wait:300|tap:476,392|wait:300|expect-text:Enter the new code again"
         "|tap:40,24|wait:400|expect:menu|expect-text:Create keystore|quit",
     "pad-cancel":
         PAD_OPEN + "|key:esc|wait:400|expect:menu|expect-text:Create keystore"

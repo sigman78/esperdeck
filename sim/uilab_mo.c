@@ -954,11 +954,12 @@ static void draw_unlock(const unlock_t *u)
     unlock_head(u, &title, &note);
     ui_title(pg.header, NULL, title, note, u->flow);
     const int kw = 9;
-    ui_rect_t pad = ui_center(pg.body, 3 * kw + 2, 15);
+    const int kh = pg.body.h >= 3 + 4 * 5 ? 5 : 3;
+    ui_rect_t pad = ui_center(pg.body, 3 * kw + 2, 3 + 4 * kh);
     draw_entry_panel(ui_cut_top(&pad, 3), u, len);
     for (int i = 0; i < 12; i++) {
         const ui_rect_t r = ui_rect(pad.x + (i % 3) * (kw + 1),
-                                    pad.y + (i / 3) * 3, kw, 3);
+                                    pad.y + (i / 3) * kh, kw, kh);
         const uint8_t off = len ? 0 : UI_PART_OFF;
         if (i == 9)
             ui_push(r, (ui_id_t)(MO_KEY + i), KEYS[i], UI_TONE_CARD, 0, off);

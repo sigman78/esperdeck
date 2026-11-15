@@ -189,11 +189,13 @@ static void render_unlock(uint64_t now)
     phase_head(&title, &note);
     ui_title(pg.header, NULL, title, note, !s_unlock.gate);
 
-    ui_rect_t pad = ui_center(pg.body, 3 * kw + 2, 15);
+    /* Five-row keys where they fit: the digit stays centred. */
+    const int kh = pg.body.h >= 3 + 4 * 5 ? 5 : 3;
+    ui_rect_t pad = ui_center(pg.body, 3 * kw + 2, 3 + 4 * kh);
     draw_entry_panel(ui_cut_top(&pad, 3));
     for (int i = 0; i < 12; i++) {
         const ui_rect_t r = ui_rect(pad.x + (i % 3) * (kw + 1),
-                                    pad.y + (i / 3) * 3, kw, 3);
+                                    pad.y + (i / 3) * kh, kw, kh);
         const bool off = (i == SLOT_ERASE || i == SLOT_OK) && !s_unlock.len;
         const uint8_t flags = off ? UI_PART_OFF : 0;
         if (i == SLOT_OK)
