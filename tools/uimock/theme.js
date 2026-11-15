@@ -82,5 +82,5 @@ export function themeBuild(fg, bg) {
 
 // Colour pairs the lab does not dump. A sketch names one as its theme.
 export const THEMES = {
-  slate: themeBuild(rgb565(208, 216, 216), rgb565(32, 40, 48)),
+  slate: themeBuild(rgb565(208, 216, 216), rgb565(0, 0, 0)),
 };

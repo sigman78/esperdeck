@@ -1,13 +1,14 @@
 # UI kit: one surface, cut layouts, one interaction model
 
 **Status: draft, 2026-11-14.** The kit and its lab exist. The look is
-decided: plain slabs on a slate screen (see *Parts*). The parts are
+decided: plain slabs on a black screen (see *Parts*). The parts are
 gated against their design sketches. Every shell screen draws with
 them: HOME, the host page, the question page, the setup hub, its
 sections, the session sheet, the host form, the code pad, the connect
 screen, the host-key page, keyboard pairing, Wi-Fi onboarding and host
 import. The status row and the in-session toast draw with `ui_status`
-and `ui_toast`. The whole shell uses the slate colour pair.
+and `ui_toast`. The whole shell uses one colour pair: light grey on black
+(the `slate` theme).
 Companion to
 [`ui-spec.md`](ui-spec.md) (what each part must do) and
 [`overlay-style.md`](overlay-style.md) (how a look is named).
@@ -96,7 +97,7 @@ drops taps until the new page has drawn once.
 
 `cyberdeck_ui.h` pulls them together. A screen includes it alone.
 
-## Parts: slabs on a slate screen
+## Parts: slabs on a black screen
 
 `ui_part.h`. This is the look chosen on 2026-11-14. The design was drawn
 first on the JavaScript model in `tools/uimock` (`sketches-mo.js`), and
@@ -265,10 +266,11 @@ above its action row while storage holds eight.
    second binding. The shell port sets it; the kit only knows `K_HOLD`.
 2. **Label hue.** Teal comes from the accent table. A softer hue needs
    its own style row.
-3. **The right margin at 12x24.** 66 cells leave 8 px that stay black
-   beside a slate screen. The display side must fill or centre it. The
-   scanline code zeroes those pixels, so it is a display change with its
-   own timing check.
+3. **The right margin at 12x24.** 66 cells leave 8 px that stay black.
+   On the black screen they do not show. A coloured background would
+   need the display side to fill or centre them: the scanline code
+   zeroes those pixels, so that is a display change with its own timing
+   check.
 4. **Focus restore.** The navigation stack keeps no focus per entry.
 5. **Key hints.** Whether the shipped screens show them.
 6. **Paged lists.** An arrow key does not turn the page at the edge.

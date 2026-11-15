@@ -23,7 +23,7 @@ static int iabs(int v) { return v < 0 ? -v : v; }
 /* The two themes the shell sets (app_internal.h UI_FG/UI_BG and the
  * hostkey mismatch hazard theme). */
 static const struct { color_t fg, bg; const char *name; } THEMES[] = {
-    { RGB565(208, 216, 216), RGB565(32, 40, 48), "slate" },
+    { RGB565(208, 216, 216), RGB565(0, 0, 0), "slate" },
     { RGB565(255, 255, 255), RGB565(96, 0, 0), "hostkey hazard" },
 };
 

@@ -10,7 +10,7 @@
 #define LAB_FG RGB565(85, 255, 85)
 #define LAB_BG RGB565(0, 0, 0)
 #define LAB_SLATE_FG RGB565(208, 216, 216)
-#define LAB_SLATE_BG RGB565(32, 40, 48)
+#define LAB_SLATE_BG RGB565(0, 0, 0)
 
 typedef struct {
     const char *name;

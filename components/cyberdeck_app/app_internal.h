@@ -22,10 +22,10 @@
 #define ERR_TOAST_MS     7000         /* errors the user must actually read */
 #define MENU_MSG_MS      5000         /* menu action feedback lifetime */
 
-/* Shell palette: light grey on slate. Per-cell accents (OVERLAY_COL_*)
+/* Shell palette: light grey on black. Per-cell accents (OVERLAY_COL_*)
  * layer the rest of the classic 16 on top. */
 #define UI_FG   RGB565(208, 216, 216)
-#define UI_BG   RGB565(32, 40, 48)
+#define UI_BG   RGB565(0, 0, 0)
 
 #define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
 
