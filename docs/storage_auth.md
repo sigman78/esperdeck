@@ -400,6 +400,11 @@ the littlefs image never needs plaintext:
   - The saver only runs on an idle HOME or over the gate pad, so a
     live session is never interrupted. An open session holds the deck
     open — accepted for v1; in-session idle lock is a future feature.
+  - Any other page without a live session (host page, editor, Setup,
+    host-key page, failed connect, Wi-Fi setup, host import) locks the
+    store when idle and gives way to the gate pad. A connect attempt
+    in flight is cancelled first. Without an unlocked store the idle
+    lock does nothing, so a deck with no keystore keeps its passwords.
   - The lazy **CONNECT pad** (`// CONNECT`; Esc or 60 s idle cancels
     to HOME) survives only as a safety net for a key connect that
     finds the store locked (races). In normal use it never appears,

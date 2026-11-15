@@ -431,7 +431,8 @@ static bool pf_orphans_key(void)
            strcmp(s_pf.draft.key_id, old->key_id) != 0;
 }
 
-/* A key with no host left is the user's to delete. Keep is the default. */
+/* A key with no host left is the user's to delete. Cancel is the
+ * default; Keep key saves without deleting. */
 static void pf_save(uint64_t now)
 {
     if (!pf_orphans_key()) {

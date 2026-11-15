@@ -284,17 +284,22 @@ SCENARIOS = {
         "|key:enter|wait:300|expect-text:Setup / Hosts|key:enter|wait:400"
         "|expect:sshimport|wait:185000|expect:saver|key:esc|wait:400"
         "|expect:unlock|quit",
+    "idle-no-store-keeps-passwords":
+        "key:esc|wait:400|expect:home|wait:185000|expect:saver|key:esc"
+        "|wait:400|expect:home|key: |wait:400|expect:host"
+        "|expect-text:password, stored|quit",
     "idle-no-store-stays":
         "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
         "|wait:185000|expect:host|quit",
     "editor-key-keep":
-        EDIT_DROPS_KEY + "|key:enter|wait:400|expect:host"
+        EDIT_DROPS_KEY + "|key:right|key:enter|wait:400|expect:host"
         "|expect-text:host saved|quit",
     "editor-key-delete":
-        EDIT_DROPS_KEY + "|key:right|key:enter|wait:400|expect:host"
-        "|expect-text:host saved, key deleted|quit",
+        EDIT_DROPS_KEY + "|key:right|key:right|key:enter|wait:400"
+        "|expect:host|expect-text:host saved, key deleted|quit",
     "editor-key-back":
-        EDIT_DROPS_KEY + "|key:esc|wait:400|expect:profile|quit",
+        EDIT_DROPS_KEY + "|key:enter|wait:400|expect:profile|key:esc"
+        "|wait:400|expect:ask|expect-text:Discard the changes?|quit",
     "host-delete-key":
         "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
         "|key:right|key:right|key:enter|wait:400|expect:ask"

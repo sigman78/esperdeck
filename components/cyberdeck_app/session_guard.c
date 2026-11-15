@@ -11,7 +11,6 @@
 #include "app_settings.h"
 #include "session_guard.h"
 #include "keystore.h"
-#include "ssh_session.h"
 
 /* Phone unseen this long (after a sighting) locks the deck. */
 #define WALKAWAY_MS  60000
@@ -74,12 +73,14 @@ static bool idle_exempt(int scr)
            scr == SCR_POWEROFF || scr == SCR_CONNECTING;
 }
 
-/* A live session holds the deck open (v1 semantics). Every other page
- * locks when idle. HOME stays up under the saver. The others give way
- * to the gate pad. The walk-away lock runs on HOME only. */
+/* A live session holds the deck open (v1 semantics). That is the session
+ * screen or a page above it, such as its menu. The controller state does
+ * not tell: a menu Disconnect leaves it at UP. Every other page locks when idle. HOME
+ * stays up under the saver. The others give way to the gate pad. The
+ * walk-away lock runs on HOME only. */
 void session_guard_tick(uint64_t now)
 {
-    if (ssh_session_state() == SSH_SESSION_UP) return;
+    if (nav_on_stack(SCR_SESSION)) return;
     const int scr = nav_current();
     if (scr != SCR_HOME) {
         if (!s_guard.engaged && !idle_exempt(scr) && session_guard_idle(now))

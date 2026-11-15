@@ -53,6 +53,13 @@ int nav_current(void)
     return s_depth > 0 ? s_stack[s_depth - 1].id : -1;
 }
 
+bool nav_on_stack(int id)
+{
+    for (int i = 0; i < s_depth; i++)
+        if (s_stack[i].id == id) return true;
+    return false;
+}
+
 bool nav_has_bar(void)
 {
     const nav_screen_t *d = s_depth > 0 ? screen(nav_current()) : NULL;
