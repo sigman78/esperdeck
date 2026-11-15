@@ -37,7 +37,7 @@ Applied to today's inventory:
 | WiFi link state | HOME LED line + bar patch | `NET` chip (gains BUSY/ALERT states) |
 | RSSI (received signal strength, dBm) | HOME text `-52dBm` + 4-step glyph | the stair glyph **is** the NET icon — height carries quality; the number moves to STATUS page |
 | IP address / SSID | HOME LED line | NET chip expansion on connect + STATUS page |
-| Keyboard link (BLE HID — Bluetooth Low Energy Human Interface Device) | HOME LED line + bar patch | `KBD` chip (gains BUSY state for pairing/reconnect) |
+| Keyboard link (BLE HID — Bluetooth Low Energy Human Interface Device) | HOME LED line + bar patch | `KBD` chip (OFF while it pairs or reconnects; see the grammar note) |
 | Keyboard name | HOME LED line | KBD chip expansion on pair + STATUS page |
 | Caps lock | amber chip fused to KBD | unchanged (the fused-segment pattern generalizes it) |
 | Num / scroll lock | unrendered (no referent) | unchanged; segments make them a one-liner the day a keymap honors them |
@@ -144,8 +144,8 @@ side so the wash reads as a chip); fused segments add 2 cells each.
   at render rate). OFF = dim `▂` in the well (shape says "signal",
   luminance says "down"); BUSY = spinner (connecting, lost); ALERT =
   `✘` (failed). The dBm number lives on the STATUS page.
-- **KBD** — sprite keyboard icon, fallback `K`. OFF (idle) / BUSY
-  (pairing scan, reconnect search) / ON (cyan) + a fused amber `C`
+- **KBD** — sprite keyboard icon, fallback `K`. OFF (idle, pairing
+  scan, reconnect search; shipped as a still grey chip) / ON (cyan) + a fused amber `C`
   segment while caps lock is on (num/scroll join as segments the day
   they gain a referent).
 - **SYNC** (temporary, soak diagnostic 2026-09) — ABSENT until the vterm
@@ -245,7 +245,8 @@ still shows them. The render only reads the state.
 
 Still open: the STATUS page, the memory chip, the phone chip and the
 plugin seam. "wifi connecting..." and "keyboard connecting..." no
-longer announce; the BUSY blink on the chip carries them.
+longer announce; the BUSY blink on the network chip carries Wi-Fi.
+The keyboard chip stays OFF until the keyboard is up.
 
 ### Layout
 
