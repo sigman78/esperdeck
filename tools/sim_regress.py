@@ -374,6 +374,10 @@ SCENARIOS = {
     "pair-timeout":
         PAIR_OPEN + "|wait:3300|expect-text:2 found|wait:20000"
         "|expect-text:closes in|wait:11000|expect:home|quit",
+    "kbd-chip-announces":
+        "key:esc|wait:400|expect:home|settle|kbd:up|wait:300"
+        "|expect-text:Keychron K2|kbd:caps|wait:300|expect-no-text:caps lock"
+        "|settle|kbd:down|wait:300|expect-text:disconnected|quit",
     "status-boot":
         "expect:home|expect-text:HomeAP 127.0.0.1|wait:6000"
         "|expect-no-text:HomeAP|expect-text:W |quit",
@@ -448,7 +452,7 @@ def run(sim, name, script, window):
                 text = text.replace(old, new, 1)
             ini.write_text(text, encoding="utf-8")
             mode = ([] if window else ["--headless"]) + (
-                ["--fake-ble"] if name.startswith("pair-") else [])
+                ["--fake-ble"] if name.startswith(("pair-", "kbd-")) else [])
             r = subprocess.run(
                 [str(sim), *mode, "--storage-dir", str(fixture),
                  "--drive", script],

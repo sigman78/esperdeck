@@ -282,6 +282,36 @@ static void session_news(uint64_t now, int chip, int kind)
         toast(now, "keyboard disconnected");
 }
 
+/* Two more facts the hidden bar would show in a session: a lock key
+ * changed, and the link got weak. The state tracks on every screen. A
+ * toast goes out only in a session. A weak link speaks once, then waits
+ * until the signal is fair again. */
+static void session_facts(uint64_t now, bool session)
+{
+    static const char *const LOCK_NAME[NELEM(KBD_LOCKS)] = { "caps", "num" };
+    static bool    s_kbd_up, s_weak;
+    static uint8_t s_locks;
+
+    const bool    up    = kbd_state(NULL) == UI_SB_ON;
+    const uint8_t locks = (up && app.ble->get_locks) ? app.ble->get_locks() : 0;
+    if (session && up && s_kbd_up) {
+        for (int i = 0; i < NELEM(KBD_LOCKS); i++)
+            if ((locks ^ s_locks) & KBD_LOCKS[i].bit)
+                toast(now, "%s lock %s", LOCK_NAME[i],
+                      locks & KBD_LOCKS[i].bit ? "on" : "off");
+    }
+    s_kbd_up = up;
+    s_locks  = locks;
+
+    const int rssi = net_state(NULL) == UI_SB_ON ? net_rssi() : 0;
+    if (rssi == 0 || rssi > SB_RSSI_FAIR) {
+        s_weak = false;
+    } else if (rssi <= SB_RSSI_WEAK && !s_weak) {
+        s_weak = true;
+        if (session) toast(now, "wifi signal weak (%d dBm)", rssi);
+    }
+}
+
 void status_tick(uint64_t now)
 {
     if (app.toast[0] && now >= app.toast_until) {
@@ -310,6 +340,7 @@ void status_tick(uint64_t now)
             session_news(now, i, kind);
         }
     }
+    session_facts(now, !bar && nav_current() == SCR_SESSION);
 
     ui_sb_chip_t chips[SB_MAX_CHIPS];
     int          slot[SB_MAX_CHIPS];

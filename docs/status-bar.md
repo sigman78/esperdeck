@@ -234,7 +234,9 @@ still shows them. The render only reads the state.
 - No bar, no expansion: a session or the saver on top plays none, and
   edges there are not replayed. In a session a Wi-Fi failure, a Wi-Fi
   loss and a keyboard loss show as toasts. So do Wi-Fi and the keyboard
-  coming back, with the network or keyboard name.
+  coming back, with the network or keyboard name. Two facts the bar
+  shows also get a session toast: a Caps or Num Lock change, and a
+  signal at the weakest rung (once, until it is fair again).
 - The same tick expires the toast for every screen.
 - The tick also redraws the page when a chip changes (state, a lock,
   a signal rung), not only on an announcement.

@@ -80,6 +80,8 @@ time_t           wifi_manager_time(void);
 #ifdef BUILD_SIMULATOR
 /** Simulator hook: put the mocked link in @p state (the --drive wifi step). */
 void             wifi_manager_sim_set(wifi_mgr_state_t state);
+/** Simulator hook: the signal a connected link reports (wifi:rssi:N). */
+void             wifi_manager_sim_set_rssi(int dbm);
 #endif
 
 #endif // WIFI_MANAGER_H

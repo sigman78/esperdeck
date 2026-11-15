@@ -225,7 +225,9 @@ static void touch_tick(uint64_t now)
  * (framebuffer pixel coords; key names: enter, esc, tab, bs (backspace),
  * up/down/left/right, f12, sbup/sbdn for scrollback paging, or a single
  * character; type:TEXT sends TEXT one character at a time). wifi:up,
- * wifi:down and wifi:fail set the mocked link. settle waits until the
+ * wifi:down and wifi:fail set the mocked link; wifi:rssi:N its signal.
+ * With --fake-ble, kbd:up and kbd:down link the keyboard; kbd:caps and
+ * kbd:num flip its locks. settle waits until the
  * status chips stop announcing. expect-no-text:TEXT fails when the
  * overlay still shows TEXT. Touch
  * steps: tap, hold (long press), press and release. Expectations
@@ -253,10 +255,13 @@ static uint64_t sim_now(void)
  * page runs on the host. Results show 3 s after the scan starts. */
 static bool     s_fake_ble;
 static bool     s_fake_scan;
+static bool     s_fake_up;
+static uint8_t  s_fake_locks;
 static uint64_t s_fake_since;
 
 static cyberdeck_ble_state_t fake_ble_state(void)
 {
+    if (s_fake_up) return CYBERDECK_BLE_CONNECTED;
     return s_fake_scan ? CYBERDECK_BLE_PAIRING_SCAN : CYBERDECK_BLE_IDLE;
 }
 
@@ -287,9 +292,9 @@ static void fake_ble_select(const uint8_t addr[6], uint8_t addr_type)
     (void)addr; (void)addr_type;
 }
 
-static const char *fake_ble_name(void) { return ""; }
+static const char *fake_ble_name(void) { return s_fake_up ? "Keychron K2" : ""; }
 static void fake_ble_forget(void) {}
-static uint8_t fake_ble_locks(void) { return 0; }
+static uint8_t fake_ble_locks(void) { return s_fake_up ? s_fake_locks : 0; }
 
 static const cyberdeck_ble_ops_t s_fake_ble_ops = {
     .get_state = fake_ble_state, .enter_pairing = fake_ble_enter,
@@ -374,8 +379,19 @@ static void drive_tick(uint64_t now)
         if      (!strcmp(to, "up"))   wifi_manager_sim_set(WIFI_MGR_CONNECTED);
         else if (!strcmp(to, "down")) wifi_manager_sim_set(WIFI_MGR_LOST);
         else if (!strcmp(to, "fail")) wifi_manager_sim_set(WIFI_MGR_FAILED);
+        else if (!strncmp(to, "rssi:", 5)) wifi_manager_sim_set_rssi(atoi(to + 5));
         else {
             fprintf(stderr, "drive: unknown wifi state '%s'\n", to);
+            exit(6);
+        }
+    } else if (!strncmp(step, "kbd:", 4)) {
+        const char *to = step + 4;
+        if      (!strcmp(to, "up"))   s_fake_up = true;
+        else if (!strcmp(to, "down")) s_fake_up = false;
+        else if (!strcmp(to, "caps")) s_fake_locks ^= CYBERDECK_KBD_LOCK_CAPS;
+        else if (!strcmp(to, "num"))  s_fake_locks ^= CYBERDECK_KBD_LOCK_NUM;
+        else {
+            fprintf(stderr, "drive: unknown kbd step '%s'\n", to);
             exit(6);
         }
     } else if (!strncmp(step, "expect:", 7)) {
