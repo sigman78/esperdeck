@@ -325,11 +325,13 @@ static void session_enter(intptr_t arg, uint64_t now)
 }
 
 /* Open the failed view. The snapshot's password goes first: the page
- * can stay open. Try again re-reads the stored host instead. Once the
- * deck idles, the page locks the store and gives way to HOME. */
-static void conn_failed(const char *reason)
+ * can stay open. Try again re-reads the stored host instead. The view
+ * opens a fresh idle window: a failure after a quiet session stays up.
+ * Once the deck idles, the page locks the store. */
+static void conn_failed(const char *reason, uint64_t now)
 {
     conn_creds_wipe();
+    session_guard_activity(now);
     snprintf(s_conn.reason, sizeof s_conn.reason, "%s", reason);
     snprintf(s_conn.name, sizeof s_conn.name, "%s",
              ssh_session_profile()->name);
@@ -355,7 +357,7 @@ static bool handle_session_event(ssh_session_event_t ev, uint64_t now)
     case SSH_SESSION_EV_KEY_UNREADABLE:
         snprintf(why, sizeof why, "Key '%.31s' cannot be read",
                  ssh_session_profile()->key_id);
-        conn_failed(why);
+        conn_failed(why, now);
         return true;
     case SSH_SESSION_EV_HOSTKEY_UNKNOWN:
         hostkey_open(false, now);
@@ -366,16 +368,16 @@ static bool handle_session_event(ssh_session_event_t ev, uint64_t now)
     case SSH_SESSION_EV_AUTH_FAILED:
         if (err[0]) snprintf(why, sizeof why, "Sign in refused: %.100s", err);
         else snprintf(why, sizeof why, "Sign in refused");
-        conn_failed(why);
+        conn_failed(why, now);
         return true;
     case SSH_SESSION_EV_BUSY:
-        conn_failed("Another connect is still running");
+        conn_failed("Another connect is still running", now);
         return true;
     case SSH_SESSION_EV_RETRYING:
         toast(now, "connect failed - retrying");
         return false;                    /* countdown renders here */
     case SSH_SESSION_EV_FAILED:
-        conn_failed(err[0] ? err : "The connection failed");
+        conn_failed(err[0] ? err : "The connection failed", now);
         return true;
     case SSH_SESSION_EV_CANCELLED:
         toast(now, "cancelled");
@@ -391,10 +393,12 @@ static void connecting_tick(uint64_t now)
     if (handle_session_event(ssh_session_poll(now), now))
         return;
     if (s_conn.failed) {
-        /* An idle failed page locks like HOME, then goes there. */
+        /* An idle failed page locks like HOME. A locked deck shows the
+         * gate pad, as every other lock does. */
         if (session_guard_idle(now)) {
             session_guard_idle_lock();
-            enter_home(now);
+            if (keystore_state() == KEYSTORE_LOCKED) unlock_open_gate(now);
+            else                                     enter_home(now);
         }
         return;
     }

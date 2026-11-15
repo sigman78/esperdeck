@@ -259,8 +259,9 @@ SCENARIOS = {
         "|expect:home|expect-text:example|quit",
     "connect-failed-idle-locks":
         PAD_MAKE + "|key:esc|wait:300|key:esc|wait:500|expect:home"
-        "|tap:130,64|wait:300|expect-text:Try again|wait:181000"
-        "|expect:home|tap:130,64|wait:300|expect:unlock|quit",
+        "|tap:130,64|wait:300|expect-text:Try again|wait:170000"
+        "|expect-text:Try again|wait:15000|expect:saver|key:esc|wait:400"
+        "|expect:unlock|expect-text:Deck locked|quit",
     "host-delete-key":
         "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
         "|key:right|key:right|key:enter|wait:400|expect:ask"
