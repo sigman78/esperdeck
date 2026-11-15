@@ -189,6 +189,11 @@ SCENARIOS = {
         "|sleep:2500|wait:100|expect:home|tap:130,64|wait:200|expect:home"
         "|wait:700|tap:130,64|wait:150|expect:connecting|key:esc|sleep:300"
         "|wait:700|quit",
+    "pad-unlock-held-touch-drops":
+        PAD_MAKE + "|key:left|key:enter|wait:400|expect:unlock|type:1234"
+        "|press:130,64|sleep:2500|wait:800|expect:home|tap:130,64|wait:200"
+        "|expect:home|tap:130,64|wait:150|expect:connecting|key:esc"
+        "|sleep:300|wait:700|quit",
     "pad-wrong-code":
         PAD_MAKE + "|key:left|key:enter|wait:400|expect:unlock|type:9999|sleep:2500"
         "|wait:700|expect:unlock|expect-text:wrong code|quit",

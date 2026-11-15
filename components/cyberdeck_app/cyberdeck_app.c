@@ -371,11 +371,13 @@ void cyberdeck_app_tick(uint64_t now)
 }
 
 static uint64_t s_quiet_until;   /* the shell drops touch before this time */
-static bool     s_quiet_touch;   /* the touch now down began in the quiet */
+static bool     s_quiet_touch;   /* drop the touch now down to its end */
+static bool     s_finger_down;   /* a PRESS came and its end did not yet */
 
 void touch_quiet(uint64_t now, uint32_t ms)
 {
     s_quiet_until = now + ms;
+    if (s_finger_down) s_quiet_touch = true;
 }
 
 /* A dropped PRESS also drops the TAP, LONG_PRESS or RELEASE that ends it. */
@@ -384,12 +386,14 @@ static bool touch_dropped(const cyberdeck_input_t *ev, uint64_t now)
     const bool quiet = now < s_quiet_until;
     switch (ev->type) {
     case CYBERDECK_INPUT_PRESS:
+        s_finger_down = true;
         s_quiet_touch = quiet;
         return quiet;
     case CYBERDECK_INPUT_TAP:
     case CYBERDECK_INPUT_LONG_PRESS:
     case CYBERDECK_INPUT_RELEASE: {
         const bool drop = quiet || s_quiet_touch;
+        s_finger_down = false;
         s_quiet_touch = false;
         return drop;
     }
