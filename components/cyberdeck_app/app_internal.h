@@ -83,6 +83,10 @@ bool ble_has_bond(void);
 void kick_wifi(void);
 void wifi_migrate_nvs_cred(void);
 
+/** Drop touch input for @p ms, and the rest of any touch already down.
+ *  A finger on the page that just closed must not act on the next one. */
+void touch_quiet(uint64_t now, uint32_t ms);
+
 /** Post a toast for @p ms; drawn by HOME inline or the SESSION toast chip. */
 void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...);
 

@@ -47,6 +47,7 @@ static struct {
 #define CODE_MIN     4            /* UI floor for a new code's length */
 #define REVEAL_MS   800          /* newest char shown while defining */
 #define IDLE_CANCEL_MS 60000      /* unattended pad cancels to HOME   */
+#define CLOSE_QUIET_MS 600        /* taps after the pad closes drop   */
 
 /* Entry phase (s_unlock.mode). */
 enum { UM_UNLOCK = 0, UM_OLD, UM_NEW, UM_CONFIRM, UM_REMOVE };
@@ -231,6 +232,9 @@ static void unlock_finish(uint64_t now)
 {
     wipe_entry();
     memset(s_staged, 0, sizeof(s_staged));
+    /* The pad closes about a second after the last tap (the code check).
+     * A finger still tapping there would land on the page below. */
+    touch_quiet(now, CLOSE_QUIET_MS);
     switch (s_flavor) {
     case UA_RESUME:                       /* re-arm the gated connect */
         connect_resume_active(now);

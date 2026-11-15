@@ -370,11 +370,42 @@ void cyberdeck_app_tick(uint64_t now)
     nav_frame(now);
 }
 
+static uint64_t s_quiet_until;   /* the shell drops touch before this time */
+static bool     s_quiet_touch;   /* the touch now down began in the quiet */
+
+void touch_quiet(uint64_t now, uint32_t ms)
+{
+    s_quiet_until = now + ms;
+}
+
+/* A dropped PRESS also drops the TAP, LONG_PRESS or RELEASE that ends it. */
+static bool touch_dropped(const cyberdeck_input_t *ev, uint64_t now)
+{
+    const bool quiet = now < s_quiet_until;
+    switch (ev->type) {
+    case CYBERDECK_INPUT_PRESS:
+        s_quiet_touch = quiet;
+        return quiet;
+    case CYBERDECK_INPUT_TAP:
+    case CYBERDECK_INPUT_LONG_PRESS:
+    case CYBERDECK_INPUT_RELEASE: {
+        const bool drop = quiet || s_quiet_touch;
+        s_quiet_touch = false;
+        return drop;
+    }
+    case CYBERDECK_INPUT_SCROLL:
+        return quiet || s_quiet_touch;
+    default:
+        return false;
+    }
+}
+
 void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
 {
     if (!ev) return;
 
     session_guard_activity(now);   /* every input feeds the idle timer */
+    if (touch_dropped(ev, now)) return;
 
     char ch = 0;
     ui_key_t k = (ev->type == CYBERDECK_INPUT_KEY ||
