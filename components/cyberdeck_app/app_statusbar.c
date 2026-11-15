@@ -261,10 +261,19 @@ static bool chips_busy(const ui_sb_chip_t *chips, int n)
     return false;
 }
 
-/* A session hides the bar. Its bad news goes to a toast. */
+/* A session hides the bar. Its chip edges go to a toast. */
 static void session_news(uint64_t now, int chip, int kind)
 {
-    if (kind == UI_ANN_NONE || kind == UI_ANN_UP) return;
+    if (kind == UI_ANN_NONE) return;
+    if (kind == UI_ANN_UP) {
+        char text[UI_ANN_TEXT];
+        CHIPS[chip].detail(kind, text, sizeof(text));
+        const char *what = chip == 0 ? "wifi" : "keyboard";
+        if (strcmp(text, "connected") == 0) toast(now, "%s connected", what);
+        else toast(now, "%s connected - %s", what, text);
+        app.toast_ok = true;
+        return;
+    }
     if (chip == 0 && kind == UI_ANN_FAIL)
         toast_for(now, ERR_TOAST_MS, "wifi connect failed (retrying)");
     else if (chip == 0)
