@@ -467,9 +467,9 @@ static void sb_look(const ui_sb_cell_t *c, uint8_t accent, uint32_t frame,
         *style = UI_FOCUS;
         *pen   = OVERLAY_COL_RED;
         break;
-    default:
+    default:                     /* OFF: a grey well */
         *style = UI_WELL;
-        *pen   = c->accent ? c->accent : OVERLAY_COL_BLUE;
+        *pen   = c->accent ? c->accent : OVERLAY_COL_DEFAULT;
         break;
     }
 }

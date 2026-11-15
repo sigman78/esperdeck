@@ -105,7 +105,7 @@ static int poll_net(ui_sb_cell_t cell[UI_SB_CELLS])
     const int rssi = net_rssi();
 
     const uint8_t st = net_state(NULL);
-    int n = sb_label(cell, "NET", st);
+    int n = sb_label(cell, "W", st);
 
     /* Rung i is lit once quality reaches level i+1. Unlit rungs stay
      * blank. On a focus chip the wash is the chip. A blank cell already
@@ -136,7 +136,8 @@ static const struct { char c; uint8_t bit; } KBD_LOCKS[] = {
     { 'N', CYBERDECK_KBD_LOCK_NUM  },
 };
 
-/* A scan is no loss: the pairing page narrates it. */
+/* A scan is no loss: the pairing page narrates it. A keyboard on its way
+ * up shows as down: a still grey chip, no spinner. */
 static uint8_t kbd_state(bool *quiet)
 {
     if (quiet) *quiet = false;
@@ -145,9 +146,6 @@ static uint8_t kbd_state(bool *quiet)
     if (quiet) *quiet = b == CYBERDECK_BLE_PAIRING_SCAN;
     switch (b) {
     case CYBERDECK_BLE_CONNECTED:    return UI_SB_ON;
-    case CYBERDECK_BLE_CONNECTING:
-    case CYBERDECK_BLE_PAIRING_SCAN:
-    case CYBERDECK_BLE_RECONNECT:    return UI_SB_BUSY;
     default:                         return UI_SB_OFF;
     }
 }

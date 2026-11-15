@@ -238,7 +238,7 @@ const sbCell = (state, cp, accent, keep) => ({ state, cp, accent, keep });
 const sbText = (s, st) => [...Array.from(s), ' '].map((ch) => sbCell(st, ch.codePointAt(0), 0, true));
 
 function sbNet(st, level) {
-  const cells = sbText('NET', st);
+  const cells = sbText('W', st);
   for (let i = 0; i < 4; i++) cells.push(sbCell(st, i < level ? SB_STAIR[i] : 0x20, 0, i > 0));
   return { accent: C.GREEN, cells };
 }
@@ -265,8 +265,8 @@ function moBarData(touch, keys, v) {
   const s = { chips: [sbNet(SB.ON, 3), sbKbd(SB.ON, [true, false])], clock: '14:07',
               hintTouch: touch, hintKeys: keys, frame: 3 };
   switch (v) {
-    case 'busy': s.chips = [sbNet(SB.BUSY, 0), sbKbd(SB.BUSY, [])]; break;
-    case 'busy-blink': s.chips = [sbNet(SB.BUSY, 0), sbKbd(SB.BUSY, [])]; s.frame = 11; break;
+    case 'busy': s.chips = [sbNet(SB.BUSY, 0), sbKbd(SB.OFF, [])]; break;
+    case 'busy-blink': s.chips = [sbNet(SB.BUSY, 0), sbKbd(SB.OFF, [])]; s.frame = 11; break;
     case 'alert': s.chips = [sbNet(SB.ALERT, 0), sbKbd(SB.ON, [true, false]), sbSync(2)]; break;
     case 'off': s.chips = [sbNet(SB.OFF, 0), sbKbd(SB.OFF, [])]; break;
     case 'note': Object.assign(s, { note: 'Host saved', tone: NOTE.PLAIN }); break;

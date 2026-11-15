@@ -142,7 +142,7 @@ function sbLook(c, accent, frame) {
     case SB.ALERT:
       if (!c.keep) cp = G.CROSS;
       return { cp, style: S.FOCUS, pen: C.RED };
-    default: return { cp, style: S.WELL, pen: c.accent || C.BLUE };
+    default: return { cp, style: S.WELL, pen: c.accent || C.DEFAULT };
   }
 }
 

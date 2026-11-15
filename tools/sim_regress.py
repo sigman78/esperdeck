@@ -371,11 +371,11 @@ SCENARIOS = {
         "|expect-text:closes in|wait:11000|expect:home|quit",
     "status-boot":
         "expect:home|expect-text:HomeAP 127.0.0.1|wait:6000"
-        "|expect-no-text:HomeAP|expect-text:NET|quit",
+        "|expect-no-text:HomeAP|expect-text:W |quit",
     "status-lost-still-page":
         "key:esc|wait:400|expect:home|settle|key: |wait:400|expect:host"
         "|wifi:down|wait:300|expect-text:link lost|expect:host|wait:5000"
-        "|expect-no-text:link lost|expect-text:NET|wifi:up|wait:300"
+        "|expect-no-text:link lost|expect-text:W |wifi:up|wait:300"
         "|expect-text:HomeAP 127.0.0.1|wait:5000|expect-no-text:HomeAP"
         "|expect:host|quit",
     "status-failed-page-toast":

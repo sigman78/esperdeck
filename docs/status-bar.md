@@ -57,9 +57,12 @@ page holds the numbers.** Nothing long-form is ever resident.
 
 > **Revised after the status-bar mock round.** The shipped chip is a
 > short label plus a value field, with one bar cell between chips:
-> `NET` with a four-cell signal ladder, `KBD` with the lock letters
-> `C` and `N`. Cells carry state one by one, so a lit lock sits inside
-> a plain chip. The state table below still holds; the spinner and the
+> `W` (Wi-Fi) with a four-cell signal ladder, `KBD` with the lock
+> letters `C` and `N`. Cells carry state one by one, so a lit lock sits
+> inside a plain chip. The font has no Wi-Fi glyph yet, so the network
+> label is the letter `W`. OFF is a grey well.
+> The keyboard chip has no BUSY look: while it pairs or reconnects it
+> shows OFF, a still grey chip. A spinner there drew the eye too much. The state table below still holds; the spinner and the
 > `✘` now take the first value cell and the label stays readable. The
 > icon-only paragraph that follows records the earlier decision.
 

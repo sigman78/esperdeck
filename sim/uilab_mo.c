@@ -33,7 +33,7 @@ static int sb_text(ui_sb_chip_t *c, const char *s, uint8_t st)
 static ui_sb_chip_t sb_net(uint8_t st, int level)
 {
     ui_sb_chip_t c = { .accent = OVERLAY_COL_GREEN };
-    int n = sb_text(&c, "NET", st);
+    int n = sb_text(&c, "W", st);
     for (int i = 0; i < 4; i++, n++)
         c.cell[n] = (ui_sb_cell_t){ .state = st, .keep = i > 0,
                                     .cp = i < level ? SB_STAIR[i] : ' ' };
@@ -82,7 +82,7 @@ static void mo_bar(ui_rect_t r, const char *touch, const char *keys,
                       .hint_touch = touch, .hint_keys = keys, .frame = 3 };
     if (!strcmp(v, "busy") || !strcmp(v, "busy-blink")) {
         chips[0] = sb_net(UI_SB_BUSY, 0);
-        chips[1] = sb_kbd(UI_SB_BUSY, false, false);
+        chips[1] = sb_kbd(UI_SB_OFF, false, false);
         if (v[4]) s.frame = 11;
     } else if (!strcmp(v, "alert")) {
         chips[0] = sb_net(UI_SB_ALERT, 0);
