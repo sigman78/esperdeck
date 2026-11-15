@@ -19,6 +19,7 @@ static const char *TAG = "app_sshimport";
 static struct {
     int      seen;                  /* count already acknowledged on screen */
     char     last[32];              /* snapshot of the last imported name   */
+    bool     running;               /* the import server is up              */
 } s_imp;
 
 static void render_sshimport(uint64_t now)
@@ -108,19 +109,35 @@ void enter_sshimport(uint64_t now, ssh_import_mode_t mode)
         enter_home(now);
         return;
     }
+    s_imp.running = true;
     nav_push(SCR_SSHIMPORT, (intptr_t)mode, now);
 }
 
-/* Tear down the import server, refresh the profile list, go home. Only SoftAP
- * parked wifi_manager, so only that mode needs to un-park it. */
+/* Tear down the import server and surface the imported profiles. Only
+ * SoftAP parked wifi_manager, so only that mode needs to un-park it. */
+static void imp_stop(void)
+{
+    if (!s_imp.running) return;
+    s_imp.running = false;
+    bool softap = (ssh_import_mode() == SSH_IMPORT_SOFTAP);
+    ssh_import_stop();
+    if (softap) kick_wifi();   /* resume STA auto-reconnect (web never parked) */
+    load_profiles();
+}
+
+/* Any other way off the page (the idle lock) stops the server too. */
+static void sshimport_exit(uint64_t now)
+{
+    (void)now;
+    imp_stop();
+}
+
+/* Stop the server, report what it did, go home. */
 static void exit_sshimport(uint64_t now)
 {
     int cnt = ssh_import_count();
     int del = ssh_import_deleted();
-    bool softap = (ssh_import_mode() == SSH_IMPORT_SOFTAP);
-    ssh_import_stop();
-    if (softap) kick_wifi();   /* resume STA auto-reconnect (web never parked) */
-    load_profiles();           /* surface freshly imported profiles on HOME */
+    imp_stop();
     if (cnt > 0 && del > 0) toast(now, "%d imported, %d removed", cnt, del);
     else if (cnt > 0)       toast(now, "imported %d profile(s)", cnt);
     else if (del > 0)       toast(now, "removed %d profile(s)", del);
@@ -157,7 +174,8 @@ static void sshimport_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
 }
 
 const nav_screen_t sshimport_screen = {
-    .name = "sshimport", .enter = sshimport_enter, .tick = sshimport_tick,
+    .name = "sshimport", .enter = sshimport_enter, .exit = sshimport_exit,
+    .tick = sshimport_tick,
     .input = sshimport_input, .render = render_sshimport,
     .chrome = NAV_CHROME_FULL,
 };

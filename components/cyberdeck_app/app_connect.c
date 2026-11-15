@@ -64,6 +64,7 @@ static const char *TAG = "app_connect";
  * reason: the client's error buffer changes with the next attempt. */
 static struct {
     bool failed;
+    bool idle_cancel;     /* the idle lock cancelled the attempt */
     char reason[128];
     char name[sizeof(((conn_profile_t *)0)->name)];
 } s_conn;
@@ -231,6 +232,7 @@ static void show_connecting(uint64_t now)
         s_conn.failed = false;
         ui_hot_reset();
     }
+    s_conn.idle_cancel = false;
     nav_invalidate();
 }
 
@@ -380,6 +382,7 @@ static bool handle_session_event(ssh_session_event_t ev, uint64_t now)
         conn_failed(err[0] ? err : "The connection failed", now);
         return true;
     case SSH_SESSION_EV_CANCELLED:
+        if (s_conn.idle_cancel && session_guard_lock_gate(now)) return true;
         toast(now, "cancelled");
         enter_home(now);
         return true;
@@ -392,16 +395,20 @@ static void connecting_tick(uint64_t now)
 {
     if (handle_session_event(ssh_session_poll(now), now))
         return;
-    if (s_conn.failed) {
-        /* An idle failed page locks like HOME. A locked deck shows the
-         * gate pad, as every other lock does. */
-        if (session_guard_idle(now)) {
-            session_guard_idle_lock();
-            if (keystore_state() == KEYSTORE_LOCKED) unlock_open_gate(now);
-            else                                     enter_home(now);
+    /* The idle lock skips this page (session_guard.c). A retry loop runs
+     * forever, so an idle attempt stops first. The lock follows on
+     * EV_CANCELLED. */
+    if (session_guard_idle(now)) {
+        if (s_conn.failed) {
+            if (!session_guard_lock_gate(now)) enter_home(now);
+            return;
         }
-        return;
+        if (!s_conn.idle_cancel && keystore_state() == KEYSTORE_UNLOCKED) {
+            s_conn.idle_cancel = true;
+            ssh_session_cancel(now);
+        }
     }
+    if (s_conn.failed) return;           /* a still page */
     if (now >= app.next_anim) {          /* keep the spinner/counters alive */
         app.next_anim = now + ANIM_PERIOD_MS;
         nav_invalidate();
@@ -494,11 +501,14 @@ static void connecting_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     }
 }
 
-/* Arrivals from other screens start on the connecting view. */
+/* Arrivals from other screens start on the connecting view. A reconnect
+ * after a quiet session gets a fresh idle window. */
 static void connecting_enter(intptr_t arg, uint64_t now)
 {
-    (void)arg; (void)now;
-    s_conn.failed = false;
+    (void)arg;
+    s_conn.failed      = false;
+    s_conn.idle_cancel = false;
+    session_guard_activity(now);
 }
 
 static void session_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,

@@ -11,6 +11,7 @@
 #include "app_settings.h"
 #include "session_guard.h"
 #include "keystore.h"
+#include "ssh_session.h"
 
 /* Phone unseen this long (after a sighting) locks the deck. */
 #define WALKAWAY_MS  60000
@@ -46,20 +47,45 @@ bool session_guard_idle(uint64_t now)
 }
 
 /* The vault goes cold along with the hydrated copies out in app state.
- * No-op when locked or without a store. */
+ * No-op when locked or without a store: without a store, the copies are
+ * the only passwords the deck has. */
 void session_guard_idle_lock(void)
 {
     s_guard.engaged = true;
+    if (keystore_state() != KEYSTORE_UNLOCKED) return;
     keystore_lock();
     app_creds_wipe();
 }
 
-/* Both policies run on HOME only. A live session holds the deck open
- * (v1 semantics), and the gate pad is already locked. A still page
- * that holds no session calls session_guard_idle_lock itself. */
+bool session_guard_lock_gate(uint64_t now)
+{
+    if (keystore_state() != KEYSTORE_UNLOCKED) return false;
+    session_guard_idle_lock();
+    unlock_open_gate(now);
+    return true;
+}
+
+/* Pages the idle lock leaves alone. The pad keeps its own idle rules.
+ * The saver only covers HOME or the gate. The connecting page must stop
+ * its attempt before it locks, so it calls the lock itself. */
+static bool idle_exempt(int scr)
+{
+    return scr == SCR_UNLOCK || scr == SCR_SAVER || scr == SCR_BOOT ||
+           scr == SCR_POWEROFF || scr == SCR_CONNECTING;
+}
+
+/* A live session holds the deck open (v1 semantics). Every other page
+ * locks when idle. HOME stays up under the saver. The others give way
+ * to the gate pad. The walk-away lock runs on HOME only. */
 void session_guard_tick(uint64_t now)
 {
-    if (nav_current() != SCR_HOME) return;
+    if (ssh_session_state() == SSH_SESSION_UP) return;
+    const int scr = nav_current();
+    if (scr != SCR_HOME) {
+        if (!s_guard.engaged && !idle_exempt(scr) && session_guard_idle(now))
+            session_guard_lock_gate(now);
+        return;
+    }
 
     /* Walk-away auto-lock (prototype): the phone was HERE, then unseen
      * for a minute, while the store sits unlocked — raise the gate,

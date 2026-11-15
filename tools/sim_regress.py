@@ -45,6 +45,12 @@ HUB = ("key:esc|wait:400|expect:home|key:up|key:right|key:enter|wait:500"
 WIFI_OPEN = (HUB + "|key:right|key:enter|wait:300|expect-text:Setup / Wi-Fi"
              "|key:right|key:enter|wait:400|expect:wifiprov")
 PAIR_OPEN = "key:esc|wait:400|expect:home|key:b|wait:200|expect:pairing"
+EDIT_DROPS_KEY = (
+    "key:esc|wait:400|expect:home|key: |wait:400|expect:host|key:right"
+    "|key:enter|wait:400|expect:profile|key:tab|key:tab|key:tab|key:tab"
+    "|key:left|key:enter|wait:200|key:tab|key:tab|key:tab|key:enter"
+    "|wait:400|expect:ask|expect-text:Delete key id_missing?"
+    "|expect-text:Keep key")
 
 # Esc first: skips the boot splash, harmless if HOME is already up.
 # Never send a bare Enter on HOME - it would start a real SSH connect.
@@ -262,6 +268,33 @@ SCENARIOS = {
         "|tap:130,64|wait:300|expect-text:Try again|wait:170000"
         "|expect-text:Try again|wait:15000|expect:saver|key:esc|wait:400"
         "|expect:unlock|expect-text:Deck locked|quit",
+    "idle-locks-host-page":
+        PAD_MAKE + "|key:esc|wait:300|key:esc|wait:500|expect:home"
+        "|hold:130,64|wait:500|expect:host|wait:185000|expect:saver|key:esc|wait:400"
+        "|expect:unlock|expect-text:Deck locked|quit",
+    "idle-locks-setup":
+        PAD_MAKE + "|wait:185000|expect:saver|key:esc|wait:400"
+        "|expect:unlock|expect-text:Deck locked|quit",
+    "idle-locks-retry-loop":
+        PAD_MAKE + "|key:esc|wait:300|key:esc|wait:500|expect:home"
+        "|tap:130,64|wait:300|expect:connecting|wait:185000|sleep:300"
+        "|wait:700|expect:saver|key:esc|wait:400|expect:unlock|quit",
+    "idle-locks-import":
+        PAD_MAKE + "|key:esc|wait:300|expect:menu|key:up|key:up|key:left"
+        "|key:enter|wait:300|expect-text:Setup / Hosts|key:enter|wait:400"
+        "|expect:sshimport|wait:185000|expect:saver|key:esc|wait:400"
+        "|expect:unlock|quit",
+    "idle-no-store-stays":
+        "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
+        "|wait:185000|expect:host|quit",
+    "editor-key-keep":
+        EDIT_DROPS_KEY + "|key:enter|wait:400|expect:host"
+        "|expect-text:host saved|quit",
+    "editor-key-delete":
+        EDIT_DROPS_KEY + "|key:right|key:enter|wait:400|expect:host"
+        "|expect-text:host saved, key deleted|quit",
+    "editor-key-back":
+        EDIT_DROPS_KEY + "|key:esc|wait:400|expect:profile|quit",
     "host-delete-key":
         "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
         "|key:right|key:right|key:enter|wait:400|expect:ask"
@@ -368,6 +401,10 @@ FIXTURE_EDITS = {
     "status-failed-page-toast": KEY_MISSING,
     "connect-failed-idle-locks": KEY_MISSING,
     "host-delete-key": KEY_MISSING,
+    "editor-key-keep": KEY_MISSING,
+    "editor-key-delete": KEY_MISSING,
+    "editor-key-back": KEY_MISSING,
+    "idle-locks-retry-loop": LOOPBACK_CLOSED,
     "host-delete-shared-key": [
         ("auth=password\npassword=changeme", "auth=key\nkey_id=id_deck"),
         ("#[server]\n#host=server.local\n#port=22\n#user=me\n"

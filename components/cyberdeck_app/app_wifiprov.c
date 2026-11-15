@@ -18,7 +18,14 @@ static const char *TAG = "app_wifiprov";
 
 static struct {
     uint64_t done_at;               /* finish after CRED_SUCCESS (0 = unset) */
+    bool     running;               /* the provisioning service is up        */
 } s_prov;
+
+static void prov_stop(void)
+{
+    s_prov.running = false;
+    wifi_provision_stop();
+}
 
 #define PROV_ACK_HOLD_MS 2500   /* success hold so the phone reads the ack */
 
@@ -87,6 +94,7 @@ void enter_wifiprov(uint64_t now)
         enter_home(now);
         return;
     }
+    s_prov.running = true;
     nav_push(SCR_WIFIPROV, 0, now);
 }
 
@@ -104,7 +112,7 @@ static void wifiprov_tick(uint64_t now)
         } else if (now >= s_prov.done_at) {
             char ssid[33];
             snprintf(ssid, sizeof(ssid), "%s", wifi_provision_ssid());
-            wifi_provision_stop();
+            prov_stop();
             /* The provisioning manager already associated + got an IP;
              * adopt that link instead of forcing a redundant reconnect
              * (which produced no GOT_IP and hung at "connecting..."). */
@@ -137,15 +145,25 @@ static void wifiprov_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
         (a.kind == UI_ACT_HOLD && a.id == UI_ID_BACK);
     const bool tap = a.kind == UI_ACT_PRESS && a.id == UI_ID_BACK;
     if (deliberate || (tap && pst != WIFI_PROV_ST_RECEIVED)) {
-        wifi_provision_stop();
+        prov_stop();
         kick_wifi();                       /* un-park wifi_manager */
         toast(now, "wifi setup cancelled");
         enter_home(now);
     }
 }
 
+/* Any other way off the page (the idle lock) stops the service too. */
+static void wifiprov_exit(uint64_t now)
+{
+    (void)now;
+    if (!s_prov.running) return;
+    prov_stop();
+    kick_wifi();                           /* un-park wifi_manager */
+}
+
 const nav_screen_t wifiprov_screen = {
-    .name = "wifiprov", .enter = wifiprov_enter, .tick = wifiprov_tick,
+    .name = "wifiprov", .enter = wifiprov_enter, .exit = wifiprov_exit,
+    .tick = wifiprov_tick,
     .input = wifiprov_input, .render = render_wifiprov,
     .chrome = NAV_CHROME_FULL,
 };
