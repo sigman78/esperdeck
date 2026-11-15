@@ -87,6 +87,16 @@ IRAM_ATTR bool render_cache_has_cells(void)
     return s_cells.buf != NULL && s_cells.cols > 0 && s_cells.rows > 0;
 }
 
+/* An opaque overlay cell hides the terminal cursor, as it hides the text. */
+IRAM_ATTR bool render_cache_overlay_covers(int col, int row)
+{
+    const display_overlay_cell_t *ov = s_overlay.buf;
+    if (!ov || col < 0 || row < 0 ||
+            col >= s_overlay.cols || row >= s_overlay.rows)
+        return false;
+    return ov[row * s_overlay.cols + col].cp != 0;
+}
+
 /* Column cache: one row's glyphs and resolved colors, rebuilt at most once
  * per frame. bg/xf/pr each hold two variants ([0] normal, [1] scanline-dim)
  * so the hot loop skips per-pixel effect math. rows[] holds decoded glyph

@@ -184,7 +184,8 @@ IRAM_ATTR void render_cursor_tick(void)
 IRAM_ATTR void render_cursor_pass(const scan_ctx_t *cx, int char_row)
 {
     if (s_cursor.mode == CURSOR_NONE || !s_cursor.visible ||
-            s_cursor.y != char_row || s_cursor.x < 0 || s_cursor.x >= cx->ncols)
+            s_cursor.y != char_row || s_cursor.x < 0 || s_cursor.x >= cx->ncols ||
+            render_cache_overlay_covers(s_cursor.x, char_row))
         return;
 
     const int col_words = g_rs.fw >> 1;

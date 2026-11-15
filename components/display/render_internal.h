@@ -81,6 +81,7 @@ void render_cache_invalidate(void);
 int  render_cache_text_rows(void);
 int  render_cache_text_cols(void);
 bool render_cache_has_cells(void);
+bool render_cache_overlay_covers(int col, int row);
 
 /* render_scan.c */
 void render_scan_band(const scan_ctx_t *cx);        /* HOT per-size loop  */
