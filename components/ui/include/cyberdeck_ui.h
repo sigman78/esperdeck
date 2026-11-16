@@ -46,7 +46,8 @@
 #define UI_PANEL       9   /* accent text on the dark neutral panel    */
 #define UI_PANEL_MUTED 10  /* receding text on the panel               */
 #define UI_PANEL_EDGE  11
-#define UI_STYLE_COUNT 12
+#define UI_FOCUS_MUTED 12  /* receding text on a UI_FOCUS wash         */
+#define UI_STYLE_COUNT 13
 #define UI_STYLE_MASK  0x0F
 #define UI_BOLD    (1 << 7)   /* bold glyph face; composes with any style */
 
@@ -81,6 +82,8 @@
 #define UI_CHECK   0x2713u  /* check mark */
 #define UI_CROSS   0x2718u  /* heavy ballot x */
 #define UI_HEAVY_H 0x2501u  /* ━ the switch line */
+#define UI_VLINE   0x2502u  /* │ light vertical line */
+#define UI_LOW_1   0x2581u  /* ▁ lower eighth block */
 #define UI_CHEVRON 0x203Au  /* › */
 #define UI_ELLIPSIS 0x2026u /* … */
 #define UI_LED_ON  0x25CFu  /* ● */

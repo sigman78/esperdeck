@@ -93,7 +93,10 @@ bool ui_visible(void) { return s_visible; }
 bool ui_debug_contains(const char *text)
 {
     if (!s_visible || !text || !text[0] || !s_draw) return false;
-    size_t len = strlen(text);
+    uint16_t want[160];
+    size_t len = 0;
+    for (const char *p = text; *p && len < sizeof(want) / sizeof(want[0]);)
+        want[len++] = ui_utf8_next(&p);
     if (len > (size_t)s_cols) return false;
 
     /* ui_present() swaps s_draw after publishing, so the other buffer is
@@ -105,7 +108,7 @@ bool ui_debug_contains(const char *text)
         for (int col = 0; col <= s_cols - (int)len; col++) {
             size_t i = 0;
             while (i < len &&
-                   front[row * s_cols + col + (int)i].cp == (uint8_t)text[i])
+                   front[row * s_cols + col + (int)i].cp == want[i])
                 i++;
             if (i == len) return true;
         }

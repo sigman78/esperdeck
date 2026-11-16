@@ -263,18 +263,22 @@ const sbCell = (state, cp, accent, keep) => ({ state, cp, accent, keep });
 const sbText = (s, st) => [...Array.from(s), ' '].map((ch) => sbCell(st, ch.codePointAt(0), 0, true));
 
 function sbNet(st, level) {
-  const cells = sbText('W', st);
-  for (let i = 0; i < 4; i++) cells.push(sbCell(st, i < level ? SB_STAIR[i] : 0x20, 0, i > 0));
+  const cells = [];
+  for (let i = 0; i < 4; i++) cells.push(sbCell(st, i < level ? SB_STAIR[i] : G.LOW_1, 0, i > 0));
+  if (st === SB.OFF) cells[0].cp = G.CROSS;
   return { accent: C.GREEN, cells };
 }
 
+// The name, then (keyboard up) every lock word: lit amber, unlit dim.
 function sbKbd(st, locks) {
-  const up = st === SB.ON, cells = sbText('KBD', st);
-  ['C', 'N'].forEach((ch, i) => {
-    const lit = up && locks[i];
-    cells.push(sbCell(lit ? SB.ON : up ? SB.OFF : st, up ? ch.codePointAt(0) : 0x20,
-                      !up ? 0 : lit ? C.AMBER : C.CYAN, up || i > 0));
-  });
+  const word = (s, stt, accent) => Array.from(s).map((ch) => sbCell(stt, ch.codePointAt(0), accent, true));
+  let cells = word('KBD', st, 0);
+  if (st === SB.ON) {
+    ['CAPS', 'NUM'].forEach((w, i) => {
+      const lit = !!locks[i];
+      cells = cells.concat(word(' ', st, 0), word(w, lit ? SB.ON : SB.DIM, lit ? C.AMBER : 0));
+    });
+  }
   return { accent: C.CYAN, cells };
 }
 
@@ -294,6 +298,8 @@ function moBarData(touch, keys, v) {
     case 'busy-blink': s.chips = [sbNet(SB.BUSY, 0), sbKbd(SB.OFF, [])]; s.frame = 11; break;
     case 'alert': s.chips = [sbNet(SB.ALERT, 0), sbKbd(SB.ON, [true, false]), sbSync(2)]; break;
     case 'off': s.chips = [sbNet(SB.OFF, 0), sbKbd(SB.OFF, [])]; break;
+    case 'locks-none': s.chips = [sbNet(SB.ON, 1), sbKbd(SB.ON, [false, false])]; break;
+    case 'locks-both': s.chips = [sbNet(SB.ON, 4), sbKbd(SB.ON, [true, true])]; break;
     case 'note': Object.assign(s, { note: 'Host saved', tone: NOTE.PLAIN }); break;
     case 'note-good': Object.assign(s, { note: 'Connected to homelab', tone: NOTE.GOOD }); break;
     case 'note-alert': Object.assign(s, { note: 'Could not save.', tone: NOTE.ALERT }); break;
@@ -1250,6 +1256,8 @@ export const MO_GATE = [
   { name: 'mo-status-busy-blink', sketch: 'mo-home', state: () => ({ bar: 'busy-blink' }) },
   { name: 'mo-status-alert', sketch: 'mo-home', state: () => ({ bar: 'alert' }) },
   { name: 'mo-status-off', sketch: 'mo-home', state: () => ({ bar: 'off' }) },
+  { name: 'mo-status-locks-none', sketch: 'mo-home', state: () => ({ bar: 'locks-none' }) },
+  { name: 'mo-status-locks-both', sketch: 'mo-home', state: () => ({ bar: 'locks-both' }) },
   { name: 'mo-status-note', sketch: 'mo-home', state: () => ({ bar: 'note' }) },
   { name: 'mo-status-note-good', sketch: 'mo-home', state: () => ({ bar: 'note-good' }) },
   { name: 'mo-status-note-alert', sketch: 'mo-home', state: () => ({ bar: 'note-alert' }) },

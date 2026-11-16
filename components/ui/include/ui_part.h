@@ -231,9 +231,11 @@ void ui_onboard(ui_rect_t body, const ui_onboard_t *o);
 
 /* The status row. A chip is a run of cells; each cell has its own state,
  * so a lit lock sits inside a plain chip. Docs: docs/status-bar.md. */
-#define UI_SB_CELLS 10          /* cells in one chip, label included     */
+#define UI_SB_CELLS 12          /* cells in one chip, label included     */
 
-enum { UI_SB_ABSENT = 0, UI_SB_OFF, UI_SB_ON, UI_SB_BUSY, UI_SB_ALERT };
+/* DIM is a quiet cell inside a lit chip: the chip's wash, dim text. */
+enum { UI_SB_ABSENT = 0, UI_SB_OFF, UI_SB_ON, UI_SB_BUSY, UI_SB_ALERT,
+       UI_SB_DIM };
 
 typedef struct {
     uint8_t  state;             /* UI_SB_*                               */

@@ -43,20 +43,21 @@ typedef struct {
     void      (*detail)(int kind, char *buf, size_t sz);
 } chip_desc_t;
 
-/* The chip's name plus the separator cell that opens its value field.
- * Label cells are text: they take the state's look, never its glyph. */
+/* Appends @p s from cell @p n, one cell a character. Text cells take the
+ * state's look, never its glyph. Returns the next free cell. */
+static int sb_put(ui_sb_cell_t cell[UI_SB_CELLS], int n, const char *s,
+                  uint8_t st, uint8_t accent)
+{
+    for (; *s && n < UI_SB_CELLS; s++, n++)
+        cell[n] = (ui_sb_cell_t){ .state = st, .accent = accent, .keep = true,
+                                  .cp = (uint16_t)(unsigned char)*s };
+    return n;
+}
+
+/* The chip's name plus the separator cell that opens its value field. */
 static int sb_label(ui_sb_cell_t cell[UI_SB_CELLS], const char *s, uint8_t st)
 {
-    int n = 0;
-    for (; *s && n < UI_SB_CELLS - 1; s++, n++) {
-        cell[n].state = st;
-        cell[n].cp    = (uint16_t)(unsigned char)*s;
-        cell[n].keep  = true;
-    }
-    cell[n].state = st;
-    cell[n].cp    = ' ';
-    cell[n].keep  = true;
-    return n + 1;
+    return sb_put(cell, sb_put(cell, 0, s, st, 0), " ", st, 0);
 }
 
 int net_rssi(void)
@@ -105,12 +106,11 @@ static int poll_net(ui_sb_cell_t cell[UI_SB_CELLS])
     const int rssi = net_rssi();
 
     const uint8_t st = net_state(NULL);
-    int n = sb_label(cell, "W", st);
 
-    /* Rung i is lit once quality reaches level i+1. Unlit rungs stay
-     * blank. On a focus chip the wash is the chip. A blank cell already
-     * reads as the empty part of the gauge. get_rssi reads 0 while the
-     * link is down, which would light every rung. */
+    /* Rung i is lit once quality reaches level i+1; an unlit rung is a low
+     * line, so the empty gauge shows. get_rssi reads 0 while the link is
+     * down, which would light every rung. The first rung also carries the
+     * spinner (BUSY), the alert mark (ALERT) or the off mark. */
     static const uint16_t STAIR[SB_LADDER] = {
         SB_STAIR_1, SB_STAIR_2, SB_STAIR_3, SB_STAIR_4,
     };
@@ -118,22 +118,20 @@ static int poll_net(ui_sb_cell_t cell[UI_SB_CELLS])
                     : rssi > SB_RSSI_GOOD ? 4
                     : rssi > SB_RSSI_FAIR ? 3
                     : rssi > SB_RSSI_WEAK ? 2 : 1;
-    for (int i = 0; i < SB_LADDER; i++, n++) {
-        cell[n].state = st;
-        cell[n].cp    = i < level ? STAIR[i] : ' ';
-        /* The first rung carries the spinner and the alert mark: BUSY and
-         * ALERT mark the field once, not four times. */
-        cell[n].keep  = i > 0;
+    int n = 0;
+    for (; n < SB_LADDER; n++) {
+        cell[n] = (ui_sb_cell_t){ .state = st, .keep = n > 0,
+                                  .cp = n < level ? STAIR[n] : UI_LOW_1 };
     }
+    if (st == UI_SB_OFF) cell[0].cp = UI_CROSS;
     return n;
 }
 
-/* Lock indicators, one cell each. The backend reports exactly these two;
- * a _Static_assert in main.c pins them to the BLE bits. The field is two
- * cells wide — there is no third lock to show. */
-static const struct { char c; uint8_t bit; } KBD_LOCKS[] = {
-    { 'C', CYBERDECK_KBD_LOCK_CAPS },
-    { 'N', CYBERDECK_KBD_LOCK_NUM  },
+/* Lock words. The backend reports exactly these two; a _Static_assert in
+ * main.c pins them to the BLE bits. The chip holds "KBD CAPS NUM". */
+static const struct { const char *word; uint8_t bit; } KBD_LOCKS[] = {
+    { "CAPS", CYBERDECK_KBD_LOCK_CAPS },
+    { "NUM",  CYBERDECK_KBD_LOCK_NUM  },
 };
 
 /* A scan is no loss: the pairing page narrates it. A keyboard on its way
@@ -166,20 +164,18 @@ static int poll_kbd(ui_sb_cell_t cell[UI_SB_CELLS])
     if (!app.ble || !app.ble->get_state) return 0;
 
     const uint8_t st = kbd_state(NULL);
-    int n = sb_label(cell, "KBD", st);
+    int n = sb_put(cell, 0, "KBD", st, 0);
 
-    /* A lock has no referent while the keyboard is down. Off ON the field
-     * goes blank. Its first cell carries the spinner or the alert mark, as
-     * the NET ladder does. An unlit lock takes the chip's own well, not
-     * the OFF blue: it reads as part of the chip. */
-    const bool    up    = st == UI_SB_ON;
-    const uint8_t locks = (up && app.ble->get_locks) ? app.ble->get_locks() : 0;
-    for (int i = 0; i < NELEM(KBD_LOCKS) && n < UI_SB_CELLS; i++, n++) {
+    /* A lock has no referent while the keyboard is down: the chip is the
+     * bare name. Up, every lock word shows: lit on an amber wash, unlit
+     * dim on the chip's own wash. */
+    if (st != UI_SB_ON) return n;
+    const uint8_t locks = app.ble->get_locks ? app.ble->get_locks() : 0;
+    for (int i = 0; i < NELEM(KBD_LOCKS); i++) {
         const bool lit = (locks & KBD_LOCKS[i].bit) != 0;
-        cell[n].state  = lit ? UI_SB_ON : (up ? UI_SB_OFF : st);
-        cell[n].accent = !up ? 0 : lit ? OVERLAY_COL_AMBER : OVERLAY_COL_CYAN;
-        cell[n].cp     = up ? (uint16_t)(unsigned char)KBD_LOCKS[i].c : ' ';
-        cell[n].keep   = up || i > 0;
+        n = sb_put(cell, n, " ", st, 0);
+        n = sb_put(cell, n, KBD_LOCKS[i].word, lit ? UI_SB_ON : UI_SB_DIM,
+                   lit ? OVERLAY_COL_AMBER : 0);
     }
     return n;
 }

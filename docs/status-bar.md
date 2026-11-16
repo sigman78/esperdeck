@@ -55,16 +55,21 @@ page holds the numbers.** Nothing long-form is ever resident.
 
 ## The chip grammar
 
-> **Revised after the status-bar mock round.** The shipped chip is a
-> short label plus a value field, with one bar cell between chips:
-> `W` (Wi-Fi) with a four-cell signal ladder, `KBD` with the lock
-> letters `C` and `N`. Cells carry state one by one, so a lit lock sits
-> inside a plain chip. The font has no Wi-Fi glyph yet, so the network
-> label is the letter `W`. OFF is a grey well.
-> The keyboard chip has no BUSY look: while it pairs or reconnects it
-> shows OFF, a still grey chip. A spinner there drew the eye too much. The state table below still holds; the spinner and the
-> `✘` now take the first value cell and the label stays readable. The
-> icon-only paragraph that follows records the earlier decision.
+> **Revised after the status-bar mock rounds.** Cells carry state one by
+> one. A `│` divider (`UI_PANEL`, default pen) fills the one-cell gap
+> between chips; there is none before the clock.
+>
+> - **Wi-Fi** has no label: a four-rung signal ladder. An unlit rung is
+>   `▁`, so the empty gauge shows. The first rung also carries the
+>   spinner (BUSY, amber blink), `✘` (ALERT, red) or `✘` (OFF, grey well).
+> - **KBD**, keyboard connected: `KBD CAPS NUM`. The name and the spaces
+>   use the chip's ON look. A lit lock word takes the amber wash
+>   (`UI_FOCUS`, bold). An unlit one keeps the chip's wash with dim text
+>   (`UI_FOCUS_MUTED`). Both pads take the name's look.
+> - **KBD**, keyboard down: the bare name in the grey well, no lock words.
+>   It has no BUSY look: pairing and reconnecting show OFF.
+>
+> The icon-only paragraph that follows records the earlier decision.
 
 A **chip** is 1–2 segments drawn adjacent on the bar, no gaps between
 chips (the shipped patch look). **A chip's body is an icon, not a

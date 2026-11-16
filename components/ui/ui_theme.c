@@ -133,5 +133,10 @@ void ui_theme_build(color_t fg, color_t bg, display_overlay_style_t *out)
             (display_overlay_style_t){ panel_muted(text, panel), panel };
         out[UI_PANEL_EDGE  * OVERLAY_ACCENTS + a] =
             (display_overlay_style_t){ panel, bg };
+        /* The FOCUS wash with its text halfway to the wash: dim, not gone. */
+        out[UI_FOCUS_MUTED * OVERLAY_ACCENTS + a] = (display_overlay_style_t){
+            (color_t)(((bg >> 1) & 0x7BEF) +
+                      ((wash(ACCENT_BAR[a]) >> 1) & 0x7BEF)),
+            wash(ACCENT_BAR[a]) };
     }
 }

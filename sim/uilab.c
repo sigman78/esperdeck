@@ -146,6 +146,7 @@ static void render_posed(const lab_screen_t *s)
 static const char *const STYLE_NAMES[] = {
     "TEXT", "MUTED", "BAR", "WELL", "FOCUS", "TRACK", "BAR_EDGE",
     "WELL_EDGE", "FOCUS_EDGE", "PANEL", "PANEL_MUTED", "PANEL_EDGE",
+    "FOCUS_MUTED",
 };
 _Static_assert(NELEM(STYLE_NAMES) == UI_STYLE_COUNT, "name every style");
 

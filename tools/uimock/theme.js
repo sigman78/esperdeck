@@ -76,6 +76,8 @@ export function themeBuild(fg, bg) {
     set(S.PANEL, a, text, panel);
     set(S.PANEL_MUTED, a, panelMuted(text, panel), panel);
     set(S.PANEL_EDGE, a, panel, bg);
+    set(S.FOCUS_MUTED, a, u16(((bg >> 1) & 0x7BEF) + ((wash(ACCENT_BAR[a]) >> 1) & 0x7BEF)),
+        wash(ACCENT_BAR[a]));
   }
   return { fg, bg, table };
 }

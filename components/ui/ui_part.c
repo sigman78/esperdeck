@@ -500,6 +500,10 @@ static void sb_look(const ui_sb_cell_t *c, uint8_t accent, uint32_t frame,
         *style = UI_FOCUS;
         *pen   = OVERLAY_COL_RED;
         break;
+    case UI_SB_DIM:
+        *style = UI_FOCUS_MUTED;
+        *pen   = c->accent ? c->accent : accent;
+        break;
     default:                     /* OFF: a grey well */
         *style = UI_WELL;
         *pen   = c->accent ? c->accent : OVERLAY_COL_DEFAULT;
@@ -508,8 +512,8 @@ static void sb_look(const ui_sb_cell_t *c, uint8_t accent, uint32_t frame,
 }
 
 /* A chip: an opening pad, its cells, an optional stretch, a closing pad.
- * The pads borrow the look of the cell they touch, so the run reads as
- * one wash. The stretch takes the label's look without the blink. */
+ * Both pads take the first cell's look, never a lock cell's, so the run
+ * reads as one wash. The stretch takes that look without the blink. */
 static int sb_chip(int x, int y, const ui_sb_chip_t *c, uint32_t frame,
                    const char *xtext, int xw)
 {
@@ -517,6 +521,7 @@ static int sb_chip(int x, int y, const ui_sb_chip_t *c, uint32_t frame,
     uint8_t  style, pen;
 
     sb_look(&c->cell[0], c->accent, frame, &cp, &style, &pen);
+    const uint8_t pad_style = style, pad_pen = pen;
     ui_pen(pen);
     ui_putch(x++, y, ' ', style | UI_BOLD);
     for (int i = 0; i < c->n; i++) {
@@ -524,14 +529,16 @@ static int sb_chip(int x, int y, const ui_sb_chip_t *c, uint32_t frame,
         ui_pen(pen);
         ui_putch(x++, y, cp, style | UI_BOLD);
     }
+    uint8_t end_style = pad_style, end_pen = pad_pen;
     if (xw > 0) {
-        sb_look(&c->cell[0], c->accent, 0, &cp, &style, &pen);
-        ui_pen(pen);
+        sb_look(&c->cell[0], c->accent, 0, &cp, &end_style, &end_pen);
+        ui_pen(end_pen);
         for (int i = 0; i < xw; i++)
             ui_putch(x++, y, i ? ui_utf8_next(&xtext) : ' ',
-                     style | UI_BOLD);
+                     end_style | UI_BOLD);
     }
-    ui_putch(x++, y, ' ', style | UI_BOLD);
+    ui_pen(end_pen);
+    ui_putch(x++, y, ' ', end_style | UI_BOLD);
     ui_pen(OVERLAY_COL_DEFAULT);
     return x;
 }
@@ -578,7 +585,10 @@ void ui_status(ui_rect_t r, const ui_status_t *s)
     for (int i = 0; i < s->nchips; i++) {
         const ui_sb_chip_t *c = &s->chips[i];
         if (c->n == 0 || c->cell[0].state == UI_SB_ABSENT) continue;
-        if (x > left) x++;
+        if (x > left) {
+            ui_pen(OVERLAY_COL_DEFAULT);
+            ui_putch(x++, y, UI_VLINE, UI_PANEL);
+        }
         const bool more = i == s->xchip && xw > 0;
         x = sb_chip(x, y, c, s->frame, s->xtext, more ? xw : 0);
     }

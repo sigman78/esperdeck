@@ -33,28 +33,34 @@ static int sb_text(ui_sb_chip_t *c, const char *s, uint8_t st)
 static ui_sb_chip_t sb_net(uint8_t st, int level)
 {
     ui_sb_chip_t c = { .accent = OVERLAY_COL_GREEN };
-    int n = sb_text(&c, "W", st);
-    for (int i = 0; i < 4; i++, n++)
-        c.cell[n] = (ui_sb_cell_t){ .state = st, .keep = i > 0,
-                                    .cp = i < level ? SB_STAIR[i] : ' ' };
+    int n = 0;
+    for (; n < 4; n++)
+        c.cell[n] = (ui_sb_cell_t){ .state = st, .keep = n > 0,
+                                    .cp = n < level ? SB_STAIR[n] : UI_LOW_1 };
+    if (st == UI_SB_OFF) c.cell[0].cp = UI_CROSS;
     c.n = (uint8_t)n;
     return c;
 }
 
+static int sb_word(ui_sb_chip_t *c, int n, const char *s, uint8_t st,
+                   uint8_t accent)
+{
+    for (; *s; s++, n++)
+        c->cell[n] = (ui_sb_cell_t){ .state = st, .accent = accent,
+                                     .cp = (uint8_t)*s, .keep = true };
+    return n;
+}
+
 static ui_sb_chip_t sb_kbd(uint8_t st, bool caps, bool num)
 {
-    static const char LOCK[2] = { 'C', 'N' };
+    static const char *const WORD[2] = { "CAPS", "NUM" };
     const bool lock[2] = { caps, num };
-    const bool up = st == UI_SB_ON;
     ui_sb_chip_t c = { .accent = OVERLAY_COL_CYAN };
-    int n = sb_text(&c, "KBD", st);
-    for (int i = 0; i < 2; i++, n++) {
-        const bool lit = up && lock[i];
-        c.cell[n] = (ui_sb_cell_t){
-            .state  = lit ? UI_SB_ON : up ? UI_SB_OFF : st,
-            .accent = !up ? 0 : lit ? OVERLAY_COL_AMBER : OVERLAY_COL_CYAN,
-            .cp     = up ? (uint16_t)LOCK[i] : ' ',
-            .keep   = up || i > 0 };
+    int n = sb_word(&c, 0, "KBD", st, 0);
+    for (int i = 0; st == UI_SB_ON && i < 2; i++) {
+        n = sb_word(&c, n, " ", st, 0);
+        n = sb_word(&c, n, WORD[i], lock[i] ? UI_SB_ON : UI_SB_DIM,
+                    lock[i] ? OVERLAY_COL_AMBER : 0);
     }
     c.n = (uint8_t)n;
     return c;
@@ -91,6 +97,12 @@ static void mo_bar(ui_rect_t r, const char *touch, const char *keys,
     } else if (!strcmp(v, "off")) {
         chips[0] = sb_net(UI_SB_OFF, 0);
         chips[1] = sb_kbd(UI_SB_OFF, false, false);
+    } else if (!strcmp(v, "locks-none")) {
+        chips[0] = sb_net(UI_SB_ON, 1);
+        chips[1] = sb_kbd(UI_SB_ON, false, false);
+    } else if (!strcmp(v, "locks-both")) {
+        chips[0] = sb_net(UI_SB_ON, 4);
+        chips[1] = sb_kbd(UI_SB_ON, true, true);
     } else if (!strcmp(v, "note")) {
         s.note = "Host saved";
         s.tone = UI_NOTE_PLAIN;
@@ -495,6 +507,8 @@ static void scr_status_busy(void)       { home_bar("busy"); }
 static void scr_status_busy_blink(void) { home_bar("busy-blink"); }
 static void scr_status_alert(void)      { home_bar("alert"); }
 static void scr_status_off(void)        { home_bar("off"); }
+static void scr_status_locks_none(void) { home_bar("locks-none"); }
+static void scr_status_locks_both(void) { home_bar("locks-both"); }
 static void scr_status_note(void)       { home_bar("note"); }
 static void scr_status_note_good(void)  { home_bar("note-good"); }
 static void scr_status_note_alert(void) { home_bar("note-alert"); }
@@ -1427,6 +1441,8 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-status-busy-blink", scr_status_busy_blink, .slate = true },
     { "mo-status-alert", scr_status_alert, .slate = true },
     { "mo-status-off",  scr_status_off,  .slate = true },
+    { "mo-status-locks-none", scr_status_locks_none, .slate = true },
+    { "mo-status-locks-both", scr_status_locks_both, .slate = true },
     { "mo-status-note", scr_status_note, .slate = true },
     { "mo-status-note-good", scr_status_note_good, .slate = true },
     { "mo-status-note-alert", scr_status_note_alert, .slate = true },

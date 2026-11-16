@@ -9,8 +9,9 @@ import { Frame } from './model.js';
 export const S = Object.freeze({
   TEXT: 0, MUTED: 1, BAR: 2, WELL: 3, FOCUS: 4, TRACK: 5, BAR_EDGE: 6,
   WELL_EDGE: 7, FOCUS_EDGE: 8, PANEL: 9, PANEL_MUTED: 10, PANEL_EDGE: 11,
+  FOCUS_MUTED: 12,
 });
-export const STYLE_COUNT = 12, ACCENTS = 8, BOLD = 0x80;
+export const STYLE_COUNT = 13, ACCENTS = 8, BOLD = 0x80;
 export const C = Object.freeze({
   DEFAULT: 0, GREEN: 1, CYAN: 2, MAGENTA: 3, AMBER: 4, RED: 5, BLUE: 6, WHITE: 7,
 });
@@ -18,7 +19,7 @@ export const G = Object.freeze({
   BOX_H: 0x2500, BOX_V: 0x2502, BOX_TL: 0x256D, BOX_TR: 0x256E, BOX_BL: 0x2570,
   BOX_BR: 0x256F, BLOCK: 0x2588, SHADE1: 0x2591, SHADE2: 0x2592, SHADE3: 0x2593,
   LHALF: 0x258C, RHALF: 0x2590, QUAD_LL: 0x2596, QUAD_UL: 0x2598,
-  QUAD_LR: 0x2597, QUAD_UR: 0x259D,
+  QUAD_LR: 0x2597, QUAD_UR: 0x259D, LOW_1: 0x2581,
   HALF_UP: 0x2580, HALF_DN: 0x2584, CHECK: 0x2713, CROSS: 0x2718,
   CHEVRON: 0x203A, ELLIPSIS: 0x2026, LED_ON: 0x25CF, LED_OFF: 0x25CB,
   DIAMOND: 0x25C6, PLAY: 0x25B6, ARROW: 0x25BA, POINT_L: 0x25C4, VBAR: 0x25AE,
@@ -118,7 +119,7 @@ export function codePlan(len, expected, room) {
 
 // Status row; ui_note_span, ui_toast_w, ui_status and ui_toast in C.
 // A chip is { accent, cells: [{ state, cp, accent, keep }] }. Its states:
-export const SB = Object.freeze({ ABSENT: 0, OFF: 1, ON: 2, BUSY: 3, ALERT: 4 });
+export const SB = Object.freeze({ ABSENT: 0, OFF: 1, ON: 2, BUSY: 3, ALERT: 4, DIM: 5 });
 export const NOTE = Object.freeze({ NONE: 0, PLAIN: 1, GOOD: 2, ALERT: 3 });
 const NOTE_MIN_GAP = 16, SB_BLINK_FRAMES = 8;
 
@@ -143,6 +144,7 @@ function sbLook(c, accent, frame) {
     case SB.ALERT:
       if (!c.keep) cp = G.CROSS;
       return { cp, style: S.FOCUS, pen: C.RED };
+    case SB.DIM: return { cp, style: S.FOCUS_MUTED, pen: c.accent || accent };
     default: return { cp, style: S.WELL, pen: c.accent || C.DEFAULT };
   }
 }
@@ -185,23 +187,23 @@ export function statusBar(ui, r, s) {
   x = left;
   chips.forEach((c, ci) => {
     if (!live(c)) return;
-    if (x > left) x++;
-    let last = null;
+    if (x > left) { ui.pen(C.DEFAULT); ui.putch(x++, y, G.BOX_V, S.PANEL); }
     const put = (cell, ch) => {
       const k = sbLook(cell, c.accent, s.frame || 0);
       ui.pen(k.pen);
       ui.putch(x++, y, ch === undefined ? k.cp : ch, k.style | BOLD);
-      last = k;
+      return k;
     };
-    put(c.cells[0], ' ');
+    let pad = put(c.cells[0], ' ');
     for (const cell of c.cells) put(cell);
     if (ci === s.xchip && xw > 0) {
       const k = sbLook(c.cells[0], c.accent, 0);
       ui.pen(k.pen);
       for (let i = 0; i < xw; i++) ui.putch(x++, y, i ? xcp[i - 1] : ' ', k.style | BOLD);
-      last = k;
+      pad = k;
     }
-    ui.putch(x++, y, ' ', last.style | BOLD);
+    ui.pen(pad.pen);
+    ui.putch(x++, y, ' ', pad.style | BOLD);
     ui.pen(C.DEFAULT);
   });
   const sp = noteSpan(left, x, clockX, !!s.note);
