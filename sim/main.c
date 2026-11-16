@@ -296,7 +296,43 @@ static const char *fake_ble_name(void) { return s_fake_up ? "Keychron K2" : ""; 
 static void fake_ble_forget(void) {}
 static uint8_t fake_ble_locks(void) { return s_fake_up ? s_fake_locks : 0; }
 
+/* Two canned bonds; the first is the keyboard kbd:up links. */
+static cyberdeck_ble_bond_t s_fake_bonds[2] = {
+    { .addr = { 0xA0 }, .addr_type = 0, .name = "Keychron K2" },
+    { .addr = { 0xA1 }, .addr_type = 1, .name = "Logitech K380" },
+};
+static int s_fake_nbonds = 2;
+
+static int fake_ble_bonds(cyberdeck_ble_bond_t *out, int max)
+{
+    const int n = s_fake_nbonds < max ? s_fake_nbonds : max;
+    for (int i = 0; i < n; i++) out[i] = s_fake_bonds[i];
+    return n;
+}
+
+static bool fake_ble_connected_addr(uint8_t addr[6])
+{
+    if (!s_fake_up) return false;
+    memcpy(addr, s_fake_bonds[0].addr, 6);
+    return true;
+}
+
+static void fake_ble_forget_device(const uint8_t addr[6], uint8_t addr_type)
+{
+    (void)addr_type;
+    for (int i = 0; i < s_fake_nbonds; i++) {
+        if (memcmp(s_fake_bonds[i].addr, addr, 6) != 0) continue;
+        if (i == 0) s_fake_up = false;
+        for (int j = i; j + 1 < s_fake_nbonds; j++)
+            s_fake_bonds[j] = s_fake_bonds[j + 1];
+        s_fake_nbonds--;
+        return;
+    }
+}
+
 static const cyberdeck_ble_ops_t s_fake_ble_ops = {
+    .bonds = fake_ble_bonds, .connected_addr = fake_ble_connected_addr,
+    .forget_device = fake_ble_forget_device,
     .get_state = fake_ble_state, .enter_pairing = fake_ble_enter,
     .exit_pairing = fake_ble_exit, .get_scan_results = fake_ble_results,
     .select_device = fake_ble_select, .get_name = fake_ble_name,

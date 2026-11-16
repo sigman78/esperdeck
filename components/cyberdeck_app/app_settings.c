@@ -16,6 +16,7 @@ const char cyberdeck_font_section[] = "font";
 const char app_fx_section[]         = "fx";
 const char app_saver_section[]      = "saver";
 const char app_touch_section[]      = "touch";
+const char app_wifi_section[]       = "wifi";
 
 const storage_kv_field_t app_fx_fields[] = {
     { "scanlines",       offsetof(display_fx_cfg_t, scanlines),       STORAGE_KV_U8, 0, 0, 0 },
@@ -42,6 +43,11 @@ const storage_kv_field_t app_saver_fields[] = {
 
 const storage_kv_field_t app_touch_fields[] = {
     { "scroll", offsetof(app_touch_cfg_t, scroll), STORAGE_KV_BOOL, 0, 0, 0 },
+    { NULL, 0, 0, 0, 0, 0 },
+};
+
+const storage_kv_field_t app_wifi_fields[] = {
+    { "seeded", offsetof(app_wifi_cfg_t, seeded), STORAGE_KV_BOOL, 0, 0, 0 },
     { NULL, 0, 0, 0, 0, 0 },
 };
 

@@ -12,6 +12,7 @@
 #include "app_screens.h"
 #include "app_settings.h"
 #include "app_widgets.h"
+#include "app_wifi.h"
 #include "cyberdeck_plugin.h"
 #include "session_guard.h"
 
@@ -167,35 +168,36 @@ void wifi_migrate_nvs_cred(void)
 
 /* One-time seed: a Kconfig fallback credential with a real PSK moves
  * into storage, so a later rebuild can blank sdkconfig. A firmware
- * image must not carry a usable pre-shared key in .rodata. Idempotent:
- * a known SSID (plaintext or @bundle marker row) is never re-seeded. */
+ * image must not carry a usable pre-shared key in .rodata. Runs once:
+ * settings.ini [wifi] seeded stops a forgotten network coming back. */
 static void wifi_seed_fallback(void)
 {
     if (!app.cfg.fallback_wifi_ssid || !app.cfg.fallback_wifi_ssid[0] ||
-        !app.cfg.fallback_wifi_password || !app.cfg.fallback_wifi_password[0])
+        !app.cfg.fallback_wifi_password || !app.cfg.fallback_wifi_password[0] ||
+        app_wifi_seeded())
         return;
 
     wifi_profile_t *nets = storage_cred_scratch()->u.nets;
     int n = 0;
     storage_wifi_load(nets, &n, STORAGE_WIFI_MAX);
-    for (int i = 0; i < n; i++)
-        if (strcmp(nets[i].ssid, app.cfg.fallback_wifi_ssid) == 0) {
-            keystore_wipe(nets, sizeof(*nets) * STORAGE_WIFI_MAX);
-            return;
-        }
-    if (n < STORAGE_WIFI_MAX) {
+    bool done = false;
+    for (int i = 0; i < n && !done; i++)
+        done = strcmp(nets[i].ssid, app.cfg.fallback_wifi_ssid) == 0;
+    if (!done && n < STORAGE_WIFI_MAX) {
         memset(&nets[n], 0, sizeof(nets[n]));
         snprintf(nets[n].ssid, sizeof(nets[n].ssid), "%s",
                  app.cfg.fallback_wifi_ssid);
         snprintf(nets[n].password, sizeof(nets[n].password), "%s",
                  app.cfg.fallback_wifi_password);
         n++;
-        if (storage_wifi_save(nets, n) == ESP_OK)
+        done = storage_wifi_save(nets, n) == ESP_OK;
+        if (done)
             ESP_LOGW(TAG, "Seeded fallback WiFi '%s' into storage — blank "
                           "CONFIG_WIFI_PASSWORD now",
                      app.cfg.fallback_wifi_ssid);
     }
     keystore_wipe(nets, sizeof(*nets) * STORAGE_WIFI_MAX);
+    if (done) app_wifi_set_seeded();
 }
 
 void kick_wifi(void)
@@ -228,7 +230,8 @@ void kick_wifi(void)
     if (gated) ESP_LOGI(TAG, "%d WiFi network(s) await unlock", gated);
     n = usable;
 
-    if (n == 0 && app.cfg.fallback_wifi_ssid && app.cfg.fallback_wifi_ssid[0]) {
+    if (n == 0 && app.cfg.fallback_wifi_ssid && app.cfg.fallback_wifi_ssid[0] &&
+        !app_wifi_seeded()) {
         memset(&nets[0], 0, sizeof(nets[0]));
         snprintf(nets[0].ssid, sizeof(nets[0].ssid), "%s",
                  app.cfg.fallback_wifi_ssid);

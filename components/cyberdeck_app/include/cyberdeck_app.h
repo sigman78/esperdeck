@@ -89,6 +89,13 @@ typedef enum {
 #define CYBERDECK_KBD_LOCK_CAPS 0x01u
 #define CYBERDECK_KBD_LOCK_NUM  0x02u
 
+/* One bonded keyboard; name is "" when the deck has none. */
+typedef struct {
+    uint8_t addr[6];
+    uint8_t addr_type;
+    char    name[32];
+} cyberdeck_ble_bond_t;
+
 typedef struct {
     cyberdeck_ble_state_t (*get_state)(void);
     void (*enter_pairing)(void);
@@ -98,6 +105,9 @@ typedef struct {
     const char *(*get_name)(void);   /* connected device name, "" if none */
     void (*forget)(void);            /* wipe all bonds (recover a bad store) */
     uint8_t (*get_locks)(void);      /* CYBERDECK_KBD_LOCK_* bitmask */
+    int  (*bonds)(cyberdeck_ble_bond_t *out, int max);   /* count written */
+    bool (*connected_addr)(uint8_t addr[6]);   /* false when not connected */
+    void (*forget_device)(const uint8_t addr[6], uint8_t addr_type);
 } cyberdeck_ble_ops_t;
 
 /* Prototype policy input for CYBERDECK_SVC_PRESENCE (docs/feat-ideas.md

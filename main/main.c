@@ -94,7 +94,33 @@ static cyberdeck_ble_state_t ble_ops_get_state(void)
     return (cyberdeck_ble_state_t)ble_keyboard_get_state();
 }
 
+static int ble_ops_bonds(cyberdeck_ble_bond_t *out, int max)
+{
+    ble_device_info_t d[STORAGE_BLE_MAX];
+    int n = 0;
+    storage_ble_list(d, STORAGE_BLE_MAX, &n);
+    if (n > max) n = max;
+    for (int i = 0; i < n; i++) {
+        out[i] = (cyberdeck_ble_bond_t){ .addr_type = d[i].addr_type };
+        memcpy(out[i].addr, d[i].addr, 6);
+        if (strcmp(d[i].name, "Unknown") != 0)
+            snprintf(out[i].name, sizeof out[i].name, "%.*s",
+                     (int)sizeof out[i].name - 1, d[i].name);
+    }
+    return n;
+}
+
+/* The backend finds the stored address type itself. */
+static void ble_ops_forget_device(const uint8_t addr[6], uint8_t addr_type)
+{
+    (void)addr_type;
+    ble_keyboard_forget_device(addr);
+}
+
 static const cyberdeck_ble_ops_t s_ble_ops = {
+    .bonds            = ble_ops_bonds,
+    .connected_addr   = ble_keyboard_get_connected_addr,
+    .forget_device    = ble_ops_forget_device,
     .get_state        = ble_ops_get_state,
     .enter_pairing    = ble_keyboard_enter_pairing,
     .exit_pairing     = ble_keyboard_exit_pairing,

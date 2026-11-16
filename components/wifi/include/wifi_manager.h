@@ -66,6 +66,8 @@ esp_err_t wifi_manager_adopt(const wifi_profile_t *profiles, int count,
 wifi_mgr_state_t wifi_manager_get_state(void);
 bool             wifi_manager_is_connected(void);
 const char      *wifi_manager_get_ip(void);
+/** Gateway of the current lease as dotted text, "" when not connected. */
+const char      *wifi_manager_get_gateway(void);
 /** SSID of the connected (or currently attempted) profile, "" if none. */
 const char      *wifi_manager_get_ssid(void);
 /** RSSI of the current AP in dBm (negative), 0 when not connected. */

@@ -33,6 +33,11 @@ typedef struct { bool scroll; } app_touch_cfg_t;
 extern const char app_touch_section[];
 extern const storage_kv_field_t app_touch_fields[];
 
+/* [wifi] — seeded: true after the Kconfig fallback seed ran. */
+typedef struct { bool seeded; } app_wifi_cfg_t;
+extern const char app_wifi_section[];
+extern const storage_kv_field_t app_wifi_fields[];
+
 /* Register settings.ini for factory reset; call once at init. */
 void app_settings_register_reset(void);
 
