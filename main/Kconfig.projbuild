@@ -29,6 +29,14 @@ menu "Cyberdeck Configuration"
             while the system brings up WiFi/BLE/SSH. Purely cosmetic; the
             layout adapts to the active font's character grid.
 
+    config CYBERDECK_DIAG_CHIPS
+        bool "Diagnostic status-row chips (dev tool)"
+        default n
+        help
+            Show developer-only chips in the status row, such as SYNC:
+            how often the terminal's synchronized-update watchdog fired.
+            Off in release builds.
+
     config CYBERDECK_BENCH_STRESS
         bool "Boot into the ISR render bench stress screen (dev tool)"
         default n

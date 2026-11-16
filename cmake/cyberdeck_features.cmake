@@ -63,6 +63,13 @@ macro(cyberdeck_sim_features)
             "FONT_SIZE must be all, 8x16, 10x20 or 12x24 (got '${FONT_SIZE}')")
     endif()
 
+    # [app] developer-only status chips (SYNC) — mirrors
+    # main/Kconfig.projbuild, off unless asked for
+    option(CYBERDECK_DIAG_CHIPS "Diagnostic status-row chips" OFF)
+    if(CYBERDECK_DIAG_CHIPS)
+        add_compile_definitions(CONFIG_CYBERDECK_DIAG_CHIPS=1)
+    endif()
+
     # [keystore] the CONFIG_ mirror stays in sim/CMakeLists.txt: it is
     # coupled to keystore_cli.c's presence (the excludable-vault
     # perimeter), a source-tree fact this file cannot own.

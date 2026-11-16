@@ -184,9 +184,9 @@ static int poll_kbd(ui_sb_cell_t cell[UI_SB_CELLS])
     return n;
 }
 
-/* TEMPORARY soak diagnostic (2026-09): the vterm ?2026 watchdog fired.
- * Absent until the first incident; then a red chip with the count (9+).
- * Remove once we know what drops the ESU. */
+#if CONFIG_CYBERDECK_DIAG_CHIPS
+/* Soak diagnostic: the vterm ?2026 watchdog fired. Absent until the
+ * first incident; then a red chip with the count (9+). Dev builds only. */
 static int poll_sync(ui_sb_cell_t cell[UI_SB_CELLS])
 {
     const uint32_t n = vterm_sync_timeouts();
@@ -197,13 +197,16 @@ static int poll_sync(ui_sb_cell_t cell[UI_SB_CELLS])
     cell[k].keep  = true;
     return k + 1;
 }
+#endif
 
 static const chip_desc_t CHIPS[] = {
     { .id = "net",  .accent = OVERLAY_COL_GREEN, .poll = poll_net,
       .state = net_state, .detail = net_detail },
     { .id = "kbd",  .accent = OVERLAY_COL_CYAN,  .poll = poll_kbd,
       .state = kbd_state, .detail = kbd_detail },
+#if CONFIG_CYBERDECK_DIAG_CHIPS
     { .id = "sync", .accent = OVERLAY_COL_AMBER, .poll = poll_sync },
+#endif
 };
 
 _Static_assert(sizeof(CHIPS) / sizeof(CHIPS[0]) <= SB_MAX_CHIPS,

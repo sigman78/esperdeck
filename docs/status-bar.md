@@ -148,10 +148,10 @@ side so the wash reads as a chip); fused segments add 2 cells each.
   scan, reconnect search; shipped as a still grey chip) / ON (cyan) + a fused amber `C`
   segment while caps lock is on (num/scroll join as segments the day
   they gain a referent).
-- **SYNC** (temporary, soak diagnostic 2026-09) — ABSENT until the vterm
+- **SYNC** (soak diagnostic, dev builds only: `CONFIG_CYBERDECK_DIAG_CHIPS`,
+  default off; sim option `-DCYBERDECK_DIAG_CHIPS=ON`) — ABSENT until the vterm
   `?2026` watchdog has force-closed a hold; then red `✘` + amber count.
-  Its purpose is human confirmation of the frozen-frame diagnosis; remove
-  with the `poll_sync` chip once we know what drops the ESU.
+  It lets a person confirm the frozen-frame diagnosis.
 - **PHN** — sprite phone icon, fallback `P`. ABSENT until enrolled;
   the existing distance colors are already this grammar: BUSY amber
   while enroll-advertising, ON green near, ON blue in-range-but-far,
