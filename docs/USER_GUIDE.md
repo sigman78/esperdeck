@@ -225,7 +225,8 @@ Inside a section every choice shows all its options as chips; tap one to
 choose it. Switches flip, and actions run, when tapped. **A change applies at
 once.** An action that cannot be undone asks first on a page of its own;
 **Cancel** is the default answer. A long section pages: use the arrows in
-the bar or **Shift+PageUp / Shift+PageDown**.
+the bar or **Shift+PageUp / Shift+PageDown**. Destructive actions (red) sit
+apart at the bottom of the section, on its last page.
 
 | Section | What's there |
 |---|---|
@@ -234,8 +235,7 @@ the bar or **Shift+PageUp / Shift+PageDown**.
 | **Keyboard** | Pair keyboard; Forget bonds, which asks first ([section 4](#4-pairing-a-keyboard)) |
 | **CRT FX** | Scanlines and Bold pop (switches); Phosphor (color / green / amber) |
 | **Motion FX** | Wobble, Wipe in, Collapse, Static |
-| **Font** | Terminal size: 8×16 / 10×20 / 12×24. Choosing another size asks, then the deck restarts and an open session ends. |
-| **System** | Saver + lock timeout in minutes; Edge scroll switch; Clear host keys and Factory reset, both ask first ([section 11](#11-resetting-things)) |
+| **System** | Font size (8×16 / 10×20 / 12×24; another size asks, then the deck restarts and an open session ends); Saver + lock timeout in minutes; Edge scroll switch; Clear host keys and Factory reset, both ask first ([section 11](#11-resetting-things)) |
 | **Keystore** | Create keystore / Change code / Remove code / Lock deck ([section 9](#9-securing-the-deck-with-an-access-code)) |
 
 In a session, **F12** or a long press opens the **session menu**: a panel at

@@ -678,7 +678,7 @@ const MO_SETUP = [
   { name: 'Hosts', note: '8 stored', items: [
     { t: 'act', label: 'Import from phone', nav: true },
     { t: 'act', label: 'Import from PC', nav: true }] },
-  { name: 'Wi-Fi', note: 'HomeAP  -55 dBm', items: [
+  { name: 'Wi-Fi', note: 'HomeAP', items: [
     { t: 'act', label: 'Reconnect' }, { t: 'act', label: 'Add network (phone)', nav: true }] },
   { name: 'Keyboard', note: 'K380 connected', items: [
     { t: 'act', label: 'Pair keyboard', nav: true },
@@ -692,18 +692,17 @@ const MO_SETUP = [
     { t: 'pick', key: 'wipe', label: 'Wipe in', set: ['off', '0.3 s', '0.6 s'], init: 1 },
     { t: 'pick', key: 'coll', label: 'Collapse', set: ['off', '0.2 s', '0.5 s'], init: 1 },
     { t: 'pick', key: 'stat', label: 'Static', set: ['off', 'light', 'heavy'], init: 1 }] },
-  { name: 'Font', note: '12x24  66x20', items: [
-    { t: 'pick', key: 'font', label: 'Size (restarts the deck)', set: ['8x16', '10x20', '12x24'], init: 2,
-      ask: (v) => ({ title: `Restart with the ${v} font?`, verb: 'Restart', accent: C.AMBER,
-        lines: ['The deck restarts to change the font.', 'An open session ends.'] }) }] },
   { name: 'System', note: 'saver, reset', items: [
+    { t: 'pick', key: 'font', label: 'Font size', set: ['8x16', '10x20', '12x24'], init: 2,
+      ask: (v) => ({ title: `Restart with the ${v} font?`, verb: 'Restart', accent: C.AMBER,
+        lines: ['The deck restarts to change the font.', 'An open session ends.'] }) },
     { t: 'pick', key: 'saver', label: 'Saver + lock, min', set: ['1', '3', '5', '10', '30'], init: 2 },
     { t: 'toggle', key: 'edge', label: 'Edge scroll', init: false },
-    { t: 'act', label: 'Clear host keys', accent: C.RED, ask: 'Clear every pinned host key?' },
-    { t: 'act', label: 'Factory reset', accent: C.RED, ask: 'Erase every host and setting?' }] },
+    { t: 'act', label: 'Clear host keys', accent: C.RED, danger: true, ask: 'Clear every pinned host key?' },
+    { t: 'act', label: 'Factory reset', accent: C.RED, danger: true, ask: 'Erase every host and setting?' }] },
   { name: 'Keystore', note: 'unlocked', items: [
     { t: 'act', label: 'Lock deck', go: 'mo-unlock' }, { t: 'act', label: 'Change code', nav: true },
-    { t: 'act', label: 'Remove code', accent: C.RED, nav: true, go: 'mo-unlock' }] },
+    { t: 'act', label: 'Remove code', accent: C.RED, danger: true, nav: true, go: 'mo-unlock' }] },
 ];
 
 // Setup hub: a section per tile, with its present state as the detail.
@@ -726,10 +725,11 @@ function moSection(ui, app) {
   st.opt = st.opt || {};
   moFirst(ui, MO_ID.OPT);
   const own = (it) => (it.t === 'toggle' ? moToggleW(it.label) : moActW(it.label, it.nav ? '›' : ''));
-  const pack = (room) => {
+  const pack = (room, danger) => {
     const out = [];
     let open = null, used = 0;
     c.items.forEach((it, n) => {
+      if (!!it.danger !== danger) return;
       const cell = { it, id: MO_ID.OPT + n * 8, w: it.t === 'pick' ? room : Math.min(own(it), room) };
       if (it.t === 'pick') { out.push([cell]); open = null; }
       else if (open && used + gx + cell.w <= room) { open.push(cell); used += gx + cell.w; }
@@ -737,13 +737,26 @@ function moSection(ui, app) {
     });
     return out;
   };
-  // A paged section gives two columns to the rail, so it packs again.
+  // Plain rows fill pages top down. Danger rows take the last page, with
+  // one empty row above. A full last page gives them a page of their own.
   const per = Math.max(1, Math.trunc(body.h / 3));
-  let rows = pack(body.w);
-  if (rows.length > per) rows = pack(body.w - 2);
-  const pages = pageCount(rows.length, per);
+  const lay = (room) => {
+    const plain = pack(room, false), danger = pack(room, true);
+    const pp = Math.ceil(plain.length / per);
+    const tail = plain.length - (pp ? (pp - 1) * per : 0);
+    const own = pp && danger.length && tail + 1 + danger.length > per ? 1 : 0;
+    const n = Math.max(1, pp + own);
+    return { plain, danger, pages: n };
+  };
+  // A paged section gives two columns to the rail, so it packs again.
+  let L = lay(body.w);
+  if (L.pages > 1) L = lay(body.w - 2);
+  const pages = L.pages;
+  const rows = L.plain.map((r, i) => ({ r, pg: Math.trunc(i / per), y: (i % per) * 3 }))
+    .concat(L.danger.map((r, i) => ({ r, pg: pages - 1,
+      y: Math.max(0, body.h - (L.danger.length - i) * 3) })));
   const capW = c.items.reduce((n, it) => (it.t === 'pick' ? Math.max(n, moCapW(it.label)) : n), 0);
-  st.spage = pageClamp(st.spage | 0, rows.length, per);
+  st.spage = Math.min(Math.max(st.spage | 0, 0), pages - 1);
   const flip = { prev: { tap: () => st.spage-- }, next: { tap: () => st.spage++ } };
   const head = moPager(ui, pg.header, st.spage, pages, flip);
   moHeader(ui, head, { path: 'Setup', title: c.name, back: { tap: () => app.back() } });
@@ -753,8 +766,8 @@ function moSection(ui, app) {
     ui.key('PageUp', () => { if (st.spage > 0) st.spage--; });
     ui.key('PageDown', () => { if (st.spage < pages - 1) st.spage++; });
   }
-  rows.slice(st.spage * per, st.spage * per + per).forEach((row, ri) => {
-    const y = body.y + ri * 3;
+  rows.filter((row) => row.pg === st.spage).forEach(({ r: row, y: dy }) => {
+    const y = body.y + dy;
     let x = body.x;
     row.forEach(({ it, id, w }) => {
       const r = rect(x, y, w, 3);
@@ -1287,7 +1300,9 @@ export const MO_GATE = [
   { name: 'mo-section-wifi', sketch: 'mo-section', state: () => ({ cat: 1 }) },
   { name: 'mo-section-fx', sketch: 'mo-section', state: () => ({ cat: 3 }) },
   { name: 'mo-section-motion', sketch: 'mo-section', state: () => ({ cat: 4 }), pose: { down: MO_ID.OPT + 9 } },
-  { name: 'mo-section-system', sketch: 'mo-section', state: () => ({ cat: 6 }), pose: { focus: MO_ID.OPT + 16 } },
+  { name: 'mo-section-system', sketch: 'mo-section', state: () => ({ cat: 5 }), pose: { focus: MO_ID.OPT + 16 } },
+  { name: 'mo-section-danger', sketch: 'mo-section', state: () => ({ cat: 5 }), pose: { focus: MO_ID.OPT + 32 } },
+  { name: 'mo-section-keystore', sketch: 'mo-section', state: () => ({ cat: 6 }), pose: { focus: MO_ID.OPT + 16 } },
   { name: 'mo-list', sketch: 'mo-list' },
   { name: 'mo-list-2', sketch: 'mo-list', state: () => ({ lpage: 1, net: 12 }), pose: { focus: MO_ID.ROW + 12 } },
   { name: 'mo-unlock', sketch: 'mo-unlock' },

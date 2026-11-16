@@ -10,7 +10,8 @@ import { MO_SKETCHES } from './sketches-mo.js';
 const GRIDS = [['12x24', 66, 20], ['10x20', 80, 24], ['8x16', 100, 30]];
 // States that show parts the first draw hides.
 const STATES = {
-  'mo-section': [0, 1, 2, 3, 4, 5, 6, 7].map((cat) => ({ cat })),
+  'mo-section': [0, 1, 2, 3, 4, 5, 6].map((cat) => ({ cat }))
+    .concat([{ cat: 5, spage: 1 }, { cat: 5, spage: 2 }, { cat: 6, spage: 1 }]),
   'mo-list': [{ lpage: 0 }, { lpage: 1 }],
   'mo-pair': [{}, { n: 2 }, { n: 8 }, { n: 8, page: 1 }],
   'mo-unlock': [{}, { code: '12' }, { flow: true, phase: 'new', code: 'ab7' }],

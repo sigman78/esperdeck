@@ -104,7 +104,10 @@ scroll; pagination: ugly, eats estate):
 
 - **Two-level tree**: a HUB of section tiles → section pages of value
   tiles. Both are **two-column grids of 3-row solid tiles**. Hub tiles
-  carry a body line naming their contents (`fx - font`).
+  carry a body line naming their contents (`fx - font`). The Wi-Fi tile
+  shows the SSID only. Font size lives in System. Destructive items
+  (`danger`) hang from the bottom of a section's last page, below an
+  empty row.
 - **Fit-one-screen contract**: a section holds at most what the
   smallest grid shows — 2×4 = **8 items at 66×20** (10 at 80×24, 12 at
   100×30). A larger section is split at design time (e.g. glow-build

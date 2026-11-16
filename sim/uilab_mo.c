@@ -647,18 +647,19 @@ typedef struct {
     const char *label;
     bool        nav;                  /* opens another page            */
     uint8_t     accent;               /* a caution action              */
+    bool        danger;               /* set apart at the page bottom  */
     int         init;                 /* switch state or chosen option */
     int         nset;
     const char *set[5];
 } item_t;
 
-typedef struct { const char *name, *note; int n; item_t it[4]; } cat_t;
+typedef struct { const char *name, *note; int n; item_t it[5]; } cat_t;
 
 static const cat_t MO_SETUP[] = {
     { "Hosts", "8 stored", 2, {
         { IT_ACT, "Import from phone", .nav = true },
         { IT_ACT, "Import from PC", .nav = true } } },
-    { "Wi-Fi", "HomeAP  -55 dBm", 2, {
+    { "Wi-Fi", "HomeAP", 2, {
         { IT_ACT, "Reconnect" },
         { IT_ACT, "Add network (phone)", .nav = true } } },
     { "Keyboard", "K380 connected", 2, {
@@ -678,18 +679,20 @@ static const cat_t MO_SETUP[] = {
           .set = { "off", "0.2 s", "0.5 s" } },
         { IT_PICK, "Static", .init = 1, .nset = 3,
           .set = { "off", "light", "heavy" } } } },
-    { "Font", "12x24  66x20", 1, {
-        { IT_PICK, "Size (restarts the deck)", .init = 2, .nset = 3,
-          .set = { "8x16", "10x20", "12x24" } } } },
-    { "System", "saver, reset", 4, {
+    { "System", "saver, reset", 5, {
+        { IT_PICK, "Font size", .init = 2, .nset = 3,
+          .set = { "8x16", "10x20", "12x24" } },
         { IT_PICK, "Saver + lock, min", .init = 2, .nset = 5,
           .set = { "1", "3", "5", "10", "30" } },
         { IT_TOGGLE, "Edge scroll", .init = 0 },
-        { IT_ACT, "Clear host keys", .accent = OVERLAY_COL_RED },
-        { IT_ACT, "Factory reset", .accent = OVERLAY_COL_RED } } },
+        { IT_ACT, "Clear host keys", .accent = OVERLAY_COL_RED,
+          .danger = true },
+        { IT_ACT, "Factory reset", .accent = OVERLAY_COL_RED,
+          .danger = true } } },
     { "Keystore", "unlocked", 3, {
         { IT_ACT, "Lock deck" }, { IT_ACT, "Change code", .nav = true },
-        { IT_ACT, "Remove code", .nav = true, .accent = OVERLAY_COL_RED } } },
+        { IT_ACT, "Remove code", .nav = true, .accent = OVERLAY_COL_RED,
+          .danger = true } } },
 };
 
 static void scr_setup(void)
@@ -709,7 +712,7 @@ static void scr_setup(void)
               UI_S_ENTER " open  Esc back", NULL);
 }
 
-typedef struct { int n; struct { int it, w; } c[4]; } sec_row_t;
+typedef struct { int n; struct { int it, w; } c[5]; } sec_row_t;
 
 static int own_w(const item_t *it)
 {
@@ -718,15 +721,17 @@ static int own_w(const item_t *it)
                                             it->nav ? UI_S_CHEVRON : "");
 }
 
-/* Pack the items into rows of @p room cells. A choice takes a row and
- * the rest keep their own width. */
-static int pack_rows(const cat_t *c, int room, int gx, sec_row_t *rows)
+/* Pack the items of one class (danger or not) into rows of @p room
+ * cells. A choice takes a row and the rest keep their own width. */
+static int pack_rows(const cat_t *c, int room, int gx, bool danger,
+                     sec_row_t *rows)
 {
     int nrows = 0, used = 0;
     bool open = false;
 
     for (int n = 0; n < c->n; n++) {
         const item_t *it = &c->it[n];
+        if (it->danger != danger) continue;
         const int own = own_w(it);
         const int w = it->type == IT_PICK ? room : own < room ? own : room;
         if (it->type == IT_PICK) {
@@ -756,20 +761,28 @@ static void draw_section(int cat)
 {
     ui_slate_t pg = ui_slate_page();
     const cat_t *c = &MO_SETUP[cat];
-    sec_row_t rows[4];
+    sec_row_t rows[5];
     const int gx0 = pg.m.gutter;
 
     ui_focus_default(MO_OPT);
     const int per = pg.body.h / 3 > 1 ? pg.body.h / 3 : 1;
-    int nrows = pack_rows(c, pg.body.w, gx0, rows);
-    if (nrows > per) nrows = pack_rows(c, pg.body.w - 2, gx0, rows);
+    int plain = 0, nd = 0, pages = 1;
+    for (int room = pg.body.w, pass = 0; pass < 2; pass++, room -= 2) {
+        plain = pack_rows(c, room, gx0, false, rows);
+        nd = pack_rows(c, room, gx0, true, rows + plain);
+        const int pp = (plain + per - 1) / per;
+        const int tail = plain - (pp ? (pp - 1) * per : 0);
+        pages = pp + (pp && nd && tail + 1 + nd > per);
+        if (pages < 1) pages = 1;
+        if (pages == 1) break;
+    }
+    const int nrows = plain + nd;
     int cap_w = 0;
     for (int n = 0; n < c->n; n++)
         if (c->it[n].type == IT_PICK) {
             const int w = ui_caption_w(c->it[n].label);
             if (w > cap_w) cap_w = w;
         }
-    const int pages = ui_page_count(nrows, per);
     const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, 0, pages);
     ui_title(head, "Setup", c->name, NULL, true);
     if (pages > 1) {
@@ -778,8 +791,14 @@ static void draw_section(int cat)
     }
     const ui_rect_t body = pg.body;
     const int gx = pg.m.gutter;
-    for (int ri = 0; ri < per && ri < nrows; ri++) {
-        const int y = body.y + ri * 3;
+    for (int ri = 0; ri < nrows; ri++) {
+        const bool last = pages == 1;
+        if (ri < plain ? ri >= per : !last) continue;
+        int y = body.y + ri * 3;
+        if (ri >= plain) {
+            y = body.y + body.h - (nrows - ri) * 3;
+            if (y < body.y) y = body.y;
+        }
         int x = body.x;
         for (int ci = 0; ci < rows[ri].n; ci++) {
             const int n = rows[ri].c[ci].it;
@@ -809,7 +828,9 @@ static void draw_section(int cat)
 static void scr_section_wifi(void)   { draw_section(1); }
 static void scr_section_fx(void)     { draw_section(3); }
 static void scr_section_motion(void) { draw_section(4); }
-static void scr_section_system(void) { draw_section(6); }
+static void scr_section_system(void) { draw_section(5); }
+static void scr_section_danger(void) { draw_section(5); }
+static void scr_section_keystore(void) { draw_section(6); }
 
 /* A long list in pages. The header carries the page and its controls,
  * the rail at the side shows where the page sits. */
@@ -1477,6 +1498,10 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-section-motion", scr_section_motion, .slate = true,
       .down = MO_OPT + 9 },
     { "mo-section-system", scr_section_system, .slate = true,
+      .focus = MO_OPT + 16 },
+    { "mo-section-danger", scr_section_danger, .slate = true,
+      .focus = MO_OPT + 32 },
+    { "mo-section-keystore", scr_section_keystore, .slate = true,
       .focus = MO_OPT + 16 },
     { "mo-list",        scr_list,        .slate = true },
     { "mo-list-2",      scr_list_2,      .slate = true,

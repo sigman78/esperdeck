@@ -35,7 +35,7 @@ def timeout_s(script, window):
     return 8 + 0.6 * (script.count("|") + 1) if window else 30
 
 PAD_OPEN = ("key:esc|wait:400|tap:744,24|wait:500|key:left|key:down|key:down"
-            "|key:right|key:enter|wait:300|expect-text:Create keystore"
+            "|key:enter|wait:300|expect-text:Create keystore"
             "|key:enter|wait:300|expect:unlock")
 PAD_MAKE = (PAD_OPEN + "|type:1234|key:enter|wait:300|type:1234|sleep:2500"
             "|wait:700|expect:menu|expect-text:Lock deck")
@@ -119,9 +119,10 @@ SCENARIOS = {
     "config-menu-roundtrip":
         "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
         "|wait:500|expect:menu|expect-text:Setup|expect-text:1 stored"
-        "|expect-text:HomeAP  127.0.0.1|key:esc|wait:500|expect:home|quit",
+        "|expect-text:HomeAP|expect-no-text:127.0.0.1|key:esc|wait:500"
+        "|expect:home|quit",
     # Hub tiles, row-major, three columns: Hosts, Wi-Fi, Keyboard (off),
-    # CRT FX, Motion FX, Font, System, Keystore. Two switches flip and a
+    # CRT FX, Motion FX, System, Keystore. Two switches flip and a
     # chip picks Phosphor: the CRT FX note then reads "phosphor".
     "config-pages":
         "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
@@ -132,30 +133,31 @@ SCENARIOS = {
         "|key:esc|wait:400|expect-text:phosphor"
         "|key:right|key:enter|wait:300|expect-text:Setup / Motion FX"
         "|expect-text:Wobble|key:esc|wait:300|key:right|key:enter|wait:300"
-        "|expect-text:Size (restarts the deck)|key:esc|wait:300|expect:menu"
-        "|key:esc|wait:500|expect:home|quit",
+        "|expect-text:Setup / System|expect-text:Font size|key:esc|wait:300"
+        "|expect:menu|key:esc|wait:500|expect:home|quit",
     # A switch shows its new word at once.
     "config-switch":
         "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
-        "|wait:500|expect:menu|key:down|key:down|key:enter|wait:300"
-        "|expect-text:Setup / System|key:down|key:left|expect-text:On"
+        "|wait:500|expect:menu|key:down|key:right|key:right|key:enter"
+        "|wait:300|expect-text:Setup / System|key:down|key:down|key:left"
+        "|expect-text:On"
         "|key:enter|wait:300|expect-text:Off|key:enter|wait:300"
         "|expect-text:On|key:esc|wait:300|key:esc|wait:500|expect:home|quit",
     # A destructive action asks on its own page; Cancel is the default.
     # A new font size asks too, and the active size does nothing.
     "config-destructive":
         "key:esc|wait:400|expect:home|key:up|key:right|key:enter"
-        "|wait:500|expect:menu|key:down|key:down|key:enter|wait:300"
-        "|expect-text:Setup / System|key:down|key:enter|wait:300|expect:ask"
+        "|wait:500|expect:menu|key:down|key:right|key:right|key:enter"
+        "|wait:300|expect-text:Setup / System|key:down|key:down|key:down"
+        "|key:enter|wait:300|expect:ask"
         "|expect-text:Clear every pinned host key?|key:enter|wait:300"
         "|expect:menu|expect-text:Setup / System"
         "|key:enter|wait:300|expect:ask|key:right|key:enter|wait:300"
         "|expect:menu|expect-text:Setup / System|expect-text:host keys"
-        "|key:esc|wait:300|key:up|key:right|key:right|key:enter|wait:300"
-        "|expect-text:Size (restarts the deck)|key:enter|wait:300|expect:menu"
+        "|key:up|key:up|key:up|key:enter|wait:300|expect:menu"
         "|key:right|key:enter|wait:300|expect:ask"
         "|expect-text:Restart with the 10x20 font?|key:esc|wait:300"
-        "|expect:menu|expect-text:Size (restarts the deck)"
+        "|expect:menu|expect-text:Font size"
         "|key:enter|wait:300|key:right|key:enter|wait:300|expect:menu"
         "|expect-text:saved|key:esc|wait:300|key:esc|wait:500|expect:home|quit",
     # Touch: a finger-down alone does nothing; a long press opens the host

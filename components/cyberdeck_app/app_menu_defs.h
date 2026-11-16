@@ -21,8 +21,7 @@ typedef enum {
     MS_KEYBOARD,   /* Pair, Forget bonds                                  */
     MS_FX_CRT,     /* beam look: scanlines, phosphor, bold                */
     MS_FX_MOTION,  /* motion: wobble, wipe, collapse, static              */
-    MS_FONT,       /* terminal font size; a change restarts the deck      */
-    MS_SYSTEM,     /* saver, edge scroll, clear host keys, factory reset  */
+    MS_SYSTEM,     /* font size, saver, edge scroll, clear host keys, factory reset */
     MS_KEYSTORE,   /* contextual: lock, set or change code, remove code   */
     MS_COUNT
 } menu_screen_t;
@@ -44,6 +43,7 @@ typedef struct {
     intptr_t    arg;
     bool        nav;           /* opens another page: draws a chevron     */
     uint8_t     accent;        /* OVERLAY_COL_*; red marks a destructive act */
+    bool        danger;        /* destructive: set apart at the page bottom */
     void      (*action)(intptr_t arg, uint64_t now);
     bool      (*on)(intptr_t arg);               /* MENU_SWITCH state     */
     int       (*count)(intptr_t arg);            /* MENU_PICK: options, at most MENU_PICK_MAX */

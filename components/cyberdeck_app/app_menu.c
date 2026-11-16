@@ -26,16 +26,18 @@ enum {
     ID_OPT = 100,
 };
 
-/* One row of a section: the items on it, left to right. */
+/* One row of a section: the items on it, left to right. A danger row
+ * holds danger items only and sits at the bottom of its page. */
 typedef struct {
-    uint8_t n;
+    uint8_t n, pg, danger;
     struct { uint8_t it, w; } c[MENU_ITEM_MAX];
 } sec_row_t;
 
-/* A section packed into rows and pages, as the last render saw it. */
+/* A section packed into rows and pages, as the last render saw it. Plain
+ * rows come first, danger rows after; `ndanger` of the `nrows` are danger. */
 typedef struct {
     sec_row_t rows[MENU_ITEM_MAX];
-    int nrows, per, pages, cap_w;
+    int nrows, ndanger, per, pages, cap_w;
 } sec_lay_t;
 
 static struct {
@@ -86,16 +88,18 @@ static int own_w(const menu_item_t *it)
         : ui_act_w(item_label(it), it->nav ? UI_S_CHEVRON : "");
 }
 
-/* Pack the visible items into rows of @p room cells. A choice takes a row
- * and the rest keep their own width. Returns the row count. */
-static int pack_rows(const menu_page_t *p, int room, int gx, sec_row_t *rows)
+/* Pack the visible items of one class (danger or not) into rows of
+ * @p room cells. A choice takes a row and the rest keep their own width.
+ * Returns the row count. */
+static int pack_rows(const menu_page_t *p, int room, int gx, bool danger,
+                     sec_row_t *rows)
 {
     int nrows = 0, used = 0;
     bool open = false;
 
     for (int n = 0; n < p->count; n++) {
         const menu_item_t *it = &p->items[n];
-        if (item_hidden(it)) continue;
+        if (item_hidden(it) || it->danger != danger) continue;
         const int own = own_w(it);
         const int w = it->kind == MENU_PICK ? room : own < room ? own : room;
         if (it->kind != MENU_PICK && open && used + gx + w <= room) {
@@ -114,16 +118,34 @@ static int pack_rows(const menu_page_t *p, int room, int gx, sec_row_t *rows)
     return nrows;
 }
 
+/* Pack plain rows, then danger rows, and give each its page. Plain rows
+ * fill pages top down. Danger rows take the last page, with one empty
+ * row above. A full last page gives them a page of their own. */
+static void lay_rows(const menu_page_t *p, int room, int gx, sec_lay_t *L)
+{
+    const int plain = pack_rows(p, room, gx, false, L->rows);
+    L->ndanger = pack_rows(p, room, gx, true, L->rows + plain);
+    L->nrows = plain + L->ndanger;
+
+    const int pp = (plain + L->per - 1) / L->per;       /* plain pages */
+    const int tail = plain - (pp ? (pp - 1) * L->per : 0);
+    const int own = pp && L->ndanger && tail + 1 + L->ndanger > L->per;
+    L->pages = pp + own > 0 ? pp + own : 1;
+    for (int ri = 0; ri < L->nrows; ri++) {
+        L->rows[ri].danger = ri >= plain;
+        L->rows[ri].pg = (uint8_t)(ri < plain ? ri / L->per : L->pages - 1);
+    }
+}
+
 /* The one place that decides rows, pages and the caption column. Drawing,
  * the page flip and the focus after a resume all read the result. */
 static void section_layout(const menu_page_t *p, int room, int gx, int per,
                            sec_lay_t *L)
 {
     L->per = per > 1 ? per : 1;
-    L->nrows = pack_rows(p, room, gx, L->rows);
+    lay_rows(p, room, gx, L);
     /* Paged rows lose two cells to the rail and its gap. */
-    if (L->nrows > L->per) L->nrows = pack_rows(p, room - 2, gx, L->rows);
-    L->pages = ui_page_count(L->nrows, L->per);
+    if (L->pages > 1) lay_rows(p, room - 2, gx, L);
     L->cap_w = 0;
     for (int n = 0; n < p->count; n++) {
         const menu_item_t *it = &p->items[n];
@@ -140,14 +162,16 @@ static ui_id_t item_entry(const menu_item_t *it, int n)
     return item_id(n, ix > 0 ? ix : 0);
 }
 
-/* First target of row @p ri, or 0 when the row has none. */
-static ui_id_t row_entry(const menu_page_t *p, int ri)
+/* First target of the topmost row of @p page that has one, or 0. */
+static ui_id_t row_entry(const menu_page_t *p, int page)
 {
     const sec_lay_t *L = &s_menu.lay;
-    if (ri < 0 || ri >= L->nrows) return 0;
-    for (int ci = 0; ci < L->rows[ri].n; ci++) {
-        const int n = L->rows[ri].c[ci].it;
-        if (!item_off(&p->items[n])) return item_entry(&p->items[n], n);
+    for (int ri = 0; ri < L->nrows; ri++) {
+        if (L->rows[ri].pg != page) continue;
+        for (int ci = 0; ci < L->rows[ri].n; ci++) {
+            const int n = L->rows[ri].c[ci].it;
+            if (!item_off(&p->items[n])) return item_entry(&p->items[n], n);
+        }
     }
     return 0;
 }
@@ -193,10 +217,11 @@ static void draw_section(const menu_page_t *p)
         for (int ri = 0; f >= ID_OPT && ri < L->nrows; ri++)
             for (int ci = 0; ci < L->rows[ri].n; ci++)
                 if ((f - ID_OPT) / MENU_PICK_MAX == L->rows[ri].c[ci].it)
-                    s_menu.page = ri / L->per;
+                    s_menu.page = L->rows[ri].pg;
     }
-    s_menu.page = ui_page_clamp(s_menu.page, L->nrows, L->per);
-    ui_focus_default(row_entry(p, s_menu.page * L->per));
+    s_menu.page = s_menu.page < 0 ? 0
+                : s_menu.page >= L->pages ? L->pages - 1 : s_menu.page;
+    ui_focus_default(row_entry(p, s_menu.page));
 
     const ui_rect_t head = ui_pages(pg.header, ID_PREV, ID_NEXT, s_menu.page,
                                     L->pages);
@@ -206,14 +231,19 @@ static void draw_section(const menu_page_t *p)
         ui_cut_right(&pg.body, 1);
     }
     const int gx = pg.m.gutter;
-    for (int k = 0; k < L->per; k++) {
-        const int ri = s_menu.page * L->per + k;
-        if (ri >= L->nrows) break;
+    int slot = 0, below = L->ndanger;
+    for (int ri = 0; ri < L->nrows; ri++) {
+        if (L->rows[ri].pg != s_menu.page) continue;
+        /* Danger rows hang from the bottom edge of the body. */
+        int y = pg.body.y + slot++ * 3;
+        if (L->rows[ri].danger) {
+            y = pg.body.y + pg.body.h - below-- * 3;
+            if (y < pg.body.y) y = pg.body.y;
+        }
         int x = pg.body.x;
         for (int ci = 0; ci < L->rows[ri].n; ci++) {
             const int n = L->rows[ri].c[ci].it, w = L->rows[ri].c[ci].w;
-            draw_item(&p->items[n], n, ui_rect(x, pg.body.y + k * 3, w, 3),
-                      L->cap_w);
+            draw_item(&p->items[n], n, ui_rect(x, y, w, 3), L->cap_w);
             x += w + gx;
         }
     }
@@ -468,7 +498,7 @@ static void menu_flip(int dir)
     const int page = s_menu.page + dir;
     if (!is_section(s_menu.screen) || page < 0 || page >= L->pages) return;
     s_menu.page = page;
-    ui_focus_set(row_entry(menu_page(s_menu.screen), page * L->per));
+    ui_focus_set(row_entry(menu_page(s_menu.screen), page));
     nav_invalidate();
 }
 

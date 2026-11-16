@@ -87,10 +87,7 @@ static const menu_item_t wifi_items[] = {
 static const char *note_wifi(char *buf, size_t sz)
 {
     if (wifi_manager_get_state() != WIFI_MGR_CONNECTED) return wifi_status_str();
-    const int rssi = net_rssi();
-    const char *ssid = wifi_manager_get_ssid(), *ip = wifi_manager_get_ip();
-    if (rssi) snprintf(buf, sz, "%s  %s  %d dBm", ssid, ip, rssi);
-    else      snprintf(buf, sz, "%s  %s", ssid, ip);
+    snprintf(buf, sz, "%s", wifi_manager_get_ssid());
     return buf;
 }
 
@@ -299,19 +296,6 @@ static void font_set(intptr_t a, int i, uint64_t now)
     }, now);
 }
 
-static const menu_item_t font_items[] = {
-    { .kind = MENU_PICK, .label = "Size (restarts the deck)",
-      .count = font_n, .index = font_ix, .option = font_opt,
-      .set = font_set },
-};
-
-static const char *note_font(char *buf, size_t sz)
-{
-    snprintf(buf, sz, "%s  %dx%d", font_size_name(font_active_size()),
-             ui_cols(), ui_rows());
-    return buf;
-}
-
 static int saver_n(intptr_t a)
 {
     (void)a;
@@ -368,16 +352,19 @@ static void act_factory(intptr_t a, uint64_t now)
     menu_note(now, MENU_MSG_MS, false, "wiped - reboot advised");
 }
 
+/* Danger items sit at the bottom of the page, apart from the rest. */
 static const menu_item_t system_items[] = {
+    { .kind = MENU_PICK, .label = "Font size", .count = font_n,
+      .index = font_ix, .option = font_opt, .set = font_set },
     { .kind = MENU_PICK, .label = "Saver + lock, min", .count = saver_n,
       .index = saver_ix, .option = saver_opt, .set = saver_set },
 #if CONFIG_INPUT_TOUCH_SCROLL
     { .kind = MENU_SWITCH, .label = "Edge scroll", .action = act_touch,
       .on = touch_on },
 #endif
-    { .label = "Clear host keys", .accent = OVERLAY_COL_RED,
+    { .label = "Clear host keys", .accent = OVERLAY_COL_RED, .danger = true,
       .action = act_clearhosts, .ask = "Clear every pinned host key?" },
-    { .label = "Factory reset", .accent = OVERLAY_COL_RED,
+    { .label = "Factory reset", .accent = OVERLAY_COL_RED, .danger = true,
       .action = act_factory, .ask = "Erase every host and setting?" },
 };
 
@@ -434,7 +421,7 @@ static const menu_item_t ks_items[] = {
       .hidden = hidden_ks_absent },
     { .label_fn = label_ks_setpin, .nav = true, .action = act_ks_setpin },
     { .label = "Remove code", .nav = true, .accent = OVERLAY_COL_RED,
-      .action = act_ks_remove, .hidden = hidden_ks_absent },
+      .danger = true, .action = act_ks_remove, .hidden = hidden_ks_absent },
 };
 
 static const char *note_keystore(char *buf, size_t sz)
@@ -457,8 +444,8 @@ static const char *unavail_keystore(void)
     _Static_assert(NELEM(t) <= MENU_ITEM_MAX, "section has too many items")
 ASSERT_FITS(hosts_items);     ASSERT_FITS(wifi_items);
 ASSERT_FITS(kbd_items);       ASSERT_FITS(fx_crt_items);
-ASSERT_FITS(fx_motion_items); ASSERT_FITS(font_items);
-ASSERT_FITS(system_items);    ASSERT_FITS(ks_items);
+ASSERT_FITS(fx_motion_items); ASSERT_FITS(system_items);
+ASSERT_FITS(ks_items);
 
 static const menu_page_t PAGES[MS_COUNT] = {
     [MS_MAIN]      = { .title = "Session", .back_to = MENU_BACK_LEAVE },
@@ -479,9 +466,6 @@ static const menu_page_t PAGES[MS_COUNT] = {
     [MS_FX_MOTION] = { .title = "Motion FX", .items = fx_motion_items,
                        .count = NELEM(fx_motion_items), .back_to = MS_CONFIG,
                        .hold = APP_SETTINGS_HOLD_FX, .note = note_fx_motion },
-    [MS_FONT]      = { .title = "Font", .items = font_items,
-                       .count = NELEM(font_items), .back_to = MS_CONFIG,
-                       .note = note_font },
     [MS_SYSTEM]    = { .title = "System", .items = system_items,
                        .count = NELEM(system_items), .back_to = MS_CONFIG,
                        .hold = APP_SETTINGS_HOLD_SYS, .note = note_system },
@@ -492,7 +476,7 @@ static const menu_page_t PAGES[MS_COUNT] = {
 };
 
 static const uint8_t HUB[] = {
-    MS_HOSTS, MS_WIFI, MS_KEYBOARD, MS_FX_CRT, MS_FX_MOTION, MS_FONT,
+    MS_HOSTS, MS_WIFI, MS_KEYBOARD, MS_FX_CRT, MS_FX_MOTION,
     MS_SYSTEM, MS_KEYSTORE,
 };
 
