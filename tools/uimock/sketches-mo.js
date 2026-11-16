@@ -687,6 +687,70 @@ function moEdit(ui, app) {
     st.edit >= 0 ? 'type  ↵ done  ↑↓ leave' : '↵ change  Esc cancel');
 }
 
+// The by-hand network form: SSID, password, a show switch. Save sits in the
+// header. It stays off without an SSID, or with a password of 1 to 7 characters.
+// st.wa holds the draft. st.edit is the entry in typing (0 SSID, 1 password).
+function moWifiAdd(ui, app) {
+  const st = app.state, pg = moPage(ui), body = pg.body, gx = pg.m.gutter;
+  if (!st.wa) { st.wa = { ssid: '', pass: '', show: false }; st.edit = -1; }
+  const f = st.wa, half = (body.w - gx) >> 1;
+  moFirst(ui, MO_ID.FIELD);
+  const passBad = f.pass.length > 0 && f.pass.length < 8;
+  const wrong = !f.ssid || passBad;
+  const leave = () => { st.wa = null; app.back(); };
+  const cancel = () => {
+    st.edit = -1;
+    if (!f.ssid && !f.pass) { leave(); return; }
+    st.ask = { title: 'Discard the network?', verb: 'Discard', accent: C.AMBER,
+      lines: ['It is not saved.', ''], yes: () => { app.back(); leave(); } };
+    app.go('mo-confirm');
+  };
+  const head = moPills(ui, pg.header, [{ id: MO_ID.PILL, label: 'Save',
+    o: { tone: 'solid', accent: C.GREEN, off: wrong }, act: { tap: leave } }]);
+  moHeader(ui, head, { path: 'Wi-Fi', title: 'Add network', back: { tap: cancel } });
+  ui.key('Escape', cancel);
+  const keys = ['ssid', 'pass'];
+  const field = (i, r, label, lw, o) => {
+    const edit = st.edit === i;
+    moField(ui, r, MO_ID.FIELD + i, label, f[keys[i]],
+      { edit, caret: st.caret, lw, ...o },
+      { tap: () => { st.edit = edit ? -1 : i; st.caret = Array.from(f[keys[i]]).length; } });
+  };
+  field(0, rect(body.x, body.y, body.w, 3), 'Network name', 14, {});
+  field(1, rect(body.x, body.y + 3, half, 3), 'Password', 0, { mask: !f.show, bad: passBad });
+  moToggle(ui, rect(body.x + half + gx, body.y + 3, moToggleW('Show password'), 3),
+    MO_ID.OPT + 4, 'Show password', f.show, { pad: 3 }, { tap: () => { f.show = !f.show; } });
+  if (passBad && body.h > 6) {
+    ui.pen(C.RED);
+    ui.text(rect(body.x + 2, body.y + 6, body.w - 4, 1), 'Password needs 8 to 63 characters',
+      S.TEXT | BOLD, LEFT);
+    ui.pen(C.DEFAULT);
+  }
+  if (st.edit >= 0) {
+    const k = keys[st.edit], max = st.edit ? 63 : 32, cs = Array.from(f[k]);
+    const caret = Math.min(st.caret === undefined ? cs.length : st.caret, cs.length);
+    ui.key('text', (ch) => {
+      if (cs.length >= max) return;
+      f[k] = [...cs.slice(0, caret), ch, ...cs.slice(caret)].join('');
+      st.caret = caret + 1;
+    });
+    ui.key('Backspace', () => {
+      if (caret === 0) return;
+      f[k] = [...cs.slice(0, caret - 1), ...cs.slice(caret)].join('');
+      st.caret = caret - 1;
+    });
+    const done = () => { st.edit = -1; };
+    ui.key('Enter', done);
+    ui.key('Escape', done);
+    ui.key('ArrowUp', done);
+    ui.key('ArrowDown', done);
+    ui.key('ArrowLeft', () => { st.caret = Math.max(0, caret - 1); });
+    ui.key('ArrowRight', () => { st.caret = Math.min(cs.length, caret + 1); });
+  }
+  moBarRow(ui, pg.status, st.edit >= 0 ? 'Type on the keyboard.' : 'Tap a field to change it.',
+    st.edit >= 0 ? 'type  ↵ done  ↑↓ leave' : '↵ change  Esc cancel');
+}
+
 // The Wi-Fi manager and the saved networks a frame shows (st.wifi).
 const moNets = (st) => st.wifi || WIFI_UP;
 const moJoined = (w, n) => w.state === 'up' && n.ssid === w.ssid;
@@ -732,7 +796,8 @@ const MO_SETUP = [
   { name: 'Wi-Fi', note: 'HomeAP', panel: moWifiPanel,
     list: { minW: 24, empty: 'No saved networks.', rows: moWifiRows,
       open: (st, n, app) => { st.net = n; app.go('mo-net'); } }, items: [
-    { t: 'act', label: 'Reconnect' }, { t: 'act', label: 'Add from phone', nav: true }] },
+    { t: 'act', label: 'Reconnect' }, { t: 'act', label: 'Add from phone', nav: true },
+    { t: 'act', label: 'Add by hand', nav: true, go: 'mo-wifiadd' }] },
   { name: 'Keyboard', note: 'K380 connected', items: [
     { t: 'act', label: 'Pair keyboard', nav: true },
     { t: 'act', label: 'Forget bonds', accent: C.RED, ask: 'Forget every paired keyboard?' }] },
@@ -1492,6 +1557,11 @@ export const MO_GATE = [
   { name: 'mo-wifiprov-test', sketch: 'mo-wifi', state: () => ({ phase: 'test' }) },
   { name: 'mo-wifiprov-fail', sketch: 'mo-wifi', state: () => ({ phase: 'fail' }) },
   { name: 'mo-wifiprov-ok', sketch: 'mo-wifi', state: () => ({ phase: 'ok' }) },
+  { name: 'mo-wifiadd', sketch: 'mo-wifiadd' },
+  { name: 'mo-wifiadd-typing', sketch: 'mo-wifiadd',
+    state: () => ({ wa: { ssid: 'Workshop', pass: '', show: false }, edit: 0, caret: 4 }) },
+  { name: 'mo-wifiadd-bad', sketch: 'mo-wifiadd',
+    state: () => ({ wa: { ssid: 'Workshop', pass: 'short', show: false }, edit: -1 }) },
   { name: 'mo-import-phone', sketch: 'mo-import' },
   { name: 'mo-import-pc', sketch: 'mo-import', state: () => ({ mode: 'pc' }) },
   { name: 'mo-import-pc-off', sketch: 'mo-import', state: () => ({ mode: 'pc', pop: false }) },
@@ -1518,6 +1588,7 @@ export const MO_SKETCHES = [
   { name: 'mo-hostkey-changed', title: 'Host key changed', theme: 'slate', draw: (u, a) => moHostKey(u, a, true) },
   { name: 'mo-pair', title: 'Pair a keyboard', theme: 'slate', draw: moPair },
   { name: 'mo-wifi', title: 'Add a network from the phone', theme: 'slate', draw: moWifi },
+  { name: 'mo-wifiadd', title: 'Add a network by hand', theme: 'slate', draw: moWifiAdd },
   { name: 'mo-import', title: 'Import hosts', theme: 'slate', draw: moImport },
   { name: 'mo-menu', title: 'Session menu sheet', theme: 'slate', draw: moMenu },
   { name: 'mo-session', title: 'Session toast', theme: 'slate', draw: moSession },

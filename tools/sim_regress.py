@@ -47,6 +47,8 @@ WIFI_OPEN = (HUB + "|key:right|key:enter|wait:300|expect-text:Setup / Wi-Fi"
 WIFI_SECTION = HUB + "|key:right|key:enter|wait:300|expect-text:Setup / Wi-Fi"
 # The first tile is the joined network; the second is Workshop.
 WIFI_SECOND = WIFI_SECTION + "|key:down|key:right|key:enter|wait:400|expect:wifinet"
+WIFI_HAND = (WIFI_SECTION + "|key:right|key:right|key:enter|wait:400"
+             "|expect:wifiadd")
 PAIR_OPEN = "key:esc|wait:400|expect:home|key:b|wait:200|expect:pairing"
 EDIT_DROPS_KEY = (
     "key:esc|wait:400|expect:home|key: |wait:400|expect:host|key:right"
@@ -432,6 +434,22 @@ SCENARIOS = {
         "|expect:wifinet|expect-text:Wi-Fi / phone-hotspot|expect-text:3 of 3"
         "|key:enter|wait:600|expect-text:1 of 3|expect-text:joined"
         "|key:esc|wait:400|expect:menu|expect-text:phone-hotspot|quit",
+    # Add by hand: a short password turns Save off and shows the alert. Tab
+    # skips Save while it is off. A good password saves and the list shows it.
+    "setup-wifi-add":
+        WIFI_HAND + "|expect-text:Add network|expect-text:Network name"
+        "|expect-no-text:Password needs|type:NewNet|key:tab|type:abc"
+        "|expect-text:Password needs 8 to 63 characters"
+        "|key:tab|key:tab|type:Z|expect-text:NewNetZ|key:bs|key:tab|type:defgh"
+        "|expect-no-text:Password needs|key:tab|key:tab|key:enter|wait:500"
+        "|expect:menu|expect-text:Setup / Wi-Fi|expect-text:NewNet|quit",
+    "setup-wifi-add-esc":
+        WIFI_HAND + "|key:esc|wait:400|expect:menu|expect-text:Setup / Wi-Fi"
+        "|key:enter|wait:400|expect:wifiadd|type:Net"
+        "|key:esc|key:esc|wait:300|expect:ask|expect-text:Discard the network?"
+        "|key:esc|wait:300|expect:wifiadd|expect-text:Net|key:esc|wait:300"
+        "|expect:ask|key:right|key:enter|wait:400|expect:menu"
+        "|expect-text:No saved networks.|quit",
     "pair-esc":
         PAIR_OPEN + "|expect-text:Pair keyboard|expect-text:Scanning for keyboards"
         "|expect-text:Put the keyboard in pairing mode.|wait:3300"
@@ -542,6 +560,8 @@ FIXTURE_FILES = {
 }
 FIXTURE_FILES["setup-wifi-empty"] = {"wifi.ini": "",
                                      "settings.ini": "[wifi]\nseeded=1\n"}
+FIXTURE_FILES["setup-wifi-add"] = FIXTURE_FILES["setup-wifi-empty"]
+FIXTURE_FILES["setup-wifi-add-esc"] = FIXTURE_FILES["setup-wifi-empty"]
 
 
 def run(sim, name, script, window):

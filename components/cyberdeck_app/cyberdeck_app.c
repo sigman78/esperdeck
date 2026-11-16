@@ -116,6 +116,7 @@ void app_creds_wipe(void)
                       sizeof(app.profiles[i].password));
     conn_creds_wipe();      /* the active-connect snapshot */
     profile_creds_wipe();   /* the editor draft            */
+    wifiadd_creds_wipe();   /* the by-hand network draft   */
 }
 
 const void *cyberdeck_service(const char *name)
@@ -280,6 +281,7 @@ static const nav_screen_t *const SCREENS[SCR_COUNT] = {
     [SCR_HOST]       = &host_screen,
     [SCR_ASK]        = &ask_screen,
     [SCR_WIFINET]    = &wifinet_screen,
+    [SCR_WIFIADD]    = &wifiadd_screen,
 };
 
 esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)

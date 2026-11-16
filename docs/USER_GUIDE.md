@@ -102,6 +102,12 @@ first choice and reconnects, Move earlier and Move later change the
 order, and Forget removes it after a question. A network marked "locked"
 keeps its password in the keystore until you unlock the deck.
 
+**Add by hand** opens a form for a network you type on the keyboard: the
+network name and the password (8 to 63 characters, or empty for an open
+network). Save stays off until both fit, and the form says what is wrong.
+Show password reveals what you typed. Esc asks before it drops a draft.
+An idle deck locks and loses the draft.
+
 ## 4. Pairing a keyboard
 
 Any Bluetooth Low Energy (BLE) keyboard should work.
@@ -239,7 +245,7 @@ apart at the bottom of the section, on its last page.
 | Section | What's there |
 |---|---|
 | **Hosts** | + New; From phone; From PC (import, [section 5](#5-adding-an-ssh-connection)); then your stored hosts as tiles. Tap one to open its host page: Connect, Edit, Delete, Move. Back or Delete returns to this list. During a live session the tiles and + New are grey. |
-| **Wi-Fi** | Link facts; Reconnect; Add from phone; your saved networks as tiles ([section 3](#3-getting-on-wifi)) |
+| **Wi-Fi** | Link facts; Reconnect; Add from phone; Add by hand; your saved networks as tiles ([section 3](#3-getting-on-wifi)) |
 | **Keyboard** | Pair keyboard; Forget bonds, which asks first ([section 4](#4-pairing-a-keyboard)) |
 | **CRT FX** | Scanlines and Bold pop (switches); Phosphor (color / green / amber) |
 | **Motion FX** | Wobble, Wipe in, Collapse, Static |

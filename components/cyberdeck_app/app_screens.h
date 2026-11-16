@@ -19,7 +19,7 @@ typedef enum {
     SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
     SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
     SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK, SCR_SAVER, SCR_HOST, SCR_ASK,
-    SCR_WIFINET,
+    SCR_WIFINET, SCR_WIFIADD,
     SCR_COUNT
 } scr_id_t;
 
@@ -49,6 +49,12 @@ bool profile_key_unshared(int idx);
 extern const nav_screen_t wifinet_screen;
 /** Open the page of the saved network at position @p idx. */
 void enter_wifinet(uint64_t now, int idx);
+
+/* ---- by-hand network form (app_wifiadd.c) ---- */
+extern const nav_screen_t wifiadd_screen;
+void enter_wifiadd(uint64_t now);
+/** Wipe the draft SSID and password (app_creds_wipe companion). */
+void wifiadd_creds_wipe(void);
 
 /* ---- question page (app_ask.c) ---- */
 typedef struct {

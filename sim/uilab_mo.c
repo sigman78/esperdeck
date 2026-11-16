@@ -441,6 +441,74 @@ static void scr_edit_nokey(void)  { draw_edit_n(5); }
 static void scr_edit_caret(void)  { draw_edit_n(6); }
 static void scr_edit_secret(void) { draw_edit_n(7); }
 
+/* The by-hand network form. edit: 0 SSID, 1 password, -1 none. */
+typedef struct {
+    char ssid[40], pass[72];
+    bool show;
+    int  edit, caret;
+} wifiadd_t;
+
+static void draw_wifiadd(const wifiadd_t *st)
+{
+    const ui_slate_t pg = ui_slate_page();
+    const ui_rect_t body = pg.body;
+    const int gx = pg.m.gutter, half = (body.w - gx) >> 1;
+    const size_t plen = strlen(st->pass);
+    const bool pass_bad = plen > 0 && plen < 8;
+    const bool wrong = !st->ssid[0] || pass_bad;
+
+    ui_focus_default(MO_FIELD);
+    ui_rect_t head = pg.header;
+    ui_pill(&head, MO_PILL, "Save", UI_TONE_SOLID, OVERLAY_COL_GREEN,
+            wrong ? UI_PART_OFF : 0);
+    ui_title(head, "Wi-Fi", "Add network", NULL, true);
+
+    ui_entry_at(ui_rect(body.x, body.y, body.w, 3), MO_FIELD, "Network name",
+                st->ssid, 14,
+                (uint8_t)(st->edit == 0 ? UI_ENTRY_EDIT : 0),
+                st->edit == 0 && st->caret >= 0 ? st->caret
+                                                : ui_len(st->ssid));
+    ui_entry_at(ui_rect(body.x, body.y + 3, half, 3), MO_FIELD + 1, "Password",
+                st->pass, 0,
+                (uint8_t)((st->edit == 1 ? UI_ENTRY_EDIT : 0) |
+                          (st->show ? 0 : UI_ENTRY_MASK) |
+                          (pass_bad ? UI_ENTRY_BAD : 0)),
+                st->edit == 1 && st->caret >= 0 ? st->caret
+                                                : ui_len(st->pass));
+    ui_switch(ui_rect(body.x + half + gx, body.y + 3,
+                      ui_switch_w("Show password"), 3),
+              MO_OPT + 4, "Show password", st->show, UI_PART_ROOMY);
+    if (pass_bad && body.h > 6) {
+        ui_pen(OVERLAY_COL_RED);
+        ui_text(ui_rect(body.x + 2, body.y + 6, body.w - 4, 1),
+                "Password needs 8 to 63 characters", UI_TEXT | UI_BOLD,
+                UI_LEFT);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
+    if (st->edit >= 0)
+        mo_bar(pg.status, "Type on the keyboard.",
+               "type  " UI_S_ENTER " done  " UI_S_UP UI_S_DOWN " leave", NULL);
+    else
+        mo_bar(pg.status, "Tap a field to change it.",
+               UI_S_ENTER " change  Esc cancel", NULL);
+}
+
+static void scr_wifiadd(void)
+{
+    draw_wifiadd(&(wifiadd_t){ .edit = -1, .caret = -1 });
+}
+
+static void scr_wifiadd_typing(void)
+{
+    draw_wifiadd(&(wifiadd_t){ .ssid = "Workshop", .edit = 0, .caret = 4 });
+}
+
+static void scr_wifiadd_bad(void)
+{
+    draw_wifiadd(&(wifiadd_t){ .ssid = "Workshop", .pass = "short",
+                               .edit = -1, .caret = -1 });
+}
+
 /* "user@host:port  key" in parts, as moParse does. */
 typedef struct { char user[40], host[48], port[12]; bool key; } where_t;
 
@@ -701,9 +769,10 @@ static const cat_t MO_SETUP[] = {
         { IT_ACT, "+ New", .off = true },
         { IT_ACT, "From phone", .nav = true },
         { IT_ACT, "From PC", .nav = true } }, .list = true },
-    { "Wi-Fi", "HomeAP", 2, {
+    { "Wi-Fi", "HomeAP", 3, {
         { IT_ACT, "Reconnect" },
-        { IT_ACT, "Add from phone", .nav = true } } },
+        { IT_ACT, "Add from phone", .nav = true },
+        { IT_ACT, "Add by hand", .nav = true } } },
     { "Keyboard", "K380 connected", 2, {
         { IT_ACT, "Pair keyboard", .nav = true },
         { IT_ACT, "Forget bonds", .accent = OVERLAY_COL_RED } } },
@@ -1870,6 +1939,9 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-wifiprov-test", scr_wifi_test, .slate = true },
     { "mo-wifiprov-fail", scr_wifi_fail, .slate = true },
     { "mo-wifiprov-ok", scr_wifi_ok,     .slate = true },
+    { "mo-wifiadd",     scr_wifiadd,     .slate = true },
+    { "mo-wifiadd-typing", scr_wifiadd_typing, .slate = true },
+    { "mo-wifiadd-bad", scr_wifiadd_bad, .slate = true },
     { "mo-import-phone", scr_import_phone, .slate = true },
     { "mo-import-pc",   scr_import_pc,   .slate = true },
     { "mo-import-pc-off", scr_import_pc_off, .slate = true },

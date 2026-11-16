@@ -23,6 +23,8 @@ const STATES = {
   'mo-list': [{ lpage: 0 }, { lpage: 1 }],
   'mo-pair': [{}, { n: 2 }, { n: 8 }, { n: 8, page: 1 }],
   'mo-unlock': [{}, { code: '12' }, { flow: true, phase: 'new', code: 'ab7' }],
+  'mo-wifiadd': [{}, { wa: { ssid: 'Workshop', pass: 'short', show: false } },
+    { wa: { ssid: 'Workshop', pass: 'longenough', show: true } }],
   'mo-edit': [{}, { host: -1 }, { host: 3 }, { host: 3, keys: [] }],
 };
 const prefix = process.argv[2] || 'mo-';

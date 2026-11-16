@@ -120,9 +120,16 @@ static void act_wifiprov(intptr_t a, uint64_t now)
     enter_wifiprov(now);
 }
 
+static void act_wifiadd(intptr_t a, uint64_t now)
+{
+    (void)a;
+    enter_wifiadd(now);
+}
+
 static const menu_item_t wifi_items[] = {
     { .label = "Reconnect",      .action = act_wifi_kick },
     { .label = "Add from phone", .nav = true, .action = act_wifiprov },
+    { .label = "Add by hand",    .nav = true, .action = act_wifiadd },
 };
 
 /* The link facts. A down link shows its state word and "-" elsewhere. */
