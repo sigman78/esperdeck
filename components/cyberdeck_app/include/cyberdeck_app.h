@@ -184,6 +184,8 @@ bool cyberdeck_app_in_session(void);
 #ifdef BUILD_SIMULATOR
 /* Simulator-only regression hooks; not part of the device/plugin API. */
 const char *cyberdeck_app_debug_screen(void);
+/* The nav stack, bottom first, as comma-joined screen names. */
+void cyberdeck_app_debug_stack(char *buf, size_t sz);
 bool cyberdeck_app_debug_overlay_contains(const char *text);
 /* True when no chip announcement is live or waiting, and the first one
  * has had its turn. The drive's settle step waits on it. */

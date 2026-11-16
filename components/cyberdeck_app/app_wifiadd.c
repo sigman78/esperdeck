@@ -59,15 +59,37 @@ static bool wa_accepts(ui_id_t id, char ch)
     return ch >= 0x20 && ch <= 0x7E;
 }
 
+/* wifi.ini drops a trailing space on load. app_wifi_list_add refuses
+ * one too. */
+static bool ends_in_space(const char *s)
+{
+    const size_t n = strlen(s);
+    return n > 0 && s[n - 1] == ' ';
+}
+
+static bool wa_ssid_bad(void)
+{
+    return ends_in_space(s_wa.ssid);
+}
+
 static bool wa_pass_bad(void)
 {
     const size_t n = strlen(s_wa.pass);
-    return n > 0 && n < WA_PASS_MIN;
+    return (n > 0 && n < WA_PASS_MIN) || ends_in_space(s_wa.pass);
+}
+
+/* The first fault on the form, or NULL. */
+static const char *wa_fault(void)
+{
+    if (wa_ssid_bad())              return "The name cannot end in a space";
+    if (ends_in_space(s_wa.pass))   return "The password cannot end in a space";
+    if (wa_pass_bad())              return "Password needs 8 to 63 characters";
+    return NULL;
 }
 
 static bool wa_wrong(void)
 {
-    return !s_wa.ssid[0] || wa_pass_bad();
+    return !s_wa.ssid[0] || wa_fault();
 }
 
 static bool wa_dirty(void)
@@ -95,17 +117,18 @@ static void render_wifiadd(uint64_t now)
     g.a = room < 40 ? room : 40;
     g.x2 = g.x1 + g.a + g.cap2_w;
     int y = ui_form_row(body, &g, 0, "Network", NULL);
-    app_form_entry(&s_wa.form, ui_rect(g.x1, y, g.a, 3), ID_SSID, false, false);
+    app_form_entry(&s_wa.form, ui_rect(g.x1, y, g.a, 3), ID_SSID,
+                   wa_ssid_bad(), false);
     y = ui_form_row(body, &g, 1, "Password", "Show");
     app_form_entry(&s_wa.form, ui_rect(g.x1, y, g.a, 3), ID_PASS,
                    wa_pass_bad(), true);
     ui_switch(ui_rect(g.x2, y, UI_SWITCH_W, 3), ID_SHOW, s_wa.form.show, 0);
 
-    if (wa_pass_bad() && body.h > 6) {
+    const char *fault = wa_fault();
+    if (fault && body.h > 6) {
         ui_pen(OVERLAY_COL_RED);
         ui_text(ui_rect(body.x + 2, body.y + 6, body.w - 4, 1),
-                "Password needs 8 to 63 characters", UI_TEXT | UI_BOLD,
-                UI_LEFT);
+                fault, UI_TEXT | UI_BOLD, UI_LEFT);
         ui_pen(OVERLAY_COL_DEFAULT);
     }
 

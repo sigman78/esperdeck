@@ -39,8 +39,9 @@ extern const nav_screen_t host_screen;
 /** Open the page of profile @p idx (stored or the built-in fallback). */
 void enter_host(uint64_t now, int idx);
 /** Delete stored profile @p idx with its key files; the host pin goes
- *  too unless @p keep_pin. Reloads the profile list. */
-void profile_delete_at(int idx, bool keep_pin);
+ *  too unless @p keep_pin. Reloads the profile list. A failed save
+ *  deletes nothing and returns the error. */
+esp_err_t profile_delete_at(int idx, bool keep_pin);
 /** True when stored profile @p idx signs in with a key that no other
  *  stored profile uses. Deleting the profile deletes that key's files. */
 bool profile_key_unshared(int idx);

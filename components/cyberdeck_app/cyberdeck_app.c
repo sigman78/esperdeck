@@ -344,6 +344,11 @@ const char *cyberdeck_app_debug_screen(void)
     return nav_current_name();
 }
 
+void cyberdeck_app_debug_stack(char *buf, size_t sz)
+{
+    nav_debug_stack(buf, sz);
+}
+
 bool cyberdeck_app_debug_overlay_contains(const char *text)
 {
     return ui_debug_contains(text);

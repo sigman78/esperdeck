@@ -387,6 +387,21 @@ SCENARIOS = {
         "|expect-text:Delete server?|key:right|key:enter|wait:500"
         "|expect:menu|expect-text:Setup / Hosts|expect-text:192.168.1.10"
         "|expect-no-text:10.0.0.5|quit",
+    # The save of profiles.ini fails. The profile and its key file stay.
+    # FIXTURE_KEEPS checks the key after the run.
+    "host-delete-save-fails":
+        "key:esc|wait:400|expect:home|key: |wait:400|expect:host"
+        "|key:right|key:right|key:enter|wait:400|expect:ask"
+        "|expect-text:The entry and its SSH key files go.|key:right"
+        "|key:enter|wait:400|expect:host|expect-text:delete failed"
+        "|expect-text:127.0.0.1|quit",
+    # A connect from Setup > Hosts takes the whole stack. The session's
+    # F12 can then push the menu.
+    "setup-hosts-connect-stack":
+        HUB + "|key:enter|wait:300|key:down|key:right|key:enter|wait:400"
+        "|expect:host|expect-text:127.0.0.1|expect-stack:home,menu,host"
+        "|key:enter|wait:150|expect:connecting|expect-stack:connecting"
+        "|key:esc|sleep:300|wait:700|expect:home|expect-stack:home|quit",
     "setup-hosts-new":
         HUB + "|key:enter|wait:300|key:enter|wait:400|expect:profile"
         "|expect-text:New host|key:esc|wait:400|expect:menu"
@@ -453,6 +468,13 @@ SCENARIOS = {
         "|key:tab|key:tab|type:Z|expect-text:NewNetZ|key:bs|key:tab|type:defgh"
         "|expect-no-text:Password needs|key:tab|key:tab|key:enter|wait:500"
         "|expect:menu|expect-text:Setup / Wi-Fi|expect-text:NewNet|quit",
+    # wifi.ini drops a trailing space on load, so the form refuses one.
+    "setup-wifi-add-trailing-space":
+        WIFI_HAND + "|type:Net |expect-text:The name cannot end in a space"
+        "|key:bs|expect-no-text:cannot end in a space|key:tab|type:secret12 "
+        "|expect-text:The password cannot end in a space|key:bs"
+        "|expect-no-text:cannot end in a space|key:tab|key:tab|key:enter"
+        "|wait:500|expect:menu|expect-text:Setup / Wi-Fi|expect-text:Net|quit",
     "setup-wifi-add-esc":
         WIFI_HAND + "|key:esc|wait:400|expect:menu|expect-text:Setup / Wi-Fi"
         "|key:enter|wait:400|expect:wifiadd|type:Net"
@@ -588,9 +610,22 @@ FIXTURE_EDITS = {
     "setup-hosts-list": [SECOND_HOST],
     "setup-hosts-open": [SECOND_HOST],
     "setup-hosts-delete": [SECOND_HOST],
+    "setup-hosts-connect-stack": [
+        (SECOND_HOST[0], SECOND_HOST[1].replace("host=10.0.0.5\nport=22",
+                                                "host=127.0.0.1\nport=1"))],
+    "host-delete-save-fails": [
+        ("host=192.168.1.10", "host=127.0.0.1"),
+        ("auth=password\npassword=changeme", "auth=key\nkey_id=id_solo")],
     "setup-hosts-empty": [("[example]\nhost=192.168.1.10\nport=22\nuser=me\n"
                            "auth=password\npassword=changeme", "")],
 }
+
+# Directories a scenario starts with. One where the atomic writer puts its
+# temporary file makes that save fail.
+FIXTURE_DIRS = {"host-delete-save-fails": ["profiles.ini.tmp"]}
+
+# Files that must still exist after the run.
+FIXTURE_KEEPS = {"host-delete-save-fails": ["keys/id_solo.pem"]}
 
 # Files a scenario starts with, by name. Three saved networks, or none.
 # The seeded flag stops the Kconfig fallback from adding one.
@@ -607,6 +642,8 @@ FIXTURE_FILES["setup-wifi-empty"] = {"wifi.ini": "",
                                      "settings.ini": "[wifi]\nseeded=1\n"}
 FIXTURE_FILES["setup-wifi-add"] = FIXTURE_FILES["setup-wifi-empty"]
 FIXTURE_FILES["setup-wifi-add-esc"] = FIXTURE_FILES["setup-wifi-empty"]
+FIXTURE_FILES["setup-wifi-add-trailing-space"] = FIXTURE_FILES["setup-wifi-empty"]
+FIXTURE_FILES["host-delete-save-fails"] = {"keys/id_solo.pem": "not a key\n"}
 
 
 def run(sim, name, script, window):
@@ -624,6 +661,8 @@ def run(sim, name, script, window):
             ini.write_text(text, encoding="utf-8")
             for fname, body in FIXTURE_FILES.get(name, {}).items():
                 (fixture / fname).write_text(body, encoding="utf-8")
+            for dname in FIXTURE_DIRS.get(name, []):
+                (fixture / dname).mkdir()
             mode =([] if window else ["--headless"]) + (
                 ["--fake-ble"] if name.startswith(("pair-", "kbd-")) else [])
             r = subprocess.run(
@@ -632,7 +671,12 @@ def run(sim, name, script, window):
                 timeout=timeout_s(script, window), cwd=tmp,
                 capture_output=True, text=True, errors="replace",
             )
-            return r.returncode == 0, r.stdout + r.stderr
+            out = r.stdout + r.stderr
+            gone = [k for k in FIXTURE_KEEPS.get(name, [])
+                    if not (fixture / k).exists()]
+            if gone:
+                return False, out + f"\ndrive: files gone after the run: {gone}"
+            return r.returncode == 0, out
     except subprocess.TimeoutExpired:
         return False, "timed out"
 

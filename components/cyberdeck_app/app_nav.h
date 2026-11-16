@@ -57,8 +57,10 @@ bool nav_on_stack(int id);
 bool nav_has_bar(void);                  /* top screen shows the status row */
 
 #ifdef BUILD_SIMULATOR
-/* Simulator regression hook: stable descriptor name of the top screen. */
+/* Simulator regression hooks: stable descriptor name of the top screen,
+ * and every entry bottom first, comma-joined into @p buf. */
 const char *nav_current_name(void);
+void nav_debug_stack(char *buf, size_t sz);
 #endif
 
 /* Request a render this tick (coalesced: one present per frame). */

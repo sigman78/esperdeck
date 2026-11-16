@@ -221,11 +221,13 @@ static void render_session_chrome(uint64_t now)
     ui_present();
 }
 
-/* Arm a connect screen-side: the controller is already armed. */
+/* Arm a connect screen-side: the controller is already armed. The
+ * connect takes the whole stack, wherever it started. Every way out
+ * lands on HOME. The session's F12 then finds no stale SCR_MENU. */
 static void show_connecting(uint64_t now)
 {
     if (nav_current() != SCR_CONNECTING) {
-        nav_replace(SCR_CONNECTING, 0, now);
+        nav_reset(SCR_CONNECTING, 0, now);
         return;
     }
     if (s_conn.failed) {                  /* the failed view gives way */

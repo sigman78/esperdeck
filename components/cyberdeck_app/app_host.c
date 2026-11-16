@@ -162,9 +162,9 @@ bool profile_key_unshared(int idx)
  * references them. @p keep_pin leaves the pin in place. This never
  * touches a live session, which runs on the connect module's snapshot
  * instead. */
-void profile_delete_at(int idx, bool keep_pin)
+esp_err_t profile_delete_at(int idx, bool keep_pin)
 {
-    if (idx < 0 || idx >= app.stored_count) return;
+    if (idx < 0 || idx >= app.stored_count) return ESP_ERR_INVALID_ARG;
     conn_profile_t doomed = app.profiles[idx];
     const bool key_goes = profile_key_unshared(idx);
 
@@ -172,7 +172,13 @@ void profile_delete_at(int idx, bool keep_pin)
     int n = 0;
     for (int i = 0; i < app.stored_count && n < MAX_PROFILES; i++)
         if (i != idx) set[n++] = app.profiles[i];
-    storage_save_profiles(set, n);
+    /* The old profiles.ini still points at the key and the pin: keep them. */
+    const esp_err_t e = storage_save_profiles(set, n);
+    if (e != ESP_OK) {
+        keystore_wipe(set, sizeof set);
+        keystore_wipe(&doomed, sizeof doomed);
+        return e;
+    }
 
     if (key_goes) storage_delete_key(doomed.key_id);
 
@@ -185,12 +191,20 @@ void profile_delete_at(int idx, bool keep_pin)
     if (!host_shared && !keep_pin)
         storage_known_host_delete(doomed.host, doomed.port);
 
+    keystore_wipe(set, sizeof set);
+    keystore_wipe(&doomed, sizeof doomed);
     load_profiles();
+    return ESP_OK;
 }
 
 static void host_delete_yes(intptr_t arg, uint64_t now)
 {
-    profile_delete_at((int)arg, true);      /* the pinned host key stays */
+    /* The question popped itself: a failure leaves the host page up. */
+    if (profile_delete_at((int)arg, true) != ESP_OK) {   /* pin stays */
+        toast(now, "delete failed");
+        nav_invalidate();
+        return;
+    }
     toast(now, "profile deleted");
     /* Opened from Setup > Hosts: go back there. Else HOME. */
     if (nav_on_stack(SCR_MENU)) nav_pop(now);

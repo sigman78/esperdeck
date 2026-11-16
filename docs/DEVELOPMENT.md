@@ -208,6 +208,7 @@ cmake --build build-sim
   scripts input and screen/overlay assertions for demos and tests. Touch
   steps are `tap`, `hold` (long press), `press` and `release`.
   `expect-no-text:TEXT` fails while the overlay shows TEXT.
+  `expect-stack:a,b` checks the whole nav stack, bottom first, by screen name.
   `wifi:up`, `wifi:down` and `wifi:fail` set the mocked Wi-Fi link
   (connected, lost, failed). `settle` waits until no chip announcement
   is live or waiting. The boot announcement runs for about 5 s after

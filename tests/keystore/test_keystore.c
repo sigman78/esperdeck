@@ -621,6 +621,15 @@ static void test_wifi_list_edits(void)
         app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "", "x", false));
     TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
         app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "C", STORAGE_PW_BUNDLED, false));
+    /* wifi.ini drops a trailing space on load: never store one. */
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "Cafe ", "pc", false));
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "Cafe", "pc ", false));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, " Cafe", "p c", false));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, app_wifi_list_forget(nets, &n, 2));
+    TEST_ASSERT_EQUAL_INT(2, n);
 
     TEST_ASSERT_EQUAL_INT(ESP_OK, app_wifi_list_move(nets, n, 0, 1));
     TEST_ASSERT_EQUAL_STRING("B", nets[0].ssid);

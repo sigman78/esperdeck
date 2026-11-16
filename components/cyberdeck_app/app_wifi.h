@@ -13,7 +13,8 @@
 /* Pure list edits (no storage, no keystore): array in, array out.
  * locked = the keystore is LOCKED. Then an add must carry no password
  * and must not replace a marker row: ESP_ERR_INVALID_STATE.
- * ESP_ERR_NO_MEM when the list is full, ESP_ERR_INVALID_ARG on bad input. */
+ * ESP_ERR_NO_MEM when the list is full, ESP_ERR_INVALID_ARG on bad input,
+ * which includes a trailing space (wifi.ini would drop it on load). */
 esp_err_t app_wifi_list_add(wifi_profile_t *nets, int *n, int max,
                             const char *ssid, const char *password,
                             bool locked);

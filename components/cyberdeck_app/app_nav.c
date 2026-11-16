@@ -8,6 +8,7 @@
 #include "app_widgets.h"   /* ui_statusbar — the composited chrome */
 
 #include "esp_log.h"
+#include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "nav";
@@ -71,6 +72,19 @@ const char *nav_current_name(void)
 {
     const nav_screen_t *d = screen(nav_current());
     return d && d->name ? d->name : "";
+}
+
+void nav_debug_stack(char *buf, size_t sz)
+{
+    size_t at = 0;
+    if (sz) buf[0] = '\0';
+    for (int i = 0; i < s_depth && at < sz; i++) {
+        const nav_screen_t *d = screen(s_stack[i].id);
+        int w = snprintf(buf + at, sz - at, "%s%s", i ? "," : "",
+                         d && d->name ? d->name : "?");
+        if (w < 0) break;
+        at += (size_t)w;
+    }
 }
 #endif
 

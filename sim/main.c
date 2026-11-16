@@ -229,7 +229,8 @@ static void touch_tick(uint64_t now)
  * With --fake-ble, kbd:up and kbd:down link the keyboard; kbd:caps and
  * kbd:num flip its locks. settle waits until the
  * status chips stop announcing. expect-no-text:TEXT fails when the
- * overlay still shows TEXT. Touch
+ * overlay still shows TEXT. expect-stack:a,b checks the whole nav
+ * stack, bottom first. Touch
  * steps: tap, hold (long press), press and release. Expectations
  * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms apart
  * (wait:N overrides the gap), starting 2.5 s after boot. Each step
@@ -408,6 +409,14 @@ static void drive_tick(uint64_t now)
             fprintf(stderr, "drive: expected overlay text '%s' on screen '%s'\n",
                     want, cyberdeck_app_debug_screen());
             exit(4);
+        }
+    } else if (!strncmp(step, "expect-stack:", 13)) {
+        char got[160];
+        cyberdeck_app_debug_stack(got, sizeof got);
+        if (strcmp(got, step + 13) != 0) {
+            fprintf(stderr, "drive: expected stack '%s', got '%s'\n",
+                    step + 13, got);
+            exit(3);
         }
     } else if (!strncmp(step, "expect-no-text:", 15)) {
         const char *bad = step + 15;

@@ -8,6 +8,13 @@
 
 #include <string.h>
 
+/* wifi.ini drops a trailing space on load: refuse one up front. */
+static bool ends_in_space(const char *s)
+{
+    const size_t n = strlen(s);
+    return n > 0 && s[n - 1] == ' ';
+}
+
 esp_err_t app_wifi_list_add(wifi_profile_t *nets, int *n, int max,
                             const char *ssid, const char *password,
                             bool locked)
@@ -15,7 +22,8 @@ esp_err_t app_wifi_list_add(wifi_profile_t *nets, int *n, int max,
     if (!nets || !n || !ssid || !password || !ssid[0]) return ESP_ERR_INVALID_ARG;
     if (strlen(ssid) >= sizeof(nets->ssid) ||
         strlen(password) >= sizeof(nets->password) ||
-        strcmp(password, STORAGE_PW_BUNDLED) == 0)
+        strcmp(password, STORAGE_PW_BUNDLED) == 0 ||
+        ends_in_space(ssid) || ends_in_space(password))
         return ESP_ERR_INVALID_ARG;
 
     int at = -1;
