@@ -18,8 +18,9 @@ void ui_present(void);
 void ui_hide(void);
 bool ui_visible(void);
 
-/** Park the terminal cursor off-screen (call in full-screen modals). */
-void ui_no_cursor(void);
+/** Open or close the terminal cursor gate (display_cursor_gate). The nav
+ *  layer alone calls it, from the top screen's descriptor. */
+void ui_term_cursor(bool shown);
 
 /** Set the screen theme colors: rebakes the overlay style table
  *  (ui_theme.c) and publishes it to the display. */

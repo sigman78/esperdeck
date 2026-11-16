@@ -161,6 +161,17 @@ esp_err_t display_set_backlight(uint8_t brightness);
 void display_set_cursor(int x, int y, cursor_mode_t mode);
 
 /**
+ * The shell's cursor gate. Closed, the cursor never draws, whatever
+ * display_set_cursor() last said. The terminal keeps reporting its
+ * position, so the cursor reappears in place when the gate opens.
+ */
+void display_cursor_gate(bool open);
+
+/** True when the cursor would draw: gate open, a shape, on screen.
+ *  It ignores the blink phase and overlay cells. */
+bool display_cursor_shown(void);
+
+/**
  * Drain (read, do not reset) the render-ISR per-chunk cycle bench.
  * avg_cycles/max_cycles cover the samples since the last reset; chunks is
  * the sample count. All zero when CONFIG_DISPLAY_ISR_BENCH is off.

@@ -126,12 +126,11 @@ const display_overlay_cell_t *ui_debug_frame(bool *scrim)
 const display_overlay_style_t *ui_debug_styles(void) { return s_theme; }
 #endif
 
-void ui_no_cursor(void)
+void ui_term_cursor(bool shown)
 {
-    /* Park the terminal cursor off-screen so its blinking XOR block does not
-     * flicker through a full-screen modal. vterm restores it on the next
-     * session write. */
-    display_set_cursor(-1, -1, CURSOR_NONE);
+    /* A gate, not a park. The session task keeps moving the cursor under
+     * a covering screen. It cannot reopen the gate. */
+    display_cursor_gate(shown);
 }
 
 void ui_colors(color_t fg, color_t bg)

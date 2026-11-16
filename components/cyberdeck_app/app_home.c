@@ -216,7 +216,6 @@ void connect_checked(int idx, uint64_t now)
 static void poweroff_enter(intptr_t arg, uint64_t now)
 {
     ui_hide();
-    ui_no_cursor();
     display_fx_collapse();
     s_home.poweroff_until = now + (uint64_t)arg * 17 + 80;
 }

@@ -104,6 +104,7 @@ static void enter_top(bool via_pop, uint64_t now)
     const nav_entry_t  *e = &s_stack[s_depth - 1];
     const nav_screen_t *d = screen(e->id);
     if (!d) return;
+    ui_term_cursor(d->term_cursor);      /* nav_frame re-asserts it */
     /* Theme is an entry-time decision: default first, then the screen's
      * enter/resume may override (hostkey hazard). Never per render —
      * the style table is ISR-live (ui.c). */
@@ -180,17 +181,19 @@ void nav_frame(uint64_t now)
     if (!d) return;
     if (d->tick) d->tick(now);
 
-    /* A tick may have navigated — render whoever is on top now. */
+    /* A tick may have navigated: whoever is on top now owns the cursor
+     * gate and the render. Each frame sets the gate again, so no screen
+     * has to remember to hide the cursor. */
+    d = screen(nav_current());
+    ui_term_cursor(d && d->term_cursor);
     if (!s_dirty) return;
     s_dirty = false;
-    d = screen(nav_current());
     if (!d || !d->render) return;        /* SESSION renders itself */
 
     ui_clear();
     d->render(now);
     if (d->chrome == NAV_CHROME_FULL)
         ui_statusbar(now);
-    ui_no_cursor();
     ui_present();
 }
 

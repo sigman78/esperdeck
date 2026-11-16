@@ -35,6 +35,9 @@ typedef struct {
      * (SESSION: overlay hidden except its transient chrome pass). */
     void (*render)(uint64_t now);
     uint8_t chrome;                      /* NAV_CHROME_*                */
+    /* The terminal cursor may show while this screen is on top. Only
+     * SESSION sets it. The gate follows the top screen every frame. */
+    bool term_cursor;
 } nav_screen_t;
 
 /* Adopt the screen table (ids index into it) and reset the stack. Call

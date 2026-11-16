@@ -292,14 +292,12 @@ void session_dropped(uint64_t now)
 }
 
 /* Hand the screen back to a live session (nav resume: menu/pairing pop).
- * Every full-screen modal parks the terminal cursor (ui_no_cursor) and a
- * vterm flush only happens when the host sends bytes — without the
- * explicit refresh the cursor stays gone until the first input. */
+ * The cursor kept its live position under the closed gate. nav opens the
+ * gate, so it shows in place. */
 static void session_resume(intptr_t arg, uint64_t now)
 {
     (void)arg; (void)now;
     ui_hide();
-    vterm_cursor_refresh();
 }
 
 static void session_enter(intptr_t arg, uint64_t now)
@@ -574,5 +572,5 @@ const nav_screen_t connecting_screen = {
 const nav_screen_t session_screen = {
     .name = "session", .enter = session_enter, .resume = session_resume,
     .tick = session_tick, .input = session_input,
-    .chrome = NAV_CHROME_NONE,
+    .chrome = NAV_CHROME_NONE, .term_cursor = true,
 };

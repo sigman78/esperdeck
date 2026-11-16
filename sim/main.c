@@ -230,7 +230,8 @@ static void touch_tick(uint64_t now)
  * kbd:num flip its locks. settle waits until the
  * status chips stop announcing. expect-no-text:TEXT fails when the
  * overlay still shows TEXT. expect-stack:a,b checks the whole nav
- * stack, bottom first. Touch
+ * stack, bottom first. expect-cursor:on|off checks whether the terminal
+ * cursor would draw. Touch
  * steps: tap, hold (long press), press and release. Expectations
  * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms apart
  * (wait:N overrides the gap), starting 2.5 s after boot. Each step
@@ -416,6 +417,13 @@ static void drive_tick(uint64_t now)
         if (strcmp(got, step + 13) != 0) {
             fprintf(stderr, "drive: expected stack '%s', got '%s'\n",
                     step + 13, got);
+            exit(3);
+        }
+    } else if (!strncmp(step, "expect-cursor:", 14)) {
+        const bool want = !strcmp(step + 14, "on");
+        if (display_cursor_shown() != want) {
+            fprintf(stderr, "drive: expected cursor %s on screen '%s'\n",
+                    want ? "on" : "off", cyberdeck_app_debug_screen());
             exit(3);
         }
     } else if (!strncmp(step, "expect-no-text:", 15)) {

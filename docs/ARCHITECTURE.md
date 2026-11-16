@@ -184,6 +184,19 @@ The kit's layout, interaction model and widgets are recorded in
 Because chrome lives in the overlay, it never corrupts the `vterm` cell
 buffer: a full-screen remote app (vim, htop) stays intact behind a menu.
 
+**Terminal cursor.** Two parties touch the cursor. The session task
+reports its position and shape on every flush (`display_set_cursor`),
+even while a menu covers the session. The shell owns a separate gate
+(`display_cursor_gate`). The nav layer sets the gate from the top
+screen's `term_cursor` flag on every screen change and every frame.
+Only SESSION sets the flag, so the cursor never shows through a menu's
+scrim. The terminal cannot reopen the gate. An earlier scheme parked
+the cursor off-screen from each modal's render. The session task
+re-armed it on the next flush, and the block blinked under the
+in-session menu. Under an open gate, an opaque overlay cell (a toast)
+still hides the cursor, as it hides the text
+(`render_cache_overlay_covers`).
+
 ### Glyph tables & the row cache — compressed tables, decode once per row
 
 The Terminus glyph tables are **compressed** ("format v1"): per-glyph row

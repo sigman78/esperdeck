@@ -483,7 +483,6 @@ void menu_present_now(uint64_t now)
     ui_clear();
     render_menu(now);
     ui_statusbar(now);       /* the note rides the StatusBar */
-    ui_no_cursor();
     ui_present();
 }
 
