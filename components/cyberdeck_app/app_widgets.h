@@ -35,5 +35,9 @@ bool clock_str(char *buf, size_t sz);
  *  Scroll events and other keys give UI_ACT_NONE. */
 ui_act_t app_hot_input(const cyberdeck_input_t *ev, ui_key_t k);
 
+/** A host as a tile: name, "user@host[:port]" in @p buf, accent stripe.
+ *  HOME and the Setup > Hosts list draw it the same way. */
+void host_tile(const conn_profile_t *p, ui_part_t *out, char *buf, size_t sz);
+
 const char *wifi_status_str(void);
 const char *ble_status_str(void);

@@ -683,9 +683,13 @@ function moEdit(ui, app) {
 }
 
 const MO_SETUP = [
-  { name: 'Hosts', note: '8 stored', items: [
-    { t: 'act', label: 'Import from phone', nav: true },
-    { t: 'act', label: 'Import from PC', nav: true }] },
+  // `list`: the stored hosts as tiles under the items, on every page of tiles.
+  // The list is shut while a session is live (st.live). The store holds
+  // st.max hosts (8 on the deck); a full store shuts "+ New" too.
+  { name: 'Hosts', note: '8 stored', list: { minW: 30, empty: 'No hosts yet.' }, items: [
+    { t: 'act', label: '+ New', off: (st, n) => st.live || n >= (st.max || 8), go: 'mo-edit', host: -1 },
+    { t: 'act', label: 'From phone', nav: true },
+    { t: 'act', label: 'From PC', nav: true }] },
   { name: 'Wi-Fi', note: 'HomeAP', items: [
     { t: 'act', label: 'Reconnect' }, { t: 'act', label: 'Add network (phone)', nav: true }] },
   { name: 'Keyboard', note: 'K380 connected', items: [
@@ -724,6 +728,28 @@ function moSetup(ui, app) {
   moBarRow(ui, pg.status,'The bar at the top goes back.', '↵ open  Esc back');
 }
 
+// The tiles of a section list in `area`, as HOME draws a host; or the empty
+// text. A live session shuts the rows (st.live). st.tileFocus lights the
+// first tile of the page. Arrows at a page edge turn it (ui.paged).
+function moHostList(ui, app, list, hosts, area, gx, L) {
+  const st = app.state;
+  if (!hosts.length) {
+    ui.pen(C.DEFAULT);
+    ui.text(rect(area.x + 1, area.y, area.w - 2, 1), list.empty, S.MUTED, LEFT);
+    return;
+  }
+  const g = grid(area, L.tcols, 4, gx, 0), first = st.spage * L.tper;
+  ui.paged = { base: MO_ID.HOST, count: hosts.length, cols: L.tcols, per: L.tper,
+               go: (to) => { st.spage = Math.trunc(to / L.tper); } };
+  for (let i = 0; i < L.tper && first + i < hosts.length; i++) {
+    const n = first + i, p = hosts[n], w = moParse(p.where);
+    moPart(ui, gridCell(g, i), MO_ID.HOST + n, {
+      title: p.name, detail: `${w.user}@${w.host}${w.port === '22' ? '' : `:${w.port}`}`,
+      stripe: profAccent(p.name), off: !!st.live, pose: st.tileFocus && i === 0 ? 'focus' : '' },
+    { tap: () => { st.host = n; app.go('mo-host'); } });
+  }
+}
+
 // One section. A choice takes a row and shows every option, so no value
 // hides behind a cycle. Switches and actions keep their own width and
 // pack into rows from the left.
@@ -731,7 +757,6 @@ function moSection(ui, app) {
   const st = app.state, pg = moPage(ui), c = MO_SETUP[st.cat | 0], body = pg.body;
   const gx = pg.m.gutter;
   st.opt = st.opt || {};
-  moFirst(ui, MO_ID.OPT);
   const own = (it) => (it.t === 'toggle' ? moToggleW(it.label) : moActW(it.label, it.nav ? '›' : ''));
   const pack = (room, danger) => {
     const out = [];
@@ -756,15 +781,36 @@ function moSection(ui, app) {
     const n = Math.max(1, pp + own);
     return { plain, danger, pages: n };
   };
+  // A section with a list. Plain rows sit above the tiles on every page.
+  // Danger rows hang below them on the last. Tiles take the rest of the
+  // body, 4 rows each. The pages are pages of tiles.
+  const hosts = c.list ? (st.hosts || PROFILES) : [];
+  const layList = (room) => {
+    const plain = pack(room, false), danger = pack(room, true);
+    const listY = plain.length ? plain.length * 3 + 1 : 0;
+    const listH = Math.max(0, body.h - listY - (danger.length ? danger.length * 3 + 1 : 0));
+    const g = grid(rect(0, 0, room, listH), moCols(room, c.list.minW, gx), 4, gx, 0);
+    const tper = gridCapacity(g);
+    return { plain, danger, listY, listH, tcols: g.ncols, tper, pages: pageCount(hosts.length, tper) };
+  };
   // A paged section gives two columns to the rail, so it packs again.
-  let L = lay(body.w);
-  if (L.pages > 1) L = lay(body.w - 2);
+  const layout = c.list ? layList : lay;
+  let L = layout(body.w);
+  if (L.pages > 1) L = layout(body.w - 2);
   const pages = L.pages;
-  const rows = L.plain.map((r, i) => ({ r, pg: Math.trunc(i / per), y: (i % per) * 3 }))
+  // pg -1: a row of every page.
+  const rows = L.plain.map((r, i) => (c.list ? { r, pg: -1, y: i * 3 }
+      : { r, pg: Math.trunc(i / per), y: (i % per) * 3 }))
     .concat(L.danger.map((r, i) => ({ r, pg: pages - 1,
       y: Math.max(0, body.h - (L.danger.length - i) * 3) })));
+  const itOff = (it) => !!(it.off && it.off(st, hosts.length));
+  const onPage = (row) => row.pg < 0 || row.pg === st.spage;
   const capW = c.items.reduce((n, it) => (it.t === 'pick' ? Math.max(n, moCapW(it.label)) : n), 0);
   st.spage = Math.min(Math.max(st.spage | 0, 0), pages - 1);
+  // The first key focus: the first live item of the page, else its first tile.
+  const firstCell = rows.filter(onPage).flatMap((row) => row.r).find((cell) => !itOff(cell.it));
+  moFirst(ui, firstCell ? firstCell.id
+    : c.list && hosts.length && !st.live ? MO_ID.HOST + st.spage * L.tper : MO_ID.OPT);
   const flip = { prev: { tap: () => st.spage-- }, next: { tap: () => st.spage++ } };
   const head = moPager(ui, pg.header, st.spage, pages, flip);
   moHeader(ui, head, { path: 'Setup', title: c.name, back: { tap: () => app.back() } });
@@ -774,7 +820,8 @@ function moSection(ui, app) {
     ui.key('PageUp', () => { if (st.spage > 0) st.spage--; });
     ui.key('PageDown', () => { if (st.spage < pages - 1) st.spage++; });
   }
-  rows.filter((row) => row.pg === st.spage).forEach(({ r: row, y: dy }) => {
+  if (c.list) moHostList(ui, app, c.list, hosts, rect(body.x, body.y + L.listY, body.w, L.listH), gx, L);
+  rows.filter(onPage).forEach(({ r: row, y: dy }) => {
     const y = body.y + dy;
     let x = body.x;
     row.forEach(({ it, id, w }) => {
@@ -790,8 +837,9 @@ function moSection(ui, app) {
         moToggle(ui, r, id, it.label, v, { pad: 3 }, { tap: () => { st.opt[it.key] = !v; } });
       else moPart(ui, r, id, {
         title: it.label, right: it.nav ? '›' : '', tone: it.accent ? 'tint' : 'card', accent: it.accent,
-        pad: 3,
+        pad: 3, off: itOff(it),
       }, { tap: () => {
+        if (it.host !== undefined) st.host = it.host;
         if (it.go) app.go(it.go);
         else if (it.ask) {
           st.ask = { title: it.ask, verb: it.label, lines: ['This cannot be undone.', ''],
@@ -1316,6 +1364,13 @@ export const MO_GATE = [
   { name: 'mo-section-system', sketch: 'mo-section', state: () => ({ cat: 5 }), pose: { focus: MO_ID.OPT + 16 } },
   { name: 'mo-section-danger', sketch: 'mo-section', state: () => ({ cat: 5 }), pose: { focus: MO_ID.OPT + 32 } },
   { name: 'mo-section-keystore', sketch: 'mo-section', state: () => ({ cat: 6 }), pose: { focus: MO_ID.OPT + 16 } },
+  { name: 'mo-section-hosts', sketch: 'mo-section', state: () => ({ cat: 0 }) },
+  { name: 'mo-section-hosts-few', sketch: 'mo-section',
+    state: () => ({ cat: 0, hosts: PROFILES.slice(0, 5) }) },
+  { name: 'mo-section-hosts-32', sketch: 'mo-section',
+    state: () => ({ cat: 0, hosts: PROFILES32, max: 40, spage: 1, tileFocus: true }) },
+  { name: 'mo-section-hosts-live', sketch: 'mo-section', state: () => ({ cat: 0, live: true }) },
+  { name: 'mo-section-hosts-empty', sketch: 'mo-section', state: () => ({ cat: 0, hosts: [] }) },
   { name: 'mo-list', sketch: 'mo-list' },
   { name: 'mo-list-2', sketch: 'mo-list', state: () => ({ lpage: 1, net: 12 }), pose: { focus: MO_ID.ROW + 12 } },
   { name: 'mo-unlock', sketch: 'mo-unlock' },

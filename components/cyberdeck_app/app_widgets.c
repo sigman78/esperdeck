@@ -51,6 +51,16 @@ const char *ble_status_str(void)
     }
 }
 
+void host_tile(const conn_profile_t *p, ui_part_t *out, char *buf, size_t sz)
+{
+    if (p->port == 22)
+        snprintf(buf, sz, "%s@%s", p->user, p->host);
+    else
+        snprintf(buf, sz, "%s@%s:%u", p->user, p->host, (unsigned)p->port);
+    *out = (ui_part_t){ .title = p->name, .detail = buf,
+                        .stripe = prof_accent(p->name) };
+}
+
 /* Wall-clock "HH:MM": SNTP time on device (0 until synced — no RTC
  * battery), host clock in the simulator. */
 bool clock_str(char *buf, size_t sz)

@@ -13,10 +13,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "cyberdeck_ui.h"   /* ui_part_t */
+
 typedef enum {
     MS_MAIN = 0,   /* in-session sheet: Reset terminal, Setup, Disconnect */
     MS_CONFIG,     /* the Setup hub: one tile per section                 */
-    MS_HOSTS,      /* import hosts from a phone or a PC                   */
+    MS_HOSTS,      /* new host, import, the stored hosts                  */
     MS_WIFI,       /* Reconnect, Add network                              */
     MS_KEYBOARD,   /* Pair, Forget bonds                                  */
     MS_FX_CRT,     /* beam look: scanlines, phosphor, bold                */
@@ -60,12 +62,25 @@ typedef struct {
 #define MENU_ITEM_MAX   8      /* items of one section                    */
 #define MENU_BACK_LEAVE (-1)   /* back pops the whole menu screen         */
 
+/* Rows of data under a section's items, drawn as tiles. The items repeat
+ * on every page of tiles, and danger items hang below the last. Count,
+ * row and off run every render. */
+typedef struct {
+    int  (*count)(void);
+    void (*row)(int i, ui_part_t *out, char *buf, size_t sz);  /* tile of row i */
+    void (*open)(int i, uint64_t now);       /* a tap or Enter on row i   */
+    bool (*off)(void);                       /* all rows drawn off        */
+    const char *empty;                       /* shown when count is 0     */
+    int  min_w;                              /* narrowest tile, cells     */
+} menu_list_t;
+
 /* One section. On the hub its tile shows `title` and the present state
  * from `note`. A non-NULL `unavail` result draws the tile off, with
  * that text as its detail. Both run every render. */
 typedef struct {
     const char *title;
     const menu_item_t *items;
+    const menu_list_t *list;   /* tiles below the items, or NULL           */
     uint8_t count;
     int8_t  back_to;           /* menu_screen_t target, or MENU_BACK_LEAVE */
     uint8_t hold;              /* APP_SETTINGS_HOLD_* while the page is open */

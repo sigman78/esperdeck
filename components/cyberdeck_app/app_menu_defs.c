@@ -53,11 +53,50 @@ static void act_import(intptr_t mode, uint64_t now)
     enter_sshimport(now, (ssh_import_mode_t)mode);
 }
 
+/* A live session shuts the list: the host page could change its hosts. */
+static bool hosts_shut(void)
+{
+    return nav_on_stack(SCR_SESSION);
+}
+
+static bool off_new_host(intptr_t a)
+{
+    (void)a;
+    return hosts_shut() || app.stored_count >= STORAGE_MAX_PROFILES;
+}
+
+static void act_new_host(intptr_t a, uint64_t now)
+{
+    (void)a;
+    enter_profile(now, -1);
+}
+
 static const menu_item_t hosts_items[] = {
-    { .label = "Import from phone", .nav = true, .action = act_import,
+    { .label = "+ New", .action = act_new_host, .off = off_new_host },
+    { .label = "From phone", .nav = true, .action = act_import,
       .arg = SSH_IMPORT_SOFTAP },
-    { .label = "Import from PC",    .nav = true, .action = act_import,
+    { .label = "From PC",    .nav = true, .action = act_import,
       .arg = SSH_IMPORT_WEB },
+};
+
+static int hosts_count(void)
+{
+    return app.stored_count;
+}
+
+static void hosts_row(int i, ui_part_t *out, char *buf, size_t sz)
+{
+    host_tile(&app.profiles[i], out, buf, sz);
+}
+
+static void hosts_open(int i, uint64_t now)
+{
+    if (i >= 0 && i < app.stored_count) enter_host(now, i);
+}
+
+static const menu_list_t hosts_list = {
+    .count = hosts_count, .row = hosts_row, .open = hosts_open,
+    .off = hosts_shut, .empty = "No hosts yet.", .min_w = 30,
 };
 
 static const char *note_hosts(char *buf, size_t sz)
@@ -452,6 +491,7 @@ static const menu_page_t PAGES[MS_COUNT] = {
     [MS_CONFIG]    = { .title = "Setup", .back_to = MS_MAIN,
                        .on_open = ks_snap },
     [MS_HOSTS]     = { .title = "Hosts", .items = hosts_items,
+                       .list = &hosts_list,
                        .count = NELEM(hosts_items), .back_to = MS_CONFIG,
                        .note = note_hosts },
     [MS_WIFI]      = { .title = "Wi-Fi", .items = wifi_items,

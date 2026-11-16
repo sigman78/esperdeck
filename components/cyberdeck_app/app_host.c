@@ -1,5 +1,6 @@
 /*
- * app_host.c — the host page (SCR_HOST): what a hold on a HOME tile opens.
+ * app_host.c — the host page (SCR_HOST): what a hold on a HOME tile or a
+ * tap on a Setup > Hosts row opens.
  * Facts of one profile, then Connect, Edit, Delete and the two moves.
  * Delete asks first through the question page (app_ask.c).
  */
@@ -191,7 +192,9 @@ static void host_delete_yes(intptr_t arg, uint64_t now)
 {
     profile_delete_at((int)arg, true);      /* the pinned host key stays */
     toast(now, "profile deleted");
-    enter_home(now);
+    /* Opened from Setup > Hosts: go back there. Else HOME. */
+    if (nav_on_stack(SCR_MENU)) nav_pop(now);
+    else enter_home(now);
 }
 
 static void host_ask_delete(uint64_t now)

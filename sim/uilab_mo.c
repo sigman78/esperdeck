@@ -682,17 +682,25 @@ typedef struct {
     bool        nav;                  /* opens another page            */
     uint8_t     accent;               /* a caution action              */
     bool        danger;               /* set apart at the page bottom  */
-    int         init;                 /* switch state or chosen option */
+    bool        off;                  /* the New rule, see s_sec_*     */
+    int         init;                /* switch state or chosen option */
     int         nset;
     const char *set[5];
 } item_t;
 
-typedef struct { const char *name, *note; int n; item_t it[5]; } cat_t;
+typedef struct {
+    const char *name, *note;
+    int         n;
+    item_t      it[5];
+    bool        list;                 /* host tiles under the items    */
+} cat_t;
 
+/* "+ New" is off in a live session and in a full store. */
 static const cat_t MO_SETUP[] = {
-    { "Hosts", "8 stored", 2, {
-        { IT_ACT, "Import from phone", .nav = true },
-        { IT_ACT, "Import from PC", .nav = true } } },
+    { "Hosts", "8 stored", 3, {
+        { IT_ACT, "+ New", .off = true },
+        { IT_ACT, "From phone", .nav = true },
+        { IT_ACT, "From PC", .nav = true } }, .list = true },
     { "Wi-Fi", "HomeAP", 2, {
         { IT_ACT, "Reconnect" },
         { IT_ACT, "Add network (phone)", .nav = true } } },
@@ -789,6 +797,18 @@ static int pack_rows(const cat_t *c, int room, int gx, bool danger,
     return nrows;
 }
 
+static void act_part(const item_t *it, ui_rect_t r, ui_id_t id, bool off)
+{
+    ui_part(r, id,
+            &(ui_part_t){ .title = it->label,
+                          .right = it->nav ? UI_S_CHEVRON : NULL,
+                          .tone = it->accent ? UI_TONE_TINT : UI_TONE_CARD,
+                          .accent = it->accent,
+                          .flags = (uint8_t)(UI_PART_ROOMY |
+                                             (off ? UI_PART_OFF : 0)) },
+            NULL);
+}
+
 /* One section. A choice takes a row and shows every option. Switches and
  * actions keep their own width and pack from the left. */
 static void draw_section(int cat)
@@ -846,18 +866,119 @@ static void draw_section(int cat)
             else if (it->type == IT_TOGGLE)
                 ui_switch(r, id, it->label, it->init != 0, UI_PART_ROOMY);
             else
-                ui_part(r, id,
-                        &(ui_part_t){ .title = it->label,
-                                      .right = it->nav ? UI_S_CHEVRON : NULL,
-                                      .tone = it->accent ? UI_TONE_TINT
-                                                         : UI_TONE_CARD,
-                                      .accent = it->accent,
-                                      .flags = UI_PART_ROOMY }, NULL);
+                act_part(it, r, id, false);
         }
     }
     mo_bar(pg.status,"A change applies at once.",
               UI_S_ENTER " change  Esc back", NULL);
 }
+
+/* The Hosts section: the items, then the stored hosts as HOME tiles. The
+ * items sit on every page of tiles. A live session shuts the tiles and
+ * "+ New". A full store shuts "+ New". */
+static int  s_sec_n = LAB_NPROFILES;    /* hosts listed                     */
+static int  s_sec_max = LAB_NPROFILES;  /* hosts the store holds            */
+static int  s_sec_page;                 /* page of tiles shown              */
+static bool s_sec_live;                 /* a session is live                */
+static bool s_sec_tile;                 /* focus the first tile             */
+
+static void draw_hosts(void)
+{
+    ui_slate_t pg = ui_slate_page();
+    const cat_t *c = &MO_SETUP[0];
+    sec_row_t rows[5];
+    const int gx = pg.m.gutter, n = s_sec_n;
+    int plain = 0, tcols = 0, tper = 0, pages = 1, list_y = 0, list_h = 0;
+
+    for (int room = pg.body.w, pass = 0; pass < 2; pass++, room -= 2) {
+        plain = pack_rows(c, room, gx, false, rows);
+        list_y = plain ? plain * 3 + 1 : 0;
+        list_h = pg.body.h - list_y > 0 ? pg.body.h - list_y : 0;
+        const ui_grid_t g = ui_grid(ui_rect(0, 0, room, list_h),
+                                    ui_cols_for(room, 30, gx), 4, gx, 0);
+        tcols = g.ncols;
+        tper = ui_grid_capacity(&g);
+        pages = ui_page_count(n, tper);
+        if (pages == 1) break;
+    }
+    const int page = ui_page_clamp(s_sec_page, n, tper);
+    const bool full = s_sec_live || n >= s_sec_max;
+    ui_id_t first_id = 0;
+    for (int ri = 0; ri < plain; ri++)
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int it = rows[ri].c[ci].it;
+            if (!first_id && !(c->it[it].off && full))
+                first_id = (ui_id_t)(MO_OPT + it * 8);
+        }
+    if (!first_id)
+        first_id = n > 0 && !s_sec_live ? (ui_id_t)(MO_HOST + page * tper)
+                                        : (ui_id_t)MO_OPT;
+    ui_focus_default(first_id);
+
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_title(head, "Setup", c->name, NULL, true);
+    if (pages > 1) {
+        ui_rail(ui_cut_right(&pg.body, 1), page, pages);
+        ui_cut_right(&pg.body, 1);
+    }
+    const ui_rect_t area = ui_rect(pg.body.x, pg.body.y + list_y, pg.body.w,
+                                   list_h);
+    if (n == 0) {
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_text(ui_rect(area.x + 1, area.y, area.w - 2, 1), "No hosts yet.",
+                UI_MUTED, UI_LEFT);
+    } else {
+        const ui_grid_t g = ui_grid(area, tcols, 4, gx, 0);
+        for (int i = 0; i < tper && page * tper + i < n; i++) {
+            const int h = page * tper + i;
+            const where_t w = parse_where(PROFILES[h].where);
+            char addr[80];
+            if (!strcmp(w.port, "22"))
+                snprintf(addr, sizeof addr, "%s@%s", w.user, w.host);
+            else
+                snprintf(addr, sizeof addr, "%s@%s:%s", w.user, w.host, w.port);
+            ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + h),
+                    &(ui_part_t){ .title = PROFILES[h].name, .detail = addr,
+                                  .stripe = prof_accent(PROFILES[h].name),
+                                  .flags = s_sec_live ? UI_PART_OFF : 0 },
+                    NULL);
+        }
+        if (s_sec_tile)
+            ui_debug_pose((ui_id_t)(MO_HOST + page * tper), UI_POSE_FOCUS);
+    }
+    for (int ri = 0; ri < plain; ri++) {
+        int x = pg.body.x;
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int it = rows[ri].c[ci].it;
+            const ui_rect_t r = ui_rect(x, pg.body.y + ri * 3,
+                                        rows[ri].c[ci].w, 3);
+            x += r.w + gx;
+            act_part(&c->it[it], r, (ui_id_t)(MO_OPT + it * 8),
+                     c->it[it].off && full);
+        }
+    }
+    mo_bar(pg.status,"A change applies at once.",
+              UI_S_ENTER " change  Esc back", NULL);
+}
+
+static void hosts_frame(int n, int max, int page, bool live, bool tile)
+{
+    s_sec_n = n;
+    s_sec_max = max;
+    s_sec_page = page;
+    s_sec_live = live;
+    s_sec_tile = tile;
+    draw_hosts();
+    s_sec_n = s_sec_max = LAB_NPROFILES;
+    s_sec_page = 0;
+    s_sec_live = s_sec_tile = false;
+}
+
+static void scr_section_hosts(void)       { hosts_frame(8, 8, 0, false, false); }
+static void scr_section_hosts_few(void)   { hosts_frame(5, 8, 0, false, false); }
+static void scr_section_hosts_32(void)    { hosts_frame(32, 40, 1, false, true); }
+static void scr_section_hosts_live(void)  { hosts_frame(8, 8, 0, true, false); }
+static void scr_section_hosts_empty(void) { hosts_frame(0, 8, 0, false, false); }
 
 static void scr_section_wifi(void)   { draw_section(1); }
 static void scr_section_fx(void)     { draw_section(3); }
@@ -1540,6 +1661,11 @@ static const lab_screen_t MO_SCREENS[] = {
       .focus = MO_OPT + 32 },
     { "mo-section-keystore", scr_section_keystore, .slate = true,
       .focus = MO_OPT + 16 },
+    { "mo-section-hosts", scr_section_hosts, .slate = true },
+    { "mo-section-hosts-few", scr_section_hosts_few, .slate = true },
+    { "mo-section-hosts-32", scr_section_hosts_32, .slate = true },
+    { "mo-section-hosts-live", scr_section_hosts_live, .slate = true },
+    { "mo-section-hosts-empty", scr_section_hosts_empty, .slate = true },
     { "mo-list",        scr_list,        .slate = true },
     { "mo-list-2",      scr_list_2,      .slate = true,
       .focus = MO_ROW + 12 },

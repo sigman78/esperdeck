@@ -169,8 +169,8 @@ SCENARIOS = {
         "|key:esc|wait:500|expect:home|tap:744,24|wait:500|expect:menu"
         "|expect-text:1 stored|press:130,80|wait:300|expect-text:1 stored"
         "|release:130,80|tap:400,300|wait:300|expect-text:1 stored"
-        "|tap:130,80|wait:400|expect-text:Import from phone"
-        "|tap:400,300|wait:300|expect-text:Import from PC"
+        "|tap:130,80|wait:400|expect-text:From phone"
+        "|tap:400,300|wait:300|expect-text:From PC"
         "|tap:40,24|wait:400|expect-text:1 stored|tap:40,24|wait:500"
         "|expect:home|quit",
     # One tap on a tile connects. The fixture edit points it at a closed
@@ -301,8 +301,8 @@ SCENARIOS = {
         "|wait:700|expect:saver|key:esc|wait:400|expect:unlock|quit",
     "idle-locks-import":
         PAD_MAKE + "|key:esc|wait:300|expect:menu|key:up|key:up|key:left"
-        "|key:enter|wait:300|expect-text:Setup / Hosts|key:enter|wait:400"
-        "|expect:sshimport|wait:185000|expect:saver|key:esc|wait:400"
+        "|key:enter|wait:300|expect-text:Setup / Hosts|key:right|key:enter"
+        "|wait:400|expect:sshimport|wait:185000|expect:saver|key:esc|wait:400"
         "|expect:unlock|quit",
     "idle-no-store-keeps-passwords":
         "key:esc|wait:400|expect:home|wait:185000|expect:saver|key:esc"
@@ -343,19 +343,43 @@ SCENARIOS = {
         WIFI_OPEN + "|tap:400,300|wait:300|expect:wifiprov"
         "|tap:40,24|wait:400|expect:home|quit",
     "import-phone":
-        HUB + "|key:enter|wait:300|expect-text:Setup / Hosts|key:enter|wait:400"
+        HUB + "|key:enter|wait:300|expect-text:Setup / Hosts|key:right"
+        "|key:enter|wait:400"
         "|expect:sshimport|expect-text:Import from phone"
         "|expect-text:Join this Wi-Fi:|expect-text:DECK-SETUP-SIM"
         "|expect-text:Wi-Fi password:|expect-text:Open in a browser:"
         "|expect-text:Waiting for a browser|expect-text:scan to join"
         "|key:esc|wait:400|expect:home|quit",
     "import-pc-back-tap":
-        HUB + "|key:enter|wait:300|key:right|key:enter|wait:400"
+        HUB + "|key:enter|wait:300|key:right|key:right|key:enter|wait:400"
         "|expect:sshimport|expect-text:Import from PC"
         "|expect-text:Open on your PC:|expect-text:Proof code:"
         "|expect-text:Plain HTTP. Use it on a network you trust."
         "|expect-text:scan to open|tap:400,300|wait:300|expect:sshimport"
         "|tap:40,24|wait:400|expect:home|quit",
+    # Setup > Hosts lists the stored hosts. A row opens the host page; Back
+    # lands on the same row; Delete returns here with the row gone.
+    "setup-hosts-list":
+        HUB + "|key:enter|wait:300|expect-text:Setup / Hosts|expect-text:+ New"
+        "|expect-text:me@192.168.1.10|expect-text:ops@10.0.0.5|quit",
+    "setup-hosts-open":
+        HUB + "|key:enter|wait:300|key:down|key:right|key:enter|wait:400"
+        "|expect:host|expect-text:10.0.0.5|key:esc|wait:400|expect:menu"
+        "|expect-text:Setup / Hosts|key:enter|wait:400|expect:host"
+        "|expect-text:10.0.0.5|quit",
+    "setup-hosts-delete":
+        HUB + "|key:enter|wait:300|key:down|key:right|key:enter|wait:400"
+        "|expect:host|key:right|key:right|key:enter|wait:400|expect:ask"
+        "|expect-text:Delete server?|key:right|key:enter|wait:500"
+        "|expect:menu|expect-text:Setup / Hosts|expect-text:192.168.1.10"
+        "|expect-no-text:10.0.0.5|quit",
+    "setup-hosts-new":
+        HUB + "|key:enter|wait:300|key:enter|wait:400|expect:profile"
+        "|expect-text:New host|key:esc|wait:400|expect:menu"
+        "|expect-text:Setup / Hosts|quit",
+    "setup-hosts-empty":
+        HUB + "|key:enter|wait:300|expect-text:Setup / Hosts"
+        "|expect-text:No hosts yet.|expect-no-text:(default)|quit",
     "pair-esc":
         PAIR_OPEN + "|expect-text:Pair keyboard|expect-text:Scanning for keyboards"
         "|expect-text:Put the keyboard in pairing mode.|wait:3300"
@@ -446,6 +470,11 @@ FIXTURE_EDITS = {
                         ("port=22", "port=1")],
     "host-delete": [SECOND_HOST],
     "host-move": [SECOND_HOST],
+    "setup-hosts-list": [SECOND_HOST],
+    "setup-hosts-open": [SECOND_HOST],
+    "setup-hosts-delete": [SECOND_HOST],
+    "setup-hosts-empty": [("[example]\nhost=192.168.1.10\nport=22\nuser=me\n"
+                           "auth=password\npassword=changeme", "")],
 }
 
 

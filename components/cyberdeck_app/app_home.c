@@ -136,16 +136,11 @@ static void render_home(uint64_t now)
         if (t < app.profile_count) {
             const conn_profile_t *p = &app.profiles[t];
             char addr[128], num[12];
-            if (p->port == 22)
-                snprintf(addr, sizeof addr, "%s@%s", p->user, p->host);
-            else
-                snprintf(addr, sizeof addr, "%s@%s:%u", p->user, p->host,
-                         (unsigned)p->port);
+            ui_part_t tile;
+            host_tile(p, &tile, addr, sizeof addr);
             snprintf(num, sizeof num, "%d", i + 1);
-            ui_part(cell, (ui_id_t)(ID_TILE + t),
-                    &(ui_part_t){ .title = p->name, .detail = addr,
-                                  .stripe = prof_accent(p->name),
-                                  .right = i < 9 ? num : NULL }, NULL);
+            tile.right = i < 9 ? num : NULL;
+            ui_part(cell, (ui_id_t)(ID_TILE + t), &tile, NULL);
         } else {
             const home_tile_t *h = xt[t - app.profile_count];
             ui_part(cell, (ui_id_t)(ID_TILE + t),

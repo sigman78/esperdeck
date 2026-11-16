@@ -300,6 +300,13 @@ Notes that cost time to learn:
 
 - A long section pages with `ui_pages` and `ui_rail`. A destructive
   action asks on the question page.
+- A section may carry a list (`menu_list_t`, `app_menu_defs.h`): rows of
+  data as tiles below the items, drawn like HOME's (`host_tile`). The
+  items repeat on every page of tiles, and an arrow at a page edge turns
+  the page (`ui_page_step`). `off` greys the whole list, `empty` is the
+  text for no rows. After a row's page pops, focus returns to its tile.
+  Danger items hang below the tiles on the last page. Setup > Hosts is
+  the one user (frames `mo-section-hosts*`).
 - The code pad takes touch through the hot regions. Keys never do, and
   the screen parks focus on an unused id so no key lights while typing.
 - Pairing asks on the question page, which stops the scan. The pairing

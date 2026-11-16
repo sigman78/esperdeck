@@ -130,11 +130,11 @@ Three ways, pick what's convenient:
   stored key. A host needs a name, an address and a user. The port is a
   number from 1 to 65535. **Save**, at the top right, stays grey until
   the form is valid.
-- **From your phone.** **Setup → Hosts → Import from phone**: same
+- **From your phone.** **Setup → Hosts → From phone**: same
   steps-and-QR page as WiFi onboarding. Join the deck's temporary
   hotspot, enter the Wi-Fi password the page shows, open the address in a
   browser, fill in the form and save. Repeat for more hosts.
-- **From your PC.** **Setup → Hosts → Import from PC**: the
+- **From your PC.** **Setup → Hosts → From PC**: the
   deck (already on your WiFi) serves a form at the address it shows,
   with the proof code beside it. **Heads-up:** this runs over plain HTTP
   on your local network. The page says "Plain HTTP. Use it on a network
@@ -233,7 +233,7 @@ apart at the bottom of the section, on its last page.
 
 | Section | What's there |
 |---|---|
-| **Hosts** | Import from phone; Import from PC ([section 5](#5-adding-an-ssh-connection)) |
+| **Hosts** | + New; From phone; From PC (import, [section 5](#5-adding-an-ssh-connection)); then your stored hosts as tiles. Tap one to open its host page: Connect, Edit, Delete, Move. Back or Delete returns to this list. During a live session the tiles and + New are grey. |
 | **Wi-Fi** | Reconnect; Add network (phone) ([section 3](#3-getting-on-wifi)) |
 | **Keyboard** | Pair keyboard; Forget bonds, which asks first ([section 4](#4-pairing-a-keyboard)) |
 | **CRT FX** | Scanlines and Bold pop (switches); Phosphor (color / green / amber) |

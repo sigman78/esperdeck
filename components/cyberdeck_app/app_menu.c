@@ -24,7 +24,10 @@ enum {
     ID_RESET = 10, ID_SETUP, ID_DISCONNECT,
     ID_HUB = 20,
     ID_OPT = 100,
+    ID_ROW = 200,
 };
+
+#define SEC_ALL 0xFF   /* row page: shown on every page of a list */
 
 /* One row of a section: the items on it, left to right. A danger row
  * holds danger items only and sits at the bottom of its page. */
@@ -34,10 +37,13 @@ typedef struct {
 } sec_row_t;
 
 /* A section packed into rows and pages, as the last render saw it. Plain
- * rows come first, danger rows after; `ndanger` of the `nrows` are danger. */
+ * rows come first, danger rows after; `ndanger` of the `nrows` are danger.
+ * A list adds its tile area: offset, height, columns, tiles per page and
+ * row count. */
 typedef struct {
     sec_row_t rows[MENU_ITEM_MAX];
     int nrows, ndanger, per, pages, cap_w;
+    int list_y, list_h, tcols, tper, ln;
 } sec_lay_t;
 
 static struct {
@@ -137,15 +143,50 @@ static void lay_rows(const menu_page_t *p, int room, int gx, sec_lay_t *L)
     }
 }
 
+/* A section with a list. Plain rows sit above the tiles on every page.
+ * Danger rows hang below them on the last. Tiles take the rest of the
+ * body, 4 rows each. The pages are pages of tiles. */
+static void lay_list(const menu_page_t *p, ui_rect_t body, int gx,
+                     sec_lay_t *L)
+{
+    const menu_list_t *ls = p->list;
+    int plain = 0;
+
+    L->ln = ls->count();
+    for (int pass = 0; pass < 2; pass++) {
+        const int room = body.w - 2 * pass;   /* the rail takes two cells */
+        plain = pack_rows(p, room, gx, false, L->rows);
+        L->ndanger = pack_rows(p, room, gx, true, L->rows + plain);
+        L->nrows = plain + L->ndanger;
+        L->list_y = plain ? plain * 3 + 1 : 0;
+        L->list_h = body.h - L->list_y - (L->ndanger ? L->ndanger * 3 + 1 : 0);
+        if (L->list_h < 0) L->list_h = 0;
+        const ui_grid_t g = ui_grid(ui_rect(0, 0, room, L->list_h),
+                                    ui_cols_for(room, ls->min_w, gx), 4, gx, 0);
+        L->tcols = g.ncols;
+        L->tper = ui_grid_capacity(&g);
+        L->pages = ui_page_count(L->ln, L->tper);
+        if (L->pages == 1) break;
+    }
+    for (int ri = 0; ri < L->nrows; ri++) {
+        L->rows[ri].danger = ri >= plain;
+        L->rows[ri].pg = (uint8_t)(ri < plain ? SEC_ALL : L->pages - 1);
+    }
+}
+
 /* The one place that decides rows, pages and the caption column. Drawing,
  * the page flip and the focus after a resume all read the result. */
-static void section_layout(const menu_page_t *p, int room, int gx, int per,
+static void section_layout(const menu_page_t *p, ui_rect_t body, int gx,
                            sec_lay_t *L)
 {
-    L->per = per > 1 ? per : 1;
-    lay_rows(p, room, gx, L);
-    /* Paged rows lose two cells to the rail and its gap. */
-    if (L->pages > 1) lay_rows(p, room - 2, gx, L);
+    L->per = body.h / 3 > 1 ? body.h / 3 : 1;
+    if (p->list) {
+        lay_list(p, body, gx, L);
+    } else {
+        lay_rows(p, body.w, gx, L);
+        /* Paged rows lose two cells to the rail and its gap. */
+        if (L->pages > 1) lay_rows(p, body.w - 2, gx, L);
+    }
     L->cap_w = 0;
     for (int n = 0; n < p->count; n++) {
         const menu_item_t *it = &p->items[n];
@@ -162,17 +203,28 @@ static ui_id_t item_entry(const menu_item_t *it, int n)
     return item_id(n, ix > 0 ? ix : 0);
 }
 
+static bool row_on(const sec_row_t *r, int page)
+{
+    return r->pg == SEC_ALL || r->pg == page;
+}
+
+static bool list_off(const menu_page_t *p)
+{
+    return p->list && p->list->off && p->list->off();
+}
+
 /* First target of the topmost row of @p page that has one, or 0. */
 static ui_id_t row_entry(const menu_page_t *p, int page)
 {
     const sec_lay_t *L = &s_menu.lay;
     for (int ri = 0; ri < L->nrows; ri++) {
-        if (L->rows[ri].pg != page) continue;
+        if (!row_on(&L->rows[ri], page)) continue;
         for (int ci = 0; ci < L->rows[ri].n; ci++) {
             const int n = L->rows[ri].c[ci].it;
             if (!item_off(&p->items[n])) return item_entry(&p->items[n], n);
         }
     }
+    if (p->list && L->ln > 0 && !list_off(p)) return ID_ROW + page * L->tper;
     return 0;
 }
 
@@ -202,21 +254,53 @@ static void draw_item(const menu_item_t *it, int n, ui_rect_t r, int cap_w)
     }
 }
 
+/* The list's tiles of the shown page in @p area, or its empty text. */
+static void draw_list(const menu_list_t *ls, ui_rect_t area, int gx,
+                      const sec_lay_t *L, int page)
+{
+    if (L->ln == 0) {
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_text(ui_rect(area.x + 1, area.y, area.w - 2, 1), ls->empty,
+                UI_MUTED, UI_LEFT);
+        return;
+    }
+    const ui_grid_t g = ui_grid(area, L->tcols, 4, gx, 0);
+    const uint8_t off = ls->off && ls->off() ? UI_PART_OFF : 0;
+    const int first = page * L->tper;
+    for (int i = 0; i < L->tper && first + i < L->ln; i++) {
+        char buf[128];
+        ui_part_t t = { 0 };
+        ls->row(first + i, &t, buf, sizeof buf);
+        t.flags |= off;
+        ui_part(ui_grid_cell(&g, i), (ui_id_t)(ID_ROW + first + i), &t, NULL);
+    }
+}
+
 /* One section: a choice takes a row and shows every option. Switches and
- * actions keep their own width and pack from the left. */
+ * actions keep their own width and pack from the left. A list follows. */
 static void draw_section(const menu_page_t *p)
 {
     ui_slate_t pg = ui_slate_page();
     sec_lay_t *L = &s_menu.lay;
 
-    section_layout(p, pg.body.w, pg.m.gutter, pg.body.h / 3, L);
+    section_layout(p, pg.body, pg.m.gutter, L);
     if (s_menu.follow) {
-        /* Resumed: land on the page that holds the focused item. */
+        /* Resumed: land on the page that holds the focused item. A list
+         * row that is gone leaves the focus on the last one. */
         s_menu.follow = false;
-        const ui_id_t f = ui_focus_get();
-        for (int ri = 0; f >= ID_OPT && ri < L->nrows; ri++)
+        ui_id_t f = ui_focus_get();
+        if (p->list && f >= ID_ROW) {
+            if (f - ID_ROW >= L->ln) {
+                f = L->ln > 0 ? (ui_id_t)(ID_ROW + L->ln - 1) : ID_OPT;
+                ui_focus_set(f);
+            }
+            if (f >= ID_ROW && L->tper > 0)
+                s_menu.page = (f - ID_ROW) / L->tper;
+        }
+        for (int ri = 0; f >= ID_OPT && f < ID_ROW && ri < L->nrows; ri++)
             for (int ci = 0; ci < L->rows[ri].n; ci++)
-                if ((f - ID_OPT) / MENU_PICK_MAX == L->rows[ri].c[ci].it)
+                if ((f - ID_OPT) / MENU_PICK_MAX == L->rows[ri].c[ci].it &&
+                    L->rows[ri].pg != SEC_ALL)
                     s_menu.page = L->rows[ri].pg;
     }
     s_menu.page = s_menu.page < 0 ? 0
@@ -232,8 +316,11 @@ static void draw_section(const menu_page_t *p)
     }
     const int gx = pg.m.gutter;
     int slot = 0, below = L->ndanger;
+    if (p->list)
+        draw_list(p->list, ui_rect(pg.body.x, pg.body.y + L->list_y,
+                                   pg.body.w, L->list_h), gx, L, s_menu.page);
     for (int ri = 0; ri < L->nrows; ri++) {
-        if (L->rows[ri].pg != s_menu.page) continue;
+        if (!row_on(&L->rows[ri], s_menu.page)) continue;
         /* Danger rows hang from the bottom edge of the body. */
         int y = pg.body.y + slot++ * 3;
         if (L->rows[ri].danger) {
@@ -498,7 +585,10 @@ static void menu_flip(int dir)
     const int page = s_menu.page + dir;
     if (!is_section(s_menu.screen) || page < 0 || page >= L->pages) return;
     s_menu.page = page;
-    ui_focus_set(row_entry(menu_page(s_menu.screen), page));
+    const menu_page_t *p = menu_page(s_menu.screen);
+    /* A list page lands on its first tile, as HOME does. */
+    ui_focus_set(p->list && L->ln > 0 && !list_off(p)
+                 ? (ui_id_t)(ID_ROW + page * L->tper) : row_entry(p, page));
     nav_invalidate();
 }
 
@@ -531,7 +621,13 @@ static void menu_press(ui_id_t id, uint64_t now)
     case ID_DISCONNECT:   menu_act_disconnect(now);       return;
     default: break;
     }
-    if (id >= ID_OPT) {
+    if (id >= ID_ROW) {
+        const menu_page_t *p = menu_page(s_menu.screen);
+        const int i = id - ID_ROW;
+        if (is_section(s_menu.screen) && p->list && !list_off(p) &&
+            i < s_menu.lay.ln)
+            p->list->open(i, now);
+    } else if (id >= ID_OPT) {
         const menu_page_t *p = menu_page(s_menu.screen);
         const int n = (id - ID_OPT) / MENU_PICK_MAX;
         if (is_section(s_menu.screen) && n < p->count)
@@ -560,6 +656,19 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     if (k == K_SCROLL_UP || k == K_SCROLL_DOWN) {
         menu_flip(k == K_SCROLL_UP ? -1 : 1);
         return;
+    }
+    /* An arrow at the edge of a page of tiles turns it (ui_page_step). */
+    const sec_lay_t *L = &s_menu.lay;
+    const ui_id_t f = ui_focus_get();
+    if (is_section(s_menu.screen) && menu_page(s_menu.screen)->list &&
+        f >= ID_ROW && ui_focused(f)) {
+        const int to = ui_page_step(k, f - ID_ROW, L->ln, L->tcols, L->tper);
+        if (to >= 0) {
+            s_menu.page = to / L->tper;
+            ui_focus_set((ui_id_t)(ID_ROW + to));
+            nav_invalidate();
+            return;
+        }
     }
 
     const ui_act_t a = app_hot_input(ev, k);
