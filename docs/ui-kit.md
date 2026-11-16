@@ -310,7 +310,9 @@ Notes that cost time to learn:
   use it. A section may also carry a text panel (`menu_panel_t`): a
   `ui_info` above the items, on every page. A tile's `detail_pen` colours
   a state mark in its detail, on a plain card only. The saved-network
-  page is `SCR_WIFINET` (frames `mo-net*`).
+  page is `SCR_WIFINET` (frames `mo-net*`). Setup > Keyboard uses the
+  panel, the list and a danger row together (`mo-section-kbd*`); the
+  paired-keyboard page is `SCR_KBDDEV` (`mo-kbd*`).
 - The code pad takes touch through the hot regions. Keys never do, and
   the screen parks focus on an unused id so no key lights while typing.
 - Pairing asks on the question page, which stops the scan. The pairing

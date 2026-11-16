@@ -126,7 +126,7 @@ shows switches, choices and actions on one page; a long one pages.
 |---------|-------|
 | Hosts | Import from phone, Import from PC |
 | Wi-Fi | Link facts, Reconnect, Add from phone, saved networks (page: Join now, Move, Forget) |
-| Keyboard | Pair keyboard, Forget bonds (asks) |
+| Keyboard | Link facts, Pair keyboard, paired keyboards (page: Forget), Forget all (asks) |
 | CRT FX | Scanlines, Bold pop, Phosphor; Row glow and Glow decay when built |
 | Motion FX | Wobble, Wipe in, Collapse, Static |
 | Font | Size 8x16, 10x20, 12x24 (asks, then restarts) |

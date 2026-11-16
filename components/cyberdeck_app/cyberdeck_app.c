@@ -282,6 +282,7 @@ static const nav_screen_t *const SCREENS[SCR_COUNT] = {
     [SCR_ASK]        = &ask_screen,
     [SCR_WIFINET]    = &wifinet_screen,
     [SCR_WIFIADD]    = &wifiadd_screen,
+    [SCR_KBDDEV]     = &kbddev_screen,
 };
 
 esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)

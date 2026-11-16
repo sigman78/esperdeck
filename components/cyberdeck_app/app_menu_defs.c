@@ -226,19 +226,81 @@ static bool off_no_forget(intptr_t a)
     return !app.ble || !app.ble->forget;
 }
 
+/* The paired keyboards, read when the page opens or comes back. */
+static struct {
+    cyberdeck_ble_bond_t b[KBD_BOND_MAX];
+    char                 label[KBD_BOND_MAX][40];
+    int                  n;
+} s_kbds;
+
+static void kbd_snap(void)
+{
+    s_kbds.n = kbd_bonds(s_kbds.b, KBD_BOND_MAX);
+    for (int i = 0; i < s_kbds.n; i++)
+        kbd_label(&s_kbds.b[i], s_kbds.label[i], sizeof s_kbds.label[i]);
+}
+
 static void act_forget_bonds(intptr_t a, uint64_t now)
 {
     (void)a;
     if (off_no_forget(0)) return;
     app.ble->forget();
+    kbd_snap();
     menu_note(now, MENU_MSG_MS, false, "keyboard bonds cleared");
 }
 
 static const menu_item_t kbd_items[] = {
     { .label = "Pair keyboard", .nav = true, .action = act_pair },
-    { .label = "Forget bonds", .accent = OVERLAY_COL_RED,
+    { .label = "Forget all", .accent = OVERLAY_COL_RED, .danger = true,
       .action = act_forget_bonds, .off = off_no_forget,
       .ask = "Forget every paired keyboard?" },
+};
+
+/* The link facts: the connected keyboard, or the state word. */
+static uint8_t kbd_panel_fill(ui_info_row_t *r, char (*txt)[MENU_PANEL_TXT])
+{
+    uint8_t a[6];
+    const bool up = kbd_connected_addr(a);
+    const char *name = up && app.ble->get_name ? app.ble->get_name() : "";
+
+    snprintf(txt[0], MENU_PANEL_TXT, "%s", name[0] ? name : ble_status_str());
+    if (up) kbd_addr_str(a, txt[1], MENU_PANEL_TXT);
+    else snprintf(txt[1], MENU_PANEL_TXT, "-");
+    r[0] = (ui_info_row_t){ .label = "Keyboard", .value = txt[0] };
+    r[1] = (ui_info_row_t){ .label = "Address", .value = txt[1] };
+    if (up) return OVERLAY_COL_GREEN;
+    if (!app.ble || !app.ble->get_state) return 0;
+    const cyberdeck_ble_state_t st = app.ble->get_state();
+    return st == CYBERDECK_BLE_IDLE ? 0 : OVERLAY_COL_AMBER;
+}
+
+static const menu_panel_t kbd_panel = { .rows = 2, .fill = kbd_panel_fill };
+
+static int kbd_count(void)
+{
+    return s_kbds.n;
+}
+
+static void kbd_row(int i, ui_part_t *out, char *buf, size_t sz)
+{
+    (void)buf; (void)sz;
+    const bool conn = kbd_is_connected(&s_kbds.b[i]);
+    *out = (ui_part_t){
+        .title = s_kbds.label[i],
+        .detail = conn ? UI_S_CHECK " connected" : "paired",
+        .stripe = conn ? OVERLAY_COL_GREEN : 0,
+        .detail_pen = conn ? OVERLAY_COL_GREEN : 0,
+    };
+}
+
+static void kbd_open(int i, uint64_t now)
+{
+    if (i >= 0 && i < s_kbds.n) enter_kbddev(now, i);
+}
+
+static const menu_list_t kbd_list = {
+    .count = kbd_count, .row = kbd_row, .open = kbd_open,
+    .empty = "No paired keyboards.", .min_w = 24,
 };
 
 static const char *note_keyboard(char *buf, size_t sz)
@@ -583,8 +645,10 @@ static const menu_page_t PAGES[MS_COUNT] = {
                        .count = NELEM(wifi_items), .back_to = MS_CONFIG,
                        .on_open = wifi_snap, .note = note_wifi },
     [MS_KEYBOARD]  = { .title = "Keyboard", .items = kbd_items,
+                       .panel = &kbd_panel, .list = &kbd_list,
                        .count = NELEM(kbd_items), .back_to = MS_CONFIG,
-                       .note = note_keyboard, .unavail = unavail_ble },
+                       .on_open = kbd_snap, .note = note_keyboard,
+                       .unavail = unavail_ble },
     [MS_FX_CRT]    = { .title = "CRT FX", .items = fx_crt_items,
                        .count = NELEM(fx_crt_items), .back_to = MS_CONFIG,
                        .hold = APP_SETTINGS_HOLD_FX, .note = note_fx_crt },

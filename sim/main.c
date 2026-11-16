@@ -280,7 +280,7 @@ static int fake_ble_results(ble_device_info_t *out, int max)
     const int n = max < 2 ? max : 2;
     for (int i = 0; i < n; i++) {
         memset(&out[i], 0, sizeof out[i]);
-        out[i].addr[0] = (uint8_t)(0xA0 + i);
+        out[i].addr[5] = (uint8_t)(0xA0 + i);
         out[i].addr_type = (uint8_t)i;
         snprintf(out[i].name, sizeof out[i].name, "%s", names[i]);
     }
@@ -293,13 +293,13 @@ static void fake_ble_select(const uint8_t addr[6], uint8_t addr_type)
 }
 
 static const char *fake_ble_name(void) { return s_fake_up ? "Keychron K2" : ""; }
-static void fake_ble_forget(void) {}
 static uint8_t fake_ble_locks(void) { return s_fake_up ? s_fake_locks : 0; }
 
-/* Two canned bonds; the first is the keyboard kbd:up links. */
+/* Two canned bonds; the first is the keyboard kbd:up links. Addresses are
+ * little-endian like NimBLE's, so they read A0:00:... on screen. */
 static cyberdeck_ble_bond_t s_fake_bonds[2] = {
-    { .addr = { 0xA0 }, .addr_type = 0, .name = "Keychron K2" },
-    { .addr = { 0xA1 }, .addr_type = 1, .name = "Logitech K380" },
+    { .addr = { [5] = 0xA0 }, .addr_type = 0, .name = "Keychron K2" },
+    { .addr = { [5] = 0xA1 }, .addr_type = 1, .name = "Logitech K380" },
 };
 static int s_fake_nbonds = 2;
 
@@ -328,6 +328,12 @@ static void fake_ble_forget_device(const uint8_t addr[6], uint8_t addr_type)
         s_fake_nbonds--;
         return;
     }
+}
+
+static void fake_ble_forget(void)
+{
+    s_fake_nbonds = 0;
+    s_fake_up = false;
 }
 
 static const cyberdeck_ble_ops_t s_fake_ble_ops = {

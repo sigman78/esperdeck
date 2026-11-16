@@ -16,7 +16,8 @@ import {
   statusBar, toast, SB, NOTE,
   entryFirst, codePlan, qrW, qrH, qrRows, qrGlyph, QR_ZONE, fakeQr, wrapLines, stepLines,
 } from './kit.js';
-import { PROFILES, PROFILES32, TERM_LINES, WIFI_UP, WIFI_DOWN, WIFI_FULL } from './fixtures.js';
+import { PROFILES, PROFILES32, TERM_LINES, WIFI_UP, WIFI_DOWN, WIFI_FULL,
+  KBD_UP, KBD_NONE, KBD_FULL } from './fixtures.js';
 
 const MO_ID = {
   HOST: 2000, PILL: 2100, PREV: 2200, NEXT: 2201, HUB: 2300, OPT: 2400,
@@ -777,6 +778,25 @@ const moWifiRows = (st) => moNets(st).nets.map((n, i) => {
            detailPen: joined ? C.GREEN : 0 };
 });
 
+// The BLE keyboard service and its bonds a frame shows (st.kbd).
+const moKbds = (st) => st.kbd || KBD_UP;
+const moKbdLabel = (b) => b.name || b.addr;
+
+// The info panel of the Keyboard section: the connected keyboard, or the state word.
+function moKbdPanel(st) {
+  const k = moKbds(st), up = k.bonds.find((b) => b.up);
+  return { stripe: up ? C.GREEN : k.state === 'idle' ? 0 : C.AMBER, rows: [
+    ['Keyboard', up ? up.name || 'connected' : k.state],
+    ['Address', up ? up.addr : '-'],
+  ] };
+}
+
+// One tile per bonded keyboard.
+const moKbdRows = (st) => moKbds(st).bonds.map((b) => ({
+  title: moKbdLabel(b), stripe: b.up ? C.GREEN : 0,
+  detail: b.up ? '✓ connected' : 'paired', detailPen: b.up ? C.GREEN : 0,
+}));
+
 const moHostRows = (st) => (st.hosts || PROFILES).map((p) => {
   const w = moParse(p.where);
   return { title: p.name, detail: `${w.user}@${w.host}${w.port === '22' ? '' : `:${w.port}`}`,
@@ -798,9 +818,11 @@ const MO_SETUP = [
       open: (st, n, app) => { st.net = n; app.go('mo-net'); } }, items: [
     { t: 'act', label: 'Reconnect' }, { t: 'act', label: 'Add from phone', nav: true },
     { t: 'act', label: 'Add by hand', nav: true, go: 'mo-wifiadd' }] },
-  { name: 'Keyboard', note: 'K380 connected', items: [
+  { name: 'Keyboard', note: 'K380 connected', panel: moKbdPanel,
+    list: { minW: 24, empty: 'No paired keyboards.', rows: moKbdRows,
+      open: (st, n, app) => { st.kbdi = n; app.go('mo-kbd'); } }, items: [
     { t: 'act', label: 'Pair keyboard', nav: true },
-    { t: 'act', label: 'Forget bonds', accent: C.RED, ask: 'Forget every paired keyboard?' }] },
+    { t: 'act', label: 'Forget all', accent: C.RED, danger: true, ask: 'Forget every paired keyboard?' }] },
   { name: 'CRT FX', note: 'scanlines, phosphor', items: [
     { t: 'toggle', key: 'scan', label: 'Scanlines', init: true },
     { t: 'toggle', key: 'pop', label: 'Bold pop', init: true },
@@ -987,6 +1009,28 @@ function moNet(ui, app) {
     { tone: 'tint', accent: C.RED }, { tap: () => {
       st.ask = { title: `Forget ${n.ssid}?`, verb: 'Forget', accent: C.RED,
         lines: [joined ? 'The deck leaves this network.' : 'The network and its password go.', ''],
+        yes: () => { app.back(); app.back(); } };
+      app.go('mo-confirm');
+    } });
+  moBarRow(ui, pg.status, app.note || 'The bar at the top goes back.', '↵ choose  Esc back');
+}
+
+// A paired keyboard's page. st.kbdi is its place in the bond list. It shows
+// facts and Forget apart at the bottom, which asks first.
+function moKbd(ui, app) {
+  const st = app.state, pg = moPage(ui), k = moKbds(st), body = pg.body;
+  const b = k.bonds[Math.min(st.kbdi | 0, k.bonds.length - 1)], label = moKbdLabel(b);
+  moHeader(ui, pg.header, { path: 'Keyboard', title: label, back: { tap: () => app.back() } });
+  moInfo(ui, cutTop(body, 5), [
+    ['Name', b.name || '-'],
+    ['Address', b.addr],
+    ['State', b.up ? 'connected' : 'paired', 0, 0, b.up ? '✓' : '', C.GREEN],
+  ], b.up ? C.GREEN : 0);
+  moFirst(ui, MO_ID.BTN);
+  moBtn(ui, rect(body.x, body.y + body.h - 3, moBtnW('Forget'), 3), MO_ID.BTN, 'Forget',
+    { tone: 'tint', accent: C.RED }, { tap: () => {
+      st.ask = { title: `Forget ${label}?`, verb: 'Forget', accent: C.RED,
+        lines: ['Pair it again to use it.', b.up ? 'It disconnects now.' : ''],
         yes: () => { app.back(); app.back(); } };
       app.go('mo-confirm');
     } });
@@ -1509,6 +1553,15 @@ export const MO_GATE = [
   { name: 'mo-confirm-forget-net', sketch: 'mo-confirm', pose: { focus: MO_ID.BTN },
     state: () => ({ ask: { title: 'Forget HomeAP?', verb: 'Forget', accent: C.RED,
                            lines: ['The deck leaves this network.', ''] } }) },
+  { name: 'mo-section-kbd', sketch: 'mo-section', state: () => ({ cat: 2 }) },
+  { name: 'mo-section-kbd-none', sketch: 'mo-section', state: () => ({ cat: 2, kbd: KBD_NONE }) },
+  { name: 'mo-section-kbd-full', sketch: 'mo-section',
+    state: () => ({ cat: 2, kbd: KBD_FULL, spage: 1, tileFocus: true }) },
+  { name: 'mo-kbd', sketch: 'mo-kbd', state: () => ({ kbdi: 0 }) },
+  { name: 'mo-kbd-paired', sketch: 'mo-kbd', state: () => ({ kbdi: 1 }) },
+  { name: 'mo-confirm-forget-kbd', sketch: 'mo-confirm', pose: { focus: MO_ID.BTN },
+    state: () => ({ ask: { title: 'Forget Keychron K2?', verb: 'Forget', accent: C.RED,
+                           lines: ['Pair it again to use it.', 'It disconnects now.'] } }) },
   { name: 'mo-section-fx', sketch: 'mo-section', state: () => ({ cat: 3 }) },
   { name: 'mo-section-motion', sketch: 'mo-section', state: () => ({ cat: 4 }), pose: { down: MO_ID.OPT + 9 } },
   { name: 'mo-section-system', sketch: 'mo-section', state: () => ({ cat: 5 }), pose: { focus: MO_ID.OPT + 16 } },
@@ -1580,6 +1633,7 @@ export const MO_SKETCHES = [
   { name: 'mo-setup', title: 'Setup hub', theme: 'slate', draw: moSetup },
   { name: 'mo-section', title: 'Setup section: switches and choices', theme: 'slate', draw: moSection },
   { name: 'mo-net', title: 'Saved network page', theme: 'slate', draw: moNet },
+  { name: 'mo-kbd', title: 'Paired keyboard page', theme: 'slate', draw: moKbd },
   { name: 'mo-list', title: 'Paged list with pager and rail', theme: 'slate', draw: moList },
   { name: 'mo-unlock', title: 'Access code pad', theme: 'slate', draw: moUnlock },
   { name: 'mo-connect', title: 'Connecting', theme: 'slate', draw: (u, a) => moConnect(u, a, false) },

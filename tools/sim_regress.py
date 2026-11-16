@@ -49,6 +49,13 @@ WIFI_SECTION = HUB + "|key:right|key:enter|wait:300|expect-text:Setup / Wi-Fi"
 WIFI_SECOND = WIFI_SECTION + "|key:down|key:right|key:enter|wait:400|expect:wifinet"
 WIFI_HAND = (WIFI_SECTION + "|key:right|key:right|key:enter|wait:400"
              "|expect:wifiadd")
+# With the fake BLE service HOME has a Pair pill, so walk right to Setup.
+KBD_HUB = ("key:esc|wait:400|expect:home|key:up|key:right|key:right|key:right"
+           "|key:enter|wait:500|expect:menu")
+KBD_SECTION = (KBD_HUB + "|key:right|key:right|key:enter|wait:300"
+               "|expect-text:Setup / Keyboard")
+# The first tile is Keychron K2; the second is Logitech K380.
+KBD_SECOND = KBD_SECTION + "|key:down|key:right|key:enter|wait:400|expect:kbddev"
 PAIR_OPEN = "key:esc|wait:400|expect:home|key:b|wait:200|expect:pairing"
 EDIT_DROPS_KEY = (
     "key:esc|wait:400|expect:home|key: |wait:400|expect:host|key:right"
@@ -450,6 +457,41 @@ SCENARIOS = {
         "|key:esc|wait:300|expect:wifiadd|expect-text:Net|key:esc|wait:300"
         "|expect:ask|key:right|key:enter|wait:400|expect:menu"
         "|expect-text:No saved networks.|quit",
+    # Setup > Keyboard. The fake deck holds two bonds, Keychron K2 first.
+    # A tile per bond opens its page. Forget and Forget all ask first.
+    "kbd-section-list":
+        KBD_SECTION + "|expect-text:Keyboard|expect-text:Address|expect-text:idle"
+        "|expect-text:Pair keyboard|expect-text:Keychron K2"
+        "|expect-text:Logitech K380|expect-text:paired|expect-text:Forget all"
+        "|expect-no-text:A0:00:00:00:00:00|kbd:up|wait:500"
+        "|expect-text:A0:00:00:00:00:00|expect-text:connected|quit",
+    "kbd-open":
+        KBD_SECTION + "|kbd:up|wait:500|key:down|key:enter|wait:400"
+        "|expect:kbddev|expect-text:Keyboard / Keychron K2|expect-text:Name"
+        "|expect-text:A0:00:00:00:00:00|expect-text:State|expect-text:connected"
+        "|expect-text:Forget|key:esc|wait:400|expect:menu"
+        "|expect-text:Setup / Keyboard|key:right|key:enter|wait:400"
+        "|expect:kbddev|expect-text:Keyboard / Logitech K380"
+        "|expect-text:A1:00:00:00:00:00|expect-text:paired|quit",
+    "kbd-forget-one":
+        KBD_SECOND + "|key:enter|wait:400|expect:ask"
+        "|expect-text:Forget Logitech K380?|expect-text:Pair it again to use it."
+        "|expect-no-text:It disconnects now.|key:enter|wait:300|expect:kbddev"
+        "|key:enter|wait:400|expect:ask|key:right|key:enter|wait:500"
+        "|expect:menu|expect-text:Setup / Keyboard|expect-no-text:Logitech K380"
+        "|expect-text:Keychron K2|quit",
+    "kbd-forget-connected":
+        KBD_SECTION + "|kbd:up|settle|key:down|key:enter|wait:400"
+        "|expect:kbddev|key:enter|wait:400|expect:ask"
+        "|expect-text:Forget Keychron K2?|expect-text:It disconnects now."
+        "|key:right|key:enter|wait:500|expect:menu|expect-text:Setup / Keyboard"
+        "|expect-no-text:A0:00:00:00:00:00|expect-text:Logitech K380"
+        "|expect-text:idle|quit",
+    "kbd-forget-all":
+        KBD_SECTION + "|key:down|key:down|key:enter|wait:400|expect:ask"
+        "|expect-text:Forget every paired keyboard?|key:right|key:enter|wait:500"
+        "|expect:menu|expect-text:Setup / Keyboard|expect-text:No paired keyboards."
+        "|expect-no-text:Keychron K2|expect-no-text:Logitech K380|quit",
     "pair-esc":
         PAIR_OPEN + "|expect-text:Pair keyboard|expect-text:Scanning for keyboards"
         "|expect-text:Put the keyboard in pairing mode.|wait:3300"

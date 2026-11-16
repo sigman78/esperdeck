@@ -55,6 +55,21 @@ export const WIFI_FULL = {
          'Lab', 'backup-link'].map((ssid, i) => ({ ssid, pw: i === 1 ? 'locked' : 'saved' })),
 };
 
+// The BLE keyboard service: its state word and the bonds (name '' when the
+// deck has none). `up` marks the connected bond.
+export const KBD_UP = {
+  state: 'connected',
+  bonds: [{ name: 'Keychron K2', addr: 'A0:00:00:00:00:00', up: true },
+          { name: 'Logitech K380', addr: 'A1:00:00:00:00:00' }],
+};
+export const KBD_NONE = { state: 'idle', bonds: [] };
+export const KBD_FULL = {
+  ...KBD_UP,
+  bonds: ['Keychron K2', 'Logitech K380', 'MX Keys Mini', '', 'Kinesis Adv360', 'ZSA Moonlander',
+          'Apple Magic Keyboard', 'Nuphy Air75'].map((name, i) =>
+    ({ name, addr: `A${i}:11:22:33:44:55`, up: i === 0 })),
+};
+
 export const TERM_LINES = [
   'deck@homelab:~$ journalctl -fu sshd',
   'Nov 12 14:02:11 homelab sshd[811]: Accepted publickey for deck',

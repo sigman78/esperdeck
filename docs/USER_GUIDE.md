@@ -122,10 +122,14 @@ Any Bluetooth Low Energy (BLE) keyboard should work.
    line adds "closes in 9 s". The header bar or Esc leaves without pairing.
 
 Once paired, the keyboard reconnects by itself — the `KBD` light tells you
-when it's linked. To unpair everything: **Setup → Keyboard →
-Forget bonds**, or the **Forget bonds** button at the bottom of the
-pairing page. It asks first on its own page; Cancel is the default
-answer. After you confirm, the scan starts again from clean bonds.
+when it's linked. **Setup → Keyboard** shows the connected keyboard and
+its address, then one tile per paired keyboard ("connected" or "paired").
+Tap a tile to open its page: name, address and state, and **Forget**,
+which asks first and drops only that keyboard. To unpair everything, use
+**Forget all** at the bottom of the section, or the **Forget bonds**
+button at the bottom of the pairing page. Both ask first on their own
+page; Cancel is the default answer. After you confirm on the pairing
+page, the scan starts again from clean bonds.
 
 No keyboard at hand? The whole interface works by touch, and a USB cable
 into the same port used for flashing also delivers keystrokes.
@@ -246,7 +250,7 @@ apart at the bottom of the section, on its last page.
 |---|---|
 | **Hosts** | + New; From phone; From PC (import, [section 5](#5-adding-an-ssh-connection)); then your stored hosts as tiles. Tap one to open its host page: Connect, Edit, Delete, Move. Back or Delete returns to this list. During a live session the tiles and + New are grey. |
 | **Wi-Fi** | Link facts; Reconnect; Add from phone; Add by hand; your saved networks as tiles ([section 3](#3-getting-on-wifi)) |
-| **Keyboard** | Pair keyboard; Forget bonds, which asks first ([section 4](#4-pairing-a-keyboard)) |
+| **Keyboard** | Link facts; Pair keyboard; your paired keyboards as tiles (a page each, with Forget); Forget all, which asks first ([section 4](#4-pairing-a-keyboard)) |
 | **CRT FX** | Scanlines and Bold pop (switches); Phosphor (color / green / amber) |
 | **Motion FX** | Wobble, Wipe in, Collapse, Static |
 | **System** | Font size (8×16 / 10×20 / 12×24; another size asks, then the deck restarts and an open session ends); Saver + lock timeout in minutes; Edge scroll switch; Clear host keys and Factory reset, both ask first ([section 11](#11-resetting-things)) |
@@ -329,7 +333,7 @@ own. **Cancel** is the default answer, so treat the red button as final.
   Reconnect** first; if the network is new, re-run "Add from phone".
   Remember the factory placeholder network is not real.
 - **Keyboard won't pair.** Make sure it is in pairing mode and not still
-  bonded to another host. **Forget bonds**, then pair again.
+  bonded to another host. Forget it under **Setup → Keyboard**, then pair again.
 - **"ACCESS DENIED", then a countdown.** Wrong code, and you are inside the
   retry backoff. Waiting is the only option — the timer survives reboots.
 - **Forgot the access code.** There is no recovery ([section

@@ -775,7 +775,8 @@ static const cat_t MO_SETUP[] = {
         { IT_ACT, "Add by hand", .nav = true } } },
     { "Keyboard", "K380 connected", 2, {
         { IT_ACT, "Pair keyboard", .nav = true },
-        { IT_ACT, "Forget bonds", .accent = OVERLAY_COL_RED } } },
+        { IT_ACT, "Forget all", .accent = OVERLAY_COL_RED,
+          .danger = true } } },
     { "CRT FX", "scanlines, phosphor", 3, {
         { IT_TOGGLE, "Scanlines", .init = 1 },
         { IT_TOGGLE, "Bold pop", .init = 1 },
@@ -1202,6 +1203,152 @@ static void scr_confirm_forget_net(void)
 {
     draw_confirm(&(ask_t){ "Forget HomeAP?", "Forget",
                            { "The deck leaves this network.", "" },
+                           OVERLAY_COL_RED });
+}
+
+/* The Keyboard section and the paired-keyboard page. Bond 0 is the
+ * connected one while the link is up; an empty name shows the address. */
+typedef struct { const char *name, *addr; } lab_kbd_t;
+typedef struct { bool up; int n; const lab_kbd_t *k; } lab_kbds_t;
+
+static const lab_kbd_t KBDS_UP[] = {
+    { "Keychron K2", "A0:00:00:00:00:00" },
+    { "Logitech K380", "A1:00:00:00:00:00" },
+};
+static const lab_kbd_t KBDS_FULL[] = {
+    { "Keychron K2", "A0:11:22:33:44:55" },
+    { "Logitech K380", "A1:11:22:33:44:55" },
+    { "MX Keys Mini", "A2:11:22:33:44:55" },
+    { "", "A3:11:22:33:44:55" },
+    { "Kinesis Adv360", "A4:11:22:33:44:55" },
+    { "ZSA Moonlander", "A5:11:22:33:44:55" },
+    { "Apple Magic Keyboard", "A6:11:22:33:44:55" },
+    { "Nuphy Air75", "A7:11:22:33:44:55" },
+};
+static const lab_kbds_t KBD_UP = { true, NELEM(KBDS_UP), KBDS_UP };
+static const lab_kbds_t KBD_NONE = { false, 0, NULL };
+static const lab_kbds_t KBD_FULL = { true, NELEM(KBDS_FULL), KBDS_FULL };
+
+static const char *kbd_label(const lab_kbd_t *k)
+{
+    return k->name[0] ? k->name : k->addr;
+}
+
+/* The panel, the items, a tile per bond, then the danger row at the foot. */
+static void draw_kbd_section(const lab_kbds_t *w, int page, bool tile)
+{
+    ui_slate_t pg = ui_slate_page();
+    const cat_t *c = &MO_SETUP[2];
+    sec_row_t rows[5];
+    const int gx = pg.m.gutter, n = w->n;
+    int plain = 0, nd = 0, tcols = 0, tper = 0, pages = 1, list_y = 0, list_h = 0;
+
+    ui_rect_t pan = ui_cut_top(&pg.body, 4);
+    for (int room = pg.body.w, pass = 0; pass < 2; pass++, room -= 2) {
+        plain = pack_rows(c, room, gx, false, rows);
+        nd = pack_rows(c, room, gx, true, rows + plain);
+        list_y = plain ? plain * 3 + 1 : 0;
+        list_h = pg.body.h - list_y - (nd ? nd * 3 + 1 : 0);
+        if (list_h < 0) list_h = 0;
+        const ui_grid_t g = ui_grid(ui_rect(0, 0, room, list_h),
+                                    ui_cols_for(room, 24, gx), 4, gx, 0);
+        tcols = g.ncols;
+        tper = ui_grid_capacity(&g);
+        pages = ui_page_count(n, tper);
+        if (pages == 1) break;
+    }
+    page = ui_page_clamp(page, n, tper);
+    ui_focus_default(MO_OPT);
+
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_title(head, "Setup", c->name, NULL, true);
+    if (pages > 1) {
+        ui_rail(ui_cut_right(&pg.body, 1), page, pages);
+        ui_cut_right(&pg.body, 1);
+        pan.w -= 2;
+    }
+    const ui_info_row_t lines[2] = {
+        { "Keyboard", w->up ? w->k[0].name : "idle" },
+        { "Address", w->up ? w->k[0].addr : "-" },
+    };
+    ui_info(pan, lines, 2, w->up ? OVERLAY_COL_GREEN : 0);
+
+    const ui_rect_t area = ui_rect(pg.body.x, pg.body.y + list_y, pg.body.w,
+                                   list_h);
+    if (n == 0) {
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_text(ui_rect(area.x + 1, area.y, area.w - 2, 1),
+                "No paired keyboards.", UI_MUTED, UI_LEFT);
+    } else {
+        const ui_grid_t g = ui_grid(area, tcols, 4, gx, 0);
+        for (int i = 0; i < tper && page * tper + i < n; i++) {
+            const int h = page * tper + i;
+            const bool conn = w->up && h == 0;
+            ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + h),
+                    &(ui_part_t){
+                        .title = kbd_label(&w->k[h]),
+                        .detail = conn ? UI_S_CHECK " connected" : "paired",
+                        .stripe = conn ? OVERLAY_COL_GREEN : 0,
+                        .detail_pen = conn ? OVERLAY_COL_GREEN : 0 },
+                    NULL);
+        }
+        if (tile)
+            ui_debug_pose((ui_id_t)(MO_HOST + page * tper), UI_POSE_FOCUS);
+    }
+    for (int ri = 0; ri < plain + nd; ri++) {
+        int y = pg.body.y + ri * 3;
+        if (ri >= plain) {
+            if (page != pages - 1) continue;
+            y = pg.body.y + pg.body.h - (plain + nd - ri) * 3;
+        }
+        int x = pg.body.x;
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int it = rows[ri].c[ci].it;
+            const ui_rect_t r = ui_rect(x, y, rows[ri].c[ci].w, 3);
+            x += r.w + gx;
+            act_part(&c->it[it], r, (ui_id_t)(MO_OPT + it * 8), false);
+        }
+    }
+    mo_bar(pg.status,"A change applies at once.",
+              UI_S_ENTER " change  Esc back", NULL);
+}
+
+static void scr_section_kbd(void)      { draw_kbd_section(&KBD_UP, 0, false); }
+static void scr_section_kbd_none(void) { draw_kbd_section(&KBD_NONE, 0, false); }
+static void scr_section_kbd_full(void) { draw_kbd_section(&KBD_FULL, 1, true); }
+
+/* The page of the bond at position @p at of KBD_UP. */
+static void draw_kbd(int at)
+{
+    ui_slate_t pg = ui_slate_page();
+    const lab_kbd_t *k = &KBD_UP.k[at];
+    const bool conn = KBD_UP.up && at == 0;
+
+    ui_title(pg.header, "Keyboard", kbd_label(k), NULL, true);
+    const ui_info_row_t rows[3] = {
+        { "Name", k->name[0] ? k->name : "-" },
+        { "Address", k->addr },
+        conn ? (ui_info_row_t){ "State", "connected", 0, 0, UI_S_CHECK,
+                                OVERLAY_COL_GREEN }
+             : (ui_info_row_t){ "State", "paired" },
+    };
+    ui_focus_default(MO_BTN);
+    ui_info(ui_cut_top(&pg.body, 5), rows, 3, conn ? OVERLAY_COL_GREEN : 0);
+    ui_push(ui_rect(pg.body.x, pg.body.y + pg.body.h - 3, ui_push_w("Forget"),
+                    3),
+            MO_BTN, "Forget", UI_TONE_TINT, OVERLAY_COL_RED, 0);
+    mo_bar(pg.status,"The bar at the top goes back.",
+              UI_S_ENTER " choose  Esc back", NULL);
+}
+
+static void scr_kbd(void)        { draw_kbd(0); }
+static void scr_kbd_paired(void) { draw_kbd(1); }
+
+static void scr_confirm_forget_kbd(void)
+{
+    draw_confirm(&(ask_t){ "Forget Keychron K2?", "Forget",
+                           { "Pair it again to use it.",
+                             "It disconnects now." },
                            OVERLAY_COL_RED });
 }
 
@@ -1884,6 +2031,13 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-net-last",    scr_net_last,    .slate = true,
       .focus = MO_BTN },
     { "mo-confirm-forget-net", scr_confirm_forget_net, .slate = true,
+      .focus = MO_BTN },
+    { "mo-section-kbd",    scr_section_kbd,    .slate = true },
+    { "mo-section-kbd-none", scr_section_kbd_none, .slate = true },
+    { "mo-section-kbd-full", scr_section_kbd_full, .slate = true },
+    { "mo-kbd",         scr_kbd,         .slate = true },
+    { "mo-kbd-paired",  scr_kbd_paired,  .slate = true },
+    { "mo-confirm-forget-kbd", scr_confirm_forget_kbd, .slate = true,
       .focus = MO_BTN },
     { "mo-section-fx",     scr_section_fx,     .slate = true },
     { "mo-section-motion", scr_section_motion, .slate = true,

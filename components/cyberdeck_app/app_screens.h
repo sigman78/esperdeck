@@ -19,7 +19,7 @@ typedef enum {
     SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
     SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
     SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK, SCR_SAVER, SCR_HOST, SCR_ASK,
-    SCR_WIFINET, SCR_WIFIADD,
+    SCR_WIFINET, SCR_WIFIADD, SCR_KBDDEV,
     SCR_COUNT
 } scr_id_t;
 
@@ -49,6 +49,20 @@ bool profile_key_unshared(int idx);
 extern const nav_screen_t wifinet_screen;
 /** Open the page of the saved network at position @p idx. */
 void enter_wifinet(uint64_t now, int idx);
+
+/* ---- paired-keyboard page and bond helpers (app_kbddev.c) ---- */
+#define KBD_BOND_MAX 8
+extern const nav_screen_t kbddev_screen;
+/** Open the page of the bond at position @p idx of kbd_bonds(). */
+void enter_kbddev(uint64_t now, int idx);
+/** The bonds, or 0 when the BLE ops have none to give. */
+int  kbd_bonds(cyberdeck_ble_bond_t *out, int max);
+/** The connected keyboard's address; false when none or no BLE ops. */
+bool kbd_connected_addr(uint8_t addr[6]);
+bool kbd_is_connected(const cyberdeck_ble_bond_t *b);
+/** "A0:B1:C2:D3:E4:F5" (18 bytes), and the bond's name or that address. */
+void kbd_addr_str(const uint8_t a[6], char *buf, size_t sz);
+void kbd_label(const cyberdeck_ble_bond_t *b, char *buf, size_t sz);
 
 /* ---- by-hand network form (app_wifiadd.c) ---- */
 extern const nav_screen_t wifiadd_screen;
