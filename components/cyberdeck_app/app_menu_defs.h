@@ -19,7 +19,7 @@ typedef enum {
     MS_MAIN = 0,   /* in-session sheet: Reset terminal, Setup, Disconnect */
     MS_CONFIG,     /* the Setup hub: one tile per section                 */
     MS_HOSTS,      /* new host, import, the stored hosts                  */
-    MS_WIFI,       /* link facts, Reconnect, Add from phone, Add by hand, saved networks */
+    MS_WIFI,       /* link facts, add actions, the saved networks         */
     MS_KEYBOARD,   /* link facts, Pair, the paired keyboards, Forget all  */
     MS_FX_CRT,     /* beam look: scanlines, phosphor, bold                */
     MS_FX_MOTION,  /* motion: wobble, wipe, collapse, static              */

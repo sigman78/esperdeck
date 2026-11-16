@@ -103,7 +103,8 @@ static int ble_ops_bonds(cyberdeck_ble_bond_t *out, int max)
     for (int i = 0; i < n; i++) {
         out[i] = (cyberdeck_ble_bond_t){ .addr_type = d[i].addr_type };
         memcpy(out[i].addr, d[i].addr, 6);
-        if (strcmp(d[i].name, "Unknown") != 0)
+        if (strcmp(d[i].name, "Unknown") != 0 &&
+            strcmp(d[i].name, "Unknown HID") != 0)
             snprintf(out[i].name, sizeof out[i].name, "%.*s",
                      (int)sizeof out[i].name - 1, d[i].name);
     }

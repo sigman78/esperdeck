@@ -53,7 +53,9 @@ static void render_wifinet(uint64_t now)
     const char *ssid = s_net.ssid[s_net.idx];
     const bool joined = net_joined();
     const bool off[ID_FORGET + 1] = {
-        [ID_JOIN] = joined || s_net.locked[s_net.idx],
+        /* Joining drops the link, so a live session keeps it off. */
+        [ID_JOIN] = joined || s_net.locked[s_net.idx] ||
+                    nav_on_stack(SCR_SESSION),
         [ID_EARLIER] = s_net.idx <= 0,
         [ID_LATER] = s_net.idx >= s_net.n - 1,
     };
@@ -187,6 +189,8 @@ static void net_ask_forget(uint64_t now)
         .title = title,
         .line1 = net_joined() ? "The deck leaves this network."
                               : "The network and its password go.",
+        .line2 = net_joined() && nav_on_stack(SCR_SESSION)
+                     ? "The SSH session drops." : NULL,
         .verb = "Forget", .accent = OVERLAY_COL_RED,
         .yes = net_forget_yes, .arg = s_net.idx,
     }, now);
