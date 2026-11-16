@@ -190,9 +190,12 @@ bool ui_part(ui_rect_t r, ui_id_t id, const ui_part_t *p, ui_part_box_t *box)
         w -= n + 1;
     }
     ui_text(ui_rect(inn.x, y, w, 1), str(p->title), k.title, al);
-    if (two)
+    if (two) {
+        const bool mark = p->detail_pen && k.card && !k.off;
+        if (mark) ui_pen(p->detail_pen);
         ui_text(ui_rect(inn.x, y + 1, inn.w - p->reserve, 1), p->detail,
-                k.detail, al);
+                mark ? k.title : k.detail, al);
+    }
     ui_pen(OVERLAY_COL_DEFAULT);
     if (box) { box->k = k; box->y = y; box->inn = inn; }
     return true;

@@ -9,6 +9,7 @@
 #include "app_screens.h"
 #include "app_settings.h"
 #include "app_widgets.h"
+#include "app_wifi.h"
 #include "font.h"
 #include "keystore.h"
 #include "ssh_client.h"
@@ -20,6 +21,7 @@
 #endif
 
 #include <stdio.h>
+#include <string.h>
 
 #ifndef BUILD_SIMULATOR
 #include "freertos/FreeRTOS.h"
@@ -119,8 +121,83 @@ static void act_wifiprov(intptr_t a, uint64_t now)
 }
 
 static const menu_item_t wifi_items[] = {
-    { .label = "Reconnect",           .action = act_wifi_kick },
-    { .label = "Add network (phone)", .nav = true, .action = act_wifiprov },
+    { .label = "Reconnect",      .action = act_wifi_kick },
+    { .label = "Add from phone", .nav = true, .action = act_wifiprov },
+};
+
+/* The link facts. A down link shows its state word and "-" elsewhere. */
+static uint8_t wifi_panel_fill(ui_info_row_t *r, char (*txt)[MENU_PANEL_TXT])
+{
+    const wifi_mgr_state_t st = wifi_manager_get_state();
+    const bool up = st == WIFI_MGR_CONNECTED;
+    const char *ip = up ? wifi_manager_get_ip() : "";
+    const char *gw = up ? wifi_manager_get_gateway() : "";
+    const int rssi = up ? net_rssi() : 0;
+    uint8_t pen = 0;
+    const char *word = NULL;
+
+    snprintf(txt[0], MENU_PANEL_TXT, "%s", up ? wifi_manager_get_ssid()
+                                              : wifi_status_str());
+    snprintf(txt[1], MENU_PANEL_TXT, "%s", ip[0] ? ip : "-");
+    snprintf(txt[2], MENU_PANEL_TXT, "%s", gw[0] ? gw : "-");
+    if (rssi) {
+        snprintf(txt[3], MENU_PANEL_TXT, "%d dBm", rssi);
+        word = rssi_word(rssi, &pen);
+    } else {
+        snprintf(txt[3], MENU_PANEL_TXT, "-");
+    }
+    r[0] = (ui_info_row_t){ .label = "Network", .value = txt[0] };
+    r[1] = (ui_info_row_t){ .label = "Address", .value = txt[1] };
+    r[2] = (ui_info_row_t){ .label = "Gateway", .value = txt[2] };
+    r[3] = (ui_info_row_t){ .label = "Signal", .value = txt[3], .tail = word,
+                            .tail_pen = pen };
+    return up ? OVERLAY_COL_GREEN
+         : st == WIFI_MGR_FAILED ? OVERLAY_COL_RED
+         : st == WIFI_MGR_IDLE ? 0 : OVERLAY_COL_AMBER;
+}
+
+static const menu_panel_t wifi_panel = { .rows = 4, .fill = wifi_panel_fill };
+
+/* The saved networks, read when the page opens: the list is a file. */
+static struct {
+    char ssid[STORAGE_WIFI_MAX][33];
+    bool locked[STORAGE_WIFI_MAX];
+    int  n;
+} s_nets;
+
+static void wifi_snap(void)
+{
+    s_nets.n = app_wifi_list(s_nets.ssid, s_nets.locked, NULL,
+                             STORAGE_WIFI_MAX);
+}
+
+static int wifi_count(void)
+{
+    return s_nets.n;
+}
+
+static void wifi_row(int i, ui_part_t *out, char *buf, size_t sz)
+{
+    const bool joined = wifi_manager_get_state() == WIFI_MGR_CONNECTED &&
+                        strcmp(wifi_manager_get_ssid(), s_nets.ssid[i]) == 0;
+    snprintf(buf, sz, "%d", i + 1);
+    *out = (ui_part_t){
+        .title = s_nets.ssid[i], .right = buf,
+        .detail = joined ? UI_S_CHECK " joined"
+                : s_nets.locked[i] ? "locked" : "saved",
+        .stripe = joined ? OVERLAY_COL_GREEN : 0,
+        .detail_pen = joined ? OVERLAY_COL_GREEN : 0,
+    };
+}
+
+static void wifi_open(int i, uint64_t now)
+{
+    if (i >= 0 && i < s_nets.n) enter_wifinet(now, i);
+}
+
+static const menu_list_t wifi_list = {
+    .count = wifi_count, .row = wifi_row, .open = wifi_open,
+    .empty = "No saved networks.", .min_w = 24,
 };
 
 static const char *note_wifi(char *buf, size_t sz)
@@ -495,8 +572,9 @@ static const menu_page_t PAGES[MS_COUNT] = {
                        .count = NELEM(hosts_items), .back_to = MS_CONFIG,
                        .note = note_hosts },
     [MS_WIFI]      = { .title = "Wi-Fi", .items = wifi_items,
+                       .panel = &wifi_panel, .list = &wifi_list,
                        .count = NELEM(wifi_items), .back_to = MS_CONFIG,
-                       .note = note_wifi },
+                       .on_open = wifi_snap, .note = note_wifi },
     [MS_KEYBOARD]  = { .title = "Keyboard", .items = kbd_items,
                        .count = NELEM(kbd_items), .back_to = MS_CONFIG,
                        .note = note_keyboard, .unavail = unavail_ble },

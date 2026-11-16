@@ -77,7 +77,7 @@ from the tiles also opens keyboard pairing.
 The deck joins stored networks automatically, in the order they are
 listed. To add a network without any cable:
 
-1. Open **Setup → Wi-Fi → Add network (phone)**.
+1. Open **Setup → Wi-Fi → Add from phone**.
 2. The page lists four numbered steps: get the "ESP SoftAP Provisioning"
    app, join the Wi-Fi the page names, enter the **proof code** it shows,
    and pick your network in the app. The proof code confirms you are
@@ -94,8 +94,13 @@ The header bar or Esc cancels and turns the hotspot off. While the deck
 tests the network, only Esc or a long press on the header bar cancels, so
 a stray touch cannot break the phone's session.
 
-**Setup → Wi-Fi → Reconnect** retries the stored networks (same as
-pressing **W** on HOME).
+**Setup → Wi-Fi** shows the link: network, address, gateway and signal
+(good, fair or weak). **Reconnect** retries the stored networks (same as
+pressing **W** on HOME). Your saved networks follow as tiles, in the order
+the deck tries them. Tap one to open its page: Join now makes it the
+first choice and reconnects, Move earlier and Move later change the
+order, and Forget removes it after a question. A network marked "locked"
+keeps its password in the keystore until you unlock the deck.
 
 ## 4. Pairing a keyboard
 
@@ -234,7 +239,7 @@ apart at the bottom of the section, on its last page.
 | Section | What's there |
 |---|---|
 | **Hosts** | + New; From phone; From PC (import, [section 5](#5-adding-an-ssh-connection)); then your stored hosts as tiles. Tap one to open its host page: Connect, Edit, Delete, Move. Back or Delete returns to this list. During a live session the tiles and + New are grey. |
-| **Wi-Fi** | Reconnect; Add network (phone) ([section 3](#3-getting-on-wifi)) |
+| **Wi-Fi** | Link facts; Reconnect; Add from phone; your saved networks as tiles ([section 3](#3-getting-on-wifi)) |
 | **Keyboard** | Pair keyboard; Forget bonds, which asks first ([section 4](#4-pairing-a-keyboard)) |
 | **CRT FX** | Scanlines and Bold pop (switches); Phosphor (color / green / amber) |
 | **Motion FX** | Wobble, Wipe in, Collapse, Static |
@@ -315,7 +320,7 @@ own. **Cancel** is the default answer, so treat the red button as final.
 ## 12. Troubleshooting
 
 - **WiFi won't connect.** `NET` stays dark: check **Setup → Wi-Fi →
-  Reconnect** first; if the network is new, re-run "Add network (phone)".
+  Reconnect** first; if the network is new, re-run "Add from phone".
   Remember the factory placeholder network is not real.
 - **Keyboard won't pair.** Make sure it is in pairing mode and not still
   bonded to another host. **Forget bonds**, then pair again.

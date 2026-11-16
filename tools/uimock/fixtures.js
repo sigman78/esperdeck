@@ -41,6 +41,20 @@ export const PROFILES32 = [
   { name: 'office-fw', where: 'admin@fw.office.example.com:8022' },
 ];
 
+// The Wi-Fi manager's state and the saved networks, in preference order.
+// pw: 'saved', 'locked' (waits for the keystore) or 'none' (open network).
+export const WIFI_UP = {
+  state: 'up', ssid: 'HomeAP', ip: '192.168.1.42', gw: '192.168.1.1', rssi: -61,
+  nets: [{ ssid: 'HomeAP', pw: 'saved' }, { ssid: 'Workshop', pw: 'locked' },
+         { ssid: 'phone-hotspot', pw: 'none' }],
+};
+export const WIFI_DOWN = { state: 'off', ssid: '', ip: '', gw: '', rssi: 0, nets: [] };
+export const WIFI_FULL = {
+  ...WIFI_UP,
+  nets: ['HomeAP', 'Workshop', 'phone-hotspot', 'garage', 'printer-setup', 'cafe-guest',
+         'Lab', 'backup-link'].map((ssid, i) => ({ ssid, pw: i === 1 ? 'locked' : 'saved' })),
+};
+
 export const TERM_LINES = [
   'deck@homelab:~$ journalctl -fu sshd',
   'Nov 12 14:02:11 homelab sshd[811]: Accepted publickey for deck',

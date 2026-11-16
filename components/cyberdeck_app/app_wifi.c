@@ -32,7 +32,7 @@ void app_wifi_set_seeded(void)
     storage_kv_save(cyberdeck_settings_ini, app_wifi_section, app_wifi_fields, &c);
 }
 
-int app_wifi_list(char ssids[][33], bool *bundled, int max)
+int app_wifi_list(char ssids[][33], bool *bundled, bool *open, int max)
 {
     wifi_profile_t *nets = storage_cred_scratch()->u.nets;
     int n = 0;
@@ -42,6 +42,7 @@ int app_wifi_list(char ssids[][33], bool *bundled, int max)
         snprintf(ssids[i], 33, "%.32s", nets[i].ssid);
         if (bundled)
             bundled[i] = strcmp(nets[i].password, STORAGE_PW_BUNDLED) == 0;
+        if (open) open[i] = nets[i].password[0] == '\0';
     }
     SCRATCH_WIPE(nets);
     return n;
@@ -111,6 +112,25 @@ esp_err_t app_wifi_forget(int i)
         return e;
     }
     return commit(nets, n);
+}
+
+/* The manager cannot join one SSID. List order is the preference. So the
+ * network goes first and the link restarts on the saved list. */
+esp_err_t app_wifi_join(int i)
+{
+    wifi_profile_t *nets = storage_cred_scratch()->u.nets;
+    int n = 0;
+    storage_wifi_load(nets, &n, STORAGE_WIFI_MAX);
+    esp_err_t e = i >= 0 && i < n ? ESP_OK : ESP_ERR_INVALID_ARG;
+    for (int k = i; k > 0 && e == ESP_OK; k--)
+        e = app_wifi_list_move(nets, n, k, -1);
+    if (e == ESP_OK) e = storage_wifi_save(nets, n);
+    SCRATCH_WIPE(nets);
+    if (e != ESP_OK) return e;
+    app_wifi_set_seeded();
+    wifi_manager_disconnect();
+    kick_wifi();
+    return ESP_OK;
 }
 
 esp_err_t app_wifi_move(int i, int dir)

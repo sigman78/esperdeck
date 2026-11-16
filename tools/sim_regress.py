@@ -44,6 +44,9 @@ HUB = ("key:esc|wait:400|expect:home|key:up|key:right|key:enter|wait:500"
        "|expect:menu")
 WIFI_OPEN = (HUB + "|key:right|key:enter|wait:300|expect-text:Setup / Wi-Fi"
              "|key:right|key:enter|wait:400|expect:wifiprov")
+WIFI_SECTION = HUB + "|key:right|key:enter|wait:300|expect-text:Setup / Wi-Fi"
+# The first tile is the joined network; the second is Workshop.
+WIFI_SECOND = WIFI_SECTION + "|key:down|key:right|key:enter|wait:400|expect:wifinet"
 PAIR_OPEN = "key:esc|wait:400|expect:home|key:b|wait:200|expect:pairing"
 EDIT_DROPS_KEY = (
     "key:esc|wait:400|expect:home|key: |wait:400|expect:host|key:right"
@@ -380,6 +383,55 @@ SCENARIOS = {
     "setup-hosts-empty":
         HUB + "|key:enter|wait:300|expect-text:Setup / Hosts"
         "|expect-text:No hosts yet.|expect-no-text:(default)|quit",
+    # Setup > Wi-Fi: the link facts, then the saved networks. A row opens the
+    # network page. Move later reorders and Forget asks first.
+    "setup-wifi-facts":
+        WIFI_SECTION + "|expect-text:Network|expect-text:HomeAP"
+        "|expect-text:Address|expect-text:127.0.0.1|expect-text:Gateway"
+        "|expect-text:192.168.1.1|expect-text:-55 dBm|expect-text:good"
+        "|expect-text:Reconnect|expect-text:Add from phone|quit",
+    "setup-wifi-weak":
+        WIFI_SECTION + "|wifi:rssi:-80|wait:1500|expect-text:-80 dBm"
+        "|expect-text:weak|quit",
+    "setup-wifi-down":
+        WIFI_SECTION + "|wifi:down|wait:500|expect-text:reconnecting..."
+        "|expect-no-text:127.0.0.1|expect-no-text:dBm|wifi:up|wait:500"
+        "|expect-text:127.0.0.1|quit",
+    "setup-wifi-list":
+        WIFI_SECTION + "|expect-text:HomeAP|expect-text:joined"
+        "|expect-text:Workshop|expect-text:phone-hotspot|expect-text:saved|quit",
+    "setup-wifi-empty":
+        WIFI_SECTION + "|expect-text:No saved networks.|expect-text:off"
+        "|expect-no-text:joined|quit",
+    "setup-wifi-open":
+        WIFI_SECOND + "|expect-text:Wi-Fi / Workshop|expect-text:2 of 3"
+        "|expect-text:Password|expect-text:saved|key:esc|wait:400|expect:menu"
+        "|expect-text:Setup / Wi-Fi|key:enter|wait:400|expect:wifinet"
+        "|expect-text:Workshop|quit",
+    "setup-wifi-move":
+        WIFI_SECOND + "|key:down|key:right|key:enter|wait:400"
+        "|expect-text:3 of 3|key:esc|wait:400|expect:menu|key:right|key:enter"
+        "|wait:400|expect:wifinet|expect-text:Wi-Fi / Workshop"
+        "|expect-text:3 of 3|key:esc|wait:400|key:left|key:enter|wait:400"
+        "|expect-text:Wi-Fi / phone-hotspot|expect-text:2 of 3|quit",
+    "setup-wifi-forget":
+        WIFI_SECOND + "|key:down|key:down|key:enter|wait:400|expect:ask"
+        "|expect-text:Forget Workshop?|expect-text:The network and its password go."
+        "|key:enter|wait:300|expect:wifinet|key:enter"
+        "|wait:400|expect:ask|key:right|key:enter|wait:500|expect:menu"
+        "|expect-text:Setup / Wi-Fi|expect-no-text:Workshop"
+        "|expect-text:phone-hotspot|quit",
+    "setup-wifi-forget-joined":
+        WIFI_SECTION + "|key:down|key:enter|wait:400|expect:wifinet"
+        "|expect-text:1 of 3|expect-text:joined|key:down|key:down|key:enter"
+        "|wait:400|expect:ask|expect-text:Forget HomeAP?"
+        "|expect-text:The deck leaves this network.|key:esc|wait:300"
+        "|expect:wifinet|quit",
+    "setup-wifi-join":
+        WIFI_SECTION + "|key:down|key:right|key:right|key:enter|wait:400"
+        "|expect:wifinet|expect-text:Wi-Fi / phone-hotspot|expect-text:3 of 3"
+        "|key:enter|wait:600|expect-text:1 of 3|expect-text:joined"
+        "|key:esc|wait:400|expect:menu|expect-text:phone-hotspot|quit",
     "pair-esc":
         PAIR_OPEN + "|expect-text:Pair keyboard|expect-text:Scanning for keyboards"
         "|expect-text:Put the keyboard in pairing mode.|wait:3300"
@@ -477,6 +529,20 @@ FIXTURE_EDITS = {
                            "auth=password\npassword=changeme", "")],
 }
 
+# Files a scenario starts with, by name. Three saved networks, or none.
+# The seeded flag stops the Kconfig fallback from adding one.
+THREE_NETS = ("[net0]\nssid=HomeAP\npassword=changeme\n\n"
+              "[net1]\nssid=Workshop\npassword=secret1\n\n"
+              "[net2]\nssid=phone-hotspot\npassword=secret2\n")
+FIXTURE_FILES = {
+    n: {"wifi.ini": THREE_NETS}
+    for n in ("setup-wifi-list", "setup-wifi-open", "setup-wifi-move",
+              "setup-wifi-forget", "setup-wifi-forget-joined",
+              "setup-wifi-join")
+}
+FIXTURE_FILES["setup-wifi-empty"] = {"wifi.ini": "",
+                                     "settings.ini": "[wifi]\nseeded=1\n"}
+
 
 def run(sim, name, script, window):
     """Run one scenario on its own storage copy. Returns (ok, output)."""
@@ -491,7 +557,9 @@ def run(sim, name, script, window):
                     return False, f"fixture lacks '{old}'"
                 text = text.replace(old, new, 1)
             ini.write_text(text, encoding="utf-8")
-            mode = ([] if window else ["--headless"]) + (
+            for fname, body in FIXTURE_FILES.get(name, {}).items():
+                (fixture / fname).write_text(body, encoding="utf-8")
+            mode =([] if window else ["--headless"]) + (
                 ["--fake-ble"] if name.startswith(("pair-", "kbd-")) else [])
             r = subprocess.run(
                 [str(sim), *mode, "--storage-dir", str(fixture),

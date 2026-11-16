@@ -75,6 +75,13 @@ int net_rssi(void)
     return rssi;
 }
 
+const char *rssi_word(int rssi, uint8_t *pen)
+{
+    const bool good = rssi > SB_RSSI_FAIR, fair = rssi > SB_RSSI_WEAK;
+    *pen = good ? OVERLAY_COL_GREEN : fair ? OVERLAY_COL_AMBER : OVERLAY_COL_RED;
+    return good ? "good" : fair ? "fair" : "weak";
+}
+
 static uint8_t net_state(bool *quiet)
 {
     if (quiet) *quiet = false;

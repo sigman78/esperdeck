@@ -116,6 +116,7 @@ typedef struct {
     uint8_t     reserve;    /* cells kept free at the right for a control */
     uint8_t     pad;        /* side padding; 0 picks 2 wide, 1 narrow    */
     uint8_t     flags;      /* UI_PART_*                                 */
+    uint8_t     detail_pen; /* mark colour of the detail, card only; 0 none */
 } ui_part_t;
 
 /* Where a part put its text, for a caller that adds a control. */

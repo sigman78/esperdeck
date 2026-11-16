@@ -10,7 +10,7 @@ The run fails on a simulator error or a "layout faults" log line.
         "key:esc|wait:300|expect:home|shot:home|key: |wait:300|shot:host"
 
 Options: --font picks the fonts (default: all three). --hosts N stores N
-example hosts first. --fx keeps the display effects. --ble adds the fake
+example hosts first. --nets N stores N saved Wi-Fi networks first. --fx keeps the display effects. --ble adds the fake
 BLE keyboard service. --sim names the simulator binary. A settle step
 runs before every picture, so the boot announcement is over and the bar
 is compact; --live drops it. Add your own settle steps and wifi:down,
@@ -50,12 +50,26 @@ def profiles_ini(count):
         for name, user, host, port in HOSTS[:count])
 
 
-def shoot(sim, font, script, hosts, fx, out, ble=False, live=False):
+NETS = ["HomeAP", "Workshop", "phone-hotspot", "garage", "printer-setup",
+        "cafe-guest", "Lab", "backup-link"]
+
+
+def wifi_ini(count):
+    return "".join(f"[net{i}]\nssid={ssid}\npassword=x\n\n"
+                   for i, ssid in enumerate(NETS[:count]))
+
+
+def shoot(sim, font, script, hosts, fx, out, ble=False, live=False,
+          nets=None):
     """Run the script at one font. Returns (ok, log lines worth showing).
     Each picture waits for the status chips to settle, unless live."""
     with tempfile.TemporaryDirectory(prefix="deck-shots-") as tmp:
         fixture = Path(tmp) / "storage"
         shutil.copytree(ROOT / "sim_storage.example", fixture)
+        if nets is not None:
+            (fixture / "wifi.ini").write_text(wifi_ini(nets), encoding="utf-8")
+            (fixture / "settings.ini").write_text("[wifi]\nseeded=1\n",
+                                                  encoding="utf-8")
         if hosts is not None:
             (fixture / "profiles.ini").write_text(profiles_ini(hosts),
                                                   encoding="utf-8")
@@ -101,6 +115,8 @@ def main():
                     help="font to shoot; repeat for more (default: all)")
     ap.add_argument("--hosts", type=int, choices=range(0, len(HOSTS) + 1),
                     metavar="N", help="store N example hosts first")
+    ap.add_argument("--nets", type=int, choices=range(0, len(NETS) + 1),
+                    metavar="N", help="store N saved Wi-Fi networks first")
     ap.add_argument("--fx", action="store_true",
                     help="keep the display effects on")
     ap.add_argument("--ble", action="store_true",
@@ -122,7 +138,7 @@ def main():
     with ThreadPoolExecutor(len(fonts)) as pool:
         results = list(pool.map(
             lambda f: shoot(sim, f, args.script, args.hosts, args.fx, out,
-                            args.ble, args.live),
+                            args.ble, args.live, args.nets),
             fonts))
     bad = 0
     for ok, notes in results:

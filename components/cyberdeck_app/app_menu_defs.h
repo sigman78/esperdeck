@@ -19,7 +19,7 @@ typedef enum {
     MS_MAIN = 0,   /* in-session sheet: Reset terminal, Setup, Disconnect */
     MS_CONFIG,     /* the Setup hub: one tile per section                 */
     MS_HOSTS,      /* new host, import, the stored hosts                  */
-    MS_WIFI,       /* Reconnect, Add network                              */
+    MS_WIFI,       /* link facts, Reconnect, Add from phone, saved networks */
     MS_KEYBOARD,   /* Pair, Forget bonds                                  */
     MS_FX_CRT,     /* beam look: scanlines, phosphor, bold                */
     MS_FX_MOTION,  /* motion: wobble, wipe, collapse, static              */
@@ -74,12 +74,23 @@ typedef struct {
     int  min_w;                              /* narrowest tile, cells     */
 } menu_list_t;
 
+/* A text panel above a section's items. `fill` writes `rows` lines (at
+ * most MENU_PANEL_MAX), keeps their text in @p txt and returns the stripe
+ * accent, or 0. It runs every render. */
+#define MENU_PANEL_MAX 4
+#define MENU_PANEL_TXT 48
+typedef struct {
+    int     rows;
+    uint8_t (*fill)(ui_info_row_t *out, char (*txt)[MENU_PANEL_TXT]);
+} menu_panel_t;
+
 /* One section. On the hub its tile shows `title` and the present state
  * from `note`. A non-NULL `unavail` result draws the tile off, with
  * that text as its detail. Both run every render. */
 typedef struct {
     const char *title;
     const menu_item_t *items;
+    const menu_panel_t *panel; /* text panel above the items, or NULL      */
     const menu_list_t *list;   /* tiles below the items, or NULL           */
     uint8_t count;
     int8_t  back_to;           /* menu_screen_t target, or MENU_BACK_LEAVE */

@@ -305,8 +305,12 @@ Notes that cost time to learn:
   items repeat on every page of tiles, and an arrow at a page edge turns
   the page (`ui_page_step`). `off` greys the whole list, `empty` is the
   text for no rows. After a row's page pops, focus returns to its tile.
-  Danger items hang below the tiles on the last page. Setup > Hosts is
-  the one user (frames `mo-section-hosts*`).
+  Danger items hang below the tiles on the last page. Setup > Hosts
+  (frames `mo-section-hosts*`) and Setup > Wi-Fi (`mo-section-wifi*`)
+  use it. A section may also carry a text panel (`menu_panel_t`): a
+  `ui_info` above the items, on every page. A tile's `detail_pen` colours
+  a state mark in its detail, on a plain card only. The saved-network
+  page is `SCR_WIFINET` (frames `mo-net*`).
 - The code pad takes touch through the hot regions. Keys never do, and
   the screen parks focus on an unused id so no key lights while typing.
 - Pairing asks on the question page, which stops the scan. The pairing

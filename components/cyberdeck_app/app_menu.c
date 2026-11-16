@@ -283,6 +283,9 @@ static void draw_section(const menu_page_t *p)
     ui_slate_t pg = ui_slate_page();
     sec_lay_t *L = &s_menu.lay;
 
+    /* The panel takes the top of the body; rows and tiles lay out below. */
+    ui_rect_t pan = { 0 };
+    if (p->panel) pan = ui_cut_top(&pg.body, p->panel->rows + 2);
     section_layout(p, pg.body, pg.m.gutter, L);
     if (s_menu.follow) {
         /* Resumed: land on the page that holds the focused item. A list
@@ -316,6 +319,13 @@ static void draw_section(const menu_page_t *p)
     }
     const int gx = pg.m.gutter;
     int slot = 0, below = L->ndanger;
+    if (p->panel) {
+        ui_info_row_t lines[MENU_PANEL_MAX];
+        char txt[MENU_PANEL_MAX][MENU_PANEL_TXT];
+        const uint8_t stripe = p->panel->fill(lines, txt);
+        if (L->pages > 1) pan.w -= 2;
+        ui_info(pan, lines, p->panel->rows, stripe);
+    }
     if (p->list)
         draw_list(p->list, ui_rect(pg.body.x, pg.body.y + L->list_y,
                                    pg.body.w, L->list_h), gx, L, s_menu.page);

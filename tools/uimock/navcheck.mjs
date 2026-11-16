@@ -6,7 +6,7 @@
 
 import { Ui, newInter, hotMove, ID_BACK } from './kit.js';
 import { MO_SKETCHES } from './sketches-mo.js';
-import { PROFILES32 } from './fixtures.js';
+import { PROFILES32, WIFI_UP, WIFI_DOWN, WIFI_FULL } from './fixtures.js';
 
 const GRIDS = [['12x24', 66, 20], ['10x20', 80, 24], ['8x16', 100, 30]];
 // States that show parts the first draw hides.
@@ -17,7 +17,9 @@ const STATES = {
     .concat([{ cat: 5, spage: 1 }, { cat: 5, spage: 2 }, { cat: 6, spage: 1 },
       { cat: 0, hosts: PROFILES32.slice(0, 5) }, { cat: 0, hosts: PROFILES32, max: 40 },
       { cat: 0, hosts: PROFILES32, max: 40, spage: 1 }, { cat: 0, hosts: [] },
-      { cat: 0, live: true }]),
+      { cat: 0, live: true }, { cat: 1, wifi: WIFI_DOWN }, { cat: 1, wifi: WIFI_FULL },
+      { cat: 1, wifi: WIFI_FULL, spage: 1 }, { cat: 1, wifi: WIFI_FULL, spage: 3 }]),
+  'mo-net': [{ net: 0 }, { net: 1 }, { net: 2 }, { net: 0, wifi: { ...WIFI_UP, nets: WIFI_UP.nets.slice(0, 1) } }],
   'mo-list': [{ lpage: 0 }, { lpage: 1 }],
   'mo-pair': [{}, { n: 2 }, { n: 8 }, { n: 8, page: 1 }],
   'mo-unlock': [{}, { code: '12' }, { flow: true, phase: 'new', code: 'ab7' }],

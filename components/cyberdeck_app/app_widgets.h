@@ -27,6 +27,10 @@ bool status_idle(void);
  *  share it. */
 int net_rssi(void);
 
+/** "good", "fair" or "weak" for @p rssi, cut where the status chip cuts.
+ *  @p pen receives its OVERLAY_COL_*. */
+const char *rssi_word(int rssi, uint8_t *pen);
+
 /** Wall-clock "HH:MM" once SNTP/host time exists; false until then. */
 bool clock_str(char *buf, size_t sz);
 

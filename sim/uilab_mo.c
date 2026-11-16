@@ -703,7 +703,7 @@ static const cat_t MO_SETUP[] = {
         { IT_ACT, "From PC", .nav = true } }, .list = true },
     { "Wi-Fi", "HomeAP", 2, {
         { IT_ACT, "Reconnect" },
-        { IT_ACT, "Add network (phone)", .nav = true } } },
+        { IT_ACT, "Add from phone", .nav = true } } },
     { "Keyboard", "K380 connected", 2, {
         { IT_ACT, "Pair keyboard", .nav = true },
         { IT_ACT, "Forget bonds", .accent = OVERLAY_COL_RED } } },
@@ -980,7 +980,162 @@ static void scr_section_hosts_32(void)    { hosts_frame(32, 40, 1, false, true);
 static void scr_section_hosts_live(void)  { hosts_frame(8, 8, 0, true, false); }
 static void scr_section_hosts_empty(void) { hosts_frame(0, 8, 0, false, false); }
 
-static void scr_section_wifi(void)   { draw_section(1); }
+/* The Wi-Fi section and the saved-network page. A network's pw is 0 saved,
+ * 1 locked, 2 none. While the link is up, it joins the first network. */
+typedef struct { const char *ssid; int pw; } lab_net_t;
+typedef struct { bool up; int n; const lab_net_t *nets; } lab_wifi_t;
+
+#define WIFI_JOINED "HomeAP"
+
+static const lab_net_t NETS_UP[] = {
+    { WIFI_JOINED, 0 }, { "Workshop", 1 }, { "phone-hotspot", 2 },
+};
+static const lab_net_t NETS_FULL[] = {
+    { WIFI_JOINED, 0 }, { "Workshop", 1 }, { "phone-hotspot", 0 },
+    { "garage", 0 }, { "printer-setup", 0 }, { "cafe-guest", 0 },
+    { "Lab", 0 }, { "backup-link", 0 },
+};
+static const lab_wifi_t WIFI_UP = { true, NELEM(NETS_UP), NETS_UP };
+static const lab_wifi_t WIFI_DOWN = { false, 0, NULL };
+static const lab_wifi_t WIFI_FULL = { true, NELEM(NETS_FULL), NETS_FULL };
+
+static bool net_joined(const lab_wifi_t *w, int i)
+{
+    return w->up && !strcmp(w->nets[i].ssid, WIFI_JOINED);
+}
+
+/* The panel of link facts, the items, then a tile per saved network. */
+static void draw_wifi_section(const lab_wifi_t *w, int page, bool tile)
+{
+    ui_slate_t pg = ui_slate_page();
+    const cat_t *c = &MO_SETUP[1];
+    sec_row_t rows[5];
+    const int gx = pg.m.gutter, n = w->n;
+    int plain = 0, tcols = 0, tper = 0, pages = 1, list_y = 0, list_h = 0;
+
+    ui_rect_t pan = ui_cut_top(&pg.body, 6);
+    for (int room = pg.body.w, pass = 0; pass < 2; pass++, room -= 2) {
+        plain = pack_rows(c, room, gx, false, rows);
+        list_y = plain ? plain * 3 + 1 : 0;
+        list_h = pg.body.h - list_y > 0 ? pg.body.h - list_y : 0;
+        const ui_grid_t g = ui_grid(ui_rect(0, 0, room, list_h),
+                                    ui_cols_for(room, 24, gx), 4, gx, 0);
+        tcols = g.ncols;
+        tper = ui_grid_capacity(&g);
+        pages = ui_page_count(n, tper);
+        if (pages == 1) break;
+    }
+    page = ui_page_clamp(page, n, tper);
+    ui_focus_default(MO_OPT);
+
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_title(head, "Setup", c->name, NULL, true);
+    if (pages > 1) {
+        ui_rail(ui_cut_right(&pg.body, 1), page, pages);
+        ui_cut_right(&pg.body, 1);
+        pan.w -= 2;
+    }
+    const char *sig = "-61 dBm";
+    const ui_info_row_t lines[4] = {
+        { "Network", w->up ? WIFI_JOINED : "off" },
+        { "Address", w->up ? "192.168.1.42" : "-" },
+        { "Gateway", w->up ? "192.168.1.1" : "-" },
+        { "Signal", w->up ? sig : "-", 0, 0, w->up ? "good" : NULL,
+          OVERLAY_COL_GREEN },
+    };
+    ui_info(pan, lines, 4, w->up ? OVERLAY_COL_GREEN : 0);
+
+    const ui_rect_t area = ui_rect(pg.body.x, pg.body.y + list_y, pg.body.w,
+                                   list_h);
+    if (n == 0) {
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_text(ui_rect(area.x + 1, area.y, area.w - 2, 1),
+                "No saved networks.", UI_MUTED, UI_LEFT);
+    } else {
+        const ui_grid_t g = ui_grid(area, tcols, 4, gx, 0);
+        for (int i = 0; i < tper && page * tper + i < n; i++) {
+            const int h = page * tper + i;
+            const bool joined = net_joined(w, h);
+            char num[8];
+            snprintf(num, sizeof num, "%d", h + 1);
+            ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + h),
+                    &(ui_part_t){
+                        .title = w->nets[h].ssid, .right = num,
+                        .detail = joined ? UI_S_CHECK " joined"
+                                : w->nets[h].pw == 1 ? "locked" : "saved",
+                        .stripe = joined ? OVERLAY_COL_GREEN : 0,
+                        .detail_pen = joined ? OVERLAY_COL_GREEN : 0 },
+                    NULL);
+        }
+        if (tile)
+            ui_debug_pose((ui_id_t)(MO_HOST + page * tper), UI_POSE_FOCUS);
+    }
+    for (int ri = 0; ri < plain; ri++) {
+        int x = pg.body.x;
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int it = rows[ri].c[ci].it;
+            const ui_rect_t r = ui_rect(x, pg.body.y + ri * 3,
+                                        rows[ri].c[ci].w, 3);
+            x += r.w + gx;
+            act_part(&c->it[it], r, (ui_id_t)(MO_OPT + it * 8), false);
+        }
+    }
+    mo_bar(pg.status,"A change applies at once.",
+              UI_S_ENTER " change  Esc back", NULL);
+}
+
+static void scr_section_wifi(void)      { draw_wifi_section(&WIFI_UP, 0, false); }
+static void scr_section_wifi_down(void) { draw_wifi_section(&WIFI_DOWN, 0, false); }
+static void scr_section_wifi_full(void) { draw_wifi_section(&WIFI_FULL, 1, true); }
+
+/* The page of the saved network at position @p at. */
+static void draw_net(int at)
+{
+    ui_slate_t pg = ui_slate_page();
+    const lab_wifi_t *w = &WIFI_UP;
+    const lab_net_t *nt = &w->nets[at];
+    const bool joined = net_joined(w, at);
+    const bool off[4] = { joined || nt->pw == 1, at <= 0, at >= w->n - 1 };
+    char pos[24];
+
+    ui_title(pg.header, "Wi-Fi", nt->ssid, NULL, true);
+    snprintf(pos, sizeof pos, "%d of %d", at + 1, w->n);
+    const ui_info_row_t rows[3] = {
+        joined ? (ui_info_row_t){ "Network", nt->ssid, 0, 0,
+                                  UI_S_CHECK " joined", OVERLAY_COL_GREEN }
+               : (ui_info_row_t){ "Network", nt->ssid },
+        { "Position", pos },
+        { "Password", nt->pw == 1 ? "locked" : nt->pw == 2 ? "none" : "saved" },
+    };
+    ui_focus_default(MO_BTN + (!off[0] ? 0 : !off[1] ? 1 : !off[2] ? 2 : 3));
+    ui_info(ui_cut_top(&pg.body, 5), rows, 3, joined ? OVERLAY_COL_GREEN : 0);
+    ui_flow_t f = ui_flow(pg.body, pg.m.gutter, 3);
+#define BTN(n, label, tone, accent) \
+    ui_push(ui_flow_next(&f, ui_push_w(label)), MO_BTN + (n), label, tone, \
+            accent, off[n] ? UI_PART_OFF : 0)
+    BTN(0, "Join now", UI_TONE_SOLID, OVERLAY_COL_GREEN);
+    ui_flow_break(&f);
+    BTN(1, UI_S_UP " Move earlier", UI_TONE_CARD, 0);
+    BTN(2, UI_S_DOWN " Move later", UI_TONE_CARD, 0);
+#undef BTN
+    ui_push(ui_rect(pg.body.x, pg.body.y + pg.body.h - 3, ui_push_w("Forget"),
+                    3),
+            MO_BTN + 3, "Forget", UI_TONE_TINT, OVERLAY_COL_RED, 0);
+    mo_bar(pg.status,"The bar at the top goes back.",
+              UI_S_ENTER " choose  Esc back", NULL);
+}
+
+static void scr_net(void)        { draw_net(0); }
+static void scr_net_locked(void) { draw_net(1); }
+static void scr_net_last(void)   { draw_net(2); }
+
+static void scr_confirm_forget_net(void)
+{
+    draw_confirm(&(ask_t){ "Forget HomeAP?", "Forget",
+                           { "The deck leaves this network.", "" },
+                           OVERLAY_COL_RED });
+}
+
 static void scr_section_fx(void)     { draw_section(3); }
 static void scr_section_motion(void) { draw_section(4); }
 static void scr_section_system(void) { draw_section(5); }
@@ -1652,6 +1807,15 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-setup",       scr_setup,       .slate = true,
       .focus = MO_HUB + 3 },
     { "mo-section-wifi",   scr_section_wifi,   .slate = true },
+    { "mo-section-wifi-down", scr_section_wifi_down, .slate = true },
+    { "mo-section-wifi-full", scr_section_wifi_full, .slate = true },
+    { "mo-net",         scr_net,         .slate = true },
+    { "mo-net-locked",  scr_net_locked,  .slate = true,
+      .focus = MO_BTN + 2 },
+    { "mo-net-last",    scr_net_last,    .slate = true,
+      .focus = MO_BTN },
+    { "mo-confirm-forget-net", scr_confirm_forget_net, .slate = true,
+      .focus = MO_BTN },
     { "mo-section-fx",     scr_section_fx,     .slate = true },
     { "mo-section-motion", scr_section_motion, .slate = true,
       .down = MO_OPT + 9 },

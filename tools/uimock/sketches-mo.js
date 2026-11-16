@@ -16,7 +16,7 @@ import {
   statusBar, toast, SB, NOTE,
   entryFirst, codePlan, qrW, qrH, qrRows, qrGlyph, QR_ZONE, fakeQr, wrapLines, stepLines,
 } from './kit.js';
-import { PROFILES, PROFILES32, TERM_LINES } from './fixtures.js';
+import { PROFILES, PROFILES32, TERM_LINES, WIFI_UP, WIFI_DOWN, WIFI_FULL } from './fixtures.js';
 
 const MO_ID = {
   HOST: 2000, PILL: 2100, PREV: 2200, NEXT: 2201, HUB: 2300, OPT: 2400,
@@ -128,6 +128,7 @@ function moCentre(y, h, lines, what) {
 //   - reserve: cells kept free at the right end for a control.
 //   - pad: side padding in cells, else 2 for a wide part and 1 for a narrow one.
 //   - stripe: accent of a colour stripe at the left edge (card tone).
+//   - detailPen: colour of a state mark in the detail, bold, on a plain card only.
 // Returns { k, y, inn } for a caller that draws a control, or null.
 function moPart(ui, r, id, o, act) {
   if (r.w < 4 || r.h < 3) { ui.issues.push({ kind: 'drop', text: o.title || `#${id}` }); return null; }
@@ -148,7 +149,11 @@ function moPart(ui, r, id, o, act) {
     w -= n + 1;
   }
   ui.text(rect(inn.x, y, w, 1), o.title, k.title, o.align || LEFT);
-  if (o.detail) ui.text(rect(inn.x, y + 1, inn.w - (o.reserve | 0), 1), o.detail, k.detail, o.align || LEFT);
+  if (o.detail) {
+    const mark = o.detailPen && k.card && !k.off;
+    if (mark) ui.pen(o.detailPen);
+    ui.text(rect(inn.x, y + 1, inn.w - (o.reserve | 0), 1), o.detail, mark ? k.title : k.detail, o.align || LEFT);
+  }
   ui.pen(C.DEFAULT);
   return { k, y, inn };
 }
@@ -682,16 +687,52 @@ function moEdit(ui, app) {
     st.edit >= 0 ? 'type  ↵ done  ↑↓ leave' : '↵ change  Esc cancel');
 }
 
+// The Wi-Fi manager and the saved networks a frame shows (st.wifi).
+const moNets = (st) => st.wifi || WIFI_UP;
+const moJoined = (w, n) => w.state === 'up' && n.ssid === w.ssid;
+
+// Signal word: the same cuts as the status chip (SB_RSSI_FAIR, SB_RSSI_WEAK).
+const moSignal = (rssi) => (rssi > -67 ? ['good', C.GREEN] : rssi > -78 ? ['fair', C.AMBER] : ['weak', C.RED]);
+
+// The info panel of the Wi-Fi section: lines and the stripe accent.
+function moWifiPanel(st) {
+  const w = moNets(st), up = w.state === 'up', [word, pen] = moSignal(w.rssi);
+  return { stripe: up ? C.GREEN : 0, rows: [
+    ['Network', up ? w.ssid : w.state],
+    ['Address', up ? w.ip : '-'],
+    ['Gateway', up ? w.gw : '-'],
+    up && w.rssi ? ['Signal', `${w.rssi} dBm`, 0, 0, word, pen] : ['Signal', '-'],
+  ] };
+}
+
+// One tile per saved network, in preference order.
+const moWifiRows = (st) => moNets(st).nets.map((n, i) => {
+  const joined = moJoined(moNets(st), n);
+  return { title: n.ssid, right: String(i + 1), stripe: joined ? C.GREEN : 0,
+           detail: joined ? '✓ joined' : n.pw === 'locked' ? 'locked' : 'saved',
+           detailPen: joined ? C.GREEN : 0 };
+});
+
+const moHostRows = (st) => (st.hosts || PROFILES).map((p) => {
+  const w = moParse(p.where);
+  return { title: p.name, detail: `${w.user}@${w.host}${w.port === '22' ? '' : `:${w.port}`}`,
+           stripe: profAccent(p.name) };
+});
+
 const MO_SETUP = [
-  // `list`: the stored hosts as tiles under the items, on every page of tiles.
-  // The list is shut while a session is live (st.live). The store holds
-  // st.max hosts (8 on the deck); a full store shuts "+ New" too.
-  { name: 'Hosts', note: '8 stored', list: { minW: 30, empty: 'No hosts yet.' }, items: [
+  // `panel`: a text panel above the items. `list`: rows as tiles under the
+  // items, on every page of tiles; `rows` makes the tile parts, `open` runs
+  // on a tap. The hosts list is shut while a session is live (st.live).
+  // The store holds st.max hosts (8 on the deck); a full store shuts "+ New".
+  { name: 'Hosts', note: '8 stored', list: { minW: 30, empty: 'No hosts yet.', rows: moHostRows,
+      off: (st) => !!st.live, open: (st, n, app) => { st.host = n; app.go('mo-host'); } }, items: [
     { t: 'act', label: '+ New', off: (st, n) => st.live || n >= (st.max || 8), go: 'mo-edit', host: -1 },
     { t: 'act', label: 'From phone', nav: true },
     { t: 'act', label: 'From PC', nav: true }] },
-  { name: 'Wi-Fi', note: 'HomeAP', items: [
-    { t: 'act', label: 'Reconnect' }, { t: 'act', label: 'Add network (phone)', nav: true }] },
+  { name: 'Wi-Fi', note: 'HomeAP', panel: moWifiPanel,
+    list: { minW: 24, empty: 'No saved networks.', rows: moWifiRows,
+      open: (st, n, app) => { st.net = n; app.go('mo-net'); } }, items: [
+    { t: 'act', label: 'Reconnect' }, { t: 'act', label: 'Add from phone', nav: true }] },
   { name: 'Keyboard', note: 'K380 connected', items: [
     { t: 'act', label: 'Pair keyboard', nav: true },
     { t: 'act', label: 'Forget bonds', accent: C.RED, ask: 'Forget every paired keyboard?' }] },
@@ -729,24 +770,23 @@ function moSetup(ui, app) {
 }
 
 // The tiles of a section list in `area`, as HOME draws a host; or the empty
-// text. A live session shuts the rows (st.live). st.tileFocus lights the
-// first tile of the page. Arrows at a page edge turn it (ui.paged).
-function moHostList(ui, app, list, hosts, area, gx, L) {
+// text. list.off shuts the rows. st.tileFocus lights the first tile of the
+// page. Arrows at a page edge turn it (ui.paged).
+function moSectionList(ui, app, list, rows, area, gx, L) {
   const st = app.state;
-  if (!hosts.length) {
+  if (!rows.length) {
     ui.pen(C.DEFAULT);
     ui.text(rect(area.x + 1, area.y, area.w - 2, 1), list.empty, S.MUTED, LEFT);
     return;
   }
   const g = grid(area, L.tcols, 4, gx, 0), first = st.spage * L.tper;
-  ui.paged = { base: MO_ID.HOST, count: hosts.length, cols: L.tcols, per: L.tper,
+  ui.paged = { base: MO_ID.HOST, count: rows.length, cols: L.tcols, per: L.tper,
                go: (to) => { st.spage = Math.trunc(to / L.tper); } };
-  for (let i = 0; i < L.tper && first + i < hosts.length; i++) {
-    const n = first + i, p = hosts[n], w = moParse(p.where);
+  for (let i = 0; i < L.tper && first + i < rows.length; i++) {
+    const n = first + i;
     moPart(ui, gridCell(g, i), MO_ID.HOST + n, {
-      title: p.name, detail: `${w.user}@${w.host}${w.port === '22' ? '' : `:${w.port}`}`,
-      stripe: profAccent(p.name), off: !!st.live, pose: st.tileFocus && i === 0 ? 'focus' : '' },
-    { tap: () => { st.host = n; app.go('mo-host'); } });
+      ...rows[n], off: !!(list.off && list.off(st)), pose: st.tileFocus && i === 0 ? 'focus' : '' },
+    { tap: () => list.open(st, n, app) });
   }
 }
 
@@ -757,6 +797,9 @@ function moSection(ui, app) {
   const st = app.state, pg = moPage(ui), c = MO_SETUP[st.cat | 0], body = pg.body;
   const gx = pg.m.gutter;
   st.opt = st.opt || {};
+  // The panel takes the top of the body; the rows and tiles lay out below.
+  const panel = c.panel ? c.panel(st) : null;
+  const pan = panel ? cutTop(body, panel.rows.length + 2) : null;
   const own = (it) => (it.t === 'toggle' ? moToggleW(it.label) : moActW(it.label, it.nav ? '›' : ''));
   const pack = (room, danger) => {
     const out = [];
@@ -784,7 +827,8 @@ function moSection(ui, app) {
   // A section with a list. Plain rows sit above the tiles on every page.
   // Danger rows hang below them on the last. Tiles take the rest of the
   // body, 4 rows each. The pages are pages of tiles.
-  const hosts = c.list ? (st.hosts || PROFILES) : [];
+  const hosts = c.list ? c.list.rows(st) : [];
+  const listOff = !!(c.list && c.list.off && c.list.off(st));
   const layList = (room) => {
     const plain = pack(room, false), danger = pack(room, true);
     const listY = plain.length ? plain.length * 3 + 1 : 0;
@@ -810,7 +854,7 @@ function moSection(ui, app) {
   // The first key focus: the first live item of the page, else its first tile.
   const firstCell = rows.filter(onPage).flatMap((row) => row.r).find((cell) => !itOff(cell.it));
   moFirst(ui, firstCell ? firstCell.id
-    : c.list && hosts.length && !st.live ? MO_ID.HOST + st.spage * L.tper : MO_ID.OPT);
+    : c.list && hosts.length && !listOff ? MO_ID.HOST + st.spage * L.tper : MO_ID.OPT);
   const flip = { prev: { tap: () => st.spage-- }, next: { tap: () => st.spage++ } };
   const head = moPager(ui, pg.header, st.spage, pages, flip);
   moHeader(ui, head, { path: 'Setup', title: c.name, back: { tap: () => app.back() } });
@@ -820,7 +864,8 @@ function moSection(ui, app) {
     ui.key('PageUp', () => { if (st.spage > 0) st.spage--; });
     ui.key('PageDown', () => { if (st.spage < pages - 1) st.spage++; });
   }
-  if (c.list) moHostList(ui, app, c.list, hosts, rect(body.x, body.y + L.listY, body.w, L.listH), gx, L);
+  if (pan) moInfo(ui, rect(pan.x, pan.y, pan.w - (pages > 1 ? 2 : 0), pan.h), panel.rows, panel.stripe);
+  if (c.list) moSectionList(ui, app, c.list, hosts, rect(body.x, body.y + L.listY, body.w, L.listH), gx, L);
   rows.filter(onPage).forEach(({ r: row, y: dy }) => {
     const y = body.y + dy;
     let x = body.x;
@@ -850,6 +895,37 @@ function moSection(ui, app) {
     });
   });
   moBarRow(ui, pg.status,app.note || 'A change applies at once.', '↵ change  Esc back');
+}
+
+// A saved network's page. st.net is its place in the list. It shows facts,
+// Join now, the two moves, and Forget apart at the bottom. Join now is off
+// for the joined network and for a network with a locked password.
+function moNet(ui, app) {
+  const st = app.state, pg = moPage(ui), w = moNets(st), body = pg.body;
+  const at = Math.min(st.net | 0, w.nets.length - 1), n = w.nets[at];
+  const joined = moJoined(w, n), locked = n.pw === 'locked';
+  moHeader(ui, pg.header, { path: 'Wi-Fi', title: n.ssid, back: { tap: () => app.back() } });
+  moInfo(ui, cutTop(body, 5), [
+    ['Network', n.ssid, 0, 0, joined ? '✓ joined' : '', C.GREEN],
+    ['Position', `${at + 1} of ${w.nets.length}`],
+    ['Password', n.pw],
+  ], joined ? C.GREEN : 0);
+  const offJoin = joined || locked, offUp = at <= 0, offDown = at >= w.nets.length - 1;
+  moFirst(ui, MO_ID.BTN + (!offJoin ? 0 : !offUp ? 1 : !offDown ? 2 : 3));
+  const f = moFlow(body, pg.m.gutter, 3);
+  const btn = (i, label, o, tap) => moBtn(ui, moFlowNext(f, moBtnW(label)), MO_ID.BTN + i, label, o, { tap });
+  btn(0, 'Join now', { tone: 'solid', accent: C.GREEN, off: offJoin }, () => { app.note = 'joining'; });
+  moFlowBreak(f);
+  btn(1, '↑ Move earlier', { off: offUp }, () => { app.note = 'moved'; });
+  btn(2, '↓ Move later', { off: offDown }, () => { app.note = 'moved'; });
+  moBtn(ui, rect(body.x, body.y + body.h - 3, moBtnW('Forget'), 3), MO_ID.BTN + 3, 'Forget',
+    { tone: 'tint', accent: C.RED }, { tap: () => {
+      st.ask = { title: `Forget ${n.ssid}?`, verb: 'Forget', accent: C.RED,
+        lines: [joined ? 'The deck leaves this network.' : 'The network and its password go.', ''],
+        yes: () => { app.back(); app.back(); } };
+      app.go('mo-confirm');
+    } });
+  moBarRow(ui, pg.status, app.note || 'The bar at the top goes back.', '↵ choose  Esc back');
 }
 
 const MO_NETS = [
@@ -1359,6 +1435,15 @@ export const MO_GATE = [
   { name: 'mo-glyphs', sketch: 'mo-glyphs' },
   { name: 'mo-setup', sketch: 'mo-setup', pose: { focus: MO_ID.HUB + 3 } },
   { name: 'mo-section-wifi', sketch: 'mo-section', state: () => ({ cat: 1 }) },
+  { name: 'mo-section-wifi-down', sketch: 'mo-section', state: () => ({ cat: 1, wifi: WIFI_DOWN }) },
+  { name: 'mo-section-wifi-full', sketch: 'mo-section',
+    state: () => ({ cat: 1, wifi: WIFI_FULL, spage: 1, tileFocus: true }) },
+  { name: 'mo-net', sketch: 'mo-net', state: () => ({ net: 0 }) },
+  { name: 'mo-net-locked', sketch: 'mo-net', state: () => ({ net: 1 }), pose: { focus: MO_ID.BTN + 2 } },
+  { name: 'mo-net-last', sketch: 'mo-net', state: () => ({ net: 2 }), pose: { focus: MO_ID.BTN } },
+  { name: 'mo-confirm-forget-net', sketch: 'mo-confirm', pose: { focus: MO_ID.BTN },
+    state: () => ({ ask: { title: 'Forget HomeAP?', verb: 'Forget', accent: C.RED,
+                           lines: ['The deck leaves this network.', ''] } }) },
   { name: 'mo-section-fx', sketch: 'mo-section', state: () => ({ cat: 3 }) },
   { name: 'mo-section-motion', sketch: 'mo-section', state: () => ({ cat: 4 }), pose: { down: MO_ID.OPT + 9 } },
   { name: 'mo-section-system', sketch: 'mo-section', state: () => ({ cat: 5 }), pose: { focus: MO_ID.OPT + 16 } },
@@ -1424,6 +1509,7 @@ export const MO_SKETCHES = [
   { name: 'mo-edit', title: 'Host form', theme: 'slate', draw: moEdit },
   { name: 'mo-setup', title: 'Setup hub', theme: 'slate', draw: moSetup },
   { name: 'mo-section', title: 'Setup section: switches and choices', theme: 'slate', draw: moSection },
+  { name: 'mo-net', title: 'Saved network page', theme: 'slate', draw: moNet },
   { name: 'mo-list', title: 'Paged list with pager and rail', theme: 'slate', draw: moList },
   { name: 'mo-unlock', title: 'Access code pad', theme: 'slate', draw: moUnlock },
   { name: 'mo-connect', title: 'Connecting', theme: 'slate', draw: (u, a) => moConnect(u, a, false) },

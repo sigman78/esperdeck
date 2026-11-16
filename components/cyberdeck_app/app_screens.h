@@ -19,6 +19,7 @@ typedef enum {
     SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
     SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
     SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK, SCR_SAVER, SCR_HOST, SCR_ASK,
+    SCR_WIFINET,
     SCR_COUNT
 } scr_id_t;
 
@@ -43,6 +44,11 @@ void profile_delete_at(int idx, bool keep_pin);
 /** True when stored profile @p idx signs in with a key that no other
  *  stored profile uses. Deleting the profile deletes that key's files. */
 bool profile_key_unshared(int idx);
+
+/* ---- saved-network page (app_wifinet.c) ---- */
+extern const nav_screen_t wifinet_screen;
+/** Open the page of the saved network at position @p idx. */
+void enter_wifinet(uint64_t now, int idx);
 
 /* ---- question page (app_ask.c) ---- */
 typedef struct {

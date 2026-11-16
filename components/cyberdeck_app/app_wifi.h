@@ -21,8 +21,9 @@ esp_err_t app_wifi_list_forget(wifi_profile_t *nets, int *n, int i);
 esp_err_t app_wifi_list_move(wifi_profile_t *nets, int n, int i, int dir);
 
 /* Saved SSIDs in preference order; bundled[i] is true while the password
- * is still the locked-bundle marker. Returns the count. */
-int app_wifi_list(char ssids[][33], bool *bundled, int max);
+ * is still the locked-bundle marker, open[i] when the network has none.
+ * Either array may be NULL. Returns the count. */
+int app_wifi_list(char ssids[][33], bool *bundled, bool *open, int max);
 
 /* Each call saves, then gives the list to wifi_manager and keeps a live
  * link. If the joined network goes, it disconnects and tries the next.
@@ -30,6 +31,9 @@ int app_wifi_list(char ssids[][33], bool *bundled, int max);
 esp_err_t app_wifi_add(const char *ssid, const char *password);
 esp_err_t app_wifi_forget(int i);
 esp_err_t app_wifi_move(int i, int dir);
+
+/* Make network @p i first in the list, drop the link and join it now. */
+esp_err_t app_wifi_join(int i);
 
 /* settings.ini [wifi] seeded: set after the Kconfig fallback seed, or
  * when the user edits the list. The seed never runs again. */
