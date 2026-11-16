@@ -156,6 +156,11 @@ int ui_caption_w(const char *caption);
  *  cells in from each side. The control beside it is the touch target. */
 void ui_caption(ui_rect_t r, const char *text);
 
+/** HOME's title: bold white @p word over a six-colour underline, then
+ *  @p version dim, up to its first '-'. A tight @p r drops the version,
+ *  then the whole mark. Returns the cells used, 0 when nothing fits. */
+int ui_wordmark(ui_rect_t r, const char *word, const char *version);
+
 /** The captions of form row @p i on grid @p g. @p cap goes in the first
  *  caption column, @p cap2 (or NULL) in the second. Returns the row's top. */
 int ui_form_row(ui_rect_t body, const ui_form_cols_t *g, int i,

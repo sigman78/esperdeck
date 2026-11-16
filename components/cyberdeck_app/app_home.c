@@ -111,16 +111,14 @@ static void render_home(uint64_t now)
     s_home.total = total;
     s_home.page = ui_page_clamp(s_home.page, total, per);
 
-    char note[16];
-    snprintf(note, sizeof note, "%d of %d", app.stored_count,
-             STORAGE_MAX_PROFILES);
+    /* The wordmark is the title; the pager alone tells the page. */
     const ui_rect_t rest = ui_pages(pg.header, ID_PREV, ID_NEXT, s_home.page,
                                     pages);
-    ui_title(rest, NULL, "Hosts", note, false);
+    const int used = ui_wordmark(rest, "CYBERDECK", app.cfg.version);
 
     /* Phone dot at the right end of the title row, if the title leaves room. */
     uint8_t ppen;
-    if (rest.w - (1 + 5 + 3 + ui_len(note)) >= 8 && phone_pen(&ppen)) {
+    if (rest.w - used >= 8 && phone_pen(&ppen)) {
         const int x = rest.x + rest.w - 5, y = ui_centre(rest.y, rest.h, 1);
         ui_pen(ppen);
         ui_putch(x, y, UI_LED_ON, UI_TEXT);

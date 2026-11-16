@@ -69,7 +69,7 @@ EDIT_DROPS_KEY = (
 SCENARIOS = {
     # boot -> HOME, arrow navigation, profile reload + wifi kick keys
     "home-nav":
-        "key:esc|wait:400|expect:home|expect-text:Hosts"
+        "key:esc|wait:400|expect:home|expect-text:CYBERDECK sim"
         "|key:right|key:down|key:left|key:up|key:r|key:w"
         "|wait:600|expect:home|quit",
     # An unchanged form leaves on one Esc, with no question.
@@ -86,7 +86,7 @@ SCENARIOS = {
         "key:esc|wait:400|expect:home|key:n|wait:400|expect:profile"
         "|type:nas|key:tab|type:me|key:tab|type:10.0.0.9|key:tab|key:tab"
         "|key:tab|type:pw|key:tab|key:enter|wait:200|expect-text:On"
-        "|key:tab|key:enter|wait:500|expect:home|expect-text:2 of 8|quit",
+        "|key:tab|key:enter|wait:500|expect:home|expect-text:me@10.0.0.9|quit",
     "editor-dup":
         "key:esc|wait:400|key:n|wait:400|type:example|key:tab|type:me"
         "|key:tab|type:h|key:tab|key:tab|key:tab|key:tab|key:tab|key:enter"
@@ -112,7 +112,7 @@ SCENARIOS = {
         "|expect-text:Discard the changes?|expect-text:The new host is not stored."
         "|key:enter|wait:300|expect:profile|expect-text:abcd|key:esc|wait:300"
         "|expect:ask|key:right|key:enter|wait:500|expect:home"
-        "|expect-text:1 of 8|quit",
+        "|expect-no-text:abcd|quit",
     "editor-key":
         "key:esc|wait:400|key:n|wait:400|type:nas|key:tab|type:me|key:tab"
         "|type:h|key:tab|key:tab|key:right|key:enter|wait:300"
@@ -243,11 +243,13 @@ SCENARIOS = {
     # Delete is two keys right of Connect. It asks first; Cancel is the
     # default. The second pass confirms.
     "host-delete":
-        "key:esc|wait:400|expect:home|expect-text:2 of 8|key: |wait:400"
+        "key:esc|wait:400|expect:home|expect-text:me@192.168.1.10"
+        "|expect-text:ops@10.0.0.5|key: |wait:400"
         "|expect:host|key:right|key:right|key:enter|wait:400|expect:ask"
         "|expect-text:Delete example?|key:enter|wait:400|expect:host"
         "|key:enter|wait:400|expect:ask|key:right|key:enter|wait:500"
-        "|expect:home|expect-text:1 of 8|quit",
+        "|expect:home|expect-no-text:me@192.168.1.10"
+        "|expect-text:ops@10.0.0.5|quit",
     # Down from Connect reaches Move later (Move earlier is off on the
     # first host). Then the first HOME tile is the other host.
     "host-move":
@@ -279,7 +281,7 @@ SCENARIOS = {
         "|expect:home|quit",
     "connect-failed-back-tap":
         "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect-text:Try again"
-        "|tap:256,280|wait:300|expect:home|expect-text:1 of 8|quit",
+        "|tap:256,280|wait:300|expect:home|expect-text:me@127.0.0.1|quit",
     "connect-failed-again":
         "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect-text:Try again"
         "|key:left|key:enter|wait:300|expect:connecting"
@@ -289,7 +291,7 @@ SCENARIOS = {
     "connect-failed-edit":
         "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect-text:Edit host"
         "|tap:508,280|wait:300|expect:profile|expect-text:Edit example"
-        "|key:esc|wait:300|expect:home|expect-text:1 of 8|quit",
+        "|key:esc|wait:300|expect:home|expect-text:me@127.0.0.1|quit",
     "connect-failed-edit-discard":
         "key:esc|wait:500|expect:home|tap:130,64|wait:300|expect-text:Edit host"
         "|key:left|key:right|key:enter|wait:300|expect:profile|type:2"

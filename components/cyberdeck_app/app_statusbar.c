@@ -54,11 +54,13 @@ static int sb_put(ui_sb_cell_t cell[UI_SB_CELLS], int n, const char *s,
     return n;
 }
 
+#if CONFIG_CYBERDECK_DIAG_CHIPS
 /* The chip's name plus the separator cell that opens its value field. */
 static int sb_label(ui_sb_cell_t cell[UI_SB_CELLS], const char *s, uint8_t st)
 {
     return sb_put(cell, sb_put(cell, 0, s, st, 0), " ", st, 0);
 }
+#endif
 
 int net_rssi(void)
 {

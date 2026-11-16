@@ -268,23 +268,28 @@ static bool port_ok(const char *s)
 
 /* Right text of the Key part, @p cap cells at most. It holds the id, the
  * type and the list place, as far as they fit. */
-static void key_text(char *out, size_t sz, const char *key, int nkeys, int cap)
+static void key_text(char *title, char *right, size_t sz, const char *key,
+                     int nkeys, int cap)
 {
     int at = -1;
     for (int i = 0; i < nkeys; i++)
         if (!strcmp(LAB_KEYS[i].id, key)) at = i;
+    right[0] = 0;
     if (at < 0) {
-        if (key[0]) snprintf(out, sz, "%.*s (missing)", cap - 10, key);
-        else        snprintf(out, sz, "none stored");
+        if (key[0]) snprintf(title, sz, "%s (missing)", key);
+        else        snprintf(title, sz, "none stored");
         return;
     }
     const char *id = LAB_KEYS[at].id, *type = LAB_KEYS[at].type;
     char pos[24] = "";
-    if (nkeys > 1) snprintf(pos, sizeof pos, " %d/%d", at + 1, nkeys);
-    if ((int)(strlen(id) + strlen(type) + strlen(pos)) + 2 <= cap)
-        snprintf(out, sz, "%s  %s%s", id, type, pos);
+    if (nkeys > 1) snprintf(pos, sizeof pos, "%d/%d", at + 1, nkeys);
+    snprintf(title, sz, "%s", id);
+    if ((int)(strlen(id) + strlen(type) + strlen(pos)) + 4 > cap)
+        snprintf(right, sz, "%s", pos);
+    else if (pos[0])
+        snprintf(right, sz, "%s  %s", type, pos);
     else
-        snprintf(out, sz, "%.*s%s", cap - (int)strlen(pos), id, pos);
+        snprintf(right, sz, "%s", type);
 }
 
 static void draw_edit(const edit_t *st)
@@ -342,11 +347,11 @@ static void draw_edit(const edit_t *st)
     ui_chips(ui_rect(g.x1, y, g.a, 3), MO_OPT, AUTH, 2, f->by_key ? 1 : 0, 0);
     int row = 3;
     if (f->by_key) {
-        char text[96];
-        key_text(text, sizeof text, f->keyid, st->nkeys, g.a - 4);
+        char text[64], right[64];
+        key_text(text, right, sizeof text, f->keyid, st->nkeys, g.a - 4);
         y = ui_form_row(body, &g, row++, "Key", NULL);
         ui_part(ui_rect(g.x1, y, g.a, 3), MO_OPT + 5,
-                &(ui_part_t){ .title = text,
+                &(ui_part_t){ .title = text, .right = right,
                               .flags = st->nkeys ? 0 : UI_PART_OFF }, NULL);
     }
     y = ui_form_row(body, &g, row++, f->by_key ? "Passphrase" : "Password",
@@ -541,10 +546,12 @@ static int  s_home_page;                /* page shown                       */
 static bool s_home_pair;                /* the Pair pill is on              */
 static bool s_home_last_row;            /* focus the last row's first tile  */
 
+/* A git describe, as a device build reports it: the wordmark keeps "v0.9". */
+static const char *s_home_version = "v0.9-120-g336c20d-dirty";
+
 static void scr_home(void)
 {
     ui_slate_t pg = ui_slate_page();
-    char note[16];
 
     const ui_grid_t g = ui_grid(pg.body,
                                 ui_cols_for(pg.body.w, 30, pg.m.gutter), 4,
@@ -560,9 +567,7 @@ static void scr_home(void)
         ui_pill(&pg.header, MO_PILL + 3, "Pair", UI_TONE_TINT,
                 OVERLAY_COL_CYAN, 0);
     const ui_rect_t rest = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
-    snprintf(note, sizeof note, "%d of %d", s_home_n,
-             s_home_n > LAB_NPROFILES ? LAB_NHOSTS : LAB_NPROFILES);
-    ui_title(rest, NULL, "Hosts", note, false);
+    ui_wordmark(rest, "CYBERDECK", s_home_version);
     const int first = page * per;
     const int shown = s_home_n - first < per ? s_home_n - first : per;
     for (int i = 0; i < shown; i++) {
@@ -608,6 +613,22 @@ static void home_32(int page, bool last_row, bool pair)
 static void scr_home_32(void)      { home_32(1, false, false); }
 static void scr_home_32_last(void) { home_32(1, true, false); }
 static void scr_home_32_pair(void) { home_32(0, false, true); }
+
+/* An untagged build: a hash too long beside the pager at 12x24. */
+static void scr_home_32_hash(void)
+{
+    const char *was = s_home_version;
+    s_home_version = "4930f23-dirty";
+    home_32(1, false, false);
+    s_home_version = was;
+}
+
+static void scr_home_pair(void)
+{
+    s_home_pair = true;
+    scr_home();
+    s_home_pair = false;
+}
 
 static void scr_status_busy(void)       { home_bar("busy"); }
 static void scr_status_busy_blink(void) { home_bar("busy-blink"); }
@@ -1996,9 +2017,11 @@ static const lab_screen_t MO_SCREENS[] = {
       .focus = MO_HOST + 1 },
     { "mo-home-down",   scr_home,        .slate = true,
       .down = MO_HOST + 2 },
+    { "mo-home-pair",   scr_home_pair,   .slate = true },
     { "mo-home-32",     scr_home_32,     .slate = true },
     { "mo-home-32-last", scr_home_32_last, .slate = true },
     { "mo-home-32-pair", scr_home_32_pair, .slate = true },
+    { "mo-home-32-hash", scr_home_32_hash, .slate = true },
     { "mo-host",      scr_host,        .slate = true },
     { "mo-host-key",    scr_host_key,    .slate = true,
       .focus = MO_BTN + 2 },

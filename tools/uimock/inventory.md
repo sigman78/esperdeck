@@ -56,8 +56,9 @@ no status bar.
 Logo wipe and tagline; CRT collapse after a session. Any input skips.
 
 ### HOME (`app_home.c`)
-- **Shows:** a header with the title "Hosts" and "n of 8", a pager when
-  the tiles need pages, and the buttons Setup and + New. Lock shows with
+- **Shows:** a header with the CYBERDECK wordmark and the firmware
+  version, a pager when the tiles need pages, and the buttons Setup and
+  + New. Lock shows with
   a keystore. Pair shows until a keyboard is bonded. A phone dot (PHN)
   shows when a phone is enrolled. A tile per host: name, `user@host`
   (`:port` when not 22), its number. Plugin tiles follow the hosts.

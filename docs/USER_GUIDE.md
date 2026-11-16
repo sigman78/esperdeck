@@ -46,8 +46,10 @@ anything real — edit or delete it and add your own
 ## 2. The HOME screen
 
 HOME lists your hosts as tiles, two per row: the name, `user@host` (plus
-`:port` when it is not 22) and the tile number. More than a page shows
-a pager at the top right.
+`:port` when it is not 22) and the tile number. The top left shows the
+CYBERDECK name and the firmware version; a crowded header drops the
+version first, then the name. More than a page shows a pager at the top
+right, with the page number between its two buttons.
 
 - **Tap a tile** to connect. **Long-press it** (or press **Space**) to open
   the host page: details, Connect, Edit, Delete and Move earlier / later.

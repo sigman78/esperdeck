@@ -114,6 +114,7 @@ the C parts port those sketches line by line.
 | `ui_entry`, `ui_entry_at` | A form field: an optional label, value, caret while editing, invalid mark. The forms pass no label: the caption sits on the page. `ui_entry_at` puts the caret anywhere in the value and scrolls to keep it in view. |
 | `ui_form_cols`, `ui_form_row` | The two-column form grid: caption, control, caption, control. `ui_form_row` draws a row's captions and returns its top. |
 | `ui_title` | Page header. With `back`, the whole bar is the back target. |
+| `ui_wordmark` | HOME's title: a bold word over a six-colour underline, the version dim beside it up to its first '-'. Drops the version, then the whole mark, when the header is tight. |
 | `ui_pages`, `ui_rail` | Page stepper in the header; position rail at the side of a paged list. |
 | `ui_info`, `ui_panel` | Text panels. They hold text only and are never touch targets. |
 | `ui_slate_page` | Paints the background and returns header, body, status and the whole area. |
@@ -307,7 +308,8 @@ above its action row while storage holds eight.
 | Focus on a value | The sand bars only, over the control's own colours. A finger still washes the control in its own accent; the underline and the knob stay. |
 | Row grid | A switch or a choice takes a row. The caption column is the page's longest caption plus four. A unit follows the control in dim text. |
 | CRT FX, Motion FX | One control per row. |
-| Forms | Two columns on one grid (`ui_form_cols`); entries hold the value only, the caption sits on the page. "Show" replaces "Show password" and "Show passphrase". The Key part is as wide as an entry; the key type shows where it fits. The Wi-Fi add form uses the same captions with "Network" first; its entries stop at 40 cells. |
+| Forms | Two columns on one grid (`ui_form_cols`); entries hold the value only, the caption sits on the page. "Show" replaces "Show password" and "Show passphrase". The Key part is as wide as an entry; the key type shows where it fits. The Wi-Fi add form uses the same captions with "Network" first; its entries stop at 40 cells. The Key part shows the key id, and dim at its right the place in the list, after the key type where it fits. |
+| HOME title | The spectrum wordmark (`ui_wordmark`): bold white CYBERDECK over a six-colour half-row underline, the firmware version dim beside it. It replaces "Hosts" and the host count. The version shows up to its first '-': a git describe such as "v0.3-120-g336c20d-dirty" shows "v0.3". A tight header drops the version, then the whole mark; there is no short form. The page position is in the header pager alone, shown with more than one page. The plate, duo and keys variants and the page rail were rejected. |
 
 ## Still open
 

@@ -225,6 +225,31 @@ void ui_caption(ui_rect_t r, const char *text)
             UI_TEXT, UI_LEFT);
 }
 
+int ui_wordmark(ui_rect_t r, const char *word, const char *version)
+{
+    static const uint8_t SPECTRUM[6] = {
+        OVERLAY_COL_RED, OVERLAY_COL_AMBER, OVERLAY_COL_GREEN,
+        OVERLAY_COL_CYAN, OVERLAY_COL_BLUE, OVERLAY_COL_MAGENTA,
+    };
+    const int n = ui_len(word);
+    if (n == 0 || r.w < 1 + n) return 0;
+    char ver[24];
+    snprintf(ver, sizeof ver, "%.*s", (int)strcspn(str(version), "-"),
+             str(version));
+    const int vn = ui_len(ver);
+    const int x = r.x + 1, y = ui_centre(r.y, r.h, 1);
+    ui_pen(OVERLAY_COL_WHITE);
+    ui_text(ui_rect(x, y, n, 1), word, UI_TEXT | UI_BOLD, UI_LEFT);
+    for (int i = 0; i < n; i++) {
+        ui_pen(SPECTRUM[i * 6 / n]);
+        ui_putch(x + i, y + 1, UI_HALF_UP, UI_BAR_EDGE);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+    if (vn == 0 || r.w < 2 + n + vn) return 1 + n;
+    ui_text(ui_rect(x + n + 1, y, vn, 1), ver, UI_MUTED, UI_LEFT);
+    return 2 + n + vn;
+}
+
 int ui_form_row(ui_rect_t body, const ui_form_cols_t *g, int i,
                 const char *cap, const char *cap2)
 {

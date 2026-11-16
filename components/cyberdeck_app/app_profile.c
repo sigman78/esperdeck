@@ -111,27 +111,31 @@ static void pf_load_keys(void)
     pf_key_refresh_info();
 }
 
-/* Text of the Key part: id, type and place in the list, as far as @p cap
- * cells allow. */
-static void pf_key_text(char *out, size_t sz, int cap)
+/* Title and dim right text of the Key part, @p cap cells inside. The
+ * right text is the place in the list, after the type where it fits. */
+static void pf_key_text(char *title, char *right, size_t sz, int cap)
 {
     const bool known = s_pf.key_sel >= 0 && s_pf.key_sel < s_pf.nkeys;
+    right[0] = 0;
     if (!known) {
         if (s_pf.draft.key_id[0])
-            snprintf(out, sz, "%.*s (missing)", cap - 10, s_pf.draft.key_id);
+            snprintf(title, sz, "%s (missing)", s_pf.draft.key_id);
         else
-            snprintf(out, sz, "none stored");
+            snprintf(title, sz, "none stored");
         return;
     }
-    const char *id = s_pf.keys[s_pf.key_sel];
+    const char *id = s_pf.keys[s_pf.key_sel], *type = s_pf.key_type;
     char pos[24] = "";
     if (s_pf.nkeys > 1)
-        snprintf(pos, sizeof pos, " %d/%d", s_pf.key_sel + 1, s_pf.nkeys);
-    if (s_pf.key_type[0] &&
-        (int)(strlen(id) + strlen(s_pf.key_type) + strlen(pos)) + 2 <= cap)
-        snprintf(out, sz, "%s  %s%s", id, s_pf.key_type, pos);
+        snprintf(pos, sizeof pos, "%d/%d", s_pf.key_sel + 1, s_pf.nkeys);
+    snprintf(title, sz, "%s", id);
+    if (!type[0] ||
+        (int)(strlen(id) + strlen(type) + strlen(pos)) + 4 > cap)
+        snprintf(right, sz, "%s", pos);
+    else if (pos[0])
+        snprintf(right, sz, "%s  %s", type, pos);
     else
-        snprintf(out, sz, "%.*s%s", cap - (int)strlen(pos), id, pos);
+        snprintf(right, sz, "%s", type);
 }
 
 typedef struct { bool port, name, host, user, key; } pf_bad_t;
@@ -218,11 +222,11 @@ static void render_profile(uint64_t now)
 
     int row = 3;
     if (key) {
-        char text[96];
-        pf_key_text(text, sizeof text, g.a - 4);
+        char text[96], right[96];
+        pf_key_text(text, right, sizeof text, g.a - 4);
         y = ui_form_row(body, &g, row++, "Key", NULL);
         ui_part(ui_rect(g.x1, y, g.a, 3), ID_KEY,
-                &(ui_part_t){ .title = text,
+                &(ui_part_t){ .title = text, .right = right,
                               .flags = s_pf.nkeys ? 0 : UI_PART_OFF }, NULL);
     }
     y = ui_form_row(body, &g, row++, key ? "Passphrase" : "Password", "Show");
