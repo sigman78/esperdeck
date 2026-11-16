@@ -2,7 +2,8 @@
  * ui_part.c — the kit's parts (ui_part.h): slabs on the theme
  * background. A part asks ui_look() for its styles and paints cells.
  * Each function ports its sketch in tools/uimock/sketches-mo.js.
- * ui_part honours UI_PART_ROOMY (pad 3); ui_switch passes its flags on.
+ * ui_part honours UI_PART_ROOMY (pad 3). Value controls (ui_switch,
+ * ui_chips) keep their colours under focus and add the bars.
  */
 
 #include "cyberdeck_ui.h"
@@ -217,70 +218,99 @@ void ui_pill(ui_rect_t *header, ui_id_t id, const char *label, uint8_t tone,
     ui_cut_right(header, 1);
 }
 
-void ui_switch(ui_rect_t r, ui_id_t id, const char *label, bool on,
-               uint8_t flags)
+void ui_caption(ui_rect_t r, const char *text)
 {
-    const ui_part_t pt = { .title = label, .reserve = 9, .flags = flags };
-    ui_part_box_t b;
-    if (!ui_part(r, id, &pt, &b)) return;
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_text(ui_rect(r.x + 2, ui_centre(r.y, r.h, 1), r.w - 4, 1), str(text),
+            UI_TEXT, UI_LEFT);
+}
 
-    const int x = b.inn.x + b.inn.w - 4;
-    const bool live = on && !b.k.off;
-    const uint8_t knob = live ? b.k.title : b.k.detail;
-    ui_pen(live && b.k.card ? OVERLAY_COL_GREEN : b.k.pen);
-    ui_text(ui_rect(x - 4, b.y, 3, 1), on ? "On" : "Off", knob, UI_RIGHT);
-    /* The knob is two cells: a left and a right triangle make one diamond. */
-    const int kx = on ? x + 2 : x, lx = on ? x : x + 2;
-    ui_putch(lx, b.y, UI_HEAVY_H, b.k.detail);
-    ui_putch(lx + 1, b.y, UI_HEAVY_H, b.k.detail);
-    ui_putch(kx, b.y, UI_POINT_L, knob);
-    ui_putch(kx + 1, b.y, UI_ARROW, knob);
+/* Key focus on a value control: the bars alone, in the focus colour. */
+static const ui_look_t FOCUS_BARS = { .pen = PART_FOCUS, .fill = UI_FOCUS,
+                                      .edge = UI_FOCUS_EDGE, .focus = true };
+
+/* Focus beats a finger on a value control. */
+static bool val_down(ui_id_t id, bool *focus)
+{
+    *focus = ui_focused(id);
+    return !*focus && ui_pressed(id);
+}
+
+void ui_switch(ui_rect_t r, ui_id_t id, bool on, uint8_t flags)
+{
+    if (r.w < UI_SWITCH_W || r.h < 3) { ui_fault(); return; }
+    const ui_rect_t sr = ui_rect(r.x, r.y, UI_SWITCH_W, r.h);
+    const int y = ui_centre(sr.y, sr.h, 1);
+    const bool off = flags & UI_PART_OFF;
+    bool focus = false, down = false;
+    if (!off) {
+        ui_hot(sr, id);
+        down = val_down(id, &focus);
+    }
+    const int kn = 4, tn = UI_SWITCH_W - kn;
+    const uint8_t acc = on ? OVERLAY_COL_GREEN : OVERLAY_COL_DEFAULT;
+    ui_look_t t = { .pen = OVERLAY_COL_DEFAULT, .fill = UI_PANEL,
+                    .edge = UI_PANEL_EDGE, .title = UI_PANEL_MUTED };
+    if (!off && down)
+        t = (ui_look_t){ .pen = acc, .fill = UI_FOCUS, .edge = UI_FOCUS_EDGE,
+                         .title = UI_FOCUS | UI_BOLD };
+    else if (!off && on)
+        t = (ui_look_t){ .pen = OVERLAY_COL_GREEN, .fill = UI_WELL,
+                         .edge = UI_WELL_EDGE, .title = UI_WELL | UI_BOLD };
+    const ui_look_t knob = off
+        ? (ui_look_t){ .pen = OVERLAY_COL_DEFAULT, .fill = UI_WELL, .edge = UI_WELL_EDGE }
+        : (ui_look_t){ .pen = acc, .fill = UI_BAR, .edge = UI_BAR_EDGE };
+    ui_slab(ui_rect(sr.x + (on ? 0 : kn), sr.y, tn, sr.h), &t);
+    ui_slab(ui_rect(sr.x + (on ? tn : 0), sr.y, kn, sr.h), &knob);
+    ui_pen(t.pen);
+    ui_text(ui_rect(sr.x + (on ? 1 : kn), y, tn - 1, 1), on ? "On" : "Off",
+            t.title, UI_CENTER);
+    if (focus) ui_focus_bars(sr, &FOCUS_BARS, false);
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
-static int chip_w(const char *label)
+void ui_chips(ui_rect_t r, ui_id_t id_base, const char *const *labels,
+              int n, int value, uint8_t accent)
 {
-    const int w = ui_len(label) + 4;
-    return w < 7 ? 7 : w;
-}
+    if (ui_chips_w(labels, n) > r.w || r.h < 3) { ui_fault(); return; }
+    const uint8_t acc = accent ? accent : OVERLAY_COL_BLUE;
+    const int y = ui_centre(r.y, r.h, 1), y1 = r.y + r.h - 1;
+    bool was_quiet = true;
+    int x = r.x;
 
-void ui_chips(ui_rect_t r, ui_id_t id_base, const char *caption,
-              const char *const *labels, int n, int value, uint8_t accent,
-              int cap_w)
-{
-    int need = 0;
-    for (int i = 0; i < n; i++) need += chip_w(labels[i]) + 1;
-
-    const int capw = cap_w ? cap_w : ui_caption_w(caption);
-    const int y = ui_centre(r.y, r.h, 1);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_text(ui_rect(r.x + 2, y, capw - 4, 1), caption, UI_TEXT, UI_LEFT);
-    if (capw + need > r.w) { ui_fault(); return; }
-
-    int x = r.x + capw;
     for (int i = 0; i < n; i++) {
-        const int w = chip_w(labels[i]);
-        const bool chosen = i == value;
-        char title[64];
-        if (chosen) snprintf(title, sizeof title, UI_S_CHECK " %s", labels[i]);
-        else        snprintf(title, sizeof title, "%s", labels[i]);
-        const ui_part_t p = {
-            .title = title, .pad = 1,
-            .tone = chosen ? UI_TONE_SOLID : UI_TONE_CARD,
-            .accent = chosen ? (accent ? accent : OVERLAY_COL_BLUE) : 0,
-            .flags = (uint8_t)(UI_PART_CENTER | (chosen ? 0 : UI_PART_PLAIN)),
-        };
         const ui_id_t id = (ui_id_t)(id_base + i);
-        ui_part(ui_rect(x, r.y, w, r.h), id, &p, NULL);
+        const int w = ui_chips_w(&labels[i], 1);
+        const ui_rect_t sr = ui_rect(x, r.y, w, r.h);
+        const bool chosen = i == value;
+        bool focus;
+        ui_hot(sr, id);
+        const bool down = val_down(id, &focus);
+        const ui_look_t k = down
+            ? (ui_look_t){ .pen = chosen ? acc : OVERLAY_COL_DEFAULT,
+                           .fill = UI_FOCUS, .edge = UI_FOCUS_EDGE,
+                           .title = UI_FOCUS }
+            : (ui_look_t){ .pen = OVERLAY_COL_DEFAULT, .fill = UI_PANEL,
+                           .edge = UI_PANEL_EDGE, .title = UI_PANEL };
+        ui_slab(sr, &k);
         if (chosen) {
-            /* The gap cells either side show half blocks: the chip sticks out. */
-            const ui_look_t k = ui_look(id, p.tone, p.accent, p.flags);
-            ui_pen(k.pen);
-            if (x > r.x) bar_col(x - 1, r, UI_QUAD_LR, UI_RHALF, UI_QUAD_UR, &k, k.edge);
-            bar_col(x + w, r, UI_QUAD_LL, UI_LHALF, UI_QUAD_UL, &k, k.edge);
-            ui_pen(OVERLAY_COL_DEFAULT);
+            ui_pen(acc);
+            for (int c = 0; c < w; c++)
+                ui_putch(x + c, y1, UI_HALF_UP, UI_BAR_EDGE);
         }
-        x += w + 1;
+        /* A thin tick parts two quiet neighbours. */
+        const bool quiet = !focus && !down;
+        if (i > 0 && quiet && was_quiet) {
+            ui_pen(OVERLAY_COL_DEFAULT);
+            ui_putch(x, y, UI_LEFT_1, UI_PANEL_MUTED);
+        }
+        was_quiet = quiet;
+        ui_pen(k.pen);
+        ui_text(ui_rect(x, y, w, 1), labels[i],
+                (uint8_t)(k.title | (chosen ? UI_BOLD : 0)), UI_CENTER);
+        if (focus) ui_focus_bars(sr, &FOCUS_BARS, false);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        x += w;
     }
 }
 

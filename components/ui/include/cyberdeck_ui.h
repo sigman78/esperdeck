@@ -84,6 +84,7 @@
 #define UI_HEAVY_H 0x2501u  /* ━ the switch line */
 #define UI_VLINE   0x2502u  /* │ light vertical line */
 #define UI_LOW_1   0x2581u  /* ▁ lower eighth block */
+#define UI_LEFT_1  0x258Fu  /* ▏ left eighth block: a tab divider */
 #define UI_CHEVRON 0x203Au  /* › */
 #define UI_ELLIPSIS 0x2026u /* … */
 #define UI_LED_ON  0x25CFu  /* ● */

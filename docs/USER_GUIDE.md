@@ -239,9 +239,11 @@ the present state, such as "3 stored" or "HomeAP  -55 dBm". Tap a tile, or
 move with the arrows and press **Enter**. The bar at the top, or **Esc**,
 goes back one level.
 
-Inside a section every choice shows all its options as chips; tap one to
-choose it. Switches flip, and actions run, when tapped. **A change applies at
-once.** An action that cannot be undone asks first on a page of its own;
+Inside a section each switch and each choice has a row: its name on the
+left, the control on the right. A choice shows all its options in one bar,
+the chosen one underlined; tap one to choose it. A switch shows On (knob
+right, green) or Off (knob left, grey) and flips when tapped. Actions run
+when tapped. **A change applies at once.** An action that cannot be undone asks first on a page of its own;
 **Cancel** is the default answer. A long section pages: use the arrows in
 the bar or **Shift+PageUp / Shift+PageDown**. Destructive actions (red) sit
 apart at the bottom of the section, on its last page.
@@ -303,7 +305,7 @@ the code first.
 
 ## 10. Auto-lock and the screensaver
 
-- **Setup → System → "Saver + lock, min"** (1/3/5/10/30 minutes)
+- **Setup → System → "Saver + lock"** (1/3/5/10/30 minutes)
   controls when the digital-rain screensaver starts on an idle HOME
   screen — and, once a keystore exists, when the deck re-locks. Waking
   from the saver lands on the PIN pad.

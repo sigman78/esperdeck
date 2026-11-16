@@ -436,8 +436,8 @@ the littlefs image never needs plaintext:
   shows a live "LOCKED · RETRY IN n s" countdown and refuses to burn a
   derivation meanwhile. Success clears the counter. There is no
   auto-wipe.
-- **Saver timeout / auto-lock interval** — SYSTEM menu "Saver + lock
-  after": 1 / 3 / 5 / 10 / 30 min (`settings.ini` `[saver]`, default
+- **Saver timeout / auto-lock interval** — SYSTEM menu "Saver + lock":
+  1 / 3 / 5 / 10 / 30 min (`settings.ini` `[saver]`, default
   3). One knob
   on purpose: the saver engaging IS the auto-lock (it wipes the MK),
   so the rain delay and the lock delay cannot drift apart.

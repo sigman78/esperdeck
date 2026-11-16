@@ -168,7 +168,6 @@ function moBtn(ui, r, id, label, o, act) {
 // its row. Ten cells is the narrowest part a finger hits at the small font.
 const moBtnW = (label) => Math.max(10, moLen(label) + 6);
 const moActW = (title, right) => Math.max(10, moLen(title) + (right ? moLen(right) + 2 : 0) + 6);
-const moToggleW = (label) => moLen(label) + 17;
 
 // A flow packs parts from the left in rows of `h`, `gap` cells apart.
 // A part with no room left starts the next row.
@@ -185,56 +184,75 @@ function moFlowBreak(f) {
   if (f.x > f.x0) { f.x = f.x0; f.y += f.h; }
 }
 
-// A switch tile. The state shows three ways: the word, the side of the
-// diamond knob on its line, the colour.
-function moToggle(ui, r, id, label, on, o, act) {
-  const p = moPart(ui, r, id, { ...o, title: label, reserve: 9 }, act);
-  if (!p) return;
-  const x = p.inn.x + p.inn.w - 4, k = p.k, live = on && !k.off;
-  ui.pen(live && k.card ? C.GREEN : k.pen);
-  ui.text(rect(x - 4, p.y, 3, 1), on ? 'On' : 'Off', live ? k.title : k.detail, RIGHT);
-  // The knob is two cells: a left and a right triangle make one diamond.
-  const kx = on ? x + 2 : x, lx = on ? x : x + 2;
-  ui.puts(lx, p.y, '━━', k.detail);
-  ui.putch(kx, p.y, G.POINT_L, live ? k.title : k.detail);
-  ui.putch(kx + 1, p.y, G.ARROW, live ? k.title : k.detail);
+// Key focus on a value control: the bars alone, over its own colours.
+// The focus never hides the value.
+const MO_FOCUS_LOOK = { focus: true, pen: MO_FOCUS, fill: S.FOCUS, edge: S.FOCUS_EDGE };
+
+// The pose of a value control. Focus beats a finger.
+function moValPose(ui, id, pose) {
+  const focus = pose === 'focus' || (!pose && ui.focused(id));
+  return { focus, down: !focus && (pose === 'down' || (!pose && ui.pressed(id))) };
+}
+
+// A caption on the page: the first column of a form row, two cells each side.
+const moCapW = (caption) => moLen(caption) + 4;
+function moCaption(ui, r, text) {
+  ui.pen(C.DEFAULT);
+  ui.text(rect(r.x + 2, moCentre(r.y, r.h, 1, text), r.w - 4, 1), text, S.TEXT, LEFT);
+}
+
+// A switch: a pill of MO_SWITCH_W cells. A 4-cell knob sits at one end and
+// the word in the free track. On: knob right, green. Off: knob left, grey.
+// A finger washes the track. Its caption is the caller's.
+const MO_SWITCH_W = 10;
+function moToggle(ui, r, id, on, o, act) {
+  if (r.w < MO_SWITCH_W || r.h < 3) { ui.issues.push({ kind: 'drop', text: `switch #${id}` }); return; }
+  const sr = rect(r.x, r.y, MO_SWITCH_W, r.h), y = moCentre(r.y, r.h, 1, 'switch');
+  const { focus, down } = o.off ? {} : moValPose(ui, id, o.pose);
+  if (!o.off) ui.hot(sr, id, act);
+  const kn = 4, tn = MO_SWITCH_W - kn, acc = on ? C.GREEN : C.DEFAULT;
+  const tk = o.off || !on && !down ? [C.DEFAULT, S.PANEL, S.PANEL_EDGE, S.PANEL_MUTED]
+    : down ? [acc, S.FOCUS, S.FOCUS_EDGE, S.FOCUS | BOLD]
+    : [C.GREEN, S.WELL, S.WELL_EDGE, S.WELL | BOLD];
+  moSlab(ui, rect(sr.x + (on ? 0 : kn), sr.y, tn, sr.h), { pen: tk[0], fill: tk[1], edge: tk[2] });
+  moSlab(ui, rect(sr.x + (on ? tn : 0), sr.y, kn, sr.h),
+    o.off ? { pen: C.DEFAULT, fill: S.WELL, edge: S.WELL_EDGE } : { pen: acc, fill: S.BAR, edge: S.BAR_EDGE });
+  ui.pen(tk[0]);
+  ui.text(rect(sr.x + (on ? 1 : kn), y, tn - 1, 1), on ? 'On' : 'Off', tk[3], CENTER);
+  if (focus) moFocusBars(ui, sr, MO_FOCUS_LOOK, false);
   ui.pen(C.DEFAULT);
 }
 
-// The caption column of a choice: the caption, two cells each side.
-const moCapW = (caption) => moLen(caption) + 4;
-
-// One choice of several: a caption, then a chip per option. The chosen
-// chip has a filled face and the check mark. Focus is the light look.
-// The chips follow the caption column. o.capW sets that column's width,
-// so the chips of several choices line up.
-function moChips(ui, r, idBase, caption, labels, value, pick, o = {}) {
-  // Seven cells is the narrowest chip a finger hits at the small font.
-  const cw = (l) => Math.max(7, moLen(l) + 4);
-  const need = labels.reduce((n, l) => n + cw(l) + 1, 0);
-  const capW = o.capW || moCapW(caption);
-  const y = moCentre(r.y, r.h, 1, caption);
-  ui.pen(C.DEFAULT);
-  ui.text(rect(r.x + 2, y, capW - 4, 1), caption, S.TEXT, LEFT);
-  if (capW + need > r.w) { ui.issues.push({ kind: 'drop', text: `${caption} chips` }); return; }
-  let x = r.x + capW;
+// One choice of several: a tab bar, a segment per option, no gaps. The
+// chosen one has a bold label over an accent underline. A thin tick parts
+// two quiet neighbours. A finger washes a segment. Its caption is the caller's.
+const moChipW = (l) => Math.max(7, moLen(l) + 4);
+const moChipsW = (labels) => labels.reduce((n, l) => n + moChipW(l), 0);
+function moChips(ui, r, idBase, labels, value, pick, o = {}) {
+  if (moChipsW(labels) > r.w || r.h < 3) { ui.issues.push({ kind: 'drop', text: `chips #${idBase}` }); return; }
+  const acc = o.accent || C.BLUE, y = moCentre(r.y, r.h, 1, 'chips'), y1 = r.y + r.h - 1;
+  const sts = labels.map((l, i) => moValPose(ui, idBase + i, o.poses ? o.poses[i] : ''));
+  const quiet = (s) => !s.focus && !s.down;
+  let x = r.x;
   labels.forEach((l, i) => {
-    const w = cw(l), chosen = i === value;
-    const po = {
-      title: chosen ? `✓ ${l}` : l, align: CENTER, plain: !chosen, pad: 1,
-      tone: chosen ? 'solid' : 'card', accent: chosen ? (o.accent || C.BLUE) : 0,
-      pose: o.poses ? o.poses[i] : '', off: o.off,
-    };
-    moPart(ui, rect(x, r.y, w, r.h), idBase + i, po, { tap: () => pick(i) });
-    if (chosen && !o.off) {
-      // The gap cells either side show half blocks: the chip sticks out.
-      const k = moLook(ui, idBase + i, po);
-      ui.pen(k.pen);
-      if (x > r.x) moBarCol(ui, x - 1, r, G.QUAD_LR, G.RHALF, G.QUAD_UR, k, k.edge);
-      moBarCol(ui, x + w, r, G.QUAD_LL, G.LHALF, G.QUAD_UL, k, k.edge);
-      ui.pen(C.DEFAULT);
+    const w = moChipW(l), sr = rect(x, r.y, w, r.h), chosen = i === value, s = sts[i];
+    ui.hot(sr, idBase + i, { tap: () => pick(i) });
+    const k = s.down ? { pen: chosen ? acc : C.DEFAULT, fill: S.FOCUS, edge: S.FOCUS_EDGE, text: S.FOCUS }
+      : { pen: C.DEFAULT, fill: S.PANEL, edge: S.PANEL_EDGE, text: S.PANEL };
+    moSlab(ui, sr, k);
+    if (chosen) {
+      ui.pen(acc);
+      for (let c = 0; c < w; c++) ui.putch(x + c, y1, G.HALF_UP, S.BAR_EDGE);
     }
-    x += w + 1;
+    if (i > 0 && quiet(s) && quiet(sts[i - 1])) {
+      ui.pen(C.DEFAULT);
+      ui.putch(x, y, G.LEFT_1, S.PANEL_MUTED);
+    }
+    ui.pen(k.pen);
+    ui.text(rect(x, y, w, 1), l, k.text | (chosen ? BOLD : 0), CENTER);
+    if (s.focus) moFocusBars(ui, sr, MO_FOCUS_LOOK, false);
+    ui.pen(C.DEFAULT);
+    x += w;
   });
 }
 
@@ -375,13 +393,17 @@ function moParts(ui) {
   POSES.forEach((pose, i) => moBtn(ui, col(i, y, 3), 11 + i, 'Connect',
     { tone: 'solid', accent: C.GREEN, pose, off: i === 3 }));
   y += 3;
-  POSES.forEach((pose, i) => moToggle(ui, col(i, y, 3), 21 + i, 'FX', i !== 0,
+  POSES.forEach((pose, i) => moToggle(ui, col(i, y, 3), 21 + i, i !== 0,
     { pose, off: i === 3 }));
   y += 3;
   if (ui.rows - y >= 6) {
-    const half = Math.trunc((ui.cols - 3) / 2);
-    moChips(ui, rect(1, y, half, 3), 31, 'Tint', ['color', 'green'], 0, () => {}, { poses: ['', 'focus'] });
-    moChips(ui, rect(2 + half, y, half, 3), 35, 'Tint', ['color', 'green'], 0, () => {}, { poses: ['focus', 'down'] });
+    const half = Math.trunc((ui.cols - 3) / 2), cw = moCapW('Tint');
+    const choice = (x, id, poses) => {
+      moCaption(ui, rect(x, y, cw, 3), 'Tint');
+      moChips(ui, rect(x + cw, y, half - cw, 3), id, ['color', 'green'], 0, () => {}, { poses });
+    };
+    choice(1, 31, ['', 'focus']);
+    choice(2 + half, 35, ['focus', 'down']);
     y += 3;
   }
   if (ui.rows - y >= 3) {
@@ -634,12 +656,13 @@ function moEdit(ui, app) {
   field(3, rect(body.x + wide + gx, y, portW, 3));
   y += 3;
   // The chips start in the fields' value column.
-  moChips(ui, rect(body.x, y, body.w, 3), MO_ID.OPT, 'Sign-in', ['password', 'key'], f.auth,
+  moCaption(ui, rect(body.x, y, 12, 3), 'Sign-in');
+  moChips(ui, rect(body.x + 12, y, body.w - 12, 3), MO_ID.OPT, ['password', 'key'], f.auth,
     (i) => {
       f.auth = i;
       if (i && !f.key && keys.length) f.key = keys[0].id;
       st.edit = -1;
-    }, { capW: 12 });
+    });
   y += 3;
   const key = f.auth === 1;
   if (key) {
@@ -653,8 +676,10 @@ function moEdit(ui, app) {
   }
   const toggle = key ? 'Show passphrase' : 'Show password';
   field(4, rect(body.x, y, half, 3), key ? 'Passphrase' : 'Password', key ? 12 : 0);
-  moToggle(ui, rect(body.x + half + gx, y, moToggleW(toggle), 3), MO_ID.OPT + 4,
-    toggle, f.show, { pad: 3 }, { tap: () => { f.show = !f.show; } });
+  const tx = body.x + half + gx, tw = moCapW(toggle);
+  moCaption(ui, rect(tx, y, tw, 3), toggle);
+  moToggle(ui, rect(tx + tw, y, MO_SWITCH_W, 3), MO_ID.OPT + 4, f.show, {},
+    { tap: () => { f.show = !f.show; } });
   y += 3;
   if (alert && y < body.y + body.h) {
     ui.pen(C.RED);
@@ -719,8 +744,10 @@ function moWifiAdd(ui, app) {
   };
   field(0, rect(body.x, body.y, body.w, 3), 'Network name', 14, {});
   field(1, rect(body.x, body.y + 3, half, 3), 'Password', 0, { mask: !f.show, bad: passBad });
-  moToggle(ui, rect(body.x + half + gx, body.y + 3, moToggleW('Show password'), 3),
-    MO_ID.OPT + 4, 'Show password', f.show, { pad: 3 }, { tap: () => { f.show = !f.show; } });
+  const tx = body.x + half + gx, tw = moCapW('Show password');
+  moCaption(ui, rect(tx, body.y + 3, tw, 3), 'Show password');
+  moToggle(ui, rect(tx + tw, body.y + 3, MO_SWITCH_W, 3), MO_ID.OPT + 4, f.show, {},
+    { tap: () => { f.show = !f.show; } });
   if (passBad && body.h > 6) {
     ui.pen(C.RED);
     ui.text(rect(body.x + 2, body.y + 6, body.w - 4, 1), 'Password needs 8 to 63 characters',
@@ -836,7 +863,7 @@ const MO_SETUP = [
     { t: 'pick', key: 'font', label: 'Font size', set: ['8x16', '10x20', '12x24'], init: 2,
       ask: (v) => ({ title: `Restart with the ${v} font?`, verb: 'Restart', accent: C.AMBER,
         lines: ['The deck restarts to change the font.', 'An open session ends.'] }) },
-    { t: 'pick', key: 'saver', label: 'Saver + lock, min', set: ['1', '3', '5', '10', '30'], init: 2 },
+    { t: 'pick', key: 'saver', label: 'Saver + lock', unit: 'min', set: ['1', '3', '5', '10', '30'], init: 2 },
     { t: 'toggle', key: 'edge', label: 'Edge scroll', init: false },
     { t: 'act', label: 'Clear host keys', accent: C.RED, danger: true, ask: 'Clear every pinned host key?' },
     { t: 'act', label: 'Factory reset', accent: C.RED, danger: true, ask: 'Erase every host and setting?' }] },
@@ -877,9 +904,9 @@ function moSectionList(ui, app, list, rows, area, gx, L) {
   }
 }
 
-// One section. A choice takes a row and shows every option, so no value
-// hides behind a cycle. Switches and actions keep their own width and
-// pack into rows from the left.
+// One section. A switch or a choice takes a row: its caption in the page's
+// caption column, then the control. A choice shows every option, so no value
+// hides behind a cycle. Actions keep their own width and pack from the left.
 function moSection(ui, app) {
   const st = app.state, pg = moPage(ui), c = MO_SETUP[st.cat | 0], body = pg.body;
   const gx = pg.m.gutter;
@@ -887,14 +914,16 @@ function moSection(ui, app) {
   // The panel takes the top of the body; the rows and tiles lay out below.
   const panel = c.panel ? c.panel(st) : null;
   const pan = panel ? cutTop(body, panel.rows.length + 2) : null;
-  const own = (it) => (it.t === 'toggle' ? moToggleW(it.label) : moActW(it.label, it.nav ? '›' : ''));
+  // A switch or a choice takes a row; actions keep their own width.
+  const own = (it) => moActW(it.label, it.nav ? '›' : '');
   const pack = (room, danger) => {
     const out = [];
     let open = null, used = 0;
     c.items.forEach((it, n) => {
       if (!!it.danger !== danger) return;
-      const cell = { it, id: MO_ID.OPT + n * 8, w: it.t === 'pick' ? room : Math.min(own(it), room) };
-      if (it.t === 'pick') { out.push([cell]); open = null; }
+      const row = it.t !== 'act';
+      const cell = { it, id: MO_ID.OPT + n * 8, w: row ? room : Math.min(own(it), room) };
+      if (row) { out.push([cell]); open = null; }
       else if (open && used + gx + cell.w <= room) { open.push(cell); used += gx + cell.w; }
       else { open = [cell]; out.push(open); used = cell.w; }
     });
@@ -936,7 +965,7 @@ function moSection(ui, app) {
       y: Math.max(0, body.h - (L.danger.length - i) * 3) })));
   const itOff = (it) => !!(it.off && it.off(st, hosts.length));
   const onPage = (row) => row.pg < 0 || row.pg === st.spage;
-  const capW = c.items.reduce((n, it) => (it.t === 'pick' ? Math.max(n, moCapW(it.label)) : n), 0);
+  const capW = c.items.reduce((n, it) => (it.t !== 'act' ? Math.max(n, moCapW(it.label)) : n), 0);
   st.spage = Math.min(Math.max(st.spage | 0, 0), pages - 1);
   // The first key focus: the first live item of the page, else its first tile.
   const firstCell = rows.filter(onPage).flatMap((row) => row.r).find((cell) => !itOff(cell.it));
@@ -960,14 +989,22 @@ function moSection(ui, app) {
       const r = rect(x, y, w, 3);
       x += w + gx;
       const v = it.key in st.opt ? st.opt[it.key] : it.init;
-      if (it.t === 'pick') moChips(ui, r, id, it.label, it.set, v, (i) => {
-        if (!it.ask || i === v) { st.opt[it.key] = i; return; }
-        st.ask = { ...it.ask(it.set[i]), yes: () => { st.opt[it.key] = i; app.back(); } };
-        app.go('mo-confirm');
-      }, { capW });
-      else if (it.t === 'toggle')
-        moToggle(ui, r, id, it.label, v, { pad: 3 }, { tap: () => { st.opt[it.key] = !v; } });
-      else moPart(ui, r, id, {
+      if (it.t !== 'act') {
+        // Caption column, control, then a unit in dim text.
+        moCaption(ui, rect(r.x, y, capW, 3), it.label);
+        const cr = rect(r.x + capW, y, r.w - capW, 3);
+        if (it.t === 'pick') moChips(ui, cr, id, it.set, v, (i) => {
+          if (!it.ask || i === v) { st.opt[it.key] = i; return; }
+          st.ask = { ...it.ask(it.set[i]), yes: () => { st.opt[it.key] = i; app.back(); } };
+          app.go('mo-confirm');
+        });
+        else moToggle(ui, cr, id, v, {}, { tap: () => { st.opt[it.key] = !v; } });
+        if (it.unit) {
+          const ux = cr.x + (it.t === 'pick' ? moChipsW(it.set) : MO_SWITCH_W) + 1;
+          ui.pen(C.DEFAULT);
+          ui.text(rect(ux, y + 1, moLen(it.unit), 1), it.unit, S.MUTED, LEFT);
+        }
+      } else moPart(ui, r, id, {
         title: it.label, right: it.nav ? '›' : '', tone: it.accent ? 'tint' : 'card', accent: it.accent,
         pad: 3, off: itOff(it),
       }, { tap: () => {
@@ -1495,6 +1532,419 @@ const moFormState = (over, edit = -1, more = {}) => () => {
 
 const MO_LONG_HOST = 'edge-gateway-03.eu-west-2.compute.internal.example-corp.co.uk';
 
+// ---------------------------------------------------------------------
+// Round 3 design scratch (x-r3-*). No gate reads these. The block from
+// here to R3_SKETCHES, and its one line in MO_SKETCHES, delete as a whole.
+
+const R3_ID = { OPT: 5000, FIELD: 5400, BTN: 5500 };
+const R3_RV = ['seg', 'dot', 'tab', 'stripe'], R3_KV = ['slide', 'pill', 'rail'];
+const R3_FOCUS = { focus: true, pen: MO_FOCUS, fill: S.FOCUS, edge: S.FOCUS_EDGE };
+
+const r3Pose = (ui, id, pose) => ({
+  focus: pose === 'focus' || (!pose && ui.focused(id)),
+  down: pose === 'down' || (!pose && ui.pressed(id)),
+});
+
+// The caption column: the longest caption of the page, two cells each side.
+const r3CapW = (caps) => caps.reduce((n, c) => Math.max(n, moLen(c)), 0) + 4;
+function r3Cap(ui, x, r, w, text) {
+  ui.pen(C.DEFAULT);
+  ui.text(rect(x, moCentre(r.y, r.h, 1, text), w, 1), text, S.TEXT, LEFT);
+}
+
+const r3RowEdge = (ui, x, w, y, cp, pen, style) => {
+  ui.pen(pen);
+  for (let i = 0; i < w; i++) ui.putch(x + i, y, cp, style);
+};
+
+// One choice of several. o.v picks the construction:
+//   seg    joined bar; the chosen segment is a solid accent thumb.
+//   dot    separate chips; a radio dot and a tint mark the chosen one.
+//   tab    joined bar; an accent underline marks the chosen one.
+//   stripe separate chips; an accent stripe marks the chosen one.
+// The chosen mark outlives the sand focus fill in each.
+const r3SegW = (l, v) => Math.max(7, moLen(l) + 4) + (v === 'stripe' ? 1 : 0);
+const r3Joined = (v) => v === 'seg' || v === 'tab';
+const r3RadioW = (v, labels) =>
+  labels.reduce((n, l) => n + r3SegW(l, v), 0) + (r3Joined(v) ? 0 : labels.length - 1);
+
+function r3Radio(ui, r, idBase, labels, value, pick, o = {}) {
+  const v = o.v || 'seg', acc = o.accent || C.BLUE;
+  const y = moCentre(r.y, r.h, 1, 'radio'), y1 = r.y + r.h - 1;
+  const sts = labels.map((l, i) => ({ ...r3Pose(ui, idBase + i, o.poses && o.poses[i]), chosen: i === value }));
+  let x = r.x;
+  labels.forEach((l, i) => {
+    const w = r3SegW(l, v), sr = rect(x, r.y, w, r.h), { focus, down, chosen } = sts[i];
+    const hot = focus || down;
+    ui.hot(sr, idBase + i, { tap: () => pick(i) });
+    let k;
+    if (focus) k = { ...R3_FOCUS, text: S.FOCUS };
+    else if (down) k = { pen: chosen ? acc : C.DEFAULT, fill: S.FOCUS, edge: S.FOCUS_EDGE, text: S.FOCUS };
+    else if (chosen && v === 'seg') k = { pen: acc, fill: S.BAR, edge: S.BAR_EDGE, text: S.BAR };
+    else if (chosen && v === 'dot') k = { pen: acc, fill: S.WELL, edge: S.WELL_EDGE, text: S.WELL };
+    else k = { pen: C.DEFAULT, fill: S.PANEL, edge: S.PANEL_EDGE, text: S.PANEL };
+    moSlab(ui, sr, k);
+    if (chosen && v === 'seg' && hot) {
+      r3RowEdge(ui, x, w, r.y, G.HALF_DN, acc, S.BAR_EDGE);
+      r3RowEdge(ui, x, w, y1, G.HALF_UP, acc, S.BAR_EDGE);
+    }
+    if (chosen && v === 'tab') r3RowEdge(ui, x, w, y1, G.HALF_UP, acc, S.BAR_EDGE);
+    if (chosen && v === 'stripe') moStripe(ui, sr, acc);
+    if (focus) moFocusBars(ui, sr, k, chosen && v === 'stripe');
+    // A thin tick parts two quiet neighbours of a joined bar.
+    const quiet = (s) => !s.focus && !s.down && !(s.chosen && v === 'seg');
+    if (r3Joined(v) && i > 0 && quiet(sts[i]) && quiet(sts[i - 1])) {
+      ui.pen(C.DEFAULT);
+      ui.putch(x, y, 0x258F, S.PANEL_MUTED);
+    }
+    ui.pen(k.pen);
+    const style = k.text | (chosen ? BOLD : 0);
+    if (v === 'dot') {
+      const t = `${chosen ? '●' : '○'} ${l}`, tx = x + ((w - moLen(t)) >> 1);
+      ui.text(rect(x, y, w, 1), t, style, CENTER);
+      if (!chosen && !hot) ui.putch(tx, y, '○', S.PANEL_MUTED);
+    } else if (v === 'stripe') ui.text(rect(x + 1, y, w - 1, 1), l, style, CENTER);
+    else ui.text(rect(x, y, w, 1), l, style, CENTER);
+    ui.pen(C.DEFAULT);
+    x += w + (r3Joined(v) ? 0 : 1);
+  });
+}
+
+// A switch control on the page background; its caption is the caller's.
+//   slide the knob is half the control and carries the word.
+//   pill  a block knob in a track; the word sits in the free track.
+//   rail  a card with the word, a line and a two-cell block knob.
+const R3_SW_W = { slide: 12, pill: 10, rail: 13 };
+function r3Switch(ui, r, id, on, o = {}, act) {
+  const kv = o.k || 'slide', w = R3_SW_W[kv], sr = rect(r.x, r.y, w, r.h);
+  const { focus, down } = r3Pose(ui, id, o.pose);
+  const y = moCentre(r.y, r.h, 1, 'switch'), acc = on ? C.GREEN : C.DEFAULT;
+  ui.hot(sr, id, act);
+  const part = (x0, n, pen, fill, edge) => moSlab(ui, rect(sr.x + x0, sr.y, n, sr.h), { pen, fill, edge });
+  if (kv === 'rail') {
+    const k = focus ? { ...R3_FOCUS, t: S.FOCUS | BOLD, d: S.FOCUS }
+      : down ? { pen: acc, fill: S.FOCUS, edge: S.FOCUS_EDGE, t: S.FOCUS | BOLD, d: S.FOCUS }
+      : { pen: C.DEFAULT, fill: S.PANEL, edge: S.PANEL_EDGE, t: S.PANEL | BOLD, d: S.PANEL_MUTED, card: true };
+    moSlab(ui, sr, k);
+    moFocusBars(ui, sr, k, false);
+    ui.pen(on && k.card ? C.GREEN : k.pen);
+    const st = on ? k.t : k.d, rx = sr.x + 6;
+    ui.text(rect(sr.x + 2, y, 3, 1), on ? 'On' : 'Off', st, RIGHT);
+    ui.puts(on ? rx : rx + 2, y, '━━━━', k.d);
+    ui.puts(on ? rx + 4 : rx, y, '██', st);
+    ui.pen(C.DEFAULT);
+    return;
+  }
+  // The knob takes `kn` cells at one end; the track takes the rest.
+  const kn = kv === 'slide' ? w >> 1 : 4, tn = w - kn, kx = on ? tn : 0, tx = on ? 0 : kn;
+  const tk = focus ? [MO_FOCUS, S.FOCUS, S.FOCUS_EDGE, S.FOCUS | BOLD]
+    : down ? [acc, S.FOCUS, S.FOCUS_EDGE, S.FOCUS | BOLD]
+    : on ? [C.GREEN, S.WELL, S.WELL_EDGE, S.WELL | BOLD]
+    : [C.DEFAULT, S.PANEL, S.PANEL_EDGE, S.PANEL_MUTED];
+  part(tx, tn, tk[0], tk[1], tk[2]);
+  part(kx, kn, acc, S.BAR, S.BAR_EDGE);
+  if (focus) moFocusBars(ui, sr, R3_FOCUS, false);
+  if (kv === 'slide') {
+    ui.pen(acc);
+    ui.text(on ? rect(sr.x + kn, y, kn, 1) : rect(sr.x + 1, y, kn - 1, 1), on ? 'On' : 'Off', S.BAR | BOLD, CENTER);
+  } else {
+    ui.pen(tk[0]);
+    ui.text(rect(sr.x + (on ? 1 : kn), y, tn - 1, 1), on ? 'On' : 'Off', tk[3], CENTER);
+  }
+  ui.pen(C.DEFAULT);
+}
+
+// A form field without a label: the value alone. Else as moField.
+function r3Field(ui, r, id, value, o, act) {
+  const p = moPart(ui, r, id, { title: '', accent: C.CYAN, lit: o.edit, stripe: o.bad ? C.RED : 0 }, act);
+  if (!p) return;
+  const k = p.k, vx = p.inn.x, vw = p.inn.w;
+  const cs = Array.from(value), n = cs.length, room = vw - (o.bad ? 2 : 0);
+  const caret = Math.max(0, Math.min(o.caret === undefined ? n : o.caret, n));
+  const first = o.edit && n > room - 1 ? entryFirst(n, caret, room) : 0;
+  const shown = o.mask ? '•'.repeat(n - first) : cs.slice(first).join('');
+  ui.pen(o.bad && k.card ? C.RED : k.pen);
+  ui.text(rect(vx, p.y, room, 1), shown, k.title, LEFT);
+  if (o.bad) ui.putch(p.inn.x + p.inn.w - 1, p.y, '!', k.title);
+  if (o.edit) {
+    const under = caret < n ? (o.mask ? '•' : cs[caret]) : ' ';
+    ui.pen(C.WHITE);
+    ui.putch(Math.min(vx + caret - first, vx + vw - 1), p.y, under, S.BAR);
+  }
+  ui.pen(C.DEFAULT);
+}
+
+// Rows of a settings page on the form grid: caption column, then the
+// control, one per row. Danger actions pack at the bottom.
+// An item: { t, label, unit, set, v, poses, pose, key }.
+function r3Rows(ui, body, items, o) {
+  const plain = items.filter((it) => it.t !== 'act');
+  const capW = r3CapW(plain.map((it) => it.label)), cx = body.x + capW;
+  let y = body.y;
+  items.forEach((it, n) => {
+    if (it.t === 'act' || y + 3 > body.y + body.h) return;
+    const r = rect(body.x, y, body.w, 3), id = R3_ID.OPT + n * 8;
+    r3Cap(ui, body.x + 2, r, capW - 4, it.label);
+    if (it.t === 'pick') {
+      const w = r3RadioW(o.rv, it.set);
+      if (capW + w > body.w) ui.issues.push({ kind: 'drop', text: `${it.label} radio` });
+      r3Radio(ui, rect(cx, y, w, 3), id, it.set, it.v, (i) => o.set(it, i), { v: o.rv, poses: it.poses });
+      if (it.unit) {
+        ui.pen(C.DEFAULT);
+        ui.text(rect(cx + w + 1, y + 1, moLen(it.unit), 1), it.unit, S.MUTED, LEFT);
+      }
+    } else r3Switch(ui, rect(cx, y, body.w - capW, 3), id, it.v, { k: o.kv, pose: it.pose },
+      { tap: () => o.set(it, !it.v) });
+    y += 3;
+  });
+  const danger = items.filter((it) => it.t === 'act');
+  const f = moFlow(rect(body.x, body.y + body.h - 3, body.w, 3), 2, 3);
+  danger.forEach((it, i) => moPart(ui, moFlowNext(f, moActW(it.label)), R3_ID.BTN + i,
+    { title: it.label, tone: 'tint', accent: C.RED, pad: 3 }, {}));
+}
+
+// State sheets on a realistic page. st.sheet: 'a' and 'b' pose the radio,
+// 'sw' the switch.
+const R3_SHEETS = {
+  a: { title: 'System', items: [
+    { t: 'pick', label: 'Font size', set: ['8x16', '10x20', '12x24'], v: 2 },
+    { t: 'pick', label: 'Saver + lock', unit: 'min', set: ['1', '3', '5', '10', '30'], v: 2, poses: ['', '', 'focus'] },
+    { t: 'pick', label: 'Phosphor', set: ['color', 'green', 'amber'], v: 0, poses: ['', 'focus'] },
+    { t: 'pick', label: 'Wobble', set: ['off', 'subtle', 'medium', 'deep'], v: 2, poses: ['', 'focus'] },
+    { t: 'toggle', label: 'Edge scroll', v: true }] },
+  b: { title: 'Motion FX', items: [
+    { t: 'pick', label: 'Font size', set: ['8x16', '10x20', '12x24'], v: 2, poses: ['', '', 'focus'] },
+    { t: 'pick', label: 'Phosphor', set: ['color', 'green', 'amber'], v: 1, poses: ['focus'] },
+    { t: 'pick', label: 'Wipe in', set: ['off', '0.3 s', '0.6 s'], v: 1, poses: ['', 'down'] },
+    { t: 'pick', label: 'Static', set: ['off', 'light', 'heavy'], v: 1, poses: ['', '', 'down'] },
+    { t: 'pick', label: 'Collapse', set: ['off', '0.2 s', '0.5 s'], v: 0 }] },
+  sw: { title: 'CRT FX', items: [
+    { t: 'toggle', label: 'Scanlines', v: true },
+    { t: 'toggle', label: 'Bold pop', v: false },
+    { t: 'toggle', label: 'Edge scroll', v: true, pose: 'focus' },
+    { t: 'toggle', label: 'Key click', v: false, pose: 'focus' },
+    { t: 'toggle', label: 'Cursor blink', v: true, pose: 'down' },
+    { t: 'toggle', label: 'Auto connect', v: false, pose: 'down' }] },
+};
+function r3Sheet(ui, app) {
+  const st = app.state, pg = moPage(ui), sh = R3_SHEETS[st.sheet || 'a'];
+  moHeader(ui, pg.header, { path: 'Setup', title: sh.title, back: { tap: () => app.back() } });
+  r3Rows(ui, pg.body, sh.items, { rv: st.rv || 'seg', kv: st.kv || 'slide', set: () => {} });
+  moBarRow(ui, pg.status, 'A change applies at once.', '←→ choose  ↵ set  Esc back');
+}
+
+// A real section (st.cat: 3 CRT FX, 4 Motion FX, 5 System) on the grid.
+function r3Section(ui, app) {
+  const st = app.state, pg = moPage(ui), c = MO_SETUP[st.cat || 5];
+  st.r3 = st.r3 || {};
+  moHeader(ui, pg.header, { path: 'Setup', title: c.name, back: { tap: () => app.back() } });
+  const items = c.items.map((it) => {
+    const [label, unit] = it.label.split(', ');
+    return { ...it, label, unit: unit || it.unit, v: it.key in st.r3 ? st.r3[it.key] : it.init };
+  });
+  r3Rows(ui, pg.body, items, { rv: st.rv || 'seg', kv: st.kv || 'slide',
+    set: (it, v) => { st.r3[it.key] = v; } });
+  moBarRow(ui, pg.status, 'A change applies at once.', '←→ choose  ↵ set  Esc back');
+}
+
+// The host form on a two-column grid: caption, entry, caption, entry.
+// st.f overrides the values; st.edit is the entry in typing.
+const R3_FORM = { name: 'homelab', user: 'root', host: '192.168.1.10', port: '22', pass: 'hunter22',
+                  auth: 0, key: 'deck-ed25519', show: false };
+function r3Form(ui, app) {
+  const st = app.state, pg = moPage(ui), body = pg.body;
+  const f = { ...R3_FORM, ...(st.f || {}) }, isKey = f.auth === 1;
+  const edit = st.edit === undefined ? -1 : st.edit;
+  const bad = { name: !f.name, user: !f.user, host: !f.host,
+                port: !(/^\d+$/.test(f.port) && +f.port >= 1 && +f.port <= 65535) };
+  const alert = bad.port ? 'Port: a number from 1 to 65535.' : bad.name ? 'A host needs a name.'
+    : bad.host ? 'A host needs an address.' : bad.user ? 'A host needs a user.' : '';
+  moFirst(ui, R3_ID.FIELD);
+  const head = moPills(ui, pg.header, [{ id: MO_ID.PILL, label: 'Save',
+    o: { tone: 'solid', accent: C.GREEN, off: !!alert }, act: {} }]);
+  moHeader(ui, head, { path: 'Hosts', title: st.isNew ? 'New host' : `Edit ${f.name}`,
+    back: { tap: () => app.back() } });
+  const capW = r3CapW(['Name', 'Host', 'Sign-in', 'Key', 'Passphrase']), cap2W = 6;
+  const B = Math.max(16, Math.min(24, body.w >> 2));
+  const x1 = body.x + capW, x2 = body.x + body.w - B, xc2 = x2 - cap2W, A = xc2 - 2 - x1;
+  const row = (i) => rect(body.x, body.y + i * 3, body.w, 3);
+  const cap = (r, text) => r3Cap(ui, body.x + 2, r, capW - 4, text);
+  const cap2 = (r, text) => r3Cap(ui, xc2, r, cap2W - 2, text);
+  const field = (i, r, key, o = {}) => r3Field(ui, r, R3_ID.FIELD + i, f[key],
+    { edit: edit === i, caret: edit === i ? st.caret : undefined, bad: bad[key], ...o },
+    { tap: () => { st.edit = edit === i ? -1 : i; } });
+  let r = row(0), n = 3;
+  cap(r, 'Name'); field(0, rect(x1, r.y, A, 3), 'name');
+  cap2(r, 'User'); field(1, rect(x2, r.y, B, 3), 'user');
+  r = row(1);
+  cap(r, 'Host'); field(2, rect(x1, r.y, A, 3), 'host');
+  cap2(r, 'Port'); field(3, rect(x2, r.y, 9, 3), 'port');
+  r = row(2);
+  cap(r, 'Sign-in');
+  const rv = st.rv || 'seg', set = ['password', 'key'];
+  r3Radio(ui, rect(x1, r.y, r3RadioW(rv, set), 3), R3_ID.OPT, set, f.auth,
+    (i) => { st.f = { ...f, auth: i }; }, { v: rv });
+  if (isKey) {
+    r = row(n++);
+    cap(r, 'Key');
+    const type = 'ssh-ed25519', pos = '1/2';
+    const right = moLen(f.key) + moLen(type) + moLen(pos) + 8 <= A ? `${type}  ${pos}` : pos;
+    moPart(ui, rect(x1, r.y, A, 3), R3_ID.OPT + 5, { title: f.key, right }, {});
+  }
+  r = row(n++);
+  cap(r, isKey ? 'Passphrase' : 'Password');
+  field(4, rect(x1, r.y, A, 3), 'pass', { mask: !f.show, bad: false });
+  cap2(r, 'Show');
+  r3Switch(ui, rect(x2, r.y, B, 3), R3_ID.OPT + 4, f.show, { k: st.kv || 'slide' },
+    { tap: () => { st.f = { ...f, show: !f.show }; } });
+  if (alert && body.y + n * 3 < body.y + body.h) {
+    ui.pen(C.RED);
+    ui.text(rect(body.x + 2, body.y + n * 3, body.w - 4, 1), alert, S.TEXT | BOLD, LEFT);
+    ui.pen(C.DEFAULT);
+  }
+  moBarRow(ui, pg.status, edit >= 0 ? 'Type on the keyboard.' : 'Tap a field to change it.',
+    edit >= 0 ? 'type  ↵ done  ↑↓ leave' : '↵ change  Esc cancel');
+}
+
+// The by-hand network form on the same grid.
+function r3WifiAdd(ui, app) {
+  const st = app.state, pg = moPage(ui), body = pg.body;
+  const f = { ssid: 'Workshop', pass: 'longenough', show: false, ...(st.f || {}) };
+  moFirst(ui, R3_ID.FIELD);
+  const head = moPills(ui, pg.header, [{ id: MO_ID.PILL, label: 'Save',
+    o: { tone: 'solid', accent: C.GREEN, off: !f.ssid }, act: {} }]);
+  moHeader(ui, head, { path: 'Wi-Fi', title: 'Add network', back: { tap: () => app.back() } });
+  const capW = r3CapW(['Network', 'Password']), cap2W = 6, sw = R3_SW_W[st.kv || 'slide'];
+  const x1 = body.x + capW, A = Math.min(40, body.w - capW - 2 - cap2W - sw), xc2 = x1 + A + 2;
+  let r = rect(body.x, body.y, body.w, 3);
+  r3Cap(ui, body.x + 2, r, capW - 4, 'Network');
+  r3Field(ui, rect(x1, r.y, A, 3), R3_ID.FIELD, f.ssid, {}, {});
+  r = rect(body.x, body.y + 3, body.w, 3);
+  r3Cap(ui, body.x + 2, r, capW - 4, 'Password');
+  r3Field(ui, rect(x1, r.y, A, 3), R3_ID.FIELD + 1, f.pass, { mask: !f.show }, {});
+  r3Cap(ui, xc2, r, cap2W - 2, 'Show');
+  r3Switch(ui, rect(xc2 + cap2W, r.y, sw, 3), R3_ID.OPT + 4, f.show, { k: st.kv || 'slide' },
+    { tap: () => { st.f = { ...f, show: !f.show }; } });
+  moBarRow(ui, pg.status, 'Tap a field to change it.', '↵ change  Esc cancel');
+}
+
+// HOME with a wordmark for a title. st.hv picks its dress:
+//   plate    a solid accent plate, the version beside it.
+//   duo      two-tone letters and a block cursor.
+//   spectrum white letters over a rainbow underline.
+//   keys     a keycap per letter, each in its own accent.
+// The mark sheds the version, then shrinks to "CD", as the header fills.
+// With st.railPos the page number leaves the header for a rail.
+const R3_VER = 'v0.9', R3_RAINBOW = [C.RED, C.AMBER, C.GREEN, C.CYAN, C.BLUE, C.MAGENTA];
+function r3Wordmark(ui, r, hv) {
+  const y = moCentre(r.y, r.h, 1, 'wordmark'), word = hv === 'duo' ? 'Cyberdeck' : 'CYBERDECK';
+  const boxed = hv === 'plate', lead = boxed || hv === 'keys' ? 0 : 1, pad = boxed ? 2 : 0;
+  const extra = hv === 'duo' ? 1 : 0;
+  const full = lead + pad * 2 + 9 + extra + 1 + moLen(R3_VER), mid = lead + pad * 2 + 9 + extra;
+  const level = r.w >= full ? 0 : r.w >= mid ? 1 : 2;
+  const text = level < 2 ? word : word[0] + word[5].toUpperCase(), n = moLen(text);
+  const x = r.x + lead + pad;
+  if (r.w < lead + pad * 2 + 2) { ui.issues.push({ kind: 'drop', text: 'wordmark' }); return; }
+  if (hv === 'plate') {
+    moSlab(ui, rect(r.x, r.y, n + 4, r.h), { pen: C.BLUE, fill: S.BAR, edge: S.BAR_EDGE });
+    ui.pen(C.BLUE);
+    ui.text(rect(x, y, n, 1), text, S.BAR | BOLD, LEFT);
+  } else if (hv === 'duo') {
+    const cut = level < 2 ? 5 : 1;
+    ui.pen(C.GREEN);
+    ui.text(rect(x, y, cut, 1), text.slice(0, cut), S.TEXT | BOLD, LEFT);
+    ui.pen(C.WHITE);
+    ui.text(rect(x + cut, y, n - cut, 1), text.slice(cut), S.TEXT | BOLD, LEFT);
+    ui.pen(C.AMBER);
+    ui.putch(x + n, y, G.VBAR, S.TEXT);
+  } else if (hv === 'spectrum') {
+    ui.pen(C.WHITE);
+    ui.text(rect(x, y, n, 1), text, S.TEXT | BOLD, LEFT);
+    for (let i = 0; i < n; i++) {
+      ui.pen(R3_RAINBOW[Math.trunc(i * R3_RAINBOW.length / n)]);
+      ui.putch(x + i, y + 1, G.HALF_UP, S.BAR_EDGE);
+    }
+  } else {
+    Array.from(text).forEach((ch, i) => {
+      const pen = R3_RAINBOW[i % R3_RAINBOW.length];
+      moSlab(ui, rect(x + i, r.y, 1, r.h), { pen, fill: S.BAR, edge: S.BAR_EDGE });
+      ui.pen(pen);
+      ui.putch(x + i, y, ch, S.BAR | BOLD);
+    });
+  }
+  if (level === 0) {
+    ui.pen(C.DEFAULT);
+    ui.text(rect(x + n + pad + extra + 1, y, moLen(R3_VER), 1), R3_VER, S.MUTED, LEFT);
+  }
+  ui.pen(C.DEFAULT);
+}
+
+function r3Home(ui, app) {
+  const st = app.state, pg = moPage(ui), hosts = st.hosts || PROFILES, hv = st.hv || 'plate';
+  // The rail takes two body columns when the list pages.
+  const many = hosts.length > gridCapacity(grid(pg.body, moCols(pg.body.w, 30, pg.m.gutter), 4, pg.m.gutter, 0));
+  const rail = st.railPos && many ? cutRight(pg.body, 2) : null;
+  const g = grid(pg.body, moCols(pg.body.w, 30, pg.m.gutter), 4, pg.m.gutter, 0);
+  const per = gridCapacity(g), pages = pageCount(hosts.length, per);
+  st.page = pageClamp(st.page | 0, hosts.length, per);
+  moFirst(ui, MO_ID.HOST + st.page * per);
+  const head = moPills(ui, pg.header, [
+    ...(st.pair ? [{ id: MO_ID.PILL + 3, label: 'Pair', o: { tone: 'tint', accent: C.CYAN } }] : []),
+    { id: MO_ID.PILL, label: '+ New' }, { id: MO_ID.PILL + 1, label: 'Setup' },
+    { id: MO_ID.PILL + 2, label: 'Lock' },
+  ]);
+  let rest = head;
+  if (rail && pages > 1) {
+    // Two page buttons, no number: the rail shows the position.
+    moBtn(ui, cutRight(rest, 6), MO_ID.NEXT, '►', { off: st.page >= pages - 1 }, {});
+    cutRight(rest, 1);
+    moBtn(ui, cutRight(rest, 6), MO_ID.PREV, '◄', { off: st.page <= 0 }, {});
+    cutRight(rest, 1);
+    moRail(ui, rect(rail.x + 1, rail.y, 1, rail.h), st.page, pages);
+  } else rest = moPager(ui, head, st.page, pages, {});
+  r3Wordmark(ui, rest, hv);
+  const first = st.page * per, shown = Math.min(per, hosts.length - first);
+  for (let i = 0; i < shown; i++) {
+    const p = hosts[first + i], w = moParse(p.where);
+    moPart(ui, gridCell(g, i), MO_ID.HOST + first + i, {
+      title: p.name, detail: `${w.user}@${w.host}${w.port === '22' ? '' : `:${w.port}`}`,
+      stripe: profAccent(p.name), right: i < 9 ? String(i + 1) : '' }, {});
+  }
+  moBarRow(ui, pg.status, 'Tap to connect. Hold for options.', '↵ connect  Space options  1-9');
+}
+
+const r3s = (name, title, draw, seed, pose) => ({ name, title, theme: 'slate', draw, seed, pose });
+const R3_SKETCHES = [
+  ...R3_RV.flatMap((rv) => [
+    r3s(`x-r3-radio-${rv}`, `r3 radio ${rv}: focus states`, r3Sheet, { sheet: 'a', rv }),
+    r3s(`x-r3-radio-${rv}-b`, `r3 radio ${rv}: edge and pressed states`, r3Sheet, { sheet: 'b', rv }),
+    r3s(`x-r3-form-key-${rv}`, `r3 host form, key, radio ${rv}`, r3Form, { rv, f: { auth: 1 } },
+      { focus: R3_ID.OPT + 1 }),
+  ]),
+  ...R3_KV.flatMap((kv) => [
+    r3s(`x-r3-switch-${kv}`, `r3 switch ${kv}: states`, r3Sheet, { sheet: 'sw', kv }),
+    r3s(`x-r3-form-${kv}`, `r3 host form, password, switch ${kv}`, r3Form, { kv }),
+  ]),
+  r3s('x-r3-form-worst', 'r3 host form: new, key, invalid, typing a long host', r3Form,
+    { isNew: true, f: { name: '', host: MO_LONG_HOST, auth: 1 }, edit: 2, caret: 24 }),
+  r3s('x-r3-crt', 'r3 CRT FX, stacked', r3Section, { cat: 3 }, { focus: R3_ID.OPT }),
+  r3s('x-r3-motion', 'r3 Motion FX', r3Section, { cat: 4 }, { down: R3_ID.OPT + 8 + 2 }),
+  r3s('x-r3-system', 'r3 System', r3Section, { cat: 5 }, { focus: R3_ID.OPT + 8 + 1 }),
+  r3s('x-r3-wifiadd', 'r3 Wi-Fi add form', r3WifiAdd, {}),
+  ...['plate', 'duo', 'spectrum', 'keys'].flatMap((hv) => [
+    r3s(`x-r3-home-${hv}`, `r3 HOME wordmark ${hv}, 8 hosts`, r3Home, { hv }),
+    r3s(`x-r3-home-${hv}-pair`, `r3 HOME wordmark ${hv}, 8 hosts, Pair`, r3Home, { hv, pair: true }),
+    r3s(`x-r3-home-${hv}-32`, `r3 HOME wordmark ${hv}, 32 hosts page 2`, r3Home,
+      { hv, hosts: PROFILES32, page: 1 }),
+    r3s(`x-r3-home-${hv}-32-pair`, `r3 HOME wordmark ${hv}, 32 hosts, Pair`, r3Home,
+      { hv, hosts: PROFILES32, page: 1, pair: true }),
+  ]),
+  r3s('x-r3-home-rail-32', 'r3 HOME: page position on a rail, 32 hosts page 2', r3Home,
+    { hv: 'spectrum', railPos: true, hosts: PROFILES32, page: 1 }),
+  r3s('x-r3-home-rail-32-pair', 'r3 HOME: page position on a rail, 32 hosts, Pair', r3Home,
+    { hv: 'spectrum', railPos: true, hosts: PROFILES32, page: 1, pair: true }),
+];
+
 // The frames the C kit must match cell for cell. kitcheck.mjs draws each
 // frame and compares it with the lab screen of the same name.
 // `state` makes the sketch state. `pose` is the key focus or the held finger.
@@ -1562,7 +2012,7 @@ export const MO_GATE = [
   { name: 'mo-confirm-forget-kbd', sketch: 'mo-confirm', pose: { focus: MO_ID.BTN },
     state: () => ({ ask: { title: 'Forget Keychron K2?', verb: 'Forget', accent: C.RED,
                            lines: ['Pair it again to use it.', 'It disconnects now.'] } }) },
-  { name: 'mo-section-fx', sketch: 'mo-section', state: () => ({ cat: 3 }) },
+  { name: 'mo-section-fx', sketch: 'mo-section', state: () => ({ cat: 3 }), pose: { focus: MO_ID.OPT + 16 } },
   { name: 'mo-section-motion', sketch: 'mo-section', state: () => ({ cat: 4 }), pose: { down: MO_ID.OPT + 9 } },
   { name: 'mo-section-system', sketch: 'mo-section', state: () => ({ cat: 5 }), pose: { focus: MO_ID.OPT + 16 } },
   { name: 'mo-section-danger', sketch: 'mo-section', state: () => ({ cat: 5 }), pose: { focus: MO_ID.OPT + 32 } },
@@ -1648,4 +2098,5 @@ export const MO_SKETCHES = [
   { name: 'mo-session', title: 'Session toast', theme: 'slate', draw: moSession },
   { name: 'mo-glyphs', title: 'Block, box and mark glyphs', theme: 'slate', draw: moGlyphs },
   { name: 'mo-parts', title: 'Parts in every state', theme: 'slate', draw: moParts },
+  ...R3_SKETCHES,
 ];

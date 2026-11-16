@@ -86,17 +86,9 @@ static ui_id_t item_id(int n, int opt)
     return (ui_id_t)(ID_OPT + n * MENU_PICK_MAX + opt);
 }
 
-/* The width an item keeps for itself. A choice takes the whole row. */
-static int own_w(const menu_item_t *it)
-{
-    return it->kind == MENU_SWITCH
-        ? ui_switch_w(item_label(it))
-        : ui_act_w(item_label(it), it->nav ? UI_S_CHEVRON : "");
-}
-
 /* Pack the visible items of one class (danger or not) into rows of
- * @p room cells. A choice takes a row and the rest keep their own width.
- * Returns the row count. */
+ * @p room cells. A switch or a choice takes a row; actions keep their own
+ * width. Returns the row count. */
 static int pack_rows(const menu_page_t *p, int room, int gx, bool danger,
                      sec_row_t *rows)
 {
@@ -106,9 +98,10 @@ static int pack_rows(const menu_page_t *p, int room, int gx, bool danger,
     for (int n = 0; n < p->count; n++) {
         const menu_item_t *it = &p->items[n];
         if (item_hidden(it) || it->danger != danger) continue;
-        const int own = own_w(it);
-        const int w = it->kind == MENU_PICK ? room : own < room ? own : room;
-        if (it->kind != MENU_PICK && open && used + gx + w <= room) {
+        const bool act = it->kind == MENU_ACT;
+        const int own = ui_act_w(item_label(it), it->nav ? UI_S_CHEVRON : "");
+        const int w = !act ? room : own < room ? own : room;
+        if (act && open && used + gx + w <= room) {
             sec_row_t *r = &rows[nrows - 1];
             r->c[r->n].it = (uint8_t)n;
             r->c[r->n++].w = (uint8_t)w;
@@ -118,7 +111,7 @@ static int pack_rows(const menu_page_t *p, int room, int gx, bool danger,
         rows[nrows].n = 1;
         rows[nrows].c[0].it = (uint8_t)n;
         rows[nrows++].c[0].w = (uint8_t)w;
-        open = it->kind != MENU_PICK;
+        open = act;
         used = w;
     }
     return nrows;
@@ -190,7 +183,7 @@ static void section_layout(const menu_page_t *p, ui_rect_t body, int gx,
     L->cap_w = 0;
     for (int n = 0; n < p->count; n++) {
         const menu_item_t *it = &p->items[n];
-        if (it->kind != MENU_PICK || item_hidden(it)) continue;
+        if (it->kind == MENU_ACT || item_hidden(it)) continue;
         const int w = ui_caption_w(item_label(it));
         if (w > L->cap_w) L->cap_w = w;
     }
@@ -233,16 +226,25 @@ static void draw_item(const menu_item_t *it, int n, ui_rect_t r, int cap_w)
     const ui_id_t id = item_id(n, 0);
     const uint8_t off = item_off(it) ? UI_PART_OFF : 0;
 
-    if (it->kind == MENU_PICK) {
-        const char *opt[MENU_PICK_MAX];
-        int cnt = it->count(it->arg);
-        if (cnt > MENU_PICK_MAX) cnt = MENU_PICK_MAX;
-        for (int i = 0; i < cnt; i++) opt[i] = it->option(it->arg, i);
-        ui_chips(r, id, item_label(it), opt, cnt, it->index(it->arg), 0,
-                 cap_w);
-    } else if (it->kind == MENU_SWITCH) {
-        ui_switch(r, id, item_label(it), it->on(it->arg),
-                  (uint8_t)(UI_PART_ROOMY | off));
+    if (it->kind != MENU_ACT) {
+        /* The caption grid: caption, control, a unit in dim text. */
+        ui_caption(ui_rect(r.x, r.y, cap_w, r.h), item_label(it));
+        const ui_rect_t cr = ui_rect(r.x + cap_w, r.y, r.w - cap_w, r.h);
+        int cw = UI_SWITCH_W;
+        if (it->kind == MENU_PICK) {
+            const char *opt[MENU_PICK_MAX];
+            int cnt = it->count(it->arg);
+            if (cnt > MENU_PICK_MAX) cnt = MENU_PICK_MAX;
+            for (int i = 0; i < cnt; i++) opt[i] = it->option(it->arg, i);
+            ui_chips(cr, id, opt, cnt, it->index(it->arg), 0);
+            cw = ui_chips_w(opt, cnt);
+        } else {
+            ui_switch(cr, id, it->on(it->arg), off);
+        }
+        ui_pen(OVERLAY_COL_DEFAULT);
+        if (it->unit)
+            ui_text(ui_rect(cr.x + cw + 1, ui_centre(r.y, r.h, 1),
+                            ui_len(it->unit), 1), it->unit, UI_MUTED, UI_LEFT);
     } else {
         ui_part(r, id,
                 &(ui_part_t){ .title = item_label(it),
@@ -276,8 +278,9 @@ static void draw_list(const menu_list_t *ls, ui_rect_t area, int gx,
     }
 }
 
-/* One section: a choice takes a row and shows every option. Switches and
- * actions keep their own width and pack from the left. A list follows. */
+/* One section: a switch or a choice takes a row on the page's caption
+ * grid. Actions keep their own width and pack from the left. A list
+ * follows. */
 static void draw_section(const menu_page_t *p)
 {
     ui_slate_t pg = ui_slate_page();

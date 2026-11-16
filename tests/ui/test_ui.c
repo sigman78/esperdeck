@@ -573,8 +573,21 @@ static void test_own_widths(void)
     TEST_ASSERT_EQUAL(10, ui_act_w("Key", NULL));
     TEST_ASSERT_EQUAL(25, ui_act_w("Key", "deck-ed25519 " UI_S_CHEVRON));
     TEST_ASSERT_EQUAL(25, ui_act_w("Add network (phone)", ""));
-    TEST_ASSERT_EQUAL(30, ui_switch_w("Show password"));
     TEST_ASSERT_EQUAL(8,  ui_caption_w("Tint"));
+    TEST_ASSERT_EQUAL(10, UI_SWITCH_W);
+}
+
+/* A tab bar has no gaps; a segment is its label and two cells each side,
+ * seven at least. */
+static void test_chips_width(void)
+{
+    static const char *const SAVER[5] = { "1", "3", "5", "10", "30" };
+    static const char *const AUTH[2] = { "password", "key" };
+    static const char *const WOB[4] = { "off", "subtle", "medium", "deep" };
+    TEST_ASSERT_EQUAL(35, ui_chips_w(SAVER, 5));
+    TEST_ASSERT_EQUAL(19, ui_chips_w(AUTH, 2));
+    TEST_ASSERT_EQUAL(35, ui_chips_w(WOB, 4));
+    TEST_ASSERT_EQUAL(0,  ui_chips_w(AUTH, 0));
 }
 
 static void test_cols_grow_with_the_grid(void)
@@ -1206,6 +1219,7 @@ int main(void)
     RUN_TEST(test_debug_pose_forces_a_look);
     RUN_TEST(test_flow_wraps_breaks_and_cuts);
     RUN_TEST(test_own_widths);
+    RUN_TEST(test_chips_width);
     RUN_TEST(test_cols_grow_with_the_grid);
     RUN_TEST(test_arrow_prefers_the_next_row_straight_ahead);
     RUN_TEST(test_arrow_prefers_straight_ahead_to_the_side);

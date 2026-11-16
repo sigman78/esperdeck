@@ -142,30 +142,40 @@ int ui_push_w(const char *label);
  *  be NULL. */
 int ui_act_w(const char *title, const char *right);
 
-/** Width of a switch drawn with UI_PART_ROOMY. */
-int ui_switch_w(const char *label);
+#define UI_SWITCH_W 10          /* cells of a switch                     */
 
-/** Width of the caption column of ui_chips: the caption and two cells
- *  each side. */
+/** Width of a ui_chips tab bar: a segment per label, its label and two
+ *  cells each side, seven at least. */
+int ui_chips_w(const char *const *labels, int n);
+
+/** Width of a caption column: the caption and two cells each side. A page
+ *  passes its longest caption, so its controls start at one x. */
 int ui_caption_w(const char *caption);
+
+/** A caption on the page background, on the centre row of @p r, two
+ *  cells in from each side. The control beside it is the touch target. */
+void ui_caption(ui_rect_t r, const char *text);
 
 /** A header button cut from the right end of @p header, with a gap.
  *  Call for the rightmost one first. */
 void ui_pill(ui_rect_t *header, ui_id_t id, const char *label, uint8_t tone,
              uint8_t accent, uint8_t flags);
 
-/** A switch. The state shows as a word, a knob position and a colour. */
-void ui_switch(ui_rect_t r, ui_id_t id, const char *label, bool on,
-               uint8_t flags);
+/* Value controls. Key focus adds the focus bars over the control's own
+ * colours, so it never hides the value. A finger washes the control in
+ * its own accent. The caption is the caller's (ui_caption). */
 
-/** One choice of @p n: a caption, then a chip per label with ids from
- *  @p id_base. The chips follow the caption column, @p cap_w cells wide
- *  (0: ui_caption_w). Pass one width to several choices and their chips
- *  line up. The chosen chip is solid in @p accent (0: blue) with a check
- *  mark. */
-void ui_chips(ui_rect_t r, ui_id_t id_base, const char *caption,
-              const char *const *labels, int n, int value, uint8_t accent,
-              int cap_w);
+/** A switch, UI_SWITCH_W cells from the left of @p r. It is a pill with
+ *  a knob at one end and the word in the free track. On: knob right,
+ *  green. Off: knob left, grey. UI_PART_OFF draws it muted and inert. */
+void ui_switch(ui_rect_t r, ui_id_t id, bool on, uint8_t flags);
+
+/** One choice of @p n: a tab bar from the left of @p r. Each label has a
+ *  segment, with ids from @p id_base. The chosen segment has a bold label
+ *  over an underline in @p accent (0: blue). A bar wider than @p r is a
+ *  fault and draws nothing. */
+void ui_chips(ui_rect_t r, ui_id_t id_base, const char *const *labels,
+              int n, int value, uint8_t accent);
 
 #define UI_PAGES_W 19           /* cells ui_pages takes at a header's end */
 

@@ -216,8 +216,9 @@ static void render_profile(uint64_t now)
     pf_entry(ui_rect(body.x + wide + gx, body.y + 3, port_w, 3), ID_PORT,
              "Port", 6, bad.port, false);
     int y = body.y + 6;
-    ui_chips(ui_rect(body.x, y, body.w, 3), ID_AUTH, "Sign-in", AUTH, 2,
-             pf_key_auth() ? 1 : 0, 0, 12);
+    ui_caption(ui_rect(body.x, y, 12, 3), "Sign-in");
+    ui_chips(ui_rect(body.x + 12, y, body.w - 12, 3), ID_AUTH, AUTH, 2,
+             pf_key_auth() ? 1 : 0, 0);
     y += 3;
 
     const bool key = pf_key_auth();
@@ -236,8 +237,9 @@ static void render_profile(uint64_t now)
     const char *toggle = key ? "Show passphrase" : "Show password";
     pf_entry(ui_rect(body.x, y, half, 3), ID_PASS, secret, key ? 12 : 0,
              false, true);
-    ui_switch(ui_rect(body.x + half + gx, y, ui_switch_w(toggle), 3), ID_SHOW,
-              toggle, s_pf.form.show, UI_PART_ROOMY);
+    const int tx = body.x + half + gx, tw = ui_caption_w(toggle);
+    ui_caption(ui_rect(tx, y, tw, 3), toggle);
+    ui_switch(ui_rect(tx + tw, y, UI_SWITCH_W, 3), ID_SHOW, s_pf.form.show, 0);
     y += 3;
 
     const char *alert = pf_alert(&bad);

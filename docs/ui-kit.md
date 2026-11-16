@@ -108,8 +108,9 @@ the C parts port those sketches line by line.
 | `ui_part` | The one tappable part. Title, optional detail line, optional right-hand text, optional colour stripe. |
 | `ui_push` | A button: one centered label. |
 | `ui_pill` | A header button, cut from the right end of the header. |
-| `ui_switch` | A two-state setting. |
-| `ui_chips` | One choice of several, every option visible; the chosen chip sticks out half a cell into the gap on each side (the first chip only on its right). |
+| `ui_switch` | A two-state setting: a 10-cell pill (`UI_SWITCH_W`) with a 4-cell knob at one end and the word in the free track. No label. |
+| `ui_chips` | One choice of several, every option visible: a tab bar with no gaps, the chosen segment bold over an accent underline. No caption. `ui_chips_w` gives its width. |
+| `ui_caption`, `ui_caption_w` | The caption of a switch or choice row, on the page background. A page's caption column is its longest caption plus four cells. |
 | `ui_entry`, `ui_entry_at` | A form field: label, value, caret while editing, invalid mark. `ui_entry_at` puts the caret anywhere in the value and scrolls to keep it in view. |
 | `ui_title` | Page header. With `back`, the whole bar is the back target. |
 | `ui_pages`, `ui_rail` | Page stepper in the header; position rail at the side of a paged list. |
@@ -132,32 +133,38 @@ and bottom edges. Three tones give depth: `CARD` is a neutral panel,
 accent (the main action). Fake rounding with quarter-cell corners was
 tried and rejected.
 
-**Colour marks a state.** Key focus is one sand fill on every part, and
-no other state uses it. A finger down shows the same light fill in the
+**Colour marks a state.** Key focus is one sand colour on every part, and
+no other state uses it: a sand fill on buttons, tiles and entries. A finger down shows the same light fill in the
 part's own accent. Key focus also redraws the part's first and last
 column as a half-cell sand bar and a dark slit (`ui_focus_bars`, `▌ label ▐`);
-a striped part keeps its stripe as the left bar. Green marks done or on, amber the step in progress,
+a striped part keeps its stripe as the left bar. A value control (a switch
+or a choice segment) keeps its own colours under key focus and takes the bars
+alone, so the focus never hides the value. Green marks done or on, amber the step in progress,
 red an invalid value or a destructive action. A label beside its value
 takes a teal hue. In a value with a unit ("2 h 14 min", "-55 dBm") the
 unit draws dim. A number is digits with at most one `.` or `:` part, so
 an address does not dim the word after it.
 
 **A switch says its state three ways:** the word On or Off, the side of
-the diamond knob on its line, and green for On.
+the block knob (right for On), and green for On.
+
+**Rows of values.** In a section, a switch or a choice takes a row:
+its caption in the page's caption column (`ui_caption_w` of the longest
+caption), then the control, then a unit in dim text ("Saver + lock" ...
+"min"). The caption is not a touch target; the control is.
 
 **An edged part sits on the screen background.** The edge styles carry
 the theme background, so a part drawn on a panel would show slate
 notches. Panels therefore hold text only. A question is a panel with
 its two answers below it, on its own page.
 
-**Own widths.** A button, switch or action is as wide as its text needs
-(`ui_push_w`, `ui_act_w`, `ui_switch_w`), never as wide as its row. Rows
-pack from the left with `ui_flow`; a part with no room starts the next
-row. Only tiles in a grid and text panels take a width from the layout,
-and a grid gains columns on a wider screen (`ui_cols_for`). The chips of
-one page share a caption column (`ui_caption_w`, the `cap_w` argument of
-`ui_chips`). Arrow keys prefer the part straight ahead over a nearer one
-off to the side.
+**Own widths.** A button or action is as wide as its text needs
+(`ui_push_w`, `ui_act_w`), never as wide as its row; a switch is
+`UI_SWITCH_W` and a choice `ui_chips_w`. Actions pack from the left with
+`ui_flow`; a part with no room starts the next row. Only tiles in a grid
+and text panels take a width from the layout, and a grid gains columns on
+a wider screen (`ui_cols_for`). Arrow keys prefer the part straight ahead
+over a nearer one off to the side.
 
 **Heights.** A one-line part is three rows; a two-line part is four.
 `ui_centre` places the text. A label that cannot sit on the centre row
@@ -274,10 +281,20 @@ above its action row while storage holds eight.
 | Key focus | Colour alone is not enough. The focused part also gets half-cell bars on both edges (`ui_focus_bars`), on every part. |
 | Session sheet | Centred, 30 columns, as short as its rows. Disconnect sits apart below a gap. Uptime and session time are plain text at the bottom. A tap outside resumes. |
 | Status row | No `W` label: the four signal rungs speak alone, with a cross when off and a spinner while joining. `KBD CAPS NUM` always shows while a keyboard is linked; lit words are amber, unlit ones dim. A `│` divider separates chips. The SYNC chip is a dev-build option. |
-| Chosen chip | Grows half a cell into the gaps on each side. |
+| Chosen chip | Grows half a cell into the gaps on each side. Replaced in round 3 by the tab bar. |
 | Danger rows | Clear host keys, factory reset and remove code never share a row. They sit at the bottom of the last page, below a gap. |
 | HOME paging | Up to 32 hosts. Arrows at a page edge turn the page. Digits and tile numbers count within the page. |
 | Setup sections | Hosts lists the stored hosts (off during a live session). Wi-Fi shows the link, add actions and the saved networks, each with its own page. Keyboard shows the link, Pair and the paired keyboards, each with Forget. Font size moved into System. The Wi-Fi hub tile shows the SSID only. |
+
+## Decisions, round 3
+
+| Question | Verdict |
+|----------|---------|
+| Choice | A tab bar: joined segments, a thin divider between quiet ones, the chosen one bold over a blue underline. Seg, dot and stripe variants were rejected. |
+| Switch | A 10-cell pill: a 4-cell knob, the word in the free track; On is the knob right and green. The caption sits on the page; the control alone is the touch target. Slide and rail were rejected. |
+| Focus on a value | The sand bars only, over the control's own colours. A finger still washes the control in its own accent; the underline and the knob stay. |
+| Row grid | A switch or a choice takes a row. The caption column is the page's longest caption plus four. A unit follows the control in dim text. |
+| CRT FX, Motion FX | One control per row. |
 
 ## Still open
 

@@ -167,17 +167,21 @@ static void scr_parts(void)
     y += 3;
     for (int i = 0; i < 4; i++) {
         if (POSE[i]) ui_debug_pose((ui_id_t)(21 + i), POSE[i]);
-        ui_switch(COL(i, y, 3), (ui_id_t)(21 + i), "FX", i != 0,
+        ui_switch(COL(i, y, 3), (ui_id_t)(21 + i), i != 0,
                   i == 3 ? UI_PART_OFF : 0);
     }
     y += 3;
     if (rows - y >= 6) {
-        const int half = (cols - 3) / 2;
+        const int half = (cols - 3) / 2, cw = ui_caption_w("Tint");
         ui_debug_pose(32, UI_POSE_FOCUS);
-        ui_chips(ui_rect(1, y, half, 3), 31, "Tint", TINT, 2, 0, 0, 0);
         ui_debug_pose(35, UI_POSE_FOCUS);
         ui_debug_pose(36, UI_POSE_DOWN);
-        ui_chips(ui_rect(2 + half, y, half, 3), 35, "Tint", TINT, 2, 0, 0, 0);
+        for (int i = 0; i < 2; i++) {
+            const int x = i ? 2 + half : 1;
+            ui_caption(ui_rect(x, y, cw, 3), "Tint");
+            ui_chips(ui_rect(x + cw, y, half - cw, 3), (ui_id_t)(31 + 4 * i),
+                     TINT, 2, 0, 0);
+        }
         y += 3;
     }
     if (rows - y >= 3) {
@@ -339,8 +343,9 @@ static void draw_edit(const edit_t *st)
                     st->edit == i && st->caret >= 0 ? st->caret
                                                     : ui_len(fld[i].value));
     int y = body.y + 6;
-    ui_chips(ui_rect(body.x, y, body.w, 3), MO_OPT, "Sign-in", AUTH, 2,
-             f->by_key ? 1 : 0, 0, 12);
+    ui_caption(ui_rect(body.x, y, 12, 3), "Sign-in");
+    ui_chips(ui_rect(body.x + 12, y, body.w - 12, 3), MO_OPT, AUTH, 2,
+             f->by_key ? 1 : 0, 0);
     y += 3;
     if (f->by_key) {
         char right[96];
@@ -360,8 +365,9 @@ static void draw_edit(const edit_t *st)
                           (fld[4].mask ? UI_ENTRY_MASK : 0)),
                 st->edit == 4 && st->caret >= 0 ? st->caret
                                                 : ui_len(fld[4].value));
-    ui_switch(ui_rect(body.x + half + gx, y, ui_switch_w(toggle), 3),
-              MO_OPT + 4, toggle, f->show, UI_PART_ROOMY);
+    const int tx = body.x + half + gx, tw = ui_caption_w(toggle);
+    ui_caption(ui_rect(tx, y, tw, 3), toggle);
+    ui_switch(ui_rect(tx + tw, y, UI_SWITCH_W, 3), MO_OPT + 4, f->show, 0);
     y += 3;
     if (alert && y < body.y + body.h) {
         ui_pen(OVERLAY_COL_RED);
@@ -475,9 +481,10 @@ static void draw_wifiadd(const wifiadd_t *st)
                           (pass_bad ? UI_ENTRY_BAD : 0)),
                 st->edit == 1 && st->caret >= 0 ? st->caret
                                                 : ui_len(st->pass));
-    ui_switch(ui_rect(body.x + half + gx, body.y + 3,
-                      ui_switch_w("Show password"), 3),
-              MO_OPT + 4, "Show password", st->show, UI_PART_ROOMY);
+    const int tx = body.x + half + gx, tw = ui_caption_w("Show password");
+    ui_caption(ui_rect(tx, body.y + 3, tw, 3), "Show password");
+    ui_switch(ui_rect(tx + tw, body.y + 3, UI_SWITCH_W, 3), MO_OPT + 4,
+              st->show, 0);
     if (pass_bad && body.h > 6) {
         ui_pen(OVERLAY_COL_RED);
         ui_text(ui_rect(body.x + 2, body.y + 6, body.w - 4, 1),
@@ -747,6 +754,7 @@ enum { IT_ACT, IT_TOGGLE, IT_PICK };
 typedef struct {
     uint8_t     type;
     const char *label;
+    const char *unit;                 /* dim text after the control    */
     bool        nav;                  /* opens another page            */
     uint8_t     accent;               /* a caution action              */
     bool        danger;               /* set apart at the page bottom  */
@@ -794,7 +802,7 @@ static const cat_t MO_SETUP[] = {
     { "System", "saver, reset", 5, {
         { IT_PICK, "Font size", .init = 2, .nset = 3,
           .set = { "8x16", "10x20", "12x24" } },
-        { IT_PICK, "Saver + lock, min", .init = 2, .nset = 5,
+        { IT_PICK, "Saver + lock", .unit = "min", .init = 2, .nset = 5,
           .set = { "1", "3", "5", "10", "30" } },
         { IT_TOGGLE, "Edge scroll", .init = 0 },
         { IT_ACT, "Clear host keys", .accent = OVERLAY_COL_RED,
@@ -826,15 +834,8 @@ static void scr_setup(void)
 
 typedef struct { int n; struct { int it, w; } c[5]; } sec_row_t;
 
-static int own_w(const item_t *it)
-{
-    return it->type == IT_TOGGLE ? ui_switch_w(it->label)
-                                 : ui_act_w(it->label,
-                                            it->nav ? UI_S_CHEVRON : "");
-}
-
 /* Pack the items of one class (danger or not) into rows of @p room
- * cells. A choice takes a row and the rest keep their own width. */
+ * cells. A switch or a choice takes a row; actions keep their own width. */
 static int pack_rows(const cat_t *c, int room, int gx, bool danger,
                      sec_row_t *rows)
 {
@@ -844,9 +845,10 @@ static int pack_rows(const cat_t *c, int room, int gx, bool danger,
     for (int n = 0; n < c->n; n++) {
         const item_t *it = &c->it[n];
         if (it->danger != danger) continue;
-        const int own = own_w(it);
-        const int w = it->type == IT_PICK ? room : own < room ? own : room;
-        if (it->type == IT_PICK) {
+        const int own = ui_act_w(it->label, it->nav ? UI_S_CHEVRON : "");
+        const bool row = it->type != IT_ACT;
+        const int w = row ? room : own < room ? own : room;
+        if (row) {
             rows[nrows].n = 1;
             rows[nrows].c[0].it = n;
             rows[nrows++].c[0].w = w;
@@ -879,8 +881,27 @@ static void act_part(const item_t *it, ui_rect_t r, ui_id_t id, bool off)
             NULL);
 }
 
-/* One section. A choice takes a row and shows every option. Switches and
- * actions keep their own width and pack from the left. */
+/* A switch or a choice on the caption grid: the caption, the control at
+ * @p cap_w, then a unit in dim text. */
+static void value_row(const item_t *it, ui_rect_t r, ui_id_t id, int cap_w)
+{
+    ui_caption(ui_rect(r.x, r.y, cap_w, r.h), it->label);
+    const ui_rect_t cr = ui_rect(r.x + cap_w, r.y, r.w - cap_w, r.h);
+    int cw = UI_SWITCH_W;
+    if (it->type == IT_PICK) {
+        ui_chips(cr, id, it->set, it->nset, it->init, 0);
+        cw = ui_chips_w(it->set, it->nset);
+    } else {
+        ui_switch(cr, id, it->init != 0, 0);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+    if (it->unit)
+        ui_text(ui_rect(cr.x + cw + 1, ui_centre(r.y, r.h, 1),
+                        ui_len(it->unit), 1), it->unit, UI_MUTED, UI_LEFT);
+}
+
+/* One section. A switch or a choice takes a row on the caption grid.
+ * Actions keep their own width and pack from the left. */
 static void draw_section(int cat)
 {
     ui_slate_t pg = ui_slate_page();
@@ -903,7 +924,7 @@ static void draw_section(int cat)
     const int nrows = plain + nd;
     int cap_w = 0;
     for (int n = 0; n < c->n; n++)
-        if (c->it[n].type == IT_PICK) {
+        if (c->it[n].type != IT_ACT) {
             const int w = ui_caption_w(c->it[n].label);
             if (w > cap_w) cap_w = w;
         }
@@ -930,13 +951,10 @@ static void draw_section(int cat)
             const ui_id_t id = (ui_id_t)(MO_OPT + n * 8);
             const ui_rect_t r = ui_rect(x, y, rows[ri].c[ci].w, 3);
             x += r.w + gx;
-            if (it->type == IT_PICK)
-                ui_chips(r, id, it->label, it->set, it->nset, it->init, 0,
-                         cap_w);
-            else if (it->type == IT_TOGGLE)
-                ui_switch(r, id, it->label, it->init != 0, UI_PART_ROOMY);
-            else
+            if (it->type == IT_ACT)
                 act_part(it, r, id, false);
+            else
+                value_row(it, r, id, cap_w);
         }
     }
     mo_bar(pg.status,"A change applies at once.",
@@ -2039,7 +2057,8 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-kbd-paired",  scr_kbd_paired,  .slate = true },
     { "mo-confirm-forget-kbd", scr_confirm_forget_kbd, .slate = true,
       .focus = MO_BTN },
-    { "mo-section-fx",     scr_section_fx,     .slate = true },
+    { "mo-section-fx",     scr_section_fx,     .slate = true,
+      .focus = MO_OPT + 16 },
     { "mo-section-motion", scr_section_motion, .slate = true,
       .down = MO_OPT + 9 },
     { "mo-section-system", scr_section_system, .slate = true,

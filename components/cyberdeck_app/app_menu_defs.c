@@ -541,7 +541,8 @@ static void act_factory(intptr_t a, uint64_t now)
 static const menu_item_t system_items[] = {
     { .kind = MENU_PICK, .label = "Font size", .count = font_n,
       .index = font_ix, .option = font_opt, .set = font_set },
-    { .kind = MENU_PICK, .label = "Saver + lock, min", .count = saver_n,
+    { .kind = MENU_PICK, .label = "Saver + lock", .unit = "min",
+      .count = saver_n,
       .index = saver_ix, .option = saver_opt, .set = saver_set },
 #if CONFIG_INPUT_TOUCH_SCROLL
     { .kind = MENU_SWITCH, .label = "Edge scroll", .action = act_touch,

@@ -73,9 +73,14 @@ int ui_act_w(const char *title, const char *right)
     return w < 10 ? 10 : w;
 }
 
-int ui_switch_w(const char *label)
+int ui_chips_w(const char *const *labels, int n)
 {
-    return ui_len(label) + 17;
+    int w = 0;
+    for (int i = 0; i < n; i++) {
+        const int s = ui_len(labels[i]) + 4;
+        w += s < 7 ? 7 : s;
+    }
+    return w;
 }
 
 int ui_caption_w(const char *caption)

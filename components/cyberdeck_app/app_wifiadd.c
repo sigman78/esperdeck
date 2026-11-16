@@ -93,9 +93,10 @@ static void render_wifiadd(uint64_t now)
                    "Network name", 14, false, false);
     app_form_entry(&s_wa.form, ui_rect(body.x, body.y + 3, half, 3), ID_PASS,
                    "Password", 0, wa_pass_bad(), true);
-    ui_switch(ui_rect(body.x + half + gx, body.y + 3,
-                      ui_switch_w("Show password"), 3),
-              ID_SHOW, "Show password", s_wa.form.show, UI_PART_ROOMY);
+    const int tx = body.x + half + gx, tw = ui_caption_w("Show password");
+    ui_caption(ui_rect(tx, body.y + 3, tw, 3), "Show password");
+    ui_switch(ui_rect(tx + tw, body.y + 3, UI_SWITCH_W, 3), ID_SHOW,
+              s_wa.form.show, 0);
 
     if (wa_pass_bad() && body.h > 6) {
         ui_pen(OVERLAY_COL_RED);

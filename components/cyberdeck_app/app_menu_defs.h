@@ -42,6 +42,7 @@ typedef struct {
     uint8_t     kind;                            /* menu_kind_t           */
     const char *label;
     const char *(*label_fn)(intptr_t arg);       /* overrides label       */
+    const char *unit;          /* dim text after a switch or choice: "min" */
     intptr_t    arg;
     bool        nav;           /* opens another page: draws a chevron     */
     uint8_t     accent;        /* OVERLAY_COL_*; red marks a destructive act */
