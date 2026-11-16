@@ -196,10 +196,11 @@ check passes.
 Once connected you are in a normal terminal — vim, htop, mc, tmux all
 work, in color, at your chosen font size.
 
-- **Menu:** press **F12** or long-press the screen. The menu is a sheet at the
-  right of the screen: reset the terminal, open Setup, or disconnect.
-  The title bar, **Esc**, **F12** or a tap beside the sheet resume the
-  session.
+- **Menu:** press **F12** or long-press the screen. The menu is a sheet in the
+  middle of the screen: reset the terminal, open Setup, or disconnect
+  (set apart so a stray touch misses it). It also shows the deck's uptime
+  and the session's age. The title bar, **Esc**, **F12** or a tap outside
+  the sheet resume the session.
 - **Reset terminal:** menu → Reset terminal. The link stays up; the
   terminal state (colors, modes, scrollback) goes back to power-on and
   the remote program is asked to repaint, like `reset` in a shell. Use it

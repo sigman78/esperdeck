@@ -45,7 +45,7 @@ static struct {
     int       root;
     int       page;                 /* shown page of a section              */
     ui_id_t   saved_focus;          /* focus saved when another screen opens */
-    int       sheet_x;              /* first column of the session sheet    */
+    ui_rect_t sheet;                /* the session sheet, as last drawn     */
     bool      fresh;                /* page switched, not drawn yet         */
     bool      follow;               /* resumed: show the focused item's page */
     sec_lay_t lay;
@@ -257,40 +257,52 @@ static void fmt_span(char *buf, size_t sz, uint64_t s)
                  (unsigned)(s / 60 % 60));
 }
 
-/* The session sheet: a slate panel at the right over the dimmed terminal. */
+/* The session sheet: a slate panel centred over the dimmed terminal, above
+ * the status row. Short grids drop the info lines, then the gaps. */
 static void draw_sheet(void)
 {
     const int cols = ui_cols(), rows = ui_rows();
     ui_dim();
-    const int w = cols < 28 ? cols : 28;
-    const ui_rect_t sheet = ui_rect(cols - w, 0, w, rows);
-    s_menu.sheet_x = sheet.x;
+    const ui_rect_t area = ui_rect(0, 0, cols, rows > 1 ? rows - 1 : rows);
+    const bool info = area.h >= 18, gaps = area.h >= 15;
+    const int g = gaps ? 1 : 0;
+    const ui_rect_t sheet = ui_center(area, cols >= 32 ? 30 : cols,
+                                      info ? 18 : gaps ? 15 : 11);
+    s_menu.sheet = sheet;
     ui_fill(sheet.x, sheet.y, sheet.w, sheet.h, UI_TEXT);
-    ui_rect_t inn = ui_inset(sheet, 1, 0);
+    ui_rect_t inn = ui_inset(sheet, 1, 1);
 
     const conn_profile_t *cp = conn_active();
     ui_focus_default(ID_RESET);
     ui_title(ui_cut_top(&inn, 3), "Session",
              cp && cp->name[0] ? cp->name : "Connected", NULL, true);
-
-    const uint64_t now_ms = (uint64_t)app.anim_frame * ANIM_PERIOD_MS;
-    const uint64_t ss = conn_session_start();
-    char up[32], span[32], link[64];
-    fmt_span(up, sizeof up, now_ms / 1000);
-    fmt_span(span, sizeof span, now_ms > ss ? (now_ms - ss) / 1000 : 0);
-    const int rssi = net_rssi();
-    if (rssi) snprintf(link, sizeof link, "%s, %d dBm", span, rssi);
-    else      snprintf(link, sizeof link, "%s", span);
-    const ui_info_row_t info[2] = { { .label = "Up", .value = up },
-                                    { .label = "Link", .value = link } };
-    ui_info(ui_cut_top(&inn, 4), info, 2, 0);
-
     ui_part(ui_cut_top(&inn, 3), ID_RESET,
             &(ui_part_t){ .title = "Reset terminal" }, NULL);
     ui_part(ui_cut_top(&inn, 3), ID_SETUP,
             &(ui_part_t){ .title = "Setup", .right = UI_S_CHEVRON }, NULL);
+    ui_cut_top(&inn, g);
     ui_push(ui_cut_top(&inn, 3), ID_DISCONNECT, "Disconnect", UI_TONE_TINT,
             OVERLAY_COL_RED, 0);
+    if (!info) return;
+
+    ui_cut_top(&inn, g);
+    const uint64_t now_ms = (uint64_t)app.anim_frame * ANIM_PERIOD_MS;
+    const uint64_t ss = conn_session_start();
+    char up[32], span[32];
+    fmt_span(up, sizeof up, now_ms / 1000);
+    fmt_span(span, sizeof span, now_ms > ss ? (now_ms - ss) / 1000 : 0);
+    const char *lab[2] = { "Uptime", "Session" };
+    const char *val[2] = { up, span };
+    const ui_rect_t txt = ui_inset(inn, 1, 0);
+    const int lw = 9;
+    for (int i = 0; i < 2; i++) {
+        const int y = inn.y + i;
+        ui_pen(OVERLAY_COL_CYAN);
+        ui_text(ui_rect(txt.x, y, lw, 1), lab[i], UI_TEXT, UI_LEFT);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_units(ui_rect(txt.x + lw, y, txt.w - lw, 1), val[i], UI_TEXT,
+                 UI_MUTED, UI_LEFT);
+    }
 }
 
 static void render_menu(uint64_t now)
@@ -521,11 +533,14 @@ static void menu_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     }
 
     const ui_act_t a = app_hot_input(ev, k);
-    /* On the sheet a tap beside it resumes the session. */
-    if (ev->type == CYBERDECK_INPUT_TAP && !a.id && s_menu.screen == MS_MAIN &&
-        ev->x / font_width() < s_menu.sheet_x) {
-        menu_back(now);
-        return;
+    /* On the sheet a tap outside its rect resumes the session. */
+    if (ev->type == CYBERDECK_INPUT_TAP && !a.id && s_menu.screen == MS_MAIN) {
+        const int cx = ev->x / font_width(), cy = ev->y / font_height();
+        const ui_rect_t *s = &s_menu.sheet;
+        if (cx < s->x || cx >= s->x + s->w || cy < s->y || cy >= s->y + s->h) {
+            menu_back(now);
+            return;
+        }
     }
     if (a.kind == UI_ACT_NONE) return;
     nav_invalidate();

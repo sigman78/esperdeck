@@ -1391,26 +1391,40 @@ static void scr_import_rejected(void)
     draw_import(&(import_t){ .pc = true, .err = "a host needs an address" });
 }
 
-/* Session menu: a slate sheet at the right over the dimmed terminal. */
+/* Session menu: a slate sheet centred over the dimmed terminal. */
 static void scr_menu(void)
 {
     const int cols = ui_cols(), rows = ui_rows();
 
     ui_dim();
-    const int w = cols < 28 ? cols : 28;
-    const ui_rect_t sheet = ui_rect(cols - w, 0, w, rows);
+    const ui_rect_t area = ui_rect(0, 0, cols, rows > 1 ? rows - 1 : rows);
+    const bool info = area.h >= 18, gaps = area.h >= 15;
+    const int g = gaps ? 1 : 0;
+    const ui_rect_t sheet = ui_center(area, cols >= 32 ? 30 : cols,
+                                      info ? 18 : gaps ? 15 : 11);
     ui_fill(sheet.x, sheet.y, sheet.w, sheet.h, UI_TEXT);
-    ui_rect_t inn = ui_inset(sheet, 1, 0);
+    ui_rect_t inn = ui_inset(sheet, 1, 1);
     ui_title(ui_cut_top(&inn, 3), "Session", PROFILES[0].name, NULL, true);
-    const ui_info_row_t info[2] = { { "Up", "2 h 14 min" },
-                                    { "Link", "41 min, -55 dBm" } };
-    ui_info(ui_cut_top(&inn, 4), info, 2, 0);
     ui_part(ui_cut_top(&inn, 3), MO_BTN,
             &(ui_part_t){ .title = "Reset terminal" }, NULL);
     ui_part(ui_cut_top(&inn, 3), MO_BTN + 1,
             &(ui_part_t){ .title = "Setup", .right = UI_S_CHEVRON }, NULL);
+    ui_cut_top(&inn, g);
     ui_push(ui_cut_top(&inn, 3), MO_BTN + 2, "Disconnect", UI_TONE_TINT,
             OVERLAY_COL_RED, 0);
+    if (!info) return;
+
+    ui_cut_top(&inn, g);
+    const char *lab[2] = { "Uptime", "Session" };
+    const char *val[2] = { "2 h 14 min", "14 min" };
+    const ui_rect_t txt = ui_inset(inn, 1, 0);
+    for (int i = 0; i < 2; i++) {
+        ui_pen(OVERLAY_COL_CYAN);
+        ui_text(ui_rect(txt.x, inn.y + i, 9, 1), lab[i], UI_TEXT, UI_LEFT);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_units(ui_rect(txt.x + 9, inn.y + i, txt.w - 9, 1), val[i], UI_TEXT,
+                 UI_MUTED, UI_LEFT);
+    }
 }
 
 static const lab_screen_t MO_SCREENS[] = {

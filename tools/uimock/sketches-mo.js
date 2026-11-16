@@ -1172,22 +1172,34 @@ function moImport(ui, app) {
   moBarRow(ui, pg.status,'', '');
 }
 
-// Session menu: a slate sheet at the right over the dimmed terminal.
-// Its parts are the same parts, because the sheet is screen background.
+// Session menu: a slate sheet centred over the dimmed terminal, above the
+// status row. Its parts are the same parts, because the sheet is screen
+// background. Short grids drop the info lines, then the gaps.
 function moMenu(ui, app) {
-  const st = app.state, p = moHostOf(st), m = ui.metrics();
+  const st = app.state, p = moHostOf(st);
   ui.term(TERM_LINES, MO_TERM_FG, 0);
   ui.dim();
-  const w = Math.min(ui.cols, 28);
-  const sheet = rect(ui.cols - w, 0, w, ui.rows);
+  const area = rect(0, 0, ui.cols, ui.rows > 1 ? ui.rows - 1 : ui.rows);
+  const info = area.h >= 18, gaps = area.h >= 15, g = gaps ? 1 : 0;
+  const sheet = center(area, ui.cols >= 32 ? 30 : ui.cols, info ? 18 : gaps ? 15 : 11);
   ui.fill(sheet, ' ', S.TEXT);
-  const inn = inset(sheet, 1, 0);
+  const inn = inset(sheet, 1, 1);
   moHeader(ui, cutTop(inn, 3), { path: 'Session', title: p.name, back: { tap: () => app.back() } });
-  moInfo(ui, cutTop(inn, 4), [['Up', '2 h 14 min'], ['Link', '41 min, -55 dBm']]);
   moPart(ui, cutTop(inn, 3), MO_ID.BTN, { title: 'Reset terminal' }, { tap: () => app.back() });
   moPart(ui, cutTop(inn, 3), MO_ID.BTN + 1, { title: 'Setup', right: '›' }, { tap: () => app.go('mo-setup') });
+  cutTop(inn, g);
   moBtn(ui, cutTop(inn, 3), MO_ID.BTN + 2, 'Disconnect', { tone: 'tint', accent: C.RED },
     { tap: () => app.home() });
+  if (!info) return;
+  cutTop(inn, g);
+  const txt = inset(inn, 1, 0), lw = 9;
+  [['Uptime', '2 h 14 min'], ['Session', '14 min']].forEach(([label, value], i) => {
+    const y = inn.y + i;
+    ui.pen(MO_LABEL);
+    ui.text(rect(txt.x, y, lw, 1), label, S.TEXT, LEFT);
+    ui.pen(C.DEFAULT);
+    moUnits(ui, rect(txt.x + lw, y, txt.w - lw, 1), value, S.TEXT, S.MUTED);
+  });
 }
 
 // In-session toast: a panel-tone box at the top right of the terminal.
