@@ -4,7 +4,7 @@
 
 import { Font, render, toRGBA, css565, PANELS, rectMM } from './model.js';
 import {
-  Ui, newInter, drawPosed, hotMove, rect, S, C, BOLD, ID_BACK, STYLE_COUNT, ACCENTS,
+  Ui, newInter, drawPosed, hotMove, pageStep, rect, S, C, BOLD, ID_BACK, STYLE_COUNT, ACCENTS,
 } from './kit.js';
 import { MO_SKETCHES } from './sketches-mo.js';
 import { THEMES } from './theme.js';
@@ -417,7 +417,13 @@ function wirePointer() {
       if (!inter.ring) {
         inter.ring = true;
         if (!lastUi.hots.some((h) => h.id === inter.focus)) inter.focus = hotMove(lastUi.hots, 0, dir);
-      } else inter.focus = hotMove(lastUi.hots, inter.focus, dir);
+      } else {
+        const pg = lastUi.paged;
+        const to = pg && inter.focus >= pg.base && inter.focus < pg.base + pg.count
+          ? pageStep(dir, inter.focus - pg.base, pg.count, pg.cols, pg.per) : -1;
+        if (to >= 0) { pg.go(to); inter.focus = pg.base + to; }
+        else inter.focus = hotMove(lastUi.hots, inter.focus, dir);
+      }
       renderScreen();
     } else if (e.key === 'Enter') {
       e.preventDefault();

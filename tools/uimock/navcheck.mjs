@@ -6,10 +6,13 @@
 
 import { Ui, newInter, hotMove, ID_BACK } from './kit.js';
 import { MO_SKETCHES } from './sketches-mo.js';
+import { PROFILES32 } from './fixtures.js';
 
 const GRIDS = [['12x24', 66, 20], ['10x20', 80, 24], ['8x16', 100, 30]];
 // States that show parts the first draw hides.
 const STATES = {
+  'mo-home': [{}, { hosts: PROFILES32 }, { hosts: PROFILES32, page: 1, pair: true },
+    { hosts: PROFILES32, page: 3 }],
   'mo-section': [0, 1, 2, 3, 4, 5, 6].map((cat) => ({ cat }))
     .concat([{ cat: 5, spage: 1 }, { cat: 5, spage: 2 }, { cat: 6, spage: 1 }]),
   'mo-list': [{ lpage: 0 }, { lpage: 1 }],

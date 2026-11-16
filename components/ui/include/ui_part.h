@@ -181,7 +181,8 @@ int ui_rail_thumb(int h, int page, int pages, int *at);
 
 /** Page header in three rows. With @p back the whole slab is the back
  *  target (UI_ID_BACK) and @p path leads the title. Without it: a bold
- *  title and a muted note on the background. */
+ *  title and a muted note on the background. A note that does not fit
+ *  whole is dropped, never clipped. */
 void ui_title(ui_rect_t r, const char *path, const char *title,
               const char *note, bool back);
 

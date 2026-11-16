@@ -30,6 +30,8 @@ enum {
 static struct {
     int      page;                  /* shown page of tiles               */
     int      per;                   /* tiles per page, from the last draw */
+    int      cols;                  /* tile columns, from the last draw  */
+    int      total;                 /* tiles in all, from the last draw  */
     ui_id_t  saved_focus;           /* focus saved when another screen opens */
     bool     kbd_bonded;            /* gates the "Pair" pill             */
     uint8_t  kon_idx;               /* Konami sequence progress          */
@@ -105,6 +107,8 @@ static void render_home(uint64_t now)
     const int per = ui_grid_capacity(&g);
     const int pages = ui_page_count(total, per);
     s_home.per = per;
+    s_home.cols = g.ncols;
+    s_home.total = total;
     s_home.page = ui_page_clamp(s_home.page, total, per);
 
     char note[16];
@@ -137,11 +141,11 @@ static void render_home(uint64_t now)
             else
                 snprintf(addr, sizeof addr, "%s@%s:%u", p->user, p->host,
                          (unsigned)p->port);
-            snprintf(num, sizeof num, "%d", t + 1);
+            snprintf(num, sizeof num, "%d", i + 1);
             ui_part(cell, (ui_id_t)(ID_TILE + t),
                     &(ui_part_t){ .title = p->name, .detail = addr,
                                   .stripe = prof_accent(p->name),
-                                  .right = num }, NULL);
+                                  .right = i < 9 ? num : NULL }, NULL);
         } else {
             const home_tile_t *h = xt[t - app.profile_count];
             ui_part(cell, (ui_id_t)(ID_TILE + t),
@@ -364,8 +368,10 @@ static void home_phone_key(uint64_t now)
 /* Letter and digit keys. Returns true when @p ch was one of them. */
 static bool home_char(char ch, uint64_t now)
 {
-    if (ch >= '1' && ch <= '8') {
-        connect_checked(ch - '1', now);
+    if (ch >= '1' && ch <= '9') {
+        /* A digit is the Nth tile of the shown page. */
+        const int i = ch - '1';
+        if (i < s_home.per) connect_checked(s_home.page * s_home.per + i, now);
         return true;
     }
     switch (ch) {
@@ -401,6 +407,19 @@ static void home_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
     }
     if (k == K_UP || k == K_DOWN || k == K_LEFT || k == K_RIGHT)
         home_konami(k, now);
+
+    /* An arrow at the edge of a page turns it (ui_page_step). */
+    const ui_id_t f = ui_focus_get();
+    if (f >= ID_TILE && ui_focused(f)) {
+        const int to = ui_page_step(k, f - ID_TILE, s_home.total, s_home.cols,
+                                    s_home.per);
+        if (to >= 0) {
+            s_home.page = to / s_home.per;
+            ui_focus_set((ui_id_t)(ID_TILE + to));
+            nav_invalidate();
+            return;
+        }
+    }
 
     const ui_act_t a = app_hot_input(ev, k);
     if (a.kind == UI_ACT_NONE) return;

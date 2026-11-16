@@ -178,6 +178,14 @@ SCENARIOS = {
     "tap-connect":
         "key:esc|wait:500|expect:home|tap:130,64|wait:150"
         "|expect:connecting|key:esc|sleep:300|wait:700|expect:home|quit",
+    # A digit is the Nth tile of the page. Digits past the list and arrows
+    # past the last row or page do nothing. Paging itself needs more hosts
+    # than the app holds; the lab frames and tests/ui cover it.
+    "home-digit-and-edges":
+        "key:esc|wait:500|expect:home|key:9|key:down|key:down|key:down"
+        "|key:right|key:right|key:left|key:up|key:up|key:up|wait:200"
+        "|expect:home|key:1|wait:150|expect:connecting|key:esc|sleep:300"
+        "|wait:700|expect:home|quit",
     "pad-create":
         PAD_OPEN + "|expect-text:Choose a new code|type:1234|key:enter"
         "|wait:300|expect-text:Enter the new code again|type:1234"
@@ -433,6 +441,7 @@ FIXTURE_EDITS = {
          "[server]\nhost=10.0.0.5\nport=22\nuser=ops\nauth=key\nkey_id=id_deck")],
     "tap-connect": [("host=192.168.1.10", "host=127.0.0.1"),
                     ("port=22", "port=1")],
+    "home-digit-and-edges": LOOPBACK_CLOSED,
     "hold-opens-host": [("host=192.168.1.10", "host=127.0.0.1"),
                         ("port=22", "port=1")],
     "host-delete": [SECOND_HOST],

@@ -16,7 +16,7 @@ import {
   statusBar, toast, SB, NOTE,
   entryFirst, codePlan, qrW, qrH, qrRows, qrGlyph, QR_ZONE, fakeQr, wrapLines, stepLines,
 } from './kit.js';
-import { PROFILES, TERM_LINES } from './fixtures.js';
+import { PROFILES, PROFILES32, TERM_LINES } from './fixtures.js';
 
 const MO_ID = {
   HOST: 2000, PILL: 2100, PREV: 2200, NEXT: 2201, HUB: 2300, OPT: 2400,
@@ -330,7 +330,8 @@ function moHeader(ui, r, o) {
     const tl = moLen(o.title);
     ui.pen(C.DEFAULT);
     ui.text(rect(r.x + 1, y, tl, 1), o.title, S.TEXT | BOLD, LEFT);
-    if (o.note) ui.text(rect(r.x + tl + 3, y, r.w - tl - 3, 1), o.note, S.MUTED, LEFT);
+    if (o.note && r.w - tl - 3 >= moLen(o.note))
+      ui.text(rect(r.x + tl + 3, y, r.w - tl - 3, 1), o.note, S.MUTED, LEFT);
     return;
   }
   const slab = r;
@@ -470,34 +471,41 @@ function moParse(where) {
   return m ? { user: m[1], host: m[2], port: m[3], key: !!m[4] }
            : { user: '', host: where, port: '22', key: false };
 }
-const moHostOf = (st) => PROFILES[st.host | 0] || PROFILES[0];
+const moHostOf = (st) => (st.hosts || PROFILES)[st.host | 0] || PROFILES[0];
 
 // HOME: a host per tile. A tap connects. A hold opens the host page.
 // New, Setup and Lock sit in the header, so no host count hides them.
 function moHome(ui, app) {
-  const st = app.state, pg = moPage(ui);
-  moFirst(ui, MO_ID.HOST);
+  const st = app.state, pg = moPage(ui), hosts = st.hosts || PROFILES;
+  const g = grid(pg.body, moCols(pg.body.w, 30, pg.m.gutter), 4, pg.m.gutter, 0);
+  const per = gridCapacity(g), pages = pageCount(hosts.length, per);
+  st.page = pageClamp(st.page | 0, hosts.length, per);
+  moFirst(ui, MO_ID.HOST + st.page * per);
   const head = moPills(ui, pg.header, [
+    ...(st.pair ? [{ id: MO_ID.PILL + 3, label: 'Pair', o: { tone: 'tint', accent: C.CYAN } }] : []),
     { id: MO_ID.PILL, label: '+ New', act: { tap: () => { st.host = -1; app.go('mo-edit'); } } },
     { id: MO_ID.PILL + 1, label: 'Setup', act: { tap: () => app.go('mo-setup') } },
     { id: MO_ID.PILL + 2, label: 'Lock', act: { tap: () => app.go('mo-unlock') } },
   ]);
-  const g = grid(pg.body, moCols(pg.body.w, 30, pg.m.gutter), 4, pg.m.gutter, 0);
-  const per = gridCapacity(g), pages = pageCount(PROFILES.length, per);
-  st.page = pageClamp(st.page | 0, PROFILES.length, per);
   const rest = moPager(ui, head, st.page, pages,
     { prev: { tap: () => st.page-- }, next: { tap: () => st.page++ } });
-  moHeader(ui, rest, { title: 'Hosts', note: `${PROFILES.length} of 8` });
-  for (let i = 0; i < per && st.page * per + i < PROFILES.length; i++) {
-    const n = st.page * per + i, p = PROFILES[n], w = moParse(p.where);
+  moHeader(ui, rest, { title: 'Hosts', note: `${hosts.length} of ${hosts.length > 8 ? 32 : 8}` });
+  const first = st.page * per, shown = Math.min(per, hosts.length - first);
+  // Arrow keys turn the page at its edges (pageStep); the viewer reads this.
+  ui.paged = { base: MO_ID.HOST, count: hosts.length, cols: g.ncols, per,
+               go: (to) => { st.page = Math.trunc(to / per); } };
+  for (let i = 0; i < shown; i++) {
+    const n = first + i, p = hosts[n], w = moParse(p.where);
     const act = { tap: () => { st.host = n; app.go('mo-connect'); },
                   hold: () => { st.host = n; app.go('mo-host'); } };
+    const last = st.lastRow && i === Math.trunc((shown - 1) / g.ncols) * g.ncols;
     moPart(ui, gridCell(g, i), MO_ID.HOST + n, {
       title: p.name, detail: `${w.user}@${w.host}${w.port === '22' ? '' : `:${w.port}`}`,
-      stripe: profAccent(p.name), right: String(n + 1) }, act);
-    ui.key(String(n + 1), act.tap);
+      stripe: profAccent(p.name), right: i < 9 ? String(i + 1) : '',
+      pose: last ? 'focus' : '' }, act);
+    if (i < 9) ui.key(String(i + 1), act.tap);
   }
-  moBarRow(ui, pg.status, 'Tap to connect. Hold for options.', '↵ connect  Space options  1-8',
+  moBarRow(ui, pg.status, 'Tap to connect. Hold for options.', '↵ connect  Space options  1-9',
     st.bar);
 }
 
@@ -1262,6 +1270,11 @@ export const MO_GATE = [
   { name: 'mo-home', sketch: 'mo-home' },
   { name: 'mo-home-keys', sketch: 'mo-home', pose: { focus: MO_ID.HOST + 1 } },
   { name: 'mo-home-down', sketch: 'mo-home', pose: { down: MO_ID.HOST + 2 } },
+  { name: 'mo-home-32', sketch: 'mo-home', state: () => ({ hosts: PROFILES32, page: 1 }) },
+  { name: 'mo-home-32-last', sketch: 'mo-home',
+    state: () => ({ hosts: PROFILES32, page: 1, lastRow: true }) },
+  { name: 'mo-home-32-pair', sketch: 'mo-home',
+    state: () => ({ hosts: PROFILES32, page: 0, pair: true }) },
   { name: 'mo-host', sketch: 'mo-host' },
   { name: 'mo-host-key', sketch: 'mo-host', state: () => ({ host: 3 }), pose: { focus: MO_ID.BTN + 2 } },
   { name: 'mo-confirm', sketch: 'mo-confirm' },

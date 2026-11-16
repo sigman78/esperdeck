@@ -445,6 +445,21 @@ function navScore(f, c, dir) {
   return 0x10000 + along + 4 * (cross + 8);
 }
 
+// Page turn on a paged grid; ui_page_step in C. `at` is the tile index over
+// all pages. Returns the tile to focus, or -1 when the key does not turn.
+export function pageStep(dir, at, count, cols, per) {
+  if (cols <= 0 || per < cols || at < 0 || at >= count) return -1;
+  const page = div(at, per), within = at % per, rows = div(per, cols);
+  const row = div(within, cols), col = within % cols;
+  const more = (page + 1) * per < count;
+  let to = -1;
+  if (dir === 'down' && row === rows - 1 && more) to = (page + 1) * per + col;
+  else if (dir === 'up' && row === 0 && page > 0) to = (page - 1) * per + (rows - 1) * cols + col;
+  else if (dir === 'right' && within === per - 1 && more) to = (page + 1) * per;
+  else if (dir === 'left' && within === 0 && page > 0) to = page * per - 1;
+  return to >= count ? count - 1 : to;
+}
+
 // Id to focus after an arrow key. `dir`: 'up' | 'down' | 'left' | 'right'.
 // Unknown focus lands on the first region that is not the back bar; no
 // region that way keeps the focus.

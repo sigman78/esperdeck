@@ -319,7 +319,7 @@ void ui_title(ui_rect_t r, const char *path, const char *title,
         const int tl = ui_len(title);
         ui_pen(OVERLAY_COL_DEFAULT);
         ui_text(ui_rect(r.x + 1, y, tl, 1), title, UI_TEXT | UI_BOLD, UI_LEFT);
-        if (has(note))
+        if (has(note) && r.w - tl - 3 >= ui_len(note))
             ui_text(ui_rect(r.x + tl + 3, y, r.w - tl - 3, 1), note, UI_MUTED,
                     UI_LEFT);
         return;

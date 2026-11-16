@@ -194,6 +194,25 @@ ui_act_t ui_hot_key(ui_key_t k)
     return (ui_act_t){ UI_ACT_MOVE, s.focus };
 }
 
+int ui_page_step(ui_key_t k, int at, int count, int cols, int per)
+{
+    if (cols <= 0 || per < cols || at < 0 || at >= count) return -1;
+    const int page = at / per, in = at % per, rows = per / cols;
+    const int row = in / cols, col = in % cols;
+    const bool more = (page + 1) * per < count;
+    int to = -1;
+
+    if (k == K_DOWN && row == rows - 1 && more)
+        to = (page + 1) * per + col;
+    else if (k == K_UP && row == 0 && page > 0)
+        to = (page - 1) * per + (rows - 1) * cols + col;
+    else if (k == K_RIGHT && in == per - 1 && more)
+        to = (page + 1) * per;
+    else if (k == K_LEFT && in == 0 && page > 0)
+        to = page * per - 1;
+    return to >= count ? count - 1 : to;
+}
+
 bool ui_focused(ui_id_t id)
 {
     const int pose = pose_of(id);

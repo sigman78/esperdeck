@@ -234,8 +234,13 @@ above its action row while storage holds eight.
 - A two-column picker of two-line cards holds all eight profiles at
   every grid, so pickers do not page. The shell has no profile picker
   now; edit, delete and move live on the host page.
-- The stepper takes focus like any part. An arrow key does not turn the
-  page at the edge of a grid yet.
+- The stepper takes focus like any part. An arrow key at the edge of a
+  grid turns the page: `ui_page_step()` maps Down from the last row, Up
+  from the first row of page 2+, Right from a page's last tile and Left
+  from its first tile to a tile on the neighbour page. A screen calls it
+  before `ui_hot_key`. HOME does, with 32 hosts in mind (frames
+  `mo-home-32*`).
+- A title's note (`ui_title`) is dropped whole when it does not fit.
 
 ## Decisions, 2026-11-12
 
@@ -275,7 +280,6 @@ above its action row while storage holds eight.
    check.
 4. **Focus restore.** The navigation stack keeps no focus per entry.
 5. **Key hints.** Whether the shipped screens show them.
-6. **Paged lists.** An arrow key does not turn the page at the edge.
 
 ## Screens
 

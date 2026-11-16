@@ -51,7 +51,10 @@ a pager at the top right.
 
 - **Tap a tile** to connect. **Long-press it** (or press **Space**) to open
   the host page: details, Connect, Edit, Delete and Move earlier / later.
-  With a keyboard: arrows + **Enter**, or a digit **1**-**8** to connect.
+  With a keyboard: arrows + **Enter**, or a digit **1**-**9** to connect to
+  that tile of the shown page. An arrow key at the edge of a page turns
+  it: Down from the last row, Up from the first row, Right from the last
+  tile, Left from the first.
 - The buttons at the top right: **+ New**, **Setup** (the settings),
   **Lock** (once an access code exists) and **Pair** (while no keyboard
   is bonded).

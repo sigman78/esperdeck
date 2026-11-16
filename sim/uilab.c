@@ -60,7 +60,7 @@ static void term_blank(int cols, int rows)
                                        .bg_color = LAB_BG };
 }
 
-const lab_profile_t PROFILES[LAB_NPROFILES] = {
+const lab_profile_t HOSTS[LAB_NHOSTS] = {
     { "homelab",   "root@192.168.1.10:22" },
     { "build-box", "ci@build.lan:22  key" },
     { "pi-garage", "pi@10.0.0.42:22" },
@@ -69,6 +69,30 @@ const lab_profile_t PROFILES[LAB_NPROFILES] = {
     { "nas",       "backup@nas.lan:22  key" },
     { "printer",   "octo@10.0.0.77:22" },
     { "bastion",   "ops@bastion.example.org:22  key" },
+    { "db-primary", "postgres@db1.lan:22  key" },
+    { "db-replica", "postgres@db2.lan:22  key" },
+    { "git",        "git@git.example.org:2222  key" },
+    { "mail",       "admin@mail.example.net:22" },
+    { "dns-a",      "root@10.0.0.2:22" },
+    { "dns-b",      "root@10.0.0.3:22" },
+    { "proxmox",    "root@pve.lan:22" },
+    { "k3s-node1",  "ubuntu@10.0.1.11:22  key" },
+    { "k3s-node2",  "ubuntu@10.0.1.12:22  key" },
+    { "k3s-node3",  "ubuntu@10.0.1.13:22  key" },
+    { "media",      "plex@media.lan:22" },
+    { "backup",     "borg@backup.lan:2200  key" },
+    { "vps-ams",    "deploy@ams1.example.net:2222  key" },
+    { "vps-nyc",    "deploy@nyc1.example.net:2222  key" },
+    { "lab-gpu",    "ml@gpu-01.lab:22  key" },
+    { "lab-arm",    "pi@arm-01.lab:22" },
+    { "iot-hub",    "pi@10.0.2.5:22" },
+    { "cam-gate",   "cam@10.0.2.31:2222" },
+    { "weather",    "pi@10.0.2.40:22" },
+    { "ci-runner",  "runner@ci2.lan:22  key" },
+    { "staging",    "deploy@stg.example.com:22  key" },
+    { "prod-web",   "deploy@web1.example.com:22  key" },
+    { "prod-api",   "deploy@api1.example.com:22  key" },
+    { "office-fw",  "admin@fw.office.example.com:8022" },
 };
 
 static int s_cols, s_rows;

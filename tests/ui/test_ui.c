@@ -1080,9 +1080,80 @@ static void test_ann_room_keeps_the_note_gap_and_the_clock_clear(void)
     TEST_ASSERT_FALSE(s.whole);
 }
 
+/* HOME header: every pill, the pager and "Hosts" fit at every grid. */
+static void test_home_header_fits_pills_pager_and_title(void)
+{
+    static const char *const PILLS[] = { "Lock", "Setup", "+ New", "Pair" };
+    for (int i = 0; i < NGRIDS; i++) {
+        const ui_metrics_t m = ui_metrics_for(GRIDS[i].cols, GRIDS[i].rows);
+        ui_rect_t head = ui_rect(m.margin, 0, GRIDS[i].cols - 2 * m.margin, 3);
+        for (int p = 0; p < 4; p++) {
+            ui_cut_right(&head, ui_len(PILLS[p]) + 4);
+            ui_cut_right(&head, 1);
+        }
+        ui_cut_right(&head, UI_PAGES_W + 1);
+        TEST_ASSERT_TRUE(head.w >= 1 + ui_len("Hosts"));
+    }
+}
+
+/* 32 tiles, 2 columns x 4 rows a page: 4 pages. */
+static void test_page_step_down_and_up_cross_pages(void)
+{
+    TEST_ASSERT_EQUAL(8, ui_page_step(K_DOWN, 6, 32, 2, 8));
+    TEST_ASSERT_EQUAL(9, ui_page_step(K_DOWN, 7, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_DOWN, 5, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_DOWN, 30, 32, 2, 8));
+    TEST_ASSERT_EQUAL(6, ui_page_step(K_UP, 8, 32, 2, 8));
+    TEST_ASSERT_EQUAL(7, ui_page_step(K_UP, 9, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_UP, 0, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_UP, 10, 32, 2, 8));
+}
+
+static void test_page_step_empty_column_lands_on_the_last_tile(void)
+{
+    /* Page 2 holds one tile: column 1 is empty. */
+    TEST_ASSERT_EQUAL(8, ui_page_step(K_DOWN, 7, 9, 2, 8));
+    TEST_ASSERT_EQUAL(8, ui_page_step(K_DOWN, 6, 9, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_DOWN, 8, 9, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_DOWN, 6, 8, 2, 8));
+}
+
+static void test_page_step_sideways_turns_only_at_the_page_ends(void)
+{
+    TEST_ASSERT_EQUAL(8, ui_page_step(K_RIGHT, 7, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_RIGHT, 6, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_RIGHT, 31, 32, 2, 8));
+    TEST_ASSERT_EQUAL(7, ui_page_step(K_LEFT, 8, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_LEFT, 9, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_LEFT, 0, 32, 2, 8));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_ENTER, 7, 32, 2, 8));
+}
+
+static void test_page_step_stays_on_a_neighbour_page(void)
+{
+    static const int G[3][2] = { { 2, 8 }, { 2, 10 }, { 3, 18 } };
+    static const ui_key_t KEYS[] = { K_UP, K_DOWN, K_LEFT, K_RIGHT };
+    for (int g = 0; g < 3; g++)
+        for (int at = 0; at < 32; at++)
+            for (int k = 0; k < 4; k++) {
+                const int to = ui_page_step(KEYS[k], at, 32, G[g][0], G[g][1]);
+                if (to < 0) continue;
+                TEST_ASSERT_TRUE(to < 32);
+                const int d = to / G[g][1] - at / G[g][1];
+                TEST_ASSERT_TRUE(d == 1 || d == -1);
+            }
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_DOWN, 0, 32, 0, 0));
+    TEST_ASSERT_EQUAL(-1, ui_page_step(K_DOWN, 40, 32, 2, 8));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_home_header_fits_pills_pager_and_title);
+    RUN_TEST(test_page_step_down_and_up_cross_pages);
+    RUN_TEST(test_page_step_empty_column_lands_on_the_last_tile);
+    RUN_TEST(test_page_step_sideways_turns_only_at_the_page_ends);
+    RUN_TEST(test_page_step_stays_on_a_neighbour_page);
     RUN_TEST(test_ann_edges_follow_the_announce_rules);
     RUN_TEST(test_ann_quiet_drops_only_the_loss);
     RUN_TEST(test_ann_first_poll_counts_when_the_chip_is_on);

@@ -464,36 +464,52 @@ static where_t parse_where(const char *w)
 }
 
 /* HOME: a host per tile. A tap connects. A hold opens the host page. */
+static int  s_home_n = LAB_NPROFILES;   /* hosts listed                     */
+static int  s_home_page;                /* page shown                       */
+static bool s_home_pair;                /* the Pair pill is on              */
+static bool s_home_last_row;            /* focus the last row's first tile  */
+
 static void scr_home(void)
 {
     ui_slate_t pg = ui_slate_page();
     char note[16];
 
-    ui_focus_default(MO_HOST);
-    ui_pill(&pg.header, MO_PILL + 2, "Lock", UI_TONE_CARD, 0, 0);
-    ui_pill(&pg.header, MO_PILL + 1, "Setup", UI_TONE_CARD, 0, 0);
-    ui_pill(&pg.header, MO_PILL, "+ New", UI_TONE_CARD, 0, 0);
     const ui_grid_t g = ui_grid(pg.body,
                                 ui_cols_for(pg.body.w, 30, pg.m.gutter), 4,
                                 pg.m.gutter, 0);
     const int per = ui_grid_capacity(&g);
-    const int pages = ui_page_count(LAB_NPROFILES, per);
-    const ui_rect_t rest = ui_pages(pg.header, MO_PREV, MO_NEXT, 0, pages);
-    snprintf(note, sizeof note, "%d of 8", LAB_NPROFILES);
+    const int pages = ui_page_count(s_home_n, per);
+    const int page = ui_page_clamp(s_home_page, s_home_n, per);
+    ui_focus_default((ui_id_t)(MO_HOST + page * per));
+    ui_pill(&pg.header, MO_PILL + 2, "Lock", UI_TONE_CARD, 0, 0);
+    ui_pill(&pg.header, MO_PILL + 1, "Setup", UI_TONE_CARD, 0, 0);
+    ui_pill(&pg.header, MO_PILL, "+ New", UI_TONE_CARD, 0, 0);
+    if (s_home_pair)
+        ui_pill(&pg.header, MO_PILL + 3, "Pair", UI_TONE_TINT,
+                OVERLAY_COL_CYAN, 0);
+    const ui_rect_t rest = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    snprintf(note, sizeof note, "%d of %d", s_home_n,
+             s_home_n > LAB_NPROFILES ? LAB_NHOSTS : LAB_NPROFILES);
     ui_title(rest, NULL, "Hosts", note, false);
-    for (int i = 0; i < per && i < LAB_NPROFILES; i++) {
-        const where_t w = parse_where(PROFILES[i].where);
+    const int first = page * per;
+    const int shown = s_home_n - first < per ? s_home_n - first : per;
+    for (int i = 0; i < shown; i++) {
+        const int n = first + i;
+        const where_t w = parse_where(PROFILES[n].where);
         char addr[80], num[4];
         if (!strcmp(w.port, "22")) snprintf(addr, sizeof addr, "%s@%s", w.user, w.host);
         else snprintf(addr, sizeof addr, "%s@%s:%s", w.user, w.host, w.port);
         snprintf(num, sizeof num, "%d", i + 1);
-        ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + i),
-                &(ui_part_t){ .title = PROFILES[i].name, .detail = addr,
-                              .stripe = prof_accent(PROFILES[i].name),
-                              .right = num }, NULL);
+        ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + n),
+                &(ui_part_t){ .title = PROFILES[n].name, .detail = addr,
+                              .stripe = prof_accent(PROFILES[n].name),
+                              .right = i < 9 ? num : NULL }, NULL);
     }
+    if (s_home_last_row && shown > 0)
+        ui_debug_pose((ui_id_t)(MO_HOST + first + (shown - 1) / g.ncols * g.ncols),
+                      UI_POSE_FOCUS);
     mo_bar(pg.status, "Tap to connect. Hold for options.",
-           UI_S_ENTER " connect  Space options  1-8", s_bar_variant);
+           UI_S_ENTER " connect  Space options  1-9", s_bar_variant);
 }
 
 static void home_bar(const char *variant)
@@ -502,6 +518,24 @@ static void home_bar(const char *variant)
     scr_home();
     s_bar_variant = NULL;
 }
+
+/* 32 hosts on page 2. The _last variant focuses a tile of the last row,
+ * where Down turns the page. The _pair variant adds the Pair pill. */
+static void home_32(int page, bool last_row, bool pair)
+{
+    s_home_n = LAB_NHOSTS;
+    s_home_page = page;
+    s_home_last_row = last_row;
+    s_home_pair = pair;
+    scr_home();
+    s_home_n = LAB_NPROFILES;
+    s_home_page = 0;
+    s_home_last_row = s_home_pair = false;
+}
+
+static void scr_home_32(void)      { home_32(1, false, false); }
+static void scr_home_32_last(void) { home_32(1, true, false); }
+static void scr_home_32_pair(void) { home_32(0, false, true); }
 
 static void scr_status_busy(void)       { home_bar("busy"); }
 static void scr_status_busy_blink(void) { home_bar("busy-blink"); }
@@ -1455,7 +1489,10 @@ static const lab_screen_t MO_SCREENS[] = {
       .focus = MO_HOST + 1 },
     { "mo-home-down",   scr_home,        .slate = true,
       .down = MO_HOST + 2 },
-    { "mo-host",        scr_host,        .slate = true },
+    { "mo-home-32",     scr_home_32,     .slate = true },
+    { "mo-home-32-last", scr_home_32_last, .slate = true },
+    { "mo-home-32-pair", scr_home_32_pair, .slate = true },
+    { "mo-host",      scr_host,        .slate = true },
     { "mo-host-key",    scr_host_key,    .slate = true,
       .focus = MO_BTN + 2 },
     { "mo-confirm",     scr_confirm,     .slate = true },

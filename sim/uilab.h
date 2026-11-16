@@ -23,8 +23,11 @@ typedef struct {
 
 typedef struct { const char *name, *where; } lab_profile_t;
 
+/* HOSTS holds 32 entries. The first LAB_NPROFILES are the usual list. */
 #define LAB_NPROFILES 8
-extern const lab_profile_t PROFILES[LAB_NPROFILES];
+#define LAB_NHOSTS    32
+extern const lab_profile_t HOSTS[LAB_NHOSTS];
+#define PROFILES HOSTS
 
 /** The frame clock of the frame being drawn, for animated parts. */
 extern uint32_t lab_frame;

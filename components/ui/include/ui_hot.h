@@ -79,6 +79,13 @@ ui_act_t ui_hot_key(ui_key_t k);
 /** True when @p id holds keyboard focus AND the ring is showing. */
 bool ui_focused(ui_id_t id);
 
+/** Page turn on a paged grid. @p at indexes all @p count tiles.
+ *  Down in the last row moves to the next page, same column. Up in the
+ *  first row moves to the previous page. Right on a page's last tile and
+ *  Left on its first tile turn the page too. Returns the tile to focus,
+ *  or -1 when the key does not turn the page. */
+int ui_page_step(ui_key_t k, int at, int count, int cols, int per);
+
 /** True while a finger is on @p id, and for UI_FLASH_FRAMES after a tap. */
 bool ui_pressed(ui_id_t id);
 
