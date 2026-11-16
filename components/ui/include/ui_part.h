@@ -68,6 +68,7 @@ typedef struct {
     uint8_t title, detail;     /* first line; second line and trailers    */
     bool    card;              /* neutral panel: text may take a colour   */
     bool    off;
+    bool    focus;             /* key focus: the part wears focus bars    */
 } ui_look_t;
 
 /** The look of part @p id. Off beats focus. Focus and pressed share one
@@ -80,6 +81,11 @@ void ui_slab(ui_rect_t r, const ui_look_t *k);
 
 /** A colour stripe: the first column of a slab, at its full height. */
 void ui_stripe(ui_rect_t r, uint8_t accent);
+
+/** Key-focus bars: a half-cell sand bar and a dark slit at each end of
+ *  the slab. Nothing unless @p k has key focus. A @p striped part keeps
+ *  its stripe as the left bar and takes the slit in the second column. */
+void ui_focus_bars(ui_rect_t r, const ui_look_t *k, bool striped);
 
 /** A text panel: a card-tone slab, with a stripe when @p stripe is an
  *  accent. Not a touch target. Text on it takes the UI_PANEL styles. */

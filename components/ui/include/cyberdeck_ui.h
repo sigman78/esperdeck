@@ -74,6 +74,8 @@
 #define UI_RHALF   0x2590u  /* ▐ right half */
 #define UI_QUAD_LL 0x2596u  /* ▖ lower-left quadrant */
 #define UI_QUAD_UL 0x2598u  /* ▘ upper-left quadrant */
+#define UI_QUAD_LR 0x2597u  /* ▗ lower-right quadrant */
+#define UI_QUAD_UR 0x259Du  /* ▝ upper-right quadrant */
 #define UI_HALF_UP 0x2580u  /* ▀ upper half: a surface's bottom edge */
 #define UI_HALF_DN 0x2584u  /* ▄ lower half: a surface's top edge    */
 #define UI_CHECK   0x2713u  /* check mark */

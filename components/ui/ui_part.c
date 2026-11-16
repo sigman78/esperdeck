@@ -55,6 +55,7 @@ ui_look_t ui_look(ui_id_t id, uint8_t tone, uint8_t accent, uint8_t flags)
         k.fill = k.detail = UI_FOCUS;
         k.edge = UI_FOCUS_EDGE;
         k.title = UI_FOCUS | UI_BOLD;
+        k.focus = focus;
     } else if (tone == UI_TONE_SOLID) {
         k.pen = accent;
         k.fill = k.detail = UI_BAR;
@@ -95,6 +96,27 @@ void ui_stripe(ui_rect_t r, uint8_t accent)
         ui_putch(r.x, y, ' ', UI_BAR);
     ui_putch(r.x, r.y + r.h - 1, UI_HALF_UP, UI_BAR_EDGE);
     ui_pen(OVERLAY_COL_DEFAULT);
+}
+
+/* One bar column: corner glyphs in the edge style, the middle in fill. */
+static void bar_col(int x, ui_rect_t r, uint16_t top, uint16_t mid,
+                    uint16_t bot, const ui_look_t *k)
+{
+    ui_putch(x, r.y, top, k->edge);
+    for (int y = r.y + 1; y < r.y + r.h - 1; y++)
+        ui_putch(x, y, mid, k->fill);
+    ui_putch(x, r.y + r.h - 1, bot, k->edge);
+}
+
+void ui_focus_bars(ui_rect_t r, const ui_look_t *k, bool striped)
+{
+    if (!k->focus) return;
+    ui_pen(k->pen);
+    if (striped)
+        bar_col(r.x + 1, r, UI_QUAD_LR, UI_LHALF, UI_QUAD_UR, k);
+    else
+        bar_col(r.x, r, UI_QUAD_LL, UI_RHALF, UI_QUAD_UL, k);
+    bar_col(r.x + r.w - 1, r, UI_QUAD_LR, UI_LHALF, UI_QUAD_UR, k);
 }
 
 void ui_panel(ui_rect_t r, uint8_t stripe)
@@ -144,6 +166,7 @@ bool ui_part(ui_rect_t r, ui_id_t id, const ui_part_t *p, ui_part_box_t *box)
     const ui_look_t k = ui_look(id, p->tone, p->accent, p->flags);
     ui_slab(r, &k);
     if (!k.off && p->stripe) ui_stripe(r, p->stripe);
+    ui_focus_bars(r, &k, !k.off && p->stripe);
     ui_pen(k.pen);
 
     const int pad = p->pad ? p->pad
@@ -295,6 +318,7 @@ void ui_title(ui_rect_t r, const char *path, const char *title,
     ui_hot(r, UI_ID_BACK);
     const ui_look_t k = ui_look(UI_ID_BACK, UI_TONE_TINT, OVERLAY_COL_BLUE, 0);
     ui_slab(r, &k);
+    ui_focus_bars(r, &k, false);
     int x = r.x + 2;
     ui_putch(x, y, UI_POINT_L, k.title);
     x += 3;

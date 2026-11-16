@@ -134,7 +134,9 @@ tried and rejected.
 
 **Colour marks a state.** Key focus is one sand fill on every part, and
 no other state uses it. A finger down shows the same light fill in the
-part's own accent. Green marks done or on, amber the step in progress,
+part's own accent. Key focus also redraws the part's first and last
+column as a half-cell sand bar and a dark slit (`ui_focus_bars`, `▌ label ▐`);
+a striped part keeps its stripe as the left bar. Green marks done or on, amber the step in progress,
 red an invalid value or a destructive action. A label beside its value
 takes a teal hue. In a value with a unit ("2 h 14 min", "-55 dBm") the
 unit draws dim. A number is digits with at most one `.` or `:` part, so

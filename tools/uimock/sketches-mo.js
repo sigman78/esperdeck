@@ -71,7 +71,7 @@ function moLook(ui, id, o) {
              detail: S.PANEL_MUTED, card: true, off: true };
   if (focus || down)
     return { pen: focus ? MO_FOCUS : a, fill: S.FOCUS, edge: S.FOCUS_EDGE, title: S.FOCUS | BOLD,
-             detail: S.FOCUS, hot: true };
+             detail: S.FOCUS, hot: true, focus };
   if (o.tone === 'solid')
     return { pen: a, fill: S.BAR, edge: S.BAR_EDGE, title: S.BAR | BOLD, detail: S.BAR };
   if (o.tone === 'tint')
@@ -100,6 +100,21 @@ function moStripe(ui, r, accent) {
   ui.pen(C.DEFAULT);
 }
 
+// Key-focus bars: a half-cell sand bar and a dark slit at each end.
+// A striped part keeps its stripe as the left bar; the slit moves in one.
+function moBarCol(ui, x, r, top, mid, bot, k) {
+  ui.putch(x, r.y, top, k.edge);
+  for (let y = r.y + 1; y < r.y + r.h - 1; y++) ui.putch(x, y, mid, k.fill);
+  ui.putch(x, r.y + r.h - 1, bot, k.edge);
+}
+function moFocusBars(ui, r, k, striped) {
+  if (!k.focus) return;
+  ui.pen(k.pen);
+  if (striped) moBarCol(ui, r.x + 1, r, G.QUAD_LR, G.LHALF, G.QUAD_UR, k);
+  else moBarCol(ui, r.x, r, G.QUAD_LL, G.RHALF, G.QUAD_UL, k);
+  moBarCol(ui, r.x + r.w - 1, r, G.QUAD_LR, G.LHALF, G.QUAD_UR, k);
+}
+
 // Top row of `lines` text rows centred in `h` rows.
 function moCentre(y, h, lines, what) {
   if ((h - lines) & 1) throw new Error(`${what}: ${lines} line(s) cannot centre in ${h} rows`);
@@ -120,6 +135,7 @@ function moPart(ui, r, id, o, act) {
   const k = moLook(ui, id, o);
   moSlab(ui, r, k);
   if (!k.off && o.stripe) moStripe(ui, r, o.stripe);
+  moFocusBars(ui, r, k, !k.off && !!o.stripe);
   ui.pen(k.pen);
   const pad = o.pad || (r.w >= 10 ? 2 : 1);
   const inn = rect(r.x + pad, r.y + 1, r.w - 2 * pad, r.h - 2);
@@ -306,6 +322,7 @@ function moHeader(ui, r, o) {
   ui.hot(slab, ID_BACK, o.back);
   const k = moLook(ui, ID_BACK, { tone: 'tint', accent: C.BLUE });
   moSlab(ui, slab, k);
+  moFocusBars(ui, slab, k, false);
   let x = slab.x + 2;
   ui.putch(x, y, G.POINT_L, k.title);
   x += 3;
