@@ -7,6 +7,7 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_widgets.h"
+#include "app_form.h"
 #include "keystore.h"        /* keystore_wipe, keystore_state */
 #include "ui_pure.h"         /* caret window and text edits */
 
@@ -28,14 +29,14 @@ static const char *TAG = "app_profile";
 
 #define PF_KEY_MAX 8              /* key ids offered by the picker */
 
+static const app_form_def_t PF_FORM;
+
 static struct {
     conn_profile_t draft;           /* the profile the user is entering */
     char     port[6];               /* port as text (parsed on save)    */
-    bool     edit;                  /* the focused entry is in typing   */
-    bool     show;                  /* secrets shown, not bullets       */
+    app_form_t form;                /* typing state: edit, show, caret  */
     bool     dirty;                 /* any change since entry           */
-    int      caret;                 /* caret within the typed entry     */
-    ui_id_t  saved_focus;           /* focus saved when a page opens    */
+    ui_id_t  saved_focus;          /* focus saved when a page opens    */
     char     err[40];               /* commit error, "" = none          */
     int      edit_idx;              /* index the user is editing, -1 = new */
     /* orig_name holds the name at edit entry. save() re-finds the slot
@@ -45,16 +46,11 @@ static struct {
     int      nkeys;
     int      key_sel;               /* index into keys, -1 = none       */
     char     key_type[24];          /* cached type of the selected key  */
-} s_pf = { .edit_idx = -1, .key_sel = -1 };
+} s_pf = { .edit_idx = -1, .key_sel = -1, .form = { .def = &PF_FORM } };
 
 void profile_creds_wipe(void)
 {
     keystore_wipe(s_pf.draft.password, sizeof(s_pf.draft.password));
-}
-
-static bool pf_is_entry(ui_id_t id)
-{
-    return id >= ID_NAME && id <= ID_PASS;
 }
 
 static bool pf_key_auth(void)
@@ -176,21 +172,10 @@ static const char *pf_alert(const pf_bad_t *b)
     return NULL;
 }
 
-static uint8_t pf_entry_flags(ui_id_t id, bool bad, bool mask)
-{
-    const bool typing = s_pf.edit && ui_focus_get() == id;
-    return (uint8_t)((typing ? UI_ENTRY_EDIT : 0) |
-                     (mask ? UI_ENTRY_MASK : 0) | (bad ? UI_ENTRY_BAD : 0));
-}
-
 static void pf_entry(ui_rect_t r, ui_id_t id, const char *label, int label_w,
-                     bool bad, bool mask)
+                     bool bad, bool secret)
 {
-    int max;
-    const char *v = pf_buf(id, &max);
-    const bool typing = s_pf.edit && ui_focus_get() == id;
-    ui_entry_at(r, id, label, v, label_w, pf_entry_flags(id, bad, mask),
-                typing ? s_pf.caret : ui_len(v));
+    app_form_entry(&s_pf.form, r, id, label, label_w, bad, secret);
 }
 
 static void render_profile(uint64_t now)
@@ -250,9 +235,9 @@ static void render_profile(uint64_t now)
     const char *secret = key ? "Passphrase" : "Password";
     const char *toggle = key ? "Show passphrase" : "Show password";
     pf_entry(ui_rect(body.x, y, half, 3), ID_PASS, secret, key ? 12 : 0,
-             false, !s_pf.show);
+             false, true);
     ui_switch(ui_rect(body.x + half + gx, y, ui_switch_w(toggle), 3), ID_SHOW,
-              toggle, s_pf.show, UI_PART_ROOMY);
+              toggle, s_pf.form.show, UI_PART_ROOMY);
     y += 3;
 
     const char *alert = pf_alert(&bad);
@@ -284,8 +269,8 @@ static void profile_enter(intptr_t arg, uint64_t now)
         snprintf(s_pf.port, sizeof(s_pf.port), "22");
     }
     pf_load_keys();
-    s_pf.edit = s_pf.show = s_pf.dirty = false;
-    s_pf.caret = 0;
+    app_form_reset(&s_pf.form);
+    s_pf.dirty = false;
     s_pf.saved_focus = 0;
     s_pf.err[0] = '\0';
 }
@@ -392,7 +377,7 @@ static void pf_discard_yes(intptr_t arg, uint64_t now)
 /* A changed form asks first. Cancel there comes back to the draft. */
 static void pf_back(uint64_t now)
 {
-    s_pf.edit = false;
+    s_pf.form.edit = false;
     if (!s_pf.dirty) {
         pf_leave(now);
         return;
@@ -460,21 +445,6 @@ static void pf_changed(void)
     nav_invalidate();
 }
 
-static void pf_start_typing(void)
-{
-    int max;
-    const char *v = pf_buf(ui_focus_get(), &max);
-    s_pf.edit = true;
-    s_pf.caret = v ? (int)strlen(v) : 0;
-}
-
-static void pf_type(char ch)
-{
-    int max;
-    char *buf = pf_buf(ui_focus_get(), &max);
-    if (buf && ui_text_insert(buf, max, &s_pf.caret, ch)) pf_changed();
-}
-
 static void pf_adopt_key(void)
 {
     if (s_pf.key_sel >= 0 && s_pf.key_sel < s_pf.nkeys)
@@ -503,18 +473,17 @@ static void pf_key_step(void)
 
 static void pf_press(ui_id_t id, ui_id_t prev, uint64_t now)
 {
-    if (pf_is_entry(id)) {
-        if (s_pf.edit && prev == id) s_pf.edit = false;
-        else                         pf_start_typing();
+    if (app_form_is_entry(&s_pf.form, id)) {
+        app_form_press_entry(&s_pf.form, id, prev);
         return;
     }
-    s_pf.edit = false;
+    s_pf.form.edit = false;
     if (id == UI_ID_BACK)            pf_back(now);
     else if (id == ID_SAVE)          pf_save(now);
     else if (id == ID_AUTH)          pf_set_auth(0);
     else if (id == ID_AUTH + 1)      pf_set_auth(1);
     else if (id == ID_KEY)           pf_key_step();
-    else if (id == ID_SHOW)          s_pf.show = !s_pf.show;
+    else if (id == ID_SHOW)          s_pf.form.show = !s_pf.form.show;
 }
 
 /* Tab order of the controls on screen now. Save drops out while off. */
@@ -531,71 +500,30 @@ static int pf_tab_order(ui_id_t *o)
     return n;
 }
 
-/* Focus the next control. An entry opens in typing, caret at the end. */
-static void pf_tab(void)
+/* The AUTH chips share one tab stop: the selected chip. */
+static ui_id_t pf_tab_cur(ui_id_t cur)
 {
-    ui_id_t order[10];
-    const int n = pf_tab_order(order);
-    ui_id_t cur = ui_focus_get();
     if (cur == ID_AUTH || cur == ID_AUTH + 1)
-        cur = (ui_id_t)(ID_AUTH + (pf_key_auth() ? 1 : 0));
-    int next = 0;
-    for (int i = 0; i < n; i++)
-        if (order[i] == cur) { next = (i + 1) % n; break; }
-    ui_focus_set(order[next]);
-    ui_focus_show();
-    s_pf.edit = false;
-    if (pf_is_entry(order[next])) pf_start_typing();
-    nav_invalidate();
+        return (ui_id_t)(ID_AUTH + (pf_key_auth() ? 1 : 0));
+    return cur;
 }
 
-/* Keys while an entry is in typing. Arrows up and down end it. */
-static void pf_typing_key(ui_key_t k, char ch)
-{
-    int max;
-    char *buf = pf_buf(ui_focus_get(), &max);
-    const int len = buf ? (int)strlen(buf) : 0;
-    switch (k) {
-    case K_CHAR:
-        if (pf_accepts(ui_focus_get(), ch)) pf_type(ch);
-        break;
-    case K_BACKSPACE:
-        if (buf && ui_text_delete(buf, &s_pf.caret)) pf_changed();
-        break;
-    case K_LEFT:
-        if (s_pf.caret > 0) { s_pf.caret--; nav_invalidate(); }
-        break;
-    case K_RIGHT:
-        if (s_pf.caret < len) { s_pf.caret++; nav_invalidate(); }
-        break;
-    case K_UP: case K_DOWN: case K_ENTER: case K_ESC:
-        s_pf.edit = false;
-        nav_invalidate();
-        break;
-    case K_TAB:
-        pf_tab();
-        break;
-    default:
-        break;
-    }
-}
+static const app_form_def_t PF_FORM = {
+    .buf = pf_buf, .accepts = pf_accepts, .tab_order = pf_tab_order,
+    .tab_cur = pf_tab_cur, .changed = pf_changed,
+};
 
 static void profile_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                           uint64_t now)
 {
-    if (k != K_NONE && s_pf.edit) {
-        pf_typing_key(k, ch);
+    if (k != K_NONE && s_pf.form.edit) {
+        app_form_typing_key(&s_pf.form, k, ch);
         return;
     }
     if (k == K_ESC) { pf_back(now); return; }
-    if (k == K_TAB) { pf_tab(); return; }
+    if (k == K_TAB) { app_form_tab(&s_pf.form); return; }
     if (k == K_CHAR) {                  /* a letter on an entry starts typing */
-        const ui_id_t id = ui_focus_get();
-        if (pf_is_entry(id) && pf_accepts(id, ch)) {
-            pf_start_typing();
-            pf_type(ch);
-            nav_invalidate();
-        }
+        app_form_char_start(&s_pf.form, ch);
         return;
     }
 
