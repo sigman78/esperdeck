@@ -88,6 +88,15 @@ int ui_cols_for(int w, int min, int gap)
     return n < 2 ? 2 : n;
 }
 
+ui_form_cols_t ui_form_cols(ui_rect_t body, int cap_w, int cap2_w)
+{
+    int b = body.w / 4;
+    b = b < 16 ? 16 : b > 24 ? 24 : b;
+    const int x1 = body.x + cap_w, x2 = body.x + body.w - b;
+    return (ui_form_cols_t){ .cap_w = cap_w, .x1 = x1, .a = x2 - cap2_w - x1,
+                             .cap2_w = cap2_w, .x2 = x2, .b = b };
+}
+
 ui_flow_t ui_flow(ui_rect_t area, int gap, int h)
 {
     return (ui_flow_t){ .x0 = area.x, .w = area.w, .gap = gap, .h = h,

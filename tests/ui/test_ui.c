@@ -590,6 +590,24 @@ static void test_chips_width(void)
     TEST_ASSERT_EQUAL(0,  ui_chips_w(AUTH, 0));
 }
 
+/* The form grid at the three fonts. The second control column is a
+ * quarter of the body, clamped to 16..24 cells. */
+static void test_form_cols(void)
+{
+    ui_form_cols_t g = ui_form_cols(ui_rect(1, 3, 64, 16), 14, 8);
+    TEST_ASSERT_EQUAL(16, g.b);
+    TEST_ASSERT_EQUAL(49, g.x2);
+    TEST_ASSERT_EQUAL(15, g.x1);
+    TEST_ASSERT_EQUAL(26, g.a);
+    g = ui_form_cols(ui_rect(1, 3, 78, 20), 14, 8);
+    TEST_ASSERT_EQUAL(19, g.b);
+    TEST_ASSERT_EQUAL(37, g.a);
+    g = ui_form_cols(ui_rect(2, 3, 96, 26), 14, 8);
+    TEST_ASSERT_EQUAL(24, g.b);
+    TEST_ASSERT_EQUAL(74, g.x2);
+    TEST_ASSERT_EQUAL(50, g.a);
+}
+
 static void test_cols_grow_with_the_grid(void)
 {
     TEST_ASSERT_EQUAL(2, ui_cols_for(30, 30, 2));   /* two at least      */
@@ -1220,6 +1238,7 @@ int main(void)
     RUN_TEST(test_flow_wraps_breaks_and_cuts);
     RUN_TEST(test_own_widths);
     RUN_TEST(test_chips_width);
+    RUN_TEST(test_form_cols);
     RUN_TEST(test_cols_grow_with_the_grid);
     RUN_TEST(test_arrow_prefers_the_next_row_straight_ahead);
     RUN_TEST(test_arrow_prefers_straight_ahead_to_the_side);

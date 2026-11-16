@@ -119,10 +119,10 @@ SCENARIOS = {
         "|expect-text:none stored|expect-text:No stored key. Setup"
         "|expect-text:Passphrase|key:esc|wait:300|expect:ask|key:right"
         "|key:enter|wait:400|expect:home|quit",
-    # Points (100x30 grid): 100,72 Name; 300,120 Host; 230,168 key chip.
+    # Points (100x30 grid): 200,72 Name; 300,120 Host; 230,168 key chip.
     "editor-tap":
         "key:esc|wait:400|expect:home|key:n|wait:400|expect:profile"
-        "|tap:100,72|wait:200|type:zz|expect-text:zz|tap:300,120|wait:200"
+        "|tap:200,72|wait:200|type:zz|expect-text:zz|tap:300,120|wait:200"
         "|type:hh|expect-text:hh|tap:230,168|wait:300|expect-text:none stored"
         "|key:esc|wait:300|expect:ask|key:left|key:right|key:enter"
         "|wait:400|expect:home|quit",
@@ -444,7 +444,8 @@ SCENARIOS = {
     # Add by hand: a short password turns Save off and shows the alert. Tab
     # skips Save while it is off. A good password saves and the list shows it.
     "setup-wifi-add":
-        WIFI_HAND + "|expect-text:Add network|expect-text:Network name"
+        WIFI_HAND + "|expect-text:Add network|expect-text:Network"
+        "|expect-text:Show"
         "|expect-no-text:Password needs|type:NewNet|key:tab|type:abc"
         "|expect-text:Password needs 8 to 63 characters"
         "|key:tab|key:tab|type:Z|expect-text:NewNetZ|key:bs|key:tab|type:defgh"

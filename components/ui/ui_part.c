@@ -225,6 +225,15 @@ void ui_caption(ui_rect_t r, const char *text)
             UI_TEXT, UI_LEFT);
 }
 
+int ui_form_row(ui_rect_t body, const ui_form_cols_t *g, int i,
+                const char *cap, const char *cap2)
+{
+    const int y = body.y + i * 3;
+    ui_caption(ui_rect(body.x, y, g->cap_w, 3), cap);
+    if (has(cap2)) ui_caption(ui_rect(g->x2 - g->cap2_w, y, g->cap2_w, 3), cap2);
+    return y;
+}
+
 /* Key focus on a value control: the bars alone, in the focus colour. */
 static const ui_look_t FOCUS_BARS = { .pen = PART_FOCUS, .fill = UI_FOCUS,
                                       .edge = UI_FOCUS_EDGE, .focus = true };
@@ -681,7 +690,7 @@ void ui_entry_at(ui_rect_t r, ui_id_t id, const char *label, const char *value,
     if (!ui_part(r, id, &pt, &b)) return;
 
     const ui_look_t *k = &b.k;
-    const int lw = label_w ? label_w : 10;
+    const int lw = !has(label) ? 0 : label_w ? label_w : 10;
     const int vx = b.inn.x + lw, vw = b.inn.w - lw;
     const int n = ui_len(value);
     const int room = vw - (bad ? 2 : 0);
@@ -707,8 +716,10 @@ void ui_entry_at(ui_rect_t r, ui_id_t id, const char *label, const char *value,
         }
     }
 
-    ui_pen(k->card ? PART_LABEL : k->pen);
-    ui_text(ui_rect(b.inn.x, b.y, lw - 1, 1), str(label), k->detail, UI_LEFT);
+    if (lw) {
+        ui_pen(k->card ? PART_LABEL : k->pen);
+        ui_text(ui_rect(b.inn.x, b.y, lw - 1, 1), label, k->detail, UI_LEFT);
+    }
     ui_pen(bad && k->card ? OVERLAY_COL_RED : k->pen);
     ui_text(ui_rect(vx, b.y, vw - (bad ? 2 : 0), 1), shown, k->title, UI_LEFT);
     if (bad) ui_putch(b.inn.x + b.inn.w - 1, b.y, '!', k->title);

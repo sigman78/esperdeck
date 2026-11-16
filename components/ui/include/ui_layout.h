@@ -64,6 +64,15 @@ static inline int ui_grid_capacity(const ui_grid_t *g)
  *  fit with @p gap between them. Two at least. */
 int ui_cols_for(int w, int min, int gap);
 
+/* A form on two columns: caption, control, caption, control. Control
+ * column b is a quarter of the body, 16 to 24 cells, at its right edge.
+ * Control column a takes the rest. The second caption column ends at x2. */
+typedef struct { int cap_w, x1, a, cap2_w, x2, b; } ui_form_cols_t;
+
+/** Columns of a form in @p body. @p cap_w and @p cap2_w are the widths of
+ *  the two caption columns. */
+ui_form_cols_t ui_form_cols(ui_rect_t body, int cap_w, int cap2_w);
+
 /* A flow packs parts from the left in rows of `h`, `gap` cells apart.
  * Each part keeps its own width. A part with no room left starts the
  * next row. */

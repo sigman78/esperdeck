@@ -20,8 +20,8 @@ bool app_form_is_entry(const app_form_t *f, ui_id_t id)
     return f->def->buf(id, &max) != NULL;
 }
 
-void app_form_entry(const app_form_t *f, ui_rect_t r, ui_id_t id,
-                    const char *label, int label_w, bool bad, bool secret)
+void app_form_entry(const app_form_t *f, ui_rect_t r, ui_id_t id, bool bad,
+                    bool secret)
 {
     int max;
     const char *v = f->def->buf(id, &max);
@@ -29,7 +29,7 @@ void app_form_entry(const app_form_t *f, ui_rect_t r, ui_id_t id,
     const uint8_t flags = (uint8_t)((typing ? UI_ENTRY_EDIT : 0) |
                                     ((secret && !f->show) ? UI_ENTRY_MASK : 0) |
                                     (bad ? UI_ENTRY_BAD : 0));
-    ui_entry_at(r, id, label, v, label_w, flags, typing ? f->caret : ui_len(v));
+    ui_entry_at(r, id, NULL, v, 0, flags, typing ? f->caret : ui_len(v));
 }
 
 void app_form_start_typing(app_form_t *f)

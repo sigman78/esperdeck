@@ -102,10 +102,10 @@ first choice and reconnects, Move earlier and Move later change the
 order, and Forget removes it after a question. A network marked "locked"
 keeps its password in the keystore until you unlock the deck.
 
-**Add by hand** opens a form for a network you type on the keyboard: the
-network name and the password (8 to 63 characters, or empty for an open
-network). Save stays off until both fit, and the form says what is wrong.
-Show password reveals what you typed. Esc asks before it drops a draft.
+**Add by hand** opens a form for a network you type on the keyboard:
+**Network** (its name) and **Password** (8 to 63 characters, or empty for
+an open network). Save stays off until both fit, and the form says what is
+wrong. The **Show** switch beside the password reveals what you typed. Esc asks before it drops a draft.
 An idle deck locks and loses the draft.
 
 ## 4. Pairing a keyboard
@@ -140,8 +140,8 @@ Three ways, pick what's convenient:
 
 - **On the device.** Tap **+ New** on HOME, or press N. The form has
   Name, User, Host and Port. **Sign-in** is a password or a stored key.
-  A password has a **Show password** switch. A key shows the stored key
-  and an optional passphrase. Press the key part to step to the next
+  The password, or a key's optional passphrase, has a **Show** switch
+  beside it. A key shows the stored key. Press the key part to step to the next
   stored key. A host needs a name, an address and a user. The port is a
   number from 1 to 65535. **Save**, at the top right, stays grey until
   the form is valid.

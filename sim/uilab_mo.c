@@ -293,7 +293,6 @@ static void draw_edit(const edit_t *st)
     const ui_slate_t pg = ui_slate_page();
     const form_t *f = &st->f;
     const ui_rect_t body = pg.body;
-    const int gx = pg.m.gutter;
 
     ui_focus_default(MO_FIELD);
     const bool changed = !same_form(f, &st->was);
@@ -319,55 +318,42 @@ static void draw_edit(const edit_t *st)
             wrong ? UI_PART_OFF : 0);
     ui_title(head, "Hosts", title, NULL, true);
 
-    const int half = (body.w - gx) >> 1, port_w = 17, wide = body.w - gx - port_w;
-    const struct { const char *label, *value; int lw; bool mask; const char *bad; }
-    fld[5] = {
-        { "Name", f->name, 0, false, msg_name },
-        { "User", f->user, 0, false, msg_user },
-        { "Host", f->host, 0, false, msg_host },
-        { "Port", f->port, 6, false, msg_port },
-        { f->by_key ? "Passphrase" : "Password", f->pass, f->by_key ? 12 : 0,
-          !f->show, NULL },
+    const ui_form_cols_t g = ui_form_cols(body, ui_caption_w("Passphrase"),
+                                          ui_caption_w("User"));
+    const struct { const char *value; bool mask; const char *bad; } fld[5] = {
+        { f->name, false, msg_name }, { f->user, false, msg_user },
+        { f->host, false, msg_host }, { f->port, false, msg_port },
+        { f->pass, !f->show, NULL },
     };
-    const ui_rect_t cell[4] = {
-        ui_rect(body.x, body.y, half, 3),
-        ui_rect(body.x + half + gx, body.y, body.w - half - gx, 3),
-        ui_rect(body.x, body.y + 3, wide, 3),
-        ui_rect(body.x + wide + gx, body.y + 3, port_w, 3),
-    };
-    for (int i = 0; i < 4; i++)
-        ui_entry_at(cell[i], (ui_id_t)(MO_FIELD + i), fld[i].label,
-                    fld[i].value, fld[i].lw,
-                    (uint8_t)((st->edit == i ? UI_ENTRY_EDIT : 0) |
-                              (fld[i].bad ? UI_ENTRY_BAD : 0)),
-                    st->edit == i && st->caret >= 0 ? st->caret
-                                                    : ui_len(fld[i].value));
-    int y = body.y + 6;
-    ui_caption(ui_rect(body.x, y, 12, 3), "Sign-in");
-    ui_chips(ui_rect(body.x + 12, y, body.w - 12, 3), MO_OPT, AUTH, 2,
-             f->by_key ? 1 : 0, 0);
-    y += 3;
+#define FIELD(i, r) \
+    ui_entry_at((r), (ui_id_t)(MO_FIELD + (i)), NULL, fld[i].value, 0, \
+                (uint8_t)((st->edit == (i) ? UI_ENTRY_EDIT : 0) | \
+                          (fld[i].mask ? UI_ENTRY_MASK : 0) | \
+                          (fld[i].bad ? UI_ENTRY_BAD : 0)), \
+                st->edit == (i) && st->caret >= 0 ? st->caret \
+                                                  : ui_len(fld[i].value))
+    int y = ui_form_row(body, &g, 0, "Name", "User");
+    FIELD(0, ui_rect(g.x1, y, g.a, 3));
+    FIELD(1, ui_rect(g.x2, y, g.b, 3));
+    y = ui_form_row(body, &g, 1, "Host", "Port");
+    FIELD(2, ui_rect(g.x1, y, g.a, 3));
+    FIELD(3, ui_rect(g.x2, y, 9, 3));
+    y = ui_form_row(body, &g, 2, "Sign-in", NULL);
+    ui_chips(ui_rect(g.x1, y, g.a, 3), MO_OPT, AUTH, 2, f->by_key ? 1 : 0, 0);
+    int row = 3;
     if (f->by_key) {
-        char right[96];
-        key_text(right, sizeof right, f->keyid, st->nkeys, body.w - 12);
-        ui_part(ui_rect(body.x, y, ui_act_w("Key", right), 3), MO_OPT + 5,
-                &(ui_part_t){ .title = "Key", .right = right,
-                              .flags = (uint8_t)(UI_PART_RIGHT_BOLD |
-                                  UI_PART_ROOMY |
-                                  (st->nkeys ? 0 : UI_PART_OFF)) },
-                NULL);
-        y += 3;
+        char text[96];
+        key_text(text, sizeof text, f->keyid, st->nkeys, g.a - 4);
+        y = ui_form_row(body, &g, row++, "Key", NULL);
+        ui_part(ui_rect(g.x1, y, g.a, 3), MO_OPT + 5,
+                &(ui_part_t){ .title = text,
+                              .flags = st->nkeys ? 0 : UI_PART_OFF }, NULL);
     }
-    const char *toggle = f->by_key ? "Show passphrase" : "Show password";
-    ui_entry_at(ui_rect(body.x, y, half, 3), MO_FIELD + 4, fld[4].label,
-                fld[4].value, fld[4].lw,
-                (uint8_t)((st->edit == 4 ? UI_ENTRY_EDIT : 0) |
-                          (fld[4].mask ? UI_ENTRY_MASK : 0)),
-                st->edit == 4 && st->caret >= 0 ? st->caret
-                                                : ui_len(fld[4].value));
-    const int tx = body.x + half + gx, tw = ui_caption_w(toggle);
-    ui_caption(ui_rect(tx, y, tw, 3), toggle);
-    ui_switch(ui_rect(tx + tw, y, UI_SWITCH_W, 3), MO_OPT + 4, f->show, 0);
+    y = ui_form_row(body, &g, row++, f->by_key ? "Passphrase" : "Password",
+                    "Show");
+    FIELD(4, ui_rect(g.x1, y, g.a, 3));
+    ui_switch(ui_rect(g.x2, y, UI_SWITCH_W, 3), MO_OPT + 4, f->show, 0);
+#undef FIELD
     y += 3;
     if (alert && y < body.y + body.h) {
         ui_pen(OVERLAY_COL_RED);
@@ -427,6 +413,15 @@ static edit_t edit_state(int n)
         e.edit = 4;
         e.caret = 3;
         break;
+    case 8:                    /* key sign-in, no name, typing a long host */
+        e.f = e.was = base_form();
+        e.f.name[0] = 0;
+        snprintf(e.f.host, sizeof e.f.host, "%s", LONG_HOST);
+        e.f.by_key = true;
+        snprintf(e.f.keyid, sizeof e.f.keyid, "%s", LAB_KEYS[0].id);
+        e.edit = 2;
+        e.caret = 24;
+        break;
     default: break;
     }
     return e;
@@ -446,6 +441,7 @@ static void scr_edit_key(void)    { draw_edit_n(4); }
 static void scr_edit_nokey(void)  { draw_edit_n(5); }
 static void scr_edit_caret(void)  { draw_edit_n(6); }
 static void scr_edit_secret(void) { draw_edit_n(7); }
+static void scr_edit_worst(void)  { draw_edit_n(8); }
 
 /* The by-hand network form. edit: 0 SSID, 1 password, -1 none. */
 typedef struct {
@@ -458,7 +454,6 @@ static void draw_wifiadd(const wifiadd_t *st)
 {
     const ui_slate_t pg = ui_slate_page();
     const ui_rect_t body = pg.body;
-    const int gx = pg.m.gutter, half = (body.w - gx) >> 1;
     const size_t plen = strlen(st->pass);
     const bool pass_bad = plen > 0 && plen < 8;
     const bool wrong = !st->ssid[0] || pass_bad;
@@ -469,22 +464,24 @@ static void draw_wifiadd(const wifiadd_t *st)
             wrong ? UI_PART_OFF : 0);
     ui_title(head, "Wi-Fi", "Add network", NULL, true);
 
-    ui_entry_at(ui_rect(body.x, body.y, body.w, 3), MO_FIELD, "Network name",
-                st->ssid, 14,
+    ui_form_cols_t g = ui_form_cols(body, ui_caption_w("Password"),
+                                    ui_caption_w("Show"));
+    const int room = body.w - g.cap_w - g.cap2_w - UI_SWITCH_W;
+    g.a = room < 40 ? room : 40;
+    g.x2 = g.x1 + g.a + g.cap2_w;
+    int y = ui_form_row(body, &g, 0, "Network", NULL);
+    ui_entry_at(ui_rect(g.x1, y, g.a, 3), MO_FIELD, NULL, st->ssid, 0,
                 (uint8_t)(st->edit == 0 ? UI_ENTRY_EDIT : 0),
                 st->edit == 0 && st->caret >= 0 ? st->caret
                                                 : ui_len(st->ssid));
-    ui_entry_at(ui_rect(body.x, body.y + 3, half, 3), MO_FIELD + 1, "Password",
-                st->pass, 0,
+    y = ui_form_row(body, &g, 1, "Password", "Show");
+    ui_entry_at(ui_rect(g.x1, y, g.a, 3), MO_FIELD + 1, NULL, st->pass, 0,
                 (uint8_t)((st->edit == 1 ? UI_ENTRY_EDIT : 0) |
                           (st->show ? 0 : UI_ENTRY_MASK) |
                           (pass_bad ? UI_ENTRY_BAD : 0)),
                 st->edit == 1 && st->caret >= 0 ? st->caret
                                                 : ui_len(st->pass));
-    const int tx = body.x + half + gx, tw = ui_caption_w("Show password");
-    ui_caption(ui_rect(tx, body.y + 3, tw, 3), "Show password");
-    ui_switch(ui_rect(tx + tw, body.y + 3, UI_SWITCH_W, 3), MO_OPT + 4,
-              st->show, 0);
+    ui_switch(ui_rect(g.x2, y, UI_SWITCH_W, 3), MO_OPT + 4, st->show, 0);
     if (pass_bad && body.h > 6) {
         ui_pen(OVERLAY_COL_RED);
         ui_text(ui_rect(body.x + 2, body.y + 6, body.w - 4, 1),
@@ -2019,6 +2016,7 @@ static const lab_screen_t MO_SCREENS[] = {
     { "mo-edit-nokey",  scr_edit_nokey,  .slate = true },
     { "mo-edit-caret",  scr_edit_caret,  .slate = true },
     { "mo-edit-secret", scr_edit_secret, .slate = true },
+    { "mo-edit-worst",  scr_edit_worst,  .slate = true },
     { "mo-status-busy", scr_status_busy, .slate = true },
     { "mo-status-busy-blink", scr_status_busy_blink, .slate = true },
     { "mo-status-alert", scr_status_alert, .slate = true },

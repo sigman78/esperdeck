@@ -111,7 +111,8 @@ the C parts port those sketches line by line.
 | `ui_switch` | A two-state setting: a 10-cell pill (`UI_SWITCH_W`) with a 4-cell knob at one end and the word in the free track. No label. |
 | `ui_chips` | One choice of several, every option visible: a tab bar with no gaps, the chosen segment bold over an accent underline. No caption. `ui_chips_w` gives its width. |
 | `ui_caption`, `ui_caption_w` | The caption of a switch or choice row, on the page background. A page's caption column is its longest caption plus four cells. |
-| `ui_entry`, `ui_entry_at` | A form field: label, value, caret while editing, invalid mark. `ui_entry_at` puts the caret anywhere in the value and scrolls to keep it in view. |
+| `ui_entry`, `ui_entry_at` | A form field: an optional label, value, caret while editing, invalid mark. The forms pass no label: the caption sits on the page. `ui_entry_at` puts the caret anywhere in the value and scrolls to keep it in view. |
+| `ui_form_cols`, `ui_form_row` | The two-column form grid: caption, control, caption, control. `ui_form_row` draws a row's captions and returns its top. |
 | `ui_title` | Page header. With `back`, the whole bar is the back target. |
 | `ui_pages`, `ui_rail` | Page stepper in the header; position rail at the side of a paged list. |
 | `ui_info`, `ui_panel` | Text panels. They hold text only and are never touch targets. |
@@ -152,6 +153,17 @@ the block knob (right for On), and green for On.
 its caption in the page's caption column (`ui_caption_w` of the longest
 caption), then the control, then a unit in dim text ("Saver + lock" ...
 "min"). The caption is not a touch target; the control is.
+
+**Forms.** The host form and the Wi-Fi add form use two columns
+(`ui_form_cols`): caption, control, caption, control. The second control
+column is a quarter of the body, 16 to 24 cells, at its right edge; its
+caption column is the longest second caption plus four. The first control
+column takes the rest: on the host form, 26 cells at 12x24 and 50 at 8x16.
+An entry holds the value only. The host form's rows: Name and User, Host
+and Port, Sign-in, Key (key sign-in only), Password or Passphrase and
+Show. Key sign-in with its alert line fills the 16 body rows at 12x24
+exactly. The Wi-Fi add form keeps the captions but stops its entries at
+40 cells; Show and its switch follow the password entry.
 
 **An edged part sits on the screen background.** The edge styles carry
 the theme background, so a part drawn on a panel would show slate
@@ -295,6 +307,7 @@ above its action row while storage holds eight.
 | Focus on a value | The sand bars only, over the control's own colours. A finger still washes the control in its own accent; the underline and the knob stay. |
 | Row grid | A switch or a choice takes a row. The caption column is the page's longest caption plus four. A unit follows the control in dim text. |
 | CRT FX, Motion FX | One control per row. |
+| Forms | Two columns on one grid (`ui_form_cols`); entries hold the value only, the caption sits on the page. "Show" replaces "Show password" and "Show passphrase". The Key part is as wide as an entry; the key type shows where it fits. The Wi-Fi add form uses the same captions with "Network" first; its entries stop at 40 cells. |
 
 ## Still open
 
@@ -318,6 +331,7 @@ above its action row while storage holds eight.
 | Question page | `app_ask.c` | `mo-confirm*` |
 | Setup hub, sections, session sheet | `app_menu.c` | `mo-setup*`, `mo-section*`, `mo-menu*` |
 | Host form | `app_profile.c` | `mo-edit*` |
+| Wi-Fi add form | `app_wifiadd.c` | `mo-wifiadd*` |
 | Code pad | `app_unlock.c` | `mo-unlock*` |
 | Connecting, failed | `app_connect.c` | `mo-connect*`, `mo-fail*` |
 | Host key | `app_hostkey.c` | `mo-hostkey*` |

@@ -111,8 +111,8 @@ static void pf_load_keys(void)
     pf_key_refresh_info();
 }
 
-/* Right text of the Key part: id, type and place in the list, as far as
- * @p cap cells allow. */
+/* Text of the Key part: id, type and place in the list, as far as @p cap
+ * cells allow. */
 static void pf_key_text(char *out, size_t sz, int cap)
 {
     const bool known = s_pf.key_sel >= 0 && s_pf.key_sel < s_pf.nkeys;
@@ -172,10 +172,9 @@ static const char *pf_alert(const pf_bad_t *b)
     return NULL;
 }
 
-static void pf_entry(ui_rect_t r, ui_id_t id, const char *label, int label_w,
-                     bool bad, bool secret)
+static void pf_entry(ui_rect_t r, ui_id_t id, bool bad, bool secret)
 {
-    app_form_entry(&s_pf.form, r, id, label, label_w, bad, secret);
+    app_form_entry(&s_pf.form, r, id, bad, secret);
 }
 
 static void render_profile(uint64_t now)
@@ -185,7 +184,6 @@ static void render_profile(uint64_t now)
     const ui_slate_t pg = ui_slate_page();
     static const char *const AUTH[2] = { "password", "key" };
     const ui_rect_t body = pg.body;
-    const int gx = pg.m.gutter;
 
     ui_focus_default(ID_NAME);
     const pf_bad_t bad = pf_bad();
@@ -205,41 +203,31 @@ static void render_profile(uint64_t now)
             invalid ? UI_PART_OFF : 0);
     ui_title(head, "Hosts", title, NULL, true);
 
-    const int half = (body.w - gx) >> 1, port_w = 17;
-    const int wide = body.w - gx - port_w;
-    pf_entry(ui_rect(body.x, body.y, half, 3), ID_NAME, "Name", 0,
-             show_name, false);
-    pf_entry(ui_rect(body.x + half + gx, body.y, body.w - half - gx, 3),
-             ID_USER, "User", 0, show_user, false);
-    pf_entry(ui_rect(body.x, body.y + 3, wide, 3), ID_HOST, "Host", 0,
-             show_host, false);
-    pf_entry(ui_rect(body.x + wide + gx, body.y + 3, port_w, 3), ID_PORT,
-             "Port", 6, bad.port, false);
-    int y = body.y + 6;
-    ui_caption(ui_rect(body.x, y, 12, 3), "Sign-in");
-    ui_chips(ui_rect(body.x + 12, y, body.w - 12, 3), ID_AUTH, AUTH, 2,
-             pf_key_auth() ? 1 : 0, 0);
-    y += 3;
-
+    /* Two columns: caption, entry, caption, entry (ui_form_cols). */
     const bool key = pf_key_auth();
+    const ui_form_cols_t g = ui_form_cols(body, ui_caption_w("Passphrase"),
+                                          ui_caption_w("User"));
+    int y = ui_form_row(body, &g, 0, "Name", "User");
+    pf_entry(ui_rect(g.x1, y, g.a, 3), ID_NAME, show_name, false);
+    pf_entry(ui_rect(g.x2, y, g.b, 3), ID_USER, show_user, false);
+    y = ui_form_row(body, &g, 1, "Host", "Port");
+    pf_entry(ui_rect(g.x1, y, g.a, 3), ID_HOST, show_host, false);
+    pf_entry(ui_rect(g.x2, y, 9, 3), ID_PORT, bad.port, false);
+    y = ui_form_row(body, &g, 2, "Sign-in", NULL);
+    ui_chips(ui_rect(g.x1, y, g.a, 3), ID_AUTH, AUTH, 2, key ? 1 : 0, 0);
+
+    int row = 3;
     if (key) {
-        char right[96];
-        pf_key_text(right, sizeof right, body.w - 12);
-        ui_part(ui_rect(body.x, y, ui_act_w("Key", right), 3), ID_KEY,
-                &(ui_part_t){ .title = "Key", .right = right,
-                              .flags = (uint8_t)(UI_PART_RIGHT_BOLD |
-                                  UI_PART_ROOMY |
-                                  (s_pf.nkeys ? 0 : UI_PART_OFF)) },
-                NULL);
-        y += 3;
+        char text[96];
+        pf_key_text(text, sizeof text, g.a - 4);
+        y = ui_form_row(body, &g, row++, "Key", NULL);
+        ui_part(ui_rect(g.x1, y, g.a, 3), ID_KEY,
+                &(ui_part_t){ .title = text,
+                              .flags = s_pf.nkeys ? 0 : UI_PART_OFF }, NULL);
     }
-    const char *secret = key ? "Passphrase" : "Password";
-    const char *toggle = key ? "Show passphrase" : "Show password";
-    pf_entry(ui_rect(body.x, y, half, 3), ID_PASS, secret, key ? 12 : 0,
-             false, true);
-    const int tx = body.x + half + gx, tw = ui_caption_w(toggle);
-    ui_caption(ui_rect(tx, y, tw, 3), toggle);
-    ui_switch(ui_rect(tx + tw, y, UI_SWITCH_W, 3), ID_SHOW, s_pf.form.show, 0);
+    y = ui_form_row(body, &g, row++, key ? "Passphrase" : "Password", "Show");
+    pf_entry(ui_rect(g.x1, y, g.a, 3), ID_PASS, false, true);
+    ui_switch(ui_rect(g.x2, y, UI_SWITCH_W, 3), ID_SHOW, s_pf.form.show, 0);
     y += 3;
 
     const char *alert = pf_alert(&bad);

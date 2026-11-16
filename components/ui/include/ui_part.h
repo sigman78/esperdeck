@@ -156,6 +156,11 @@ int ui_caption_w(const char *caption);
  *  cells in from each side. The control beside it is the touch target. */
 void ui_caption(ui_rect_t r, const char *text);
 
+/** The captions of form row @p i on grid @p g. @p cap goes in the first
+ *  caption column, @p cap2 (or NULL) in the second. Returns the row's top. */
+int ui_form_row(ui_rect_t body, const ui_form_cols_t *g, int i,
+                const char *cap, const char *cap2);
+
 /** A header button cut from the right end of @p header, with a gap.
  *  Call for the rightmost one first. */
 void ui_pill(ui_rect_t *header, ui_id_t id, const char *label, uint8_t tone,
@@ -292,8 +297,9 @@ void ui_toast(ui_rect_t r, const char *text, uint8_t tone);
 #define UI_ENTRY_EDIT 0x02   /* lit, with a caret after the value        */
 #define UI_ENTRY_BAD  0x04   /* invalid: red stripe, red value, a mark   */
 
-/** A form field: label, then the value. @p label_w is the label column
- *  width in cells; 0 picks 10. */
+/** A form field: an optional label, then the value. @p label_w is the
+ *  label column width in cells; 0 picks 10. A NULL or empty label leaves
+ *  the value alone in the field; the form puts its caption on the page. */
 void ui_entry(ui_rect_t r, ui_id_t id, const char *label, const char *value,
               int label_w, uint8_t flags);
 

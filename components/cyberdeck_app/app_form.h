@@ -35,9 +35,10 @@ void app_form_reset(app_form_t *f);
 
 bool app_form_is_entry(const app_form_t *f, ui_id_t id);
 
-/** Draw one entry. @p secret entries are masked unless f->show. */
-void app_form_entry(const app_form_t *f, ui_rect_t r, ui_id_t id,
-                    const char *label, int label_w, bool bad, bool secret);
+/** Draw one entry: the value alone; its caption is on the page.
+ *  @p secret entries are masked unless f->show. */
+void app_form_entry(const app_form_t *f, ui_rect_t r, ui_id_t id, bool bad,
+                    bool secret);
 
 /** Focus entry @p id starts typing, caret at the end. */
 void app_form_start_typing(app_form_t *f);

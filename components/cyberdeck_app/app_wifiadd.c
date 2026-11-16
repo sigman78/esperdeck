@@ -81,7 +81,6 @@ static void render_wifiadd(uint64_t now)
     const int faults = ui_faults();
     const ui_slate_t pg = ui_slate_page();
     const ui_rect_t body = pg.body;
-    const int gx = pg.m.gutter, half = (body.w - gx) >> 1;
 
     ui_focus_default(ID_SSID);
     ui_rect_t head = pg.header;
@@ -89,14 +88,18 @@ static void render_wifiadd(uint64_t now)
             wa_wrong() ? UI_PART_OFF : 0);
     ui_title(head, "Wi-Fi", "Add network", NULL, true);
 
-    app_form_entry(&s_wa.form, ui_rect(body.x, body.y, body.w, 3), ID_SSID,
-                   "Network name", 14, false, false);
-    app_form_entry(&s_wa.form, ui_rect(body.x, body.y + 3, half, 3), ID_PASS,
-                   "Password", 0, wa_pass_bad(), true);
-    const int tx = body.x + half + gx, tw = ui_caption_w("Show password");
-    ui_caption(ui_rect(tx, body.y + 3, tw, 3), "Show password");
-    ui_switch(ui_rect(tx + tw, body.y + 3, UI_SWITCH_W, 3), ID_SHOW,
-              s_wa.form.show, 0);
+    /* The host form's captions; the entry stops at 40 cells, Show follows. */
+    ui_form_cols_t g = ui_form_cols(body, ui_caption_w("Password"),
+                                    ui_caption_w("Show"));
+    const int room = body.w - g.cap_w - g.cap2_w - UI_SWITCH_W;
+    g.a = room < 40 ? room : 40;
+    g.x2 = g.x1 + g.a + g.cap2_w;
+    int y = ui_form_row(body, &g, 0, "Network", NULL);
+    app_form_entry(&s_wa.form, ui_rect(g.x1, y, g.a, 3), ID_SSID, false, false);
+    y = ui_form_row(body, &g, 1, "Password", "Show");
+    app_form_entry(&s_wa.form, ui_rect(g.x1, y, g.a, 3), ID_PASS,
+                   wa_pass_bad(), true);
+    ui_switch(ui_rect(g.x2, y, UI_SWITCH_W, 3), ID_SHOW, s_wa.form.show, 0);
 
     if (wa_pass_bad() && body.h > 6) {
         ui_pen(OVERLAY_COL_RED);

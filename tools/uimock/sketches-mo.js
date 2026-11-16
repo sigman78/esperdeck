@@ -201,6 +201,21 @@ function moCaption(ui, r, text) {
   ui.text(rect(r.x + 2, moCentre(r.y, r.h, 1, text), r.w - 4, 1), text, S.TEXT, LEFT);
 }
 
+// A form on two columns: caption, control, caption, control. The second
+// control column (b) is a quarter of the body, 16 to 24 cells, at its right
+// edge. The first (a) takes the rest. ui_form_cols in C.
+function moFormCols(body, capW, cap2W) {
+  const b = Math.max(16, Math.min(24, body.w >> 2)), x1 = body.x + capW, x2 = body.x + body.w - b;
+  return { capW, cap2W, x1, a: x2 - cap2W - x1, x2, b };
+}
+// Row `i` of a form: its captions. Returns the row's top.
+function moFormRow(ui, body, g, i, cap, cap2) {
+  const y = body.y + i * 3;
+  moCaption(ui, rect(body.x, y, g.capW, 3), cap);
+  if (cap2) moCaption(ui, rect(g.x2 - g.cap2W, y, g.cap2W, 3), cap2);
+  return y;
+}
+
 // A switch: a pill of MO_SWITCH_W cells. A 4-cell knob sits at one end and
 // the word in the free track. On: knob right, green. Off: knob left, grey.
 // A finger washes the track. Its caption is the caller's.
@@ -467,20 +482,22 @@ function moInfo(ui, r, rows, stripe) {
   ui.pen(C.DEFAULT);
 }
 
-// A form field: label, then the value. Editing lights it and puts a caret
-// on character o.caret (default: after the last). A long value scrolls to
-// keep the caret in view, as ui_entry_at does.
+// A form field: an optional label, then the value. Editing lights it and
+// puts a caret on character o.caret (default: after the last). A long value
+// scrolls to keep the caret in view, as ui_entry_at does.
 // o.bad marks an invalid value: red stripe, red text, a mark at the end.
 function moField(ui, r, id, label, value, o, act) {
   const p = moPart(ui, r, id, { title: '', accent: C.CYAN, lit: o.edit, stripe: o.bad ? C.RED : 0 }, act);
   if (!p) return;
-  const k = p.k, lw = o.lw || 10, vx = p.inn.x + lw, vw = p.inn.w - lw;
+  const k = p.k, lw = label ? o.lw || 10 : 0, vx = p.inn.x + lw, vw = p.inn.w - lw;
   const cs = Array.from(value), n = cs.length, room = vw - (o.bad ? 2 : 0);
   const caret = Math.max(0, Math.min(o.caret === undefined ? n : o.caret, n));
   const first = o.edit && n > room - 1 ? entryFirst(n, caret, room) : 0;
   const shown = o.mask ? '•'.repeat(n - first) : cs.slice(first).join('');
-  ui.pen(k.card ? MO_LABEL : k.pen);
-  ui.text(rect(p.inn.x, p.y, lw - 1, 1), label, k.detail, LEFT);
+  if (label) {
+    ui.pen(k.card ? MO_LABEL : k.pen);
+    ui.text(rect(p.inn.x, p.y, lw - 1, 1), label, k.detail, LEFT);
+  }
   ui.pen(o.bad && k.card ? C.RED : k.pen);
   ui.text(rect(vx, p.y, room, 1), shown, k.title, LEFT);
   if (o.bad) ui.putch(p.inn.x + p.inn.w - 1, p.y, '!', k.title);
@@ -581,16 +598,15 @@ function moConfirm(ui, app) {
 }
 
 const MO_FIELDS = [
-  { key: 'name', label: 'Name' }, { key: 'user', label: 'User' },
-  { key: 'host', label: 'Host' }, { key: 'port', label: 'Port', lw: 6 },
-  { key: 'pass', label: 'Password', mask: true },
+  { key: 'name' }, { key: 'user' }, { key: 'host' }, { key: 'port' },
+  { key: 'pass', mask: true },
 ];
 
 // Keys stored on the deck, as the host form lists them.
 const MO_KEYS = [{ id: 'deck-ed25519', type: 'ssh-ed25519' }, { id: 'work-rsa', type: 'ssh-rsa' }];
 
-// Right text of the Key part, `cap` cells at most. Id, type and place in
-// the list as far as they fit; pf_key_text in app_profile.c.
+// Text of the Key part, `cap` cells at most. Id, type and place in the
+// list as far as they fit; pf_key_text in app_profile.c.
 function moKeyText(key, keys, cap) {
   const at = keys.findIndex((k) => k.id === key);
   if (at < 0) return key ? `${key.slice(0, cap - 10)} (missing)` : 'none stored';
@@ -613,7 +629,7 @@ function moEdit(ui, app) {
     st.orig = isNew ? '' : p.name;
     st.edit = -1;
   }
-  const f = st.form, body = pg.body, gx = pg.m.gutter, keys = st.keys || MO_KEYS;
+  const f = st.form, body = pg.body, keys = st.keys || MO_KEYS;
   moFirst(ui, MO_ID.FIELD);
   const changed = JSON.stringify(f) !== st.formWas;
   const port = /^\d+$/.test(f.port) && +f.port >= 1 && +f.port <= 65535;
@@ -640,45 +656,40 @@ function moEdit(ui, app) {
   moHeader(ui, head, { path: 'Hosts', title: isNew ? 'New host' : `Edit ${st.orig}`,
     back: { tap: cancel } });
   ui.key('Escape', cancel);
-  const half = (body.w - gx) >> 1, portW = 17, wide = body.w - gx - portW;
-  const field = (i, r, label, lw) => {
+  const key = f.auth === 1;
+  const g = moFormCols(body, moCapW('Passphrase'), moCapW('User'));
+  const field = (i, r) => {
     const d = MO_FIELDS[i], edit = st.edit === i;
-    moField(ui, r, MO_ID.FIELD + i, label || d.label, f[d.key],
-      { edit, caret: st.caret, mask: d.mask && !f.show, lw: lw || d.lw,
+    moField(ui, r, MO_ID.FIELD + i, '', f[d.key],
+      { edit, caret: st.caret, mask: d.mask && !f.show,
         bad: d.key !== 'pass' && bad[d.key] && (changed || d.key === 'port') },
       { tap: () => { st.edit = edit ? -1 : i; st.caret = Array.from(f[d.key]).length; } });
   };
-  let y = body.y;
-  field(0, rect(body.x, y, half, 3));
-  field(1, rect(body.x + half + gx, y, body.w - half - gx, 3));
-  y += 3;
-  field(2, rect(body.x, y, wide, 3));
-  field(3, rect(body.x + wide + gx, y, portW, 3));
-  y += 3;
-  // The chips start in the fields' value column.
-  moCaption(ui, rect(body.x, y, 12, 3), 'Sign-in');
-  moChips(ui, rect(body.x + 12, y, body.w - 12, 3), MO_ID.OPT, ['password', 'key'], f.auth,
+  let y = moFormRow(ui, body, g, 0, 'Name', 'User');
+  field(0, rect(g.x1, y, g.a, 3));
+  field(1, rect(g.x2, y, g.b, 3));
+  y = moFormRow(ui, body, g, 1, 'Host', 'Port');
+  field(2, rect(g.x1, y, g.a, 3));
+  field(3, rect(g.x2, y, 9, 3));
+  y = moFormRow(ui, body, g, 2, 'Sign-in');
+  moChips(ui, rect(g.x1, y, g.a, 3), MO_ID.OPT, ['password', 'key'], f.auth,
     (i) => {
       f.auth = i;
       if (i && !f.key && keys.length) f.key = keys[0].id;
       st.edit = -1;
     });
-  y += 3;
-  const key = f.auth === 1;
+  let n = 3;
   if (key) {
-    const right = moKeyText(f.key, keys, body.w - 12);
-    moPart(ui, rect(body.x, y, moActW('Key', right), 3), MO_ID.OPT + 5,
-      { title: 'Key', right, rightBold: true, pad: 3, off: !keys.length }, { tap: () => {
+    y = moFormRow(ui, body, g, n++, 'Key');
+    moPart(ui, rect(g.x1, y, g.a, 3), MO_ID.OPT + 5,
+      { title: moKeyText(f.key, keys, g.a - 4), off: !keys.length }, { tap: () => {
         const at = keys.findIndex((k) => k.id === f.key);
         f.key = keys[(at + 1) % keys.length].id;
       } });
-    y += 3;
   }
-  const toggle = key ? 'Show passphrase' : 'Show password';
-  field(4, rect(body.x, y, half, 3), key ? 'Passphrase' : 'Password', key ? 12 : 0);
-  const tx = body.x + half + gx, tw = moCapW(toggle);
-  moCaption(ui, rect(tx, y, tw, 3), toggle);
-  moToggle(ui, rect(tx + tw, y, MO_SWITCH_W, 3), MO_ID.OPT + 4, f.show, {},
+  y = moFormRow(ui, body, g, n++, key ? 'Passphrase' : 'Password', 'Show');
+  field(4, rect(g.x1, y, g.a, 3));
+  moToggle(ui, rect(g.x2, y, MO_SWITCH_W, 3), MO_ID.OPT + 4, f.show, {},
     { tap: () => { f.show = !f.show; } });
   y += 3;
   if (alert && y < body.y + body.h) {
@@ -717,9 +728,9 @@ function moEdit(ui, app) {
 // header. It stays off without an SSID, or with a password of 1 to 7 characters.
 // st.wa holds the draft. st.edit is the entry in typing (0 SSID, 1 password).
 function moWifiAdd(ui, app) {
-  const st = app.state, pg = moPage(ui), body = pg.body, gx = pg.m.gutter;
+  const st = app.state, pg = moPage(ui), body = pg.body;
   if (!st.wa) { st.wa = { ssid: '', pass: '', show: false }; st.edit = -1; }
-  const f = st.wa, half = (body.w - gx) >> 1;
+  const f = st.wa;
   moFirst(ui, MO_ID.FIELD);
   const passBad = f.pass.length > 0 && f.pass.length < 8;
   const wrong = !f.ssid || passBad;
@@ -736,17 +747,20 @@ function moWifiAdd(ui, app) {
   moHeader(ui, head, { path: 'Wi-Fi', title: 'Add network', back: { tap: cancel } });
   ui.key('Escape', cancel);
   const keys = ['ssid', 'pass'];
-  const field = (i, r, label, lw, o) => {
+  const field = (i, r, o) => {
     const edit = st.edit === i;
-    moField(ui, r, MO_ID.FIELD + i, label, f[keys[i]],
-      { edit, caret: st.caret, lw, ...o },
+    moField(ui, r, MO_ID.FIELD + i, '', f[keys[i]], { edit, caret: st.caret, ...o },
       { tap: () => { st.edit = edit ? -1 : i; st.caret = Array.from(f[keys[i]]).length; } });
   };
-  field(0, rect(body.x, body.y, body.w, 3), 'Network name', 14, {});
-  field(1, rect(body.x, body.y + 3, half, 3), 'Password', 0, { mask: !f.show, bad: passBad });
-  const tx = body.x + half + gx, tw = moCapW('Show password');
-  moCaption(ui, rect(tx, body.y + 3, tw, 3), 'Show password');
-  moToggle(ui, rect(tx + tw, body.y + 3, MO_SWITCH_W, 3), MO_ID.OPT + 4, f.show, {},
+  // The host form's captions; the entry stops at 40 cells, Show follows it.
+  const g = moFormCols(body, moCapW('Password'), moCapW('Show'));
+  g.a = Math.min(40, body.w - g.capW - g.cap2W - MO_SWITCH_W);
+  g.x2 = g.x1 + g.a + g.cap2W;
+  let y = moFormRow(ui, body, g, 0, 'Network');
+  field(0, rect(g.x1, y, g.a, 3), {});
+  y = moFormRow(ui, body, g, 1, 'Password', 'Show');
+  field(1, rect(g.x1, y, g.a, 3), { mask: !f.show, bad: passBad });
+  moToggle(ui, rect(g.x2, y, MO_SWITCH_W, 3), MO_ID.OPT + 4, f.show, {},
     { tap: () => { f.show = !f.show; } });
   if (passBad && body.h > 6) {
     ui.pen(C.RED);
@@ -1973,6 +1987,8 @@ export const MO_GATE = [
   { name: 'mo-edit-nokey', sketch: 'mo-edit', state: moFormState({ auth: 1 }, -1, { keys: [] }) },
   { name: 'mo-edit-caret', sketch: 'mo-edit', state: moFormState({ host: MO_LONG_HOST }, 2, { caret: 24 }) },
   { name: 'mo-edit-secret', sketch: 'mo-edit', state: moFormState({}, 4, { caret: 3 }) },
+  { name: 'mo-edit-worst', sketch: 'mo-edit',
+    state: moFormState({ name: '', host: MO_LONG_HOST, auth: 1, key: MO_KEYS[0].id }, 2, { caret: 24 }) },
   { name: 'mo-status-busy', sketch: 'mo-home', state: () => ({ bar: 'busy' }) },
   { name: 'mo-status-busy-blink', sketch: 'mo-home', state: () => ({ bar: 'busy-blink' }) },
   { name: 'mo-status-alert', sketch: 'mo-home', state: () => ({ bar: 'alert' }) },
