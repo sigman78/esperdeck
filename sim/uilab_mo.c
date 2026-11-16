@@ -787,6 +787,7 @@ typedef struct {
     int         n;
     item_t      it[5];
     bool        list;                 /* host tiles under the items    */
+    bool        stack;                /* actions one per row, one width */
 } cat_t;
 
 /* "+ New" is off in a live session and in a full store. */
@@ -830,7 +831,7 @@ static const cat_t MO_SETUP[] = {
     { "Keystore", "unlocked", 3, {
         { IT_ACT, "Lock deck" }, { IT_ACT, "Change code", .nav = true },
         { IT_ACT, "Remove code", .nav = true, .accent = OVERLAY_COL_RED,
-          .danger = true } } },
+          .danger = true } }, .stack = true },
 };
 
 static void scr_setup(void)
@@ -852,6 +853,8 @@ static void scr_setup(void)
 
 typedef struct { int n; struct { int it, w; } c[5]; } sec_row_t;
 
+#define LAB_STACK_MIN_W 24   /* MENU_STACK_MIN_W in app_menu_defs.h */
+
 /* Pack the items of one class (danger or not) into rows of @p room
  * cells. A switch or a choice takes a row; actions keep their own width. */
 static int pack_rows(const cat_t *c, int room, int gx, bool danger,
@@ -859,11 +862,20 @@ static int pack_rows(const cat_t *c, int room, int gx, bool danger,
 {
     int nrows = 0, used = 0;
     bool open = false;
+    int sw = 0;   /* a stacked page: its widest action, at least the min */
+    if (c->stack) {
+        sw = LAB_STACK_MIN_W;
+        for (int n = 0; n < c->n; n++) {
+            const item_t *it = &c->it[n];
+            const int w = ui_act_w(it->label, it->nav ? UI_S_CHEVRON : "");
+            if (it->type == IT_ACT && w > sw) sw = w;
+        }
+    }
 
     for (int n = 0; n < c->n; n++) {
         const item_t *it = &c->it[n];
         if (it->danger != danger) continue;
-        const int own = ui_act_w(it->label, it->nav ? UI_S_CHEVRON : "");
+        const int own = sw ? sw : ui_act_w(it->label, it->nav ? UI_S_CHEVRON : "");
         const bool row = it->type != IT_ACT;
         const int w = row ? room : own < room ? own : room;
         if (row) {
@@ -880,7 +892,7 @@ static int pack_rows(const cat_t *c, int room, int gx, bool danger,
             rows[nrows].n = 1;
             rows[nrows].c[0].it = n;
             rows[nrows++].c[0].w = w;
-            open = true;
+            open = !sw;
             used = w;
         }
     }
@@ -958,7 +970,9 @@ static void draw_section(int cat)
         const bool last = pages == 1;
         if (ri < plain ? ri >= per : !last) continue;
         int y = body.y + ri * 3;
-        if (ri >= plain) {
+        if (ri >= plain && c->stack) {
+            y += 1;
+        } else if (ri >= plain) {
             y = body.y + body.h - (nrows - ri) * 3;
             if (y < body.y) y = body.y;
         }

@@ -61,6 +61,7 @@ typedef struct {
 
 #define MENU_PICK_MAX   8      /* options of one choice                   */
 #define MENU_ITEM_MAX   8      /* items of one section                    */
+#define MENU_STACK_MIN_W 24    /* narrowest action on a stacked page      */
 #define MENU_BACK_LEAVE (-1)   /* back pops the whole menu screen         */
 
 /* Rows of data under a section's items, drawn as tiles. The items repeat
@@ -94,6 +95,8 @@ typedef struct {
     const menu_panel_t *panel; /* text panel above the items, or NULL      */
     const menu_list_t *list;   /* tiles below the items, or NULL           */
     uint8_t count;
+    /* Actions one per row at one width; danger rows follow a gap. */
+    bool    stack;
     int8_t  back_to;           /* menu_screen_t target, or MENU_BACK_LEAVE */
     uint8_t hold;              /* APP_SETTINGS_HOLD_* while the page is open */
     void  (*on_open)(void);    /* snapshot volatile state at page open    */

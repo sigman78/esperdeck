@@ -203,21 +203,21 @@ SCENARIOS = {
         "|wait:300|expect-text:Enter the new code again|type:1234"
         "|sleep:2500|wait:700|expect:menu|expect-text:Lock deck|quit",
     "pad-lock-unlock":
-        PAD_MAKE + "|key:left|key:enter|wait:400|expect:unlock|expect-text:Deck locked"
+        PAD_MAKE + "|key:up|key:enter|wait:400|expect:unlock|expect-text:Deck locked"
         "|key:esc|wait:200|expect:unlock|type:1234|sleep:2500|wait:700"
         "|expect:home|quit",
     "pad-unlock-tap-drops":
-        PAD_MAKE + "|key:left|key:enter|wait:400|expect:unlock|type:1234"
+        PAD_MAKE + "|key:up|key:enter|wait:400|expect:unlock|type:1234"
         "|sleep:2500|wait:100|expect:home|tap:130,64|wait:200|expect:home"
         "|wait:700|tap:130,64|wait:150|expect:connecting|key:esc|sleep:300"
         "|wait:700|quit",
     "pad-unlock-held-touch-drops":
-        PAD_MAKE + "|key:left|key:enter|wait:400|expect:unlock|type:1234"
+        PAD_MAKE + "|key:up|key:enter|wait:400|expect:unlock|type:1234"
         "|press:130,64|sleep:2500|wait:800|expect:home|tap:130,64|wait:200"
         "|expect:home|tap:130,64|wait:150|expect:connecting|key:esc"
         "|sleep:300|wait:700|quit",
     "pad-wrong-code":
-        PAD_MAKE + "|key:left|key:enter|wait:400|expect:unlock|type:9999|sleep:2500"
+        PAD_MAKE + "|key:up|key:enter|wait:400|expect:unlock|type:9999|sleep:2500"
         "|wait:700|expect:unlock|expect-text:wrong code|quit",
     "pad-mismatch":
         PAD_OPEN + "|type:1234|key:enter|wait:300|type:1235|sleep:200|wait:300"

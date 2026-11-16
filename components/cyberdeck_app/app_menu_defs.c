@@ -660,7 +660,8 @@ static const menu_page_t PAGES[MS_COUNT] = {
                        .count = NELEM(system_items), .back_to = MS_CONFIG,
                        .hold = APP_SETTINGS_HOLD_SYS, .note = note_system },
     [MS_KEYSTORE]  = { .title = "Keystore", .items = ks_items,
-                       .count = NELEM(ks_items), .back_to = MS_CONFIG,
+                       .count = NELEM(ks_items), .stack = true,
+                       .back_to = MS_CONFIG,
                        .on_open = ks_snap, .note = note_keystore,
                        .unavail = unavail_keystore },
 };

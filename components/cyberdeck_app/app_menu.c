@@ -89,17 +89,36 @@ static ui_id_t item_id(int n, int opt)
 /* Pack the visible items of one class (danger or not) into rows of
  * @p room cells. A switch or a choice takes a row; actions keep their own
  * width. Returns the row count. */
+static int act_own_w(const menu_item_t *it)
+{
+    return ui_act_w(item_label(it), it->nav ? UI_S_CHEVRON : "");
+}
+
+/* A stacked page's action width: its widest action, at least
+ * MENU_STACK_MIN_W cells. */
+static int stack_w(const menu_page_t *p)
+{
+    int w = MENU_STACK_MIN_W;
+    for (int n = 0; n < p->count; n++) {
+        const menu_item_t *it = &p->items[n];
+        if (it->kind == MENU_ACT && !item_hidden(it) && act_own_w(it) > w)
+            w = act_own_w(it);
+    }
+    return w;
+}
+
 static int pack_rows(const menu_page_t *p, int room, int gx, bool danger,
                      sec_row_t *rows)
 {
     int nrows = 0, used = 0;
     bool open = false;
+    const int sw = p->stack ? stack_w(p) : 0;
 
     for (int n = 0; n < p->count; n++) {
         const menu_item_t *it = &p->items[n];
         if (item_hidden(it) || it->danger != danger) continue;
         const bool act = it->kind == MENU_ACT;
-        const int own = ui_act_w(item_label(it), it->nav ? UI_S_CHEVRON : "");
+        const int own = sw ? sw : act_own_w(it);
         const int w = !act ? room : own < room ? own : room;
         if (act && open && used + gx + w <= room) {
             sec_row_t *r = &rows[nrows - 1];
@@ -111,7 +130,7 @@ static int pack_rows(const menu_page_t *p, int room, int gx, bool danger,
         rows[nrows].n = 1;
         rows[nrows].c[0].it = (uint8_t)n;
         rows[nrows++].c[0].w = (uint8_t)w;
-        open = act;
+        open = act && !sw;
         used = w;
     }
     return nrows;
@@ -334,9 +353,12 @@ static void draw_section(const menu_page_t *p)
                                    pg.body.w, L->list_h), gx, L, s_menu.page);
     for (int ri = 0; ri < L->nrows; ri++) {
         if (!row_on(&L->rows[ri], s_menu.page)) continue;
-        /* Danger rows hang from the bottom edge of the body. */
+        /* Danger rows hang from the bottom edge of the body; a stacked
+         * page keeps them in its column after one empty row. */
         int y = pg.body.y + slot++ * 3;
-        if (L->rows[ri].danger) {
+        if (L->rows[ri].danger && p->stack) {
+            y += 1;
+        } else if (L->rows[ri].danger) {
             y = pg.body.y + pg.body.h - below-- * 3;
             if (y < pg.body.y) y = pg.body.y;
         }

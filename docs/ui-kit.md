@@ -310,6 +310,7 @@ above its action row while storage holds eight.
 | CRT FX, Motion FX | One control per row. |
 | Forms | Two columns on one grid (`ui_form_cols`); entries hold the value only, the caption sits on the page. "Show" replaces "Show password" and "Show passphrase". The Key part is as wide as an entry; the key type shows where it fits. The Wi-Fi add form uses the same captions with "Network" first; its entries stop at 40 cells. The Key part shows the key id, and dim at its right the place in the list, after the key type where it fits. |
 | HOME title | The spectrum wordmark (`ui_wordmark`): bold white CYBERDECK over a six-colour half-row underline, the firmware version dim beside it. It replaces "Hosts" and the host count. The version shows up to its first '-': a git describe such as "v0.3-120-g336c20d-dirty" shows "v0.3". A tight header drops the version, then the whole mark; there is no short form. The page position is in the header pager alone, shown with more than one page. The plate, duo and keys variants and the page rail were rejected. |
+| Keystore | A stacked page (`menu_page_t.stack`): one action per row, all as wide as the widest (at least 24 cells). Remove code follows after one empty row instead of hanging from the foot. |
 
 ## Still open
 

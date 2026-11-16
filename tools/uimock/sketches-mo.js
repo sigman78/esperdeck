@@ -904,7 +904,7 @@ const MO_SETUP = [
     { t: 'toggle', key: 'edge', label: 'Edge scroll', init: false },
     { t: 'act', label: 'Clear host keys', accent: C.RED, danger: true, ask: 'Clear every pinned host key?' },
     { t: 'act', label: 'Factory reset', accent: C.RED, danger: true, ask: 'Erase every host and setting?' }] },
-  { name: 'Keystore', note: 'unlocked', items: [
+  { name: 'Keystore', note: 'unlocked', stack: true, items: [
     { t: 'act', label: 'Lock deck', go: 'mo-unlock' }, { t: 'act', label: 'Change code', nav: true },
     { t: 'act', label: 'Remove code', accent: C.RED, danger: true, nav: true, go: 'mo-unlock' }] },
 ];
@@ -951,15 +951,18 @@ function moSection(ui, app) {
   // The panel takes the top of the body; the rows and tiles lay out below.
   const panel = c.panel ? c.panel(st) : null;
   const pan = panel ? cutTop(body, panel.rows.length + 2) : null;
-  // A switch or a choice takes a row; actions keep their own width.
-  const own = (it) => moActW(it.label, it.nav ? '›' : '');
+  // A switch or a choice takes a row; actions keep their own width. A
+  // stacked page gives every action its own row at one width (MENU_STACK_MIN_W).
+  const actW = (it) => moActW(it.label, it.nav ? '›' : '');
+  const stackW = c.stack ? c.items.reduce((w, it) => (it.t === 'act' ? Math.max(w, actW(it)) : w), 24) : 0;
+  const own = (it) => stackW || actW(it);
   const pack = (room, danger) => {
     const out = [];
     let open = null, used = 0;
     c.items.forEach((it, n) => {
       if (!!it.danger !== danger) return;
-      const row = it.t !== 'act';
-      const cell = { it, id: MO_ID.OPT + n * 8, w: row ? room : Math.min(own(it), room) };
+      const row = it.t !== 'act' || !!c.stack;
+      const cell = { it, id: MO_ID.OPT + n * 8, w: it.t !== 'act' ? room : Math.min(own(it), room) };
       if (row) { out.push([cell]); open = null; }
       else if (open && used + gx + cell.w <= room) { open.push(cell); used += gx + cell.w; }
       else { open = [cell]; out.push(open); used = cell.w; }
@@ -999,7 +1002,8 @@ function moSection(ui, app) {
   const rows = L.plain.map((r, i) => (c.list ? { r, pg: -1, y: i * 3 }
       : { r, pg: Math.trunc(i / per), y: (i % per) * 3 }))
     .concat(L.danger.map((r, i) => ({ r, pg: pages - 1,
-      y: Math.max(0, body.h - (L.danger.length - i) * 3) })));
+      y: c.stack ? (L.plain.length % per + i) * 3 + 1
+                 : Math.max(0, body.h - (L.danger.length - i) * 3) })));
   const itOff = (it) => !!(it.off && it.off(st, hosts.length));
   const onPage = (row) => row.pg < 0 || row.pg === st.spage;
   const capW = c.items.reduce((n, it) => (it.t !== 'act' ? Math.max(n, moCapW(it.label)) : n), 0);
