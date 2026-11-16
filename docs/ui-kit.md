@@ -258,7 +258,7 @@ above its action row while storage holds eight.
 | Question | Verdict |
 |----------|---------|
 | Look | The slate parts above. The Panel and Wire renditions and the first Slab widgets are deleted. |
-| HOME | Two-line host tiles, two columns. New, Setup and Lock are header buttons, so no action row and no Settings tile. Eight hosts fit at 66x20. |
+| HOME | Two-line host tiles, two columns. New, Setup and Lock are header buttons, so no action row and no Settings tile. Eight hosts fit a page at 66x20; more hosts page (see 2026-11-15). |
 | Tap and hold | A tap connects. A hold opens the host page (connect, edit, delete, reorder). |
 | Keyboard | Every screen works from the keys alone. The kit has a hold key (`K_HOLD`) for the alternate action. |
 | Values | A switch for two states, chips for a choice. No value hides behind a cycling tile. |
@@ -266,6 +266,18 @@ above its action row while storage holds eight.
 | Lists | Paged, with the page in the header and a rail at the side. |
 | Status row | The adopted chips on a panel-tone bar, drawn by `ui_status`. |
 | Widths | Stretched buttons look odd. A button, switch or action keeps its own width and rows pack from the left; tile grids gain columns instead. |
+
+## Decisions, 2026-11-15 (play-test round 2)
+
+| Question | Verdict |
+|----------|---------|
+| Key focus | Colour alone is not enough. The focused part also gets half-cell bars on both edges (`ui_focus_bars`), on every part. |
+| Session sheet | Centred, 30 columns, as short as its rows. Disconnect sits apart below a gap. Uptime and session time are plain text at the bottom. A tap outside resumes. |
+| Status row | No `W` label: the four signal rungs speak alone, with a cross when off and a spinner while joining. `KBD CAPS NUM` always shows while a keyboard is linked; lit words are amber, unlit ones dim. A `│` divider separates chips. The SYNC chip is a dev-build option. |
+| Chosen chip | Grows half a cell into the gaps on each side. |
+| Danger rows | Clear host keys, factory reset and remove code never share a row. They sit at the bottom of the last page, below a gap. |
+| HOME paging | Up to 32 hosts. Arrows at a page edge turn the page. Digits and tile numbers count within the page. |
+| Setup sections | Hosts lists the stored hosts (off during a live session). Wi-Fi shows the link, add actions and the saved networks, each with its own page. Keyboard shows the link, Pair and the paired keyboards, each with Forget. Font size moved into System. The Wi-Fi hub tile shows the SSID only. |
 
 ## Still open
 
