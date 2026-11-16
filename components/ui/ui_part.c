@@ -98,13 +98,13 @@ void ui_stripe(ui_rect_t r, uint8_t accent)
     ui_pen(OVERLAY_COL_DEFAULT);
 }
 
-/* One bar column: corner glyphs in the edge style, the middle in fill. */
+/* One bar column: corner glyphs in the edge style, the middle in `ms`. */
 static void bar_col(int x, ui_rect_t r, uint16_t top, uint16_t mid,
-                    uint16_t bot, const ui_look_t *k)
+                    uint16_t bot, const ui_look_t *k, uint8_t ms)
 {
     ui_putch(x, r.y, top, k->edge);
     for (int y = r.y + 1; y < r.y + r.h - 1; y++)
-        ui_putch(x, y, mid, k->fill);
+        ui_putch(x, y, mid, ms);
     ui_putch(x, r.y + r.h - 1, bot, k->edge);
 }
 
@@ -113,10 +113,10 @@ void ui_focus_bars(ui_rect_t r, const ui_look_t *k, bool striped)
     if (!k->focus) return;
     ui_pen(k->pen);
     if (striped)
-        bar_col(r.x + 1, r, UI_QUAD_LR, UI_LHALF, UI_QUAD_UR, k);
+        bar_col(r.x + 1, r, UI_QUAD_LR, UI_LHALF, UI_QUAD_UR, k, k->fill);
     else
-        bar_col(r.x, r, UI_QUAD_LL, UI_RHALF, UI_QUAD_UL, k);
-    bar_col(r.x + r.w - 1, r, UI_QUAD_LR, UI_LHALF, UI_QUAD_UR, k);
+        bar_col(r.x, r, UI_QUAD_LL, UI_RHALF, UI_QUAD_UL, k, k->fill);
+    bar_col(r.x + r.w - 1, r, UI_QUAD_LR, UI_LHALF, UI_QUAD_UR, k, k->fill);
 }
 
 void ui_panel(ui_rect_t r, uint8_t stripe)
@@ -245,7 +245,7 @@ void ui_chips(ui_rect_t r, ui_id_t id_base, const char *caption,
               const char *const *labels, int n, int value, uint8_t accent,
               int cap_w)
 {
-    int need = -1;
+    int need = 0;
     for (int i = 0; i < n; i++) need += chip_w(labels[i]) + 1;
 
     const int capw = cap_w ? cap_w : ui_caption_w(caption);
@@ -267,7 +267,16 @@ void ui_chips(ui_rect_t r, ui_id_t id_base, const char *caption,
             .accent = chosen ? (accent ? accent : OVERLAY_COL_BLUE) : 0,
             .flags = (uint8_t)(UI_PART_CENTER | (chosen ? 0 : UI_PART_PLAIN)),
         };
-        ui_part(ui_rect(x, r.y, w, r.h), (ui_id_t)(id_base + i), &p, NULL);
+        const ui_id_t id = (ui_id_t)(id_base + i);
+        ui_part(ui_rect(x, r.y, w, r.h), id, &p, NULL);
+        if (chosen) {
+            /* The gap cells either side show half blocks: the chip sticks out. */
+            const ui_look_t k = ui_look(id, p.tone, p.accent, p.flags);
+            ui_pen(k.pen);
+            if (x > r.x) bar_col(x - 1, r, UI_QUAD_LR, UI_RHALF, UI_QUAD_UR, &k, k.edge);
+            bar_col(x + w, r, UI_QUAD_LL, UI_LHALF, UI_QUAD_UL, &k, k.edge);
+            ui_pen(OVERLAY_COL_DEFAULT);
+        }
         x += w + 1;
     }
 }

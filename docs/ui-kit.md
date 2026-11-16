@@ -109,7 +109,7 @@ the C parts port those sketches line by line.
 | `ui_push` | A button: one centered label. |
 | `ui_pill` | A header button, cut from the right end of the header. |
 | `ui_switch` | A two-state setting. |
-| `ui_chips` | One choice of several, every option visible. |
+| `ui_chips` | One choice of several, every option visible; the chosen chip sticks out half a cell into the gap on each side (the first chip only on its right). |
 | `ui_entry`, `ui_entry_at` | A form field: label, value, caret while editing, invalid mark. `ui_entry_at` puts the caret anywhere in the value and scrolls to keep it in view. |
 | `ui_title` | Page header. With `back`, the whole bar is the back target. |
 | `ui_pages`, `ui_rail` | Page stepper in the header; position rail at the side of a paged list. |

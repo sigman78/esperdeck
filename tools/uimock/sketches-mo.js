@@ -102,9 +102,9 @@ function moStripe(ui, r, accent) {
 
 // Key-focus bars: a half-cell sand bar and a dark slit at each end.
 // A striped part keeps its stripe as the left bar; the slit moves in one.
-function moBarCol(ui, x, r, top, mid, bot, k) {
+function moBarCol(ui, x, r, top, mid, bot, k, ms = k.fill) {
   ui.putch(x, r.y, top, k.edge);
-  for (let y = r.y + 1; y < r.y + r.h - 1; y++) ui.putch(x, y, mid, k.fill);
+  for (let y = r.y + 1; y < r.y + r.h - 1; y++) ui.putch(x, y, mid, ms);
   ui.putch(x, r.y + r.h - 1, bot, k.edge);
 }
 function moFocusBars(ui, r, k, striped) {
@@ -205,7 +205,7 @@ const moCapW = (caption) => moLen(caption) + 4;
 function moChips(ui, r, idBase, caption, labels, value, pick, o = {}) {
   // Seven cells is the narrowest chip a finger hits at the small font.
   const cw = (l) => Math.max(7, moLen(l) + 4);
-  const need = labels.reduce((n, l) => n + cw(l) + 1, -1);
+  const need = labels.reduce((n, l) => n + cw(l) + 1, 0);
   const capW = o.capW || moCapW(caption);
   const y = moCentre(r.y, r.h, 1, caption);
   ui.pen(C.DEFAULT);
@@ -214,11 +214,20 @@ function moChips(ui, r, idBase, caption, labels, value, pick, o = {}) {
   let x = r.x + capW;
   labels.forEach((l, i) => {
     const w = cw(l), chosen = i === value;
-    moPart(ui, rect(x, r.y, w, r.h), idBase + i, {
+    const po = {
       title: chosen ? `✓ ${l}` : l, align: CENTER, plain: !chosen, pad: 1,
       tone: chosen ? 'solid' : 'card', accent: chosen ? (o.accent || C.BLUE) : 0,
       pose: o.poses ? o.poses[i] : '', off: o.off,
-    }, { tap: () => pick(i) });
+    };
+    moPart(ui, rect(x, r.y, w, r.h), idBase + i, po, { tap: () => pick(i) });
+    if (chosen && !o.off) {
+      // The gap cells either side show half blocks: the chip sticks out.
+      const k = moLook(ui, idBase + i, po);
+      ui.pen(k.pen);
+      if (x > r.x) moBarCol(ui, x - 1, r, G.QUAD_LR, G.RHALF, G.QUAD_UR, k, k.edge);
+      moBarCol(ui, x + w, r, G.QUAD_LL, G.LHALF, G.QUAD_UL, k, k.edge);
+      ui.pen(C.DEFAULT);
+    }
     x += w + 1;
   });
 }
