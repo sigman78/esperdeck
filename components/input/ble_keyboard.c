@@ -221,6 +221,13 @@ ble_state_t ble_keyboard_get_state(void) { return s_state; }
 
 const char *ble_keyboard_get_connected_name(void) { return s_connected_name; }
 
+bool ble_keyboard_get_connected_addr(uint8_t addr[6])
+{
+    if (s_state != BLE_CONNECTED) return false;
+    memcpy(addr, s_connected_bda, 6);
+    return true;
+}
+
 int ble_keyboard_get_scan_results(ble_device_info_t *out, int max)
 {
     int n = 0;
@@ -980,6 +987,7 @@ esp_err_t   ble_keyboard_backend_init(void)                            { return 
 ble_state_t ble_keyboard_get_state(void)                               { return BLE_IDLE; }
 uint8_t     ble_keyboard_get_locks(void)                               { return 0; }
 const char *ble_keyboard_get_connected_name(void)                      { return ""; }
+bool        ble_keyboard_get_connected_addr(uint8_t a[6])              { (void)a; return false; }
 void        ble_keyboard_enter_pairing(void)                           {}
 void        ble_keyboard_exit_pairing(void)                            {}
 void        ble_keyboard_reconnect_start(void)                         {}

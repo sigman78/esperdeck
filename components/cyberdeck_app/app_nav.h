@@ -20,6 +20,11 @@
  * recorded per screen now so the descriptor is stable). */
 enum { NAV_CHROME_NONE = 0, NAV_CHROME_FULL };
 
+/* Terminal cursor policy. HIDE closes the gate. SHOW opens it (SESSION).
+ * UNDER copies the entry below. The menu over a session shows the cursor
+ * through its scrim. The menu over HOME hides it. */
+enum { NAV_CURSOR_HIDE = 0, NAV_CURSOR_SHOW, NAV_CURSOR_UNDER };
+
 typedef struct {
     const char *name;                    /* debug/logging id            */
     /* Becoming current via push/replace/reset. @p arg is the intent:
@@ -35,6 +40,7 @@ typedef struct {
      * (SESSION: overlay hidden except its transient chrome pass). */
     void (*render)(uint64_t now);
     uint8_t chrome;                      /* NAV_CHROME_*                */
+    uint8_t cursor;                      /* NAV_CURSOR_*                */
 } nav_screen_t;
 
 /* Adopt the screen table (ids index into it) and reset the stack. Call
@@ -53,10 +59,14 @@ bool nav_reset(int id, intptr_t arg, uint64_t now);    /* whole stack   */
 bool nav_pop(uint64_t now);
 
 int  nav_current(void);                  /* id of the top screen        */
+bool nav_on_stack(int id);
+bool nav_has_bar(void);                  /* top screen shows the status row */
 
 #ifdef BUILD_SIMULATOR
-/* Simulator regression hook: stable descriptor name of the top screen. */
+/* Simulator regression hooks: stable descriptor name of the top screen,
+ * and every entry bottom first, comma-joined into @p buf. */
 const char *nav_current_name(void);
+void nav_debug_stack(char *buf, size_t sz);
 #endif
 
 /* Request a render this tick (coalesced: one present per frame). */

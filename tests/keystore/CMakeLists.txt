@@ -14,6 +14,7 @@ CPMAddPackage(
 
 set(STORAGE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../components/storage)
 set(MONO_DIR    ${CMAKE_CURRENT_SOURCE_DIR}/../../components/monocypher)
+set(APP_DIR     ${CMAKE_CURRENT_SOURCE_DIR}/../../components/cyberdeck_app)
 
 add_subdirectory(../../idfsim ${CMAKE_CURRENT_BINARY_DIR}/idfsim)
 
@@ -22,9 +23,11 @@ add_executable(test_keystore
     ${STORAGE_DIR}/keystore.c
     ${STORAGE_DIR}/storage.c
     ${MONO_DIR}/monocypher.c
+    ${APP_DIR}/app_wifi_list.c
 )
 
 target_include_directories(test_keystore PRIVATE
+    ${APP_DIR}
     ${STORAGE_DIR}
     ${STORAGE_DIR}/include
     ${MONO_DIR}

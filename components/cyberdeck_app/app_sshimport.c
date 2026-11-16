@@ -1,6 +1,7 @@
 /*
- * app_sshimport.c — HTTP SSH-profile import modal (ST_SSHIMPORT), over the
- * deck's own SoftAP or the existing LAN (Web/PC).
+ * app_sshimport.c — the host import page (SCR_SSHIMPORT).
+ * Steps and a QR code lead a browser to the deck's form. It runs over
+ * the deck's SoftAP or the LAN.
  */
 
 #include "app_internal.h"
@@ -8,123 +9,85 @@
 #include "app_widgets.h"
 #include "ssh_import.h"
 
+#include "esp_log.h"
+
 #include <stdio.h>
 #include <string.h>
+
+static const char *TAG = "app_sshimport";
 
 static struct {
     int      seen;                  /* count already acknowledged on screen */
     char     last[32];              /* snapshot of the last imported name   */
+    bool     running;               /* the import server is up              */
 } s_imp;
 
-/* Full-screen HTTP SSH-profile import modal (SoftAP or Web transport). */
 static void render_sshimport(uint64_t now)
 {
     (void)now;
-    bool web = (ssh_import_mode() == SSH_IMPORT_WEB);
-    ui_fill(0, 0, ui_cols(), ui_rows(), 0);
+    const int faults = ui_faults();
+    ui_slate_t pg = ui_slate_page();
+    const bool web = ssh_import_mode() == SSH_IMPORT_WEB;
+    char spin[8], state[96];
 
-    draw_titlebar(2, "SSH IMPORT");
-    ui_pen(OVERLAY_COL_BLUE);
-    ui_puts(ui_cols() - 10, 0, web ? "// Web/PC" : "// SoftAP", 0);
-    ui_pen(OVERLAY_COL_DEFAULT);
-    draw_rule(3);
+    ui_title(pg.header, "Hosts", web ? "Import from PC" : "Import from phone",
+             NULL, true);
+    ui_utf8_put(spin, spinner_glyph(app.anim_frame));
 
-    /* QR first — its column bounds the step text on narrow grids. */
-    int qx = draw_qr_panel(ssh_import_qr_size(), ssh_import_qr_module,
-                           web ? "scan to open" : "scan to join");
-    bool wide = ui_cols() >= 97;
-    int y = ui_rows() >= 28 ? 6 : 4;
+    const ui_step_t web_steps[4] = {
+        { .mark = '1', .text = "Open on your PC:", .value = ssh_import_url(),
+          .pen = OVERLAY_COL_WHITE },
+        ssh_import_pop_required()
+            ? (ui_step_t){ .mark = '2', .text = "Proof code:",
+                           .value = ssh_import_pop(),
+                           .pen = OVERLAY_COL_AMBER }
+            : (ui_step_t){ .mark = '2', .pen = OVERLAY_COL_AMBER,
+                           .text = "Proof code is off in this build. "
+                                   "The page is open." },
+        { .mark = '3', .text = "Fill the form and save." },
+        /* Plain HTTP over the LAN: nothing wraps the page in WPA2. */
+        { .mark = '!', .text = "Plain HTTP. Use it on a network you trust.",
+          .pen = OVERLAY_COL_AMBER },
+    };
+    const ui_step_t softap_steps[4] = {
+        { .mark = '1', .text = "Join this Wi-Fi:",
+          .value = ssh_import_service_name(), .pen = OVERLAY_COL_GREEN },
+        { .mark = '2', .text = "Wi-Fi password:", .value = ssh_import_pop(),
+          .pen = OVERLAY_COL_AMBER },
+        { .mark = '3', .text = "Open in a browser:", .value = ssh_import_url(),
+          .pen = OVERLAY_COL_WHITE },
+        { .mark = '4', .text = "Fill the form and save. Repeat for more." },
+    };
+    ui_onboard_t o = {
+        .steps = web ? web_steps : softap_steps, .nsteps = 4,
+        .qr_size = ssh_import_qr_size(), .qr_mod = ssh_import_qr_module,
+        .qr_caption = web ? "scan to open" : "scan to join",
+        .mark = UI_S_CHECK, .pen = OVERLAY_COL_GREEN, .state = state,
+    };
 
-    if (web) {
-        /* On the existing LAN — the PC opens the deck's IP directly. */
-        y = draw_step(y, '1', wide ? "On your PC browser, open:"
-                                   : "Open on your PC:",
-                      ssh_import_url(), OVERLAY_COL_WHITE, qx - 1);
-        if (ssh_import_pop_required()) {
-            y = draw_step(y, '2', wide ? "Type this proof code in the form:"
-                                       : "Proof code:",
-                          ssh_import_pop(), OVERLAY_COL_AMBER, qx - 1);
-        } else {
-            ui_pen(OVERLAY_COL_CYAN);
-            ui_putch(4, y, '2', 0);
-            ui_pen(OVERLAY_COL_AMBER);
-            ui_printf(6, y, 0, "%.*s", qx - 7,
-                      "Proof code OFF (dev build) - page is open.");
-            ui_pen(OVERLAY_COL_DEFAULT);
-            y += 2;
-        }
-        y = draw_step(y, '3', wide ? "Fill the form + Save. Repeat for more."
-                                   : "Fill the form + Save.",
-                      NULL, 0, qx - 1);
-        /* Honest caveat: plain HTTP over the LAN (no WPA2 wrapping us). */
-        ui_pen(OVERLAY_COL_AMBER);
-        ui_putch(4, y, UI_DIAMOND, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-        ui_printf(6, y, 0, "%.*s", qx - 7,
-                  wide ? "LAN only - use on a network you trust."
-                       : "trusted LAN only.");
-        y += 2;
-    } else {
-        /* SoftAP — the phone joins the deck's own WPA2 network. */
-        y = draw_step(y, '1', wide ? "Join this WiFi network:"
-                                   : "Join this WiFi:",
-                      ssh_import_service_name(), OVERLAY_COL_GREEN, qx - 1);
-        y = draw_step(y, '2', wide ? "WiFi password / proof code:"
-                                   : "WiFi password:",
-                      ssh_import_pop(), OVERLAY_COL_AMBER, qx - 1);
-        y = draw_step(y, '3', wide ? "Open in a browser:" : "Browse to:",
-                      ssh_import_url(), OVERLAY_COL_WHITE, qx - 1);
-        y = draw_step(y, '4', wide ? "Fill the form + Save. Repeat for more."
-                                   : "Fill the form + Save.",
-                      NULL, 0, qx - 1);
-    }
-
-    /* Status: running import/delete tally + last name, or a waiting spinner. */
-    int cnt = ssh_import_count();
-    int del = ssh_import_deleted();
+    /* Status: the running tally and the last name, or a waiting spinner. */
+    const int cnt = ssh_import_count();
+    const int del = ssh_import_deleted();
     const char *err = ssh_import_err();
-    char stat[96];
     if (err && err[0]) {
-        snprintf(stat, sizeof(stat), "rejected: %s", err);
-        ui_pen(OVERLAY_COL_RED);
-        ui_putch(4, y, UI_DIAMOND, 0);
-    } else if (cnt > 0 || del > 0) {
-        if (del > 0 && cnt > 0)
-            snprintf(stat, sizeof(stat), "last: '%s'  (%d saved, %d removed)",
-                     s_imp.last, cnt, del);
-        else if (del > 0)
-            snprintf(stat, sizeof(stat), "removed '%s'  (%d removed)",
-                     s_imp.last, del);
-        else
-            snprintf(stat, sizeof(stat), "imported '%s'  (%d saved)",
-                     s_imp.last, cnt);
-        ui_pen(OVERLAY_COL_GREEN);
-        ui_putch(4, y, UI_LED_ON, 0);
+        o.mark = UI_S_CROSS;
+        o.pen = OVERLAY_COL_RED;
+        snprintf(state, sizeof state, "Rejected: %s", err);
+    } else if (cnt > 0 && del > 0) {
+        snprintf(state, sizeof state, "Last: %s (%d saved, %d removed)",
+                 s_imp.last, cnt, del);
+    } else if (del > 0) {
+        snprintf(state, sizeof state, "Removed %s (%d removed)", s_imp.last, del);
+    } else if (cnt > 0) {
+        snprintf(state, sizeof state, "Imported %s (%d saved)", s_imp.last, cnt);
     } else {
-        snprintf(stat, sizeof(stat), "waiting for a browser...");
-        ui_pen(OVERLAY_COL_GREEN);
-        ui_putch(4, y, spinner_glyph(app.anim_frame), 0);
+        o.mark = spin;
+        snprintf(state, sizeof state, "Waiting for a browser");
     }
-    ui_pen(OVERLAY_COL_DEFAULT);
-    ui_printf(6, y, 0, "%.*s", qx - 7, stat);
+    ui_onboard(pg.body, &o);
 
-    /* Live RAM readout — dropped when the short grid has no spare row. */
-    if (y + 2 <= ui_rows() - 3) {
-        char ram[48];
-        ram_stats(ram, sizeof(ram));
-        ui_pen(OVERLAY_COL_BLUE);
-        ui_putch(4, y + 2, UI_DIAMOND, 0);
-        ui_puts(6, y + 2, "RAM", UI_BOLD);
-        ui_puts(11, y + 2, ram, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    }
-
-    if (cnt > 0 || del > 0) {   /* state, not a hint: changes landed */
-        const char *st = "changes are saved";
-        ui_pen(OVERLAY_COL_GREEN);
-        ui_puts((ui_cols() - (int)strlen(st)) / 2, ui_rows() - 2, st, 0);
-        ui_pen(OVERLAY_COL_DEFAULT);
-    }
+    if (ui_faults() != faults)
+        ESP_LOGW(TAG, "layout faults +%d", ui_faults() - faults);
 }
 
 static void sshimport_enter(intptr_t arg, uint64_t now)
@@ -146,19 +109,35 @@ void enter_sshimport(uint64_t now, ssh_import_mode_t mode)
         enter_home(now);
         return;
     }
+    s_imp.running = true;
     nav_push(SCR_SSHIMPORT, (intptr_t)mode, now);
 }
 
-/* Tear down the import server, refresh the profile list, go home. Only SoftAP
- * parked wifi_manager, so only that mode needs to un-park it. */
+/* Tear down the import server and surface the imported profiles. Only
+ * SoftAP parked wifi_manager, so only that mode needs to un-park it. */
+static void imp_stop(void)
+{
+    if (!s_imp.running) return;
+    s_imp.running = false;
+    bool softap = (ssh_import_mode() == SSH_IMPORT_SOFTAP);
+    ssh_import_stop();
+    if (softap) kick_wifi();   /* resume STA auto-reconnect (web never parked) */
+    load_profiles();
+}
+
+/* Any other way off the page (the idle lock) stops the server too. */
+static void sshimport_exit(uint64_t now)
+{
+    (void)now;
+    imp_stop();
+}
+
+/* Stop the server, report what it did, go home. */
 static void exit_sshimport(uint64_t now)
 {
     int cnt = ssh_import_count();
     int del = ssh_import_deleted();
-    bool softap = (ssh_import_mode() == SSH_IMPORT_SOFTAP);
-    ssh_import_stop();
-    if (softap) kick_wifi();   /* resume STA auto-reconnect (web never parked) */
-    load_profiles();           /* surface freshly imported profiles on HOME */
+    imp_stop();
     if (cnt > 0 && del > 0) toast(now, "%d imported, %d removed", cnt, del);
     else if (cnt > 0)       toast(now, "imported %d profile(s)", cnt);
     else if (del > 0)       toast(now, "removed %d profile(s)", del);
@@ -186,16 +165,17 @@ static void sshimport_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                             uint64_t now)
 {
     (void)ch;
-    /* Esc / tap / long-press finishes the session (any imports are already
-     * on flash). There is no destructive in-flight state to protect. */
-    if (k == K_ESC || ev->type == CYBERDECK_INPUT_TAP ||
-        ev->type == CYBERDECK_INPUT_LONG_PRESS) {
+    /* Esc or the header back finishes the session. Any imports are already
+     * on flash, so no in-flight state needs protecting. */
+    const ui_act_t a = app_hot_input(ev, k);
+    if (a.kind != UI_ACT_NONE) nav_invalidate();
+    if (k == K_ESC || (a.kind == UI_ACT_PRESS && a.id == UI_ID_BACK))
         exit_sshimport(now);
-    }
 }
 
 const nav_screen_t sshimport_screen = {
-    .name = "sshimport", .enter = sshimport_enter, .tick = sshimport_tick,
+    .name = "sshimport", .enter = sshimport_enter, .exit = sshimport_exit,
+    .tick = sshimport_tick,
     .input = sshimport_input, .render = render_sshimport,
     .chrome = NAV_CHROME_FULL,
 };

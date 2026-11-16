@@ -158,7 +158,19 @@ static DRAM_ATTR struct {
     cursor_mode_t mode;
     uint32_t      blink_count;
     bool          visible;
-} s_cursor = { .mode = CURSOR_NONE, .visible = true };
+    bool          gate_open;          /* the shell's veto, see display.h */
+} s_cursor = { .mode = CURSOR_NONE, .visible = true, .gate_open = true };
+
+void display_cursor_gate(bool open)
+{
+    s_cursor.gate_open = open;
+}
+
+bool display_cursor_shown(void)
+{
+    return s_cursor.gate_open && s_cursor.mode != CURSOR_NONE &&
+           s_cursor.x >= 0 && s_cursor.y >= 0;
+}
 
 void display_set_cursor(int x, int y, cursor_mode_t mode)
 {
@@ -184,7 +196,9 @@ IRAM_ATTR void render_cursor_tick(void)
 IRAM_ATTR void render_cursor_pass(const scan_ctx_t *cx, int char_row)
 {
     if (s_cursor.mode == CURSOR_NONE || !s_cursor.visible ||
-            s_cursor.y != char_row || s_cursor.x < 0 || s_cursor.x >= cx->ncols)
+            !s_cursor.gate_open ||
+            s_cursor.y != char_row || s_cursor.x < 0 || s_cursor.x >= cx->ncols ||
+            render_cache_overlay_covers(s_cursor.x, char_row))
         return;
 
     const int col_words = g_rs.fw >> 1;

@@ -1,0 +1,177 @@
+/*
+ * ui_pure.h — the kit's text and layout arithmetic. It has no display
+ * dependency, so host tests cover it. It holds UTF-8 width, the
+ * number-word rule, centring, the rail thumb and the fault count.
+ * ui_part.h declares the public part: ui_len, ui_centre, ui_faults,
+ * ui_rail_thumb.
+ */
+
+#pragma once
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+/** Next code point of a UTF-8 string; advances @p s past it. Beyond-BMP
+ *  and malformed input give one '?'. Returns 0 at the end. */
+uint16_t ui_utf8_next(const char **s);
+
+/** Write code point @p cp to @p dst as UTF-8 with a NUL: at most four
+ *  bytes. Returns the length without the NUL. */
+int ui_utf8_put(char *dst, uint16_t cp);
+
+/** Cells @p s takes in @p w: its code points, at most @p w. A longer
+ *  string sets @p cut: it must end in an ellipsis. */
+int ui_fit(const char *s, int w, bool *cut);
+
+/** True when the @p n bytes at @p w are a number. A number is an
+ *  optional sign, digits, and at most one '.' or ':' part with digits. */
+bool ui_is_number(const char *w, int n);
+
+/** First shown character of an entry value. @p len is its length and
+ *  @p caret the caret index. The window of @p room cells holds room - 1
+ *  characters and keeps the caret in view. A caret at the end shows the
+ *  tail. */
+int ui_entry_first(int len, int caret, int room);
+
+#define UI_NOTE_MIN_GAP 16   /* a note needs this gap, else it takes the row */
+
+/* The text cells of a status note or hint: first cell and width. */
+typedef struct { int x, w; bool whole; } ui_note_span_t;
+
+/** Where a note goes on a status row. The chips end before @p chips_end,
+ *  the clock starts at @p clock_x, the first chip cell is @p left. Text
+ *  keeps one blank cell at each end. With @p take_row a gap under
+ *  UI_NOTE_MIN_GAP gives the note the whole row (@p whole: chips hidden). */
+ui_note_span_t ui_note_span(int left, int chips_end, int clock_x,
+                            bool take_row);
+
+/** Width of a toast box for @p len cells of text. It has a blank cell at
+ *  each end, and two more for a check mark. At most @p max_w. Zero when
+ *  it cannot hold text. */
+int ui_toast_w(int len, bool mark, int max_w);
+
+/** Cells a chip may stretch on a status row. @p chips_end is the first
+ *  cell after the last chip, @p clock_x the clock's first cell. A live
+ *  note keeps UI_NOTE_MIN_GAP cells, else the row keeps two. */
+int ui_sb_room(int chips_end, int clock_x, bool note);
+
+/* A chip announces its own change: it stretches with a detail text,
+ * holds, then collapses one cell per step. This is the queue and the
+ * clock of it, in milliseconds. The shell drives it from its tick. */
+#define UI_ANN_TEXT     56      /* bytes of one detail text, with the NUL  */
+#define UI_ANN_WAITING  4       /* edges that may wait for the live one    */
+#define UI_ANN_HOLD_MS  3000
+#define UI_ANN_SHORT_MS 1500    /* hold while another edge waits           */
+#define UI_ANN_STEP_MS  100     /* one collapse step                       */
+
+enum { UI_ANN_NONE = 0, UI_ANN_UP, UI_ANN_FAIL, UI_ANN_LOST };
+
+/** What a chip's move from @p prev to @p cur announces (UI_SB_* states).
+ *  The first poll counts as an edge when the chip is on. @p quiet drops
+ *  the loss, for a chip that left only to scan. */
+int ui_ann_edge(uint8_t prev, uint8_t cur, bool first, bool quiet);
+
+typedef struct { int chip; char text[UI_ANN_TEXT]; } ui_ann_item_t;
+
+typedef struct {
+    ui_ann_item_t cur, wait[UI_ANN_WAITING];
+    int      nwait, full, width;
+    bool     live, collapsing;
+    uint64_t t0, c0;               /* hold start, collapse start          */
+    int      seen_chip, seen_width;  /* what the last step reported       */
+} ui_ann_t;
+
+void ui_ann_init(ui_ann_t *a);
+
+/** Queue the detail @p text of @p chip. It plays at once when none is
+ *  live. It replaces a waiting edge of the same chip. A full queue drops
+ *  its oldest. */
+void ui_ann_post(ui_ann_t *a, int chip, const char *text, uint64_t now);
+
+/** Move the clock to @p now. True when the live chip or its width is not
+ *  what the last step reported: the row needs a redraw. */
+bool ui_ann_step(ui_ann_t *a, uint64_t now);
+
+int         ui_ann_width(const ui_ann_t *a);   /* cells, 0 when none      */
+int         ui_ann_chip(const ui_ann_t *a);    /* -1 when none            */
+const char *ui_ann_text(const ui_ann_t *a);
+int         ui_ann_waiting(const ui_ann_t *a);
+bool        ui_ann_busy(const ui_ann_t *a);    /* live or waiting         */
+
+/** Insert printable ASCII @p ch at *@p caret of the NUL-terminated @p buf,
+ *  which holds at most @p max characters. The caret moves past it.
+ *  Returns whether the text changed. */
+bool ui_text_insert(char *buf, int max, int *caret, char ch);
+
+/** Delete the character before *@p caret. Returns whether the text
+ *  changed. */
+bool ui_text_delete(char *buf, int *caret);
+
+/** Wrap ASCII @p text into two lines of @p w cells. Each line goes into
+ *  a buffer of @p sz bytes. The first line breaks at the last space that
+ *  fits, or cuts a word at @p w. The second line takes the rest whole.
+ *  Returns the line count; @p l2 is empty for one. */
+int ui_wrap2(const char *text, int w, char *l1, char *l2, size_t sz);
+
+/** The first @p n characters of @p s with a space after every fourth,
+ *  as a fingerprint reads. Fills @p out of @p sz bytes, cut to fit. */
+void ui_group4(const char *s, int n, char *out, size_t sz);
+
+/** The cell that holds two QR modules, one above the other. */
+uint16_t ui_qr_glyph(bool top, bool bottom);
+
+/** Rows of the QR panel that fit a body of @p w by @p h cells. One row
+ *  less than ui_qr_h leaves the caption out. Zero drops the code. The
+ *  steps keep 30 cells beside the code. */
+int ui_qr_rows(int size, int w, int h);
+
+#define UI_QR_ZONE 2       /* quiet zone, in modules                       */
+
+/* One step of an onboarding page. @p mark is its number, or '!' for a
+ * caution. @p value, when set, takes its own row in @p pen. A step with
+ * no value takes @p pen for its text. */
+typedef struct {
+    char        mark;
+    const char *text, *value;
+    uint8_t     pen;               /* OVERLAY_COL_*, 0 for plain           */
+} ui_step_t;
+
+#define UI_STEP_TEXT  96
+#define UI_STEP_WRAP  3            /* lines one step text wraps to, at most */
+
+/* One row of the steps panel. */
+typedef struct {
+    char    label[2];              /* the mark on a step's first row      */
+    char    text[UI_STEP_TEXT];
+    uint8_t pen, label_pen;
+} ui_step_line_t;
+
+/** Lay @p n steps out as rows for a value column @p w cells wide. Each
+ *  text wraps under its mark. A value takes the next row. Returns the
+ *  rows written to @p out, at most @p max. */
+int ui_steps_wrap(const ui_step_t *steps, int n, int w, ui_step_line_t *out,
+                  int max);
+
+/** Wrap @p text into at most @p max_lines of @p w cells; each line goes
+ *  into a row of @p lines. A cut word, or the last line, keeps the
+ *  rest whole. Returns the line count. */
+int ui_wrap_n(const char *text, int w, char (*lines)[UI_STEP_TEXT],
+              int max_lines);
+
+/* How a typed code shows in @p room cells: taken characters, then
+ * dots for those still to come. */
+typedef struct {
+    int  bullets;    /* taken characters shown (the last ones)         */
+    int  dots;       /* characters still to come                       */
+    bool spaced;     /* one blank cell between marks                   */
+    int  width;      /* cells the row takes                            */
+} ui_code_t;
+
+/** Plan the code row for @p len typed characters and an @p expected
+ *  length (0 when unknown). Spaced when it fits, else packed, else it
+ *  keeps only the last marks that fit. */
+ui_code_t ui_code_plan(int len, int expected, int room);
+
+/** Count one layout fault. */
+void ui_fault(void);

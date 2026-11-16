@@ -66,6 +66,8 @@ esp_err_t wifi_manager_adopt(const wifi_profile_t *profiles, int count,
 wifi_mgr_state_t wifi_manager_get_state(void);
 bool             wifi_manager_is_connected(void);
 const char      *wifi_manager_get_ip(void);
+/** Gateway of the current lease as dotted text, "" when not connected. */
+const char      *wifi_manager_get_gateway(void);
 /** SSID of the connected (or currently attempted) profile, "" if none. */
 const char      *wifi_manager_get_ssid(void);
 /** RSSI of the current AP in dBm (negative), 0 when not connected. */
@@ -76,5 +78,12 @@ int              wifi_manager_get_rssi(void);
  *  Stepping it decades forward mid-handshake corrupts libssh2's blocking-
  *  timeout arithmetic (elapsed = difftime(time(NULL), start)). */
 time_t           wifi_manager_time(void);
+
+#ifdef BUILD_SIMULATOR
+/** Simulator hook: put the mocked link in @p state (the --drive wifi step). */
+void             wifi_manager_sim_set(wifi_mgr_state_t state);
+/** Simulator hook: the signal a connected link reports (wifi:rssi:N). */
+void             wifi_manager_sim_set_rssi(int dbm);
+#endif
 
 #endif // WIFI_MANAGER_H

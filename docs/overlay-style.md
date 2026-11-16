@@ -65,6 +65,7 @@ the accent **pen** (`ui_pen`, `OVERLAY_COL_*`) orthogonal to them:
 | `UI_WELL`  | value well (darker companion of the bar beside it)    | ~60% companion bg, pale derived text           |
 | `UI_FOCUS` | focused / lit bar                                     | pastel wash of the bar tone, dark text         |
 | `UI_TRACK` | gauge track (scrollback fill)                         | medium white on dark neutral tint              |
+| `UI_FOCUS_MUTED` | receding text on a `UI_FOCUS` wash (unlit lock word) | the `UI_FOCUS` wash, text halfway to the wash  |
 
 A draw call passes **one** style plus optionally `UI_BOLD`. The kit maps
 `(style, pen)` to the palette index (`style * 8 + accent`), and

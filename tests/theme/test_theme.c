@@ -6,7 +6,7 @@
  */
 
 #include "unity.h"
-#include "app_theme.h"
+#include "ui_theme.h"
 #include <stdio.h>
 
 /* Same luma recipe as the display's mono effect: 0..62. */
@@ -23,7 +23,7 @@ static int iabs(int v) { return v < 0 ? -v : v; }
 /* The two themes the shell sets (app_internal.h UI_FG/UI_BG and the
  * hostkey mismatch hazard theme). */
 static const struct { color_t fg, bg; const char *name; } THEMES[] = {
-    { RGB565(85, 255, 85), RGB565(0, 0, 0),  "default green" },
+    { RGB565(208, 216, 216), RGB565(0, 0, 0), "slate" },
     { RGB565(255, 255, 255), RGB565(96, 0, 0), "hostkey hazard" },
 };
 
@@ -63,6 +63,29 @@ static void test_track_regression(void)
     }
 }
 
+static void test_focus_muted_dims_focus(void)
+{
+    /* Same wash as UI_FOCUS. The text sits strictly between the FOCUS
+     * text and the wash: readable, but not the lit look. */
+    for (unsigned t = 0; t < sizeof THEMES / sizeof *THEMES; t++) {
+        ui_theme_build(THEMES[t].fg, THEMES[t].bg, s_pal);
+        for (int a = 0; a < OVERLAY_ACCENTS; a++) {
+            const display_overlay_style_t f =
+                s_pal[UI_FOCUS * OVERLAY_ACCENTS + a];
+            const display_overlay_style_t m =
+                s_pal[UI_FOCUS_MUTED * OVERLAY_ACCENTS + a];
+            char msg[64];
+            snprintf(msg, sizeof(msg), "%s: accent %d", THEMES[t].name, a);
+            TEST_ASSERT_EQUAL_HEX16_MESSAGE(f.bg, m.bg, msg);
+            TEST_ASSERT_MESSAGE(m.fg != m.bg, msg);
+            TEST_ASSERT_MESSAGE(m.fg != f.fg, msg);
+            TEST_ASSERT_MESSAGE(iabs(luma(m.fg) - luma(f.fg)) >= 6, msg);
+            TEST_ASSERT_MESSAGE(luma(m.fg) > luma(f.fg) &&
+                                luma(m.fg) < luma(f.bg), msg);
+        }
+    }
+}
+
 static void test_qr_stays_dark_on_white(void)
 {
     /* BAR white must stay a pure white surface with dark modules. */
@@ -78,6 +101,7 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_every_entry_readable);
     RUN_TEST(test_track_regression);
+    RUN_TEST(test_focus_muted_dims_focus);
     RUN_TEST(test_qr_stays_dark_on_white);
     return UNITY_END();
 }

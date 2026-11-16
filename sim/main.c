@@ -133,6 +133,7 @@ static void touch_mouse_down(const SDL_MouseButtonEvent *b, uint64_t now)
     touch_y     = y;
     touch_start = now;
     touch_state = TOUCH_TOUCHING;
+    send_touch(CYBERDECK_INPUT_PRESS, x, y, now);
 }
 
 static void touch_mouse_up(const SDL_MouseButtonEvent *b, uint64_t now)
@@ -141,6 +142,8 @@ static void touch_mouse_up(const SDL_MouseButtonEvent *b, uint64_t now)
     SDL_CaptureMouse(SDL_FALSE);
     if (touch_state == TOUCH_TOUCHING && now - touch_start < TOUCH_TAP_MAX_MS)
         send_touch(CYBERDECK_INPUT_TAP, touch_x, touch_y, now);
+    else if (touch_state == TOUCH_TOUCHING)
+        send_touch(CYBERDECK_INPUT_RELEASE, touch_x, touch_y, now);
     touch_state = TOUCH_IDLE;
 }
 
@@ -192,6 +195,7 @@ static void touch_mouse_motion(const SDL_MouseMotionEvent *m, uint64_t now)
         if (dy > -TOUCH_SCROLL_START_PX && dy < TOUCH_SCROLL_START_PX) return;
         s_scroll_last_y = y;
         touch_state     = TOUCH_SCROLLING;
+        send_touch(CYBERDECK_INPUT_RELEASE, touch_x, touch_y, now);
         return;
     }
 
@@ -218,14 +222,134 @@ static void touch_tick(uint64_t now)
 /* -------------------------------------------------------------------------
  * --drive "tap:x,y|key:enter|expect:home|shot:menu.bmp|wait:800|quit" —
  * scripted input for UI screenshot automation and regression runs
- * (framebuffer pixel coords; key names: enter, esc, tab, up/down/left/right,
- * f12, sbup/sbdn for scrollback paging, or a single character). Expectations
+ * (framebuffer pixel coords; key names: enter, esc, tab, bs (backspace),
+ * up/down/left/right, f12, sbup/sbdn for scrollback paging, or a single
+ * character; type:TEXT sends TEXT one character at a time). wifi:up,
+ * wifi:down and wifi:fail set the mocked link; wifi:rssi:N its signal.
+ * With --fake-ble, kbd:up and kbd:down link the keyboard; kbd:caps and
+ * kbd:num flip its locks. settle waits until the
+ * status chips stop announcing. expect-no-text:TEXT fails when the
+ * overlay still shows TEXT. expect-stack:a,b checks the whole nav
+ * stack, bottom first. expect-cursor:on|off checks whether the terminal
+ * cursor would draw. Touch
+ * steps: tap, hold (long press), press and release. Expectations
  * exit nonzero on mismatch; quit exits 0. Steps fire 450 ms apart
  * (wait:N overrides the gap), starting 2.5 s after boot. Each step
  * injects through the same paths as real input. Sim-only test hook.
+ *
+ * --headless: no window, virtual clock; sleep:N waits N real ms.
+ * --no-fx: display effects off. --fake-ble: a canned BLE keyboard service.
+ * Details: docs/DEVELOPMENT.md.
  * ---------------------------------------------------------------------- */
 static const char *s_drive      = NULL;
 static uint64_t    s_drive_next = 0;
+static bool        s_headless   = false;
+static uint64_t    s_vnow       = 0;      /* headless deck time, ms */
+
+#define HEADLESS_STEP_MS 16
+
+static uint64_t sim_now(void)
+{
+    return s_headless ? s_vnow : SDL_GetTicks64();
+}
+
+/* --fake-ble: a keyboard service with two canned keyboards, so the pairing
+ * page runs on the host. Results show 3 s after the scan starts. */
+static bool     s_fake_ble;
+static bool     s_fake_scan;
+static bool     s_fake_up;
+static uint8_t  s_fake_locks;
+static uint64_t s_fake_since;
+
+static cyberdeck_ble_state_t fake_ble_state(void)
+{
+    if (s_fake_up) return CYBERDECK_BLE_CONNECTED;
+    return s_fake_scan ? CYBERDECK_BLE_PAIRING_SCAN : CYBERDECK_BLE_IDLE;
+}
+
+static void fake_ble_enter(void)
+{
+    s_fake_scan = true;
+    s_fake_since = sim_now();
+}
+
+static void fake_ble_exit(void) { s_fake_scan = false; }
+
+static int fake_ble_results(ble_device_info_t *out, int max)
+{
+    static const char *const names[2] = { "Keychron K2", "Logitech K380" };
+    if (!s_fake_scan || sim_now() - s_fake_since < 3000) return 0;
+    const int n = max < 2 ? max : 2;
+    for (int i = 0; i < n; i++) {
+        memset(&out[i], 0, sizeof out[i]);
+        out[i].addr[5] = (uint8_t)(0xA0 + i);
+        out[i].addr_type = (uint8_t)i;
+        snprintf(out[i].name, sizeof out[i].name, "%s", names[i]);
+    }
+    return n;
+}
+
+static void fake_ble_select(const uint8_t addr[6], uint8_t addr_type)
+{
+    (void)addr; (void)addr_type;
+}
+
+static const char *fake_ble_name(void) { return s_fake_up ? "Keychron K2" : ""; }
+static uint8_t fake_ble_locks(void) { return s_fake_up ? s_fake_locks : 0; }
+
+/* Two canned bonds; the first is the keyboard kbd:up links. Addresses are
+ * little-endian like NimBLE's, so they read A0:00:... on screen. */
+static cyberdeck_ble_bond_t s_fake_bonds[2] = {
+    { .addr = { [5] = 0xA0 }, .addr_type = 0, .name = "Keychron K2" },
+    { .addr = { [5] = 0xA1 }, .addr_type = 1, .name = "Logitech K380" },
+};
+static int s_fake_nbonds = 2;
+
+static int fake_ble_bonds(cyberdeck_ble_bond_t *out, int max)
+{
+    const int n = s_fake_nbonds < max ? s_fake_nbonds : max;
+    for (int i = 0; i < n; i++) out[i] = s_fake_bonds[i];
+    return n;
+}
+
+static bool fake_ble_connected_addr(uint8_t addr[6])
+{
+    if (!s_fake_up) return false;
+    memcpy(addr, s_fake_bonds[0].addr, 6);
+    return true;
+}
+
+static void fake_ble_forget_device(const uint8_t addr[6], uint8_t addr_type)
+{
+    (void)addr_type;
+    for (int i = 0; i < s_fake_nbonds; i++) {
+        if (memcmp(s_fake_bonds[i].addr, addr, 6) != 0) continue;
+        if (i == 0) s_fake_up = false;
+        for (int j = i; j + 1 < s_fake_nbonds; j++)
+            s_fake_bonds[j] = s_fake_bonds[j + 1];
+        s_fake_nbonds--;
+        return;
+    }
+}
+
+static void fake_ble_forget(void)
+{
+    s_fake_nbonds = 0;
+    s_fake_up = false;
+}
+
+static const cyberdeck_ble_ops_t s_fake_ble_ops = {
+    .bonds = fake_ble_bonds, .connected_addr = fake_ble_connected_addr,
+    .forget_device = fake_ble_forget_device,
+    .get_state = fake_ble_state, .enter_pairing = fake_ble_enter,
+    .exit_pairing = fake_ble_exit, .get_scan_results = fake_ble_results,
+    .select_device = fake_ble_select, .get_name = fake_ble_name,
+    .forget = fake_ble_forget, .get_locks = fake_ble_locks,
+};
+
+static const cyberdeck_service_t s_fake_services[] = {
+    { CYBERDECK_SVC_BLE_KEYBOARD, &s_fake_ble_ops },
+};
 
 static void drive_key(const char *name, uint64_t now)
 {
@@ -237,6 +361,7 @@ static void drive_key(const char *name, uint64_t now)
     if      (!strcmp(name, "enter")) seq = "\r";
     else if (!strcmp(name, "esc"))   seq = "\x1b";
     else if (!strcmp(name, "tab"))   seq = "\t";
+    else if (!strcmp(name, "bs"))    seq = "\x7f";
     else if (name[0] && !name[1])    { one[0] = name[0]; seq = one; }
     /* Special keys travel as HID usages (SDL scancodes ARE the usages). */
     else if (!strcmp(name, "up"))    send_hidkey(SDL_SCANCODE_UP,    0, now);
@@ -252,25 +377,81 @@ static void drive_key(const char *name, uint64_t now)
 
 static void drive_tick(uint64_t now)
 {
-    if (!s_drive || !*s_drive || now < s_drive_next) return;
+    if (!s_drive || now < s_drive_next) return;
+    if (!*s_drive) {
+        /* A window stays up for a look. A headless run has no viewer. */
+        if (s_headless) exit(0);
+        return;
+    }
     char step[64];
     const char *bar = strchr(s_drive, '|');
     size_t n = bar ? (size_t)(bar - s_drive) : strlen(s_drive);
     if (n >= sizeof(step)) n = sizeof(step) - 1;
     memcpy(step, s_drive, n);
     step[n] = '\0';
+
+    /* settle: hold the script until the chips stop announcing. */
+    if (!strcmp(step, "settle") && !cyberdeck_app_debug_status_idle()) {
+        s_drive_next = now + 50;
+        return;
+    }
     s_drive = bar ? bar + 1 : "";
 
     uint64_t gap = 450;
     int x = 0, y = 0;
     if (!strncmp(step, "wait:", 5)) {
         gap = strtoul(step + 5, NULL, 10);
+    } else if (!strncmp(step, "sleep:", 6)) {
+        SDL_Delay((uint32_t)strtoul(step + 6, NULL, 10));
+        gap = 0;
     } else if (!strncmp(step, "expect-text:", 12)) {
         const char *want = step + 12;
         if (!cyberdeck_app_debug_overlay_contains(want)) {
             fprintf(stderr, "drive: expected overlay text '%s' on screen '%s'\n",
                     want, cyberdeck_app_debug_screen());
             exit(4);
+        }
+    } else if (!strncmp(step, "expect-stack:", 13)) {
+        char got[160];
+        cyberdeck_app_debug_stack(got, sizeof got);
+        if (strcmp(got, step + 13) != 0) {
+            fprintf(stderr, "drive: expected stack '%s', got '%s'\n",
+                    step + 13, got);
+            exit(3);
+        }
+    } else if (!strncmp(step, "expect-cursor:", 14)) {
+        const bool want = !strcmp(step + 14, "on");
+        if (display_cursor_shown() != want) {
+            fprintf(stderr, "drive: expected cursor %s on screen '%s'\n",
+                    want ? "on" : "off", cyberdeck_app_debug_screen());
+            exit(3);
+        }
+    } else if (!strncmp(step, "expect-no-text:", 15)) {
+        const char *bad = step + 15;
+        if (cyberdeck_app_debug_overlay_contains(bad)) {
+            fprintf(stderr, "drive: overlay text '%s' still on screen '%s'\n",
+                    bad, cyberdeck_app_debug_screen());
+            exit(4);
+        }
+    } else if (!strncmp(step, "wifi:", 5)) {
+        const char *to = step + 5;
+        if      (!strcmp(to, "up"))   wifi_manager_sim_set(WIFI_MGR_CONNECTED);
+        else if (!strcmp(to, "down")) wifi_manager_sim_set(WIFI_MGR_LOST);
+        else if (!strcmp(to, "fail")) wifi_manager_sim_set(WIFI_MGR_FAILED);
+        else if (!strncmp(to, "rssi:", 5)) wifi_manager_sim_set_rssi(atoi(to + 5));
+        else {
+            fprintf(stderr, "drive: unknown wifi state '%s'\n", to);
+            exit(6);
+        }
+    } else if (!strncmp(step, "kbd:", 4)) {
+        const char *to = step + 4;
+        if      (!strcmp(to, "up"))   s_fake_up = true;
+        else if (!strcmp(to, "down")) s_fake_up = false;
+        else if (!strcmp(to, "caps")) s_fake_locks ^= CYBERDECK_KBD_LOCK_CAPS;
+        else if (!strcmp(to, "num"))  s_fake_locks ^= CYBERDECK_KBD_LOCK_NUM;
+        else {
+            fprintf(stderr, "drive: unknown kbd step '%s'\n", to);
+            exit(6);
         }
     } else if (!strncmp(step, "expect:", 7)) {
         const char *want = step + 7;
@@ -292,8 +473,14 @@ static void drive_tick(uint64_t now)
         send_touch(CYBERDECK_INPUT_TAP, (uint16_t)x, (uint16_t)y, now);
     } else if (sscanf(step, "hold:%d,%d", &x, &y) == 2) {
         send_touch(CYBERDECK_INPUT_LONG_PRESS, (uint16_t)x, (uint16_t)y, now);
+    } else if (sscanf(step, "press:%d,%d", &x, &y) == 2) {
+        send_touch(CYBERDECK_INPUT_PRESS, (uint16_t)x, (uint16_t)y, now);
+    } else if (sscanf(step, "release:%d,%d", &x, &y) == 2) {
+        send_touch(CYBERDECK_INPUT_RELEASE, (uint16_t)x, (uint16_t)y, now);
     } else if (!strncmp(step, "key:", 4)) {
         drive_key(step + 4, now);
+    } else if (!strncmp(step, "type:", 5)) {
+        for (const char *c = step + 5; *c; c++) send_key_bytes(c, 1, now);
     }
     s_drive_next = now + gap;
 }
@@ -326,6 +513,38 @@ static int sim_main(int argc, char *argv[])
         i--;
     }
 
+    /* --font WxH picks the grid for this run (builds that link every
+     * size; a single-size build ignores it). */
+    font_size_t font = FONT_SIZE_8X16;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--font") != 0) continue;
+        const char *v = i + 1 < argc ? argv[i + 1] : "";
+        if      (!strcmp(v, "8x16"))  font = FONT_SIZE_8X16;
+        else if (!strcmp(v, "10x20")) font = FONT_SIZE_10X20;
+        else if (!strcmp(v, "12x24")) font = FONT_SIZE_12X24;
+        else {
+            fprintf(stderr, "--font requires 8x16, 10x20 or 12x24\n");
+            return 2;
+        }
+        memmove(&argv[i], &argv[i + 2], (size_t)(argc - i - 1) * sizeof(*argv));
+        argc -= 2;
+        i--;
+    }
+
+    bool no_fx = false;
+    for (int i = 1; i < argc; i++) {
+        const bool headless = strcmp(argv[i], "--headless") == 0;
+        const bool fake_ble = strcmp(argv[i], "--fake-ble") == 0;
+        if (!headless && !fake_ble && strcmp(argv[i], "--no-fx") != 0)
+            continue;
+        if (headless)       s_headless = true;
+        else if (fake_ble)  s_fake_ble = true;
+        else                no_fx = true;
+        memmove(&argv[i], &argv[i + 1], (size_t)(argc - i) * sizeof(*argv));
+        argc--;
+        i--;
+    }
+
     /* Keystore provisioning commands run headless and exit (see
      * keystore_cli.c); returns -1 when none is present. */
     int cli_rc = keystore_cli_main(argc, argv);
@@ -336,9 +555,13 @@ static int sim_main(int argc, char *argv[])
      * the "(default)" entry in the profile picker. */
     if (argc > 2 && strcmp(argv[1], "--drive") == 0) {
         s_drive      = argv[2];
-        s_drive_next = SDL_GetTicks64() + 2500;
+        s_drive_next = sim_now() + 2500;
         argv += 2;
         argc -= 2;
+    }
+    if (s_headless && !s_drive) {
+        fprintf(stderr, "--headless needs a --drive script\n");
+        return 2;
     }
     const char *host = (argc > 1) ? argv[1] : "";
     int         port = (argc > 2) ? atoi(argv[2]) : 22;
@@ -356,15 +579,19 @@ static int sim_main(int argc, char *argv[])
         return 1;
     }
 
+    /* The dummy video driver opens no window and takes no input. */
+    if (s_headless) {
+        SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
+        display_sim_headless();
+    }
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
 
-    /* The sim links exactly one size (cmake -DFONT_SIZE=...), so the request
-     * is irrelevant — font_init falls back to whichever one that is. The
-     * caller must still tell the renderer, or it keeps its 8x16 defaults. */
-    font_init(FONT_SIZE_8X16);
+    /* A single-size build falls back to the one it links. The caller
+     * must still tell the renderer, or it keeps its 8x16 defaults. */
+    font_init(font);
     display_render_set_font(font_width(), font_height());
     display_init();
     vterm_init(display_text_cols(), display_text_rows());
@@ -385,22 +612,28 @@ static int sim_main(int argc, char *argv[])
         .fallback_password  = pass,
         .fallback_wifi_ssid     = "SIM",
         .fallback_wifi_password = "",
-        /* no .services: the sim has no BLE keyboard or phone presence */
+        /* no phone presence; the BLE keyboard exists only with --fake-ble */
+        .services   = s_fake_ble ? s_fake_services : NULL,
+        .n_services = s_fake_ble ? 1 : 0,
 #if CONFIG_INPUT_TOUCH_SCROLL
         .set_scroll_edge = sim_set_scroll_edge,
         .scroll_edge_px  = CONFIG_INPUT_TOUCH_SCROLL_EDGE_PX,
 #endif
     };
-    if (cyberdeck_app_init(&app_cfg, SDL_GetTicks64()) != ESP_OK) {
+    if (cyberdeck_app_init(&app_cfg, sim_now()) != ESP_OK) {
         fprintf(stderr, "cyberdeck_app_init() failed\n");
         SDL_Quit();
         return 1;
+    }
+    if (no_fx) {
+        const display_fx_cfg_t off = { 0 };
+        display_fx_set(&off);
     }
 
     bool running = true;
     while (running) {
         bool got_input = false;
-        uint64_t now = SDL_GetTicks64();
+        uint64_t now = sim_now();
 
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
@@ -465,13 +698,14 @@ static int sim_main(int argc, char *argv[])
             }
         }
 
-        uint64_t tick = SDL_GetTicks64();
+        uint64_t tick = sim_now();
         touch_tick(tick);
         drive_tick(tick);
         cyberdeck_app_tick(tick);
         display_render_frame();
 
-        SDL_Delay(got_input ? 1 : 16);
+        if (s_headless) s_vnow += HEADLESS_STEP_MS;
+        else            SDL_Delay(got_input ? 1 : 16);
     }
 
     ssh_client_disconnect();

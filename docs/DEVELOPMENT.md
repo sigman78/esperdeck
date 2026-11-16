@@ -66,8 +66,9 @@ applied on reboot.
 Which sizes are *linked into the build* — and which one is the boot
 default — are Kconfig options (`CYBERDECK_FONT_RT_8X16` / `_10X20` /
 `_12X24`, plus the `CYBERDECK_FONT_DEFAULT` choice; the bold face is
-`CYBERDECK_FONT_BOLD`). The sim picks its font at configure time
-(`-DFONT_SIZE=8x16|10x20|12x24`).
+`CYBERDECK_FONT_BOLD`). The sim links all three and picks one per run
+(`--font 8x16|10x20|12x24`, default 8x16); `-DFONT_SIZE=<size>` at
+configure time pins a single-size build.
 
 The `tools/check_iram.py` audit proves the render ISR keeps running
 while the flash cache is disabled (`LCD_RGB_ISR_IRAM_SAFE`). If the
@@ -128,6 +129,9 @@ Host-compiled Unity suites (no ESP-IDF required) live under
   from the BLE peer: truncated, oversized and malformed input)
 - **`ssh_txbuf`** — the SSH TX FIFO (append, partial consume, EAGAIN keeps
   the head bytes, overflow)
+- **`ui`** — the UI kit's layout and interaction logic at every grid
+  (rect cuts, grids, fit-one-screen capacity, hit test, focus walk, tap
+  and press)
 
 Each suite builds the same way:
 
@@ -196,10 +200,31 @@ cmake --build build-sim
   already exist. Invalid paths fail instead of falling back to other storage.
   The root supports up to 767 bytes, subject to host OS path limits.
   Without the option, the existing `sim_storage/` discovery remains available.
+- **`--font 8x16|10x20|12x24`** selects the character grid for the run
+  (100x30, 80x24 or 66x20).
 - **Mouse emulates touch** faithfully (tap, drag, long-press =
   right-click).
 - **`--drive "tap:x,y|key:enter|expect:home|expect-text:HOME|wait:800|..."`**
-  scripts input and screen/overlay assertions for demos and tests.
+  scripts input and screen/overlay assertions for demos and tests. Touch
+  steps are `tap`, `hold` (long press), `press` and `release`.
+  `expect-no-text:TEXT` fails while the overlay shows TEXT.
+  `expect-stack:a,b` checks the whole nav stack, bottom first, by screen name.
+  `expect-cursor:on|off` checks whether the terminal cursor would draw.
+  `wifi:up`, `wifi:down` and `wifi:fail` set the mocked Wi-Fi link
+  (connected, lost, failed). `settle` waits until no chip announcement
+  is live or waiting. The boot announcement runs for about 5 s after
+  HOME appears.
+- **`--headless`** runs a `--drive` script with no window and on a
+  virtual clock. Each loop pass counts as 16 ms of deck time and takes
+  no wall time, so a `wait:` costs nothing and a run takes about a
+  second. The run ends with the script. Work on another thread (an SSH
+  connect) still needs real time: the `sleep:N` step waits N real
+  milliseconds.
+- **`--no-fx`** turns the display effects off, so a `shot:` shows the
+  layout and not a wipe or a static burst in mid-flight.
+- **`--fake-ble`** registers a canned BLE keyboard service: two keyboards
+  show up 3 s after the pairing scan starts. Without it the sim has no
+  keyboard service and the pairing page is out of reach.
 - **Alt+Enter** toggles window scale; **F12** opens the in-session menu.
 - **MSVC toolchain.** On Windows the sim links against MSVC. Build from
   an environment where `cl` is available (a VS developer prompt, for
@@ -212,6 +237,23 @@ pins therefore match between sim and device — a fingerprint accepted in
 the sim is valid on the deck. What the deck needs from crypto and where
 each piece comes from: [`crypto-stack.md`](crypto-stack.md).
 
+### UI lab — kit screens without the shell
+
+`cyberdeck_uilab` builds with the simulator. It draws example screens
+through the real display path using only the `ui`, `display` and `font`
+components. Design record: [`ui-kit.md`](ui-kit.md).
+
+```bash
+./build-sim/sim/cyberdeck_uilab.exe --font 12x24               # live window
+./build-sim/sim/cyberdeck_uilab.exe --font 12x24 --out shots   # one BMP per screen
+```
+
+- **Live:** the mouse is the finger, right-click is a long press, arrows
+  and Enter drive focus, Tab steps through the screens.
+- **`--out DIR`** renders each screen in a fixed pose with animated
+  effects off. Two runs give the same image. The directory must exist.
+- **`--screen NAME`** limits the run to one screen.
+
 ### Simulator storage isolation tests
 
 `tools/sim_regress.py` copies `sim_storage.example/` into a separate temporary
@@ -222,6 +264,25 @@ Run from the repository root after building the simulator:
 python tests/sim/test_storage_dir.py --binary build-sim/sim/cyberdeck_sim.exe
 python tools/sim_regress.py build-sim/sim/cyberdeck_sim.exe
 ```
+
+The scenarios run headless and side by side. `-k PATTERN` keeps the
+scenarios whose name matches, `-j N` sets how many run at once, and
+`--window` shows each run in a window at real speed.
+
+### Screenshots of shell screens
+
+`tools/sim_shots.py` runs one `--drive` script per font, headless and
+with the effects off. Each `shot:NAME` step writes `NAME-<font>.png`.
+A "layout faults" log line fails the run.
+
+```powershell
+python tools/sim_shots.py --out shots --hosts 8 "key:esc|wait:300|expect:home|shot:home"
+```
+
+`--hosts N` stores N example hosts first, `--font` limits the fonts and
+`--fx` keeps the effects. A `settle` step runs before every picture, so
+the bar is compact. `--live` drops it, to shoot a chip while it
+announces (`wifi:down|wait:300|shot:lost`).
 
 ## Performance — see performance.md for the log
 

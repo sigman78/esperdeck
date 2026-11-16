@@ -1,11 +1,11 @@
 /*
- * app_theme.c — bakes the overlay style table. ui_theme_build() resolves
+ * ui_theme.c — bakes the overlay style table. ui_theme_build() resolves
  * every look the rendition uses, once per ui_colors() call, not per cell
  * in the ISR. Tones and derivations carried over verbatim from the
  * retired per-cell resolver (docs/overlay-style.md).
  */
 
-#include "app_theme.h"
+#include "ui_theme.h"
 
 /* Accent tones. TEXT accents are VGA bright; bars use muted companions
  * of the same hues; wells their ~60% versions (ui-spec value wells). */
@@ -49,6 +49,46 @@ static color_t bar_text(int a, color_t bar, color_t screen_bg)
     return screen_bg;
 }
 
+/* Panel: the theme background lifted a fifth of the way to a cool
+ * white — a neutral dark surface that still reads on a colored theme. */
+static color_t panel_of(color_t bg)
+{
+    const int r = (bg >> 11) & 0x1F, g = (bg >> 5) & 0x3F, b = bg & 0x1F;
+    return (color_t)(((r + (24 - r) / 5) << 11) |
+                     ((g + (52 - g) / 5) << 5) |
+                      (b + (30 - b) / 5));
+}
+
+/* @p n eighths of @p a over the rest of @p b, per channel. */
+static color_t mix8(color_t a, color_t b, int n)
+{
+    const int r = (((a >> 11) & 0x1F) * n + ((b >> 11) & 0x1F) * (8 - n)) / 8;
+    const int g = (((a >> 5) & 0x3F) * n + ((b >> 5) & 0x3F) * (8 - n)) / 8;
+    const int bl = ((a & 0x1F) * n + (b & 0x1F) * (8 - n)) / 8;
+    return (color_t)((r << 11) | (g << 5) | bl);
+}
+
+/* Same luma recipe as the display's mono effect: 0..62. */
+static int luma(color_t p)
+{
+    const int r6 = ((p >> 11) & 0x1F) << 1;
+    const int g6 = (p >> 5) & 0x3F;
+    const int b6 = (p & 0x1F) << 1;
+    return (r6 * 5 + g6 * 9 + b6 * 2) >> 4;
+}
+
+/* Muted text on a panel: five eighths of the text colour. A hue near
+ * the panel's own brightness takes more, so it stays readable. */
+static color_t panel_muted(color_t text, color_t panel)
+{
+    for (int n = 5; n < 8; n++) {
+        const color_t c = mix8(text, panel, n);
+        const int d = luma(c) - luma(panel);
+        if (d >= 6 || d <= -6) return c;
+    }
+    return text;
+}
+
 /* Focus wash: 50% toward white (carry-safe half-sum). */
 static color_t wash(color_t c)
 {
@@ -57,6 +97,8 @@ static color_t wash(color_t c)
 
 void ui_theme_build(color_t fg, color_t bg, display_overlay_style_t *out)
 {
+    const color_t panel = panel_of(bg);
+
     for (int a = 0; a < OVERLAY_ACCENTS; a++) {
         const color_t text = a ? ACCENT_TEXT[a] : fg;
 
@@ -78,5 +120,23 @@ void ui_theme_build(color_t fg, color_t bg, display_overlay_style_t *out)
          * dark tint — the fill reads at a glance, the track recedes. */
         out[UI_TRACK * OVERLAY_ACCENTS + a] =
             (display_overlay_style_t){ 0x7BEF, 0x39E7 };
+
+        out[UI_BAR_EDGE   * OVERLAY_ACCENTS + a] =
+            (display_overlay_style_t){ ACCENT_BAR[a], bg };
+        out[UI_WELL_EDGE  * OVERLAY_ACCENTS + a] =
+            (display_overlay_style_t){ ACCENT_WELL[a], bg };
+        out[UI_FOCUS_EDGE * OVERLAY_ACCENTS + a] =
+            (display_overlay_style_t){ wash(ACCENT_BAR[a]), bg };
+        out[UI_PANEL       * OVERLAY_ACCENTS + a] =
+            (display_overlay_style_t){ text, panel };
+        out[UI_PANEL_MUTED * OVERLAY_ACCENTS + a] =
+            (display_overlay_style_t){ panel_muted(text, panel), panel };
+        out[UI_PANEL_EDGE  * OVERLAY_ACCENTS + a] =
+            (display_overlay_style_t){ panel, bg };
+        /* The FOCUS wash with its text halfway to the wash: dim, not gone. */
+        out[UI_FOCUS_MUTED * OVERLAY_ACCENTS + a] = (display_overlay_style_t){
+            (color_t)(((bg >> 1) & 0x7BEF) +
+                      ((wash(ACCENT_BAR[a]) >> 1) & 0x7BEF)),
+            wash(ACCENT_BAR[a]) };
     }
 }

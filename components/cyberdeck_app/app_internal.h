@@ -12,7 +12,7 @@
 
 #include "cyberdeck_app.h"
 #include "app_nav.h"
-#include "app_ui.h"
+#include "ui_frame.h"
 #include "storage.h"
 
 #define MAX_PROFILES     (STORAGE_MAX_PROFILES + 1)   /* stored + synth fallback */
@@ -22,14 +22,12 @@
 #define ERR_TOAST_MS     7000         /* errors the user must actually read */
 #define MENU_MSG_MS      5000         /* menu action feedback lifetime */
 
-/* Shell palette — VGA phosphor green on black. Per-cell accents
- * (OVERLAY_COL_*) layer the rest of the classic 16 on top. */
-#define UI_FG   RGB565(85, 255, 85)
+/* Shell palette: light grey on black. Per-cell accents (OVERLAY_COL_*)
+ * layer the rest of the classic 16 on top. */
+#define UI_FG   RGB565(208, 216, 216)
 #define UI_BG   RGB565(0, 0, 0)
 
 #define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
-
-/* tilegrid_t moved to the public kit (cyberdeck_ui.h, via app_ui.h). */
 
 /** Push app.touch_scroll down to the touch driver (no-op without the
  *  gesture compiled in). Call after boot load and after every toggle. */
@@ -54,17 +52,11 @@ struct app_state {
      * never has to be #ifdef'd at every read site. */
     bool touch_scroll;
 
-    /* Tile grid of the current screen, saved for touch hit-testing. */
-    tilegrid_t grid;
-
     /* SESSION alone uses the toast; other UI states draw status inline. */
     char     toast[64];
     uint64_t toast_until;
-    bool     toast_ok;     /* success toast: spinner-to-checkmark garnish */
-
-    /* link watcher: last states seen, for connect/disconnect toasts */
-    uint8_t  prev_wifi;    /* wifi_mgr_state_t */
-    uint8_t  prev_ble;     /* cyberdeck_ble_state_t */
+    bool     toast_ok;     /* success toast: green, with a check mark */
+    bool     toast_wifi;   /* the menu's note tracks the Wi-Fi state  */
 
     uint32_t anim_frame;   /* advances ~10 fps for subtle animation */
     uint64_t next_anim;    /* next animated re-render */
@@ -90,6 +82,10 @@ bool ble_has_bond(void);
 /** Connect wifi_manager from wifi.ini (or the Kconfig fallback). */
 void kick_wifi(void);
 void wifi_migrate_nvs_cred(void);
+
+/** Drop touch input for @p ms, and the rest of any touch already down.
+ *  A finger on the page that just closed must not act on the next one. */
+void touch_quiet(uint64_t now, uint32_t ms);
 
 /** Post a toast for @p ms; drawn by HOME inline or the SESSION toast chip. */
 void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...);

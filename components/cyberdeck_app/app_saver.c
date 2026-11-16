@@ -220,7 +220,10 @@ static void saver_tick(uint64_t now)
 static void saver_input(const cyberdeck_input_t *ev, ui_key_t k, char ch,
                         uint64_t now)
 {
-    if (app.toast[0] && now >= app.toast_until) app.toast[0] = '\0';
+    /* The gesture wakes the deck, not the finger-down that opens it. A
+     * wake on PRESS would hand its TAP to the screen under the rain. */
+    if (ev->type == CYBERDECK_INPUT_PRESS ||
+        ev->type == CYBERDECK_INPUT_RELEASE) return;
     bool swallow = now - s_since >= SAVER_WAKE_GRACE_MS;
     if (swallow && keystore_state() == KEYSTORE_LOCKED) {
         unlock_open_gate(now);

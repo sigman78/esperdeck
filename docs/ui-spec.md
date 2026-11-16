@@ -52,11 +52,11 @@ status bar on the bottom — no hint row, no tab row.
 | **StatusBar** | row n-1, own background; lettered indicators + lock + clock; a live Toast takes the indicator span over | locked |
 | **Toast** | lives on the StatusBar while alive; one impl, all screens | free |
 | **Menu** | hub + section panels; own section below | locked |
-| **TileGrid** | slot rects + hit + arrow-nav | free |
-| **ListView** | scrolls, never drops overflow — pickers and other variable-length lists, NOT menus | shipped (item 4 pt 1) |
+| **TileGrid** | slot rects + hit + arrow-nav | `ui_grid` + hot regions |
+| **ListView** | never drops overflow — variable-length lists, NOT menus | paged: `ui_pages` + `ui_rail` |
 | **Value well** | right span of a value tile, dimmed accent, tap = step; replaces the Slider/Stepper concept | locked |
 | **Field** | edit + caret + focus contract | free |
-| **Modal/Confirm** | one helper, title/body/actions; `ui_button_bar` is its action row | action row shipped |
+| **Modal/Confirm** | one helper, title/body/actions; the question page (`ask_open`) | shipped |
 | **Scrim** | dims terminal behind modals | free |
 | **ScrollIndicator** | right edge, offset/total | free |
 | **StepRow / QRPanel** | onboarding widgets | free |
@@ -104,12 +104,16 @@ scroll; pagination: ugly, eats estate):
 
 - **Two-level tree**: a HUB of section tiles → section pages of value
   tiles. Both are **two-column grids of 3-row solid tiles**. Hub tiles
-  carry a body line naming their contents (`fx - font`).
+  carry a body line naming their contents (`fx - font`). The Wi-Fi tile
+  shows the SSID only. Font size lives in System. Destructive items
+  (`danger`) hang from the bottom of a section's last page, below an
+  empty row.
 - **Fit-one-screen contract**: a section holds at most what the
   smallest grid shows — 2×4 = **8 items at 66×20** (10 at 80×24, 12 at
   100×30). A larger section is split at design time (e.g. glow-build
   EFFECTS → CRT + MOTION). Menus never scroll, never paginate, never
-  need a swipe.
+  need a swipe. (Update: sections now page when their rows do not fit;
+  see `ui-kit.md`.)
 - **Tiles are 3 rows** — odd heights only, so text centers on a real
   row; even-height tiles are banned (misaligned text).
 - **Value well**: the right span of a value tile in the *dimmed* accent
@@ -120,7 +124,7 @@ scroll; pagination: ugly, eats estate):
 - **BreadcrumbBar** is the title AND the back path; there is no tab
   row and no Back tile inside pages.
 - **Typing leaves** (profile editor, import) keep the vocabulary —
-  breadcrumb bar, status bar, touch Save/Cancel via `ui_button_bar` —
+  breadcrumb bar, status bar, a touch Save pill and Back —
   around a dense 1-row-field form (accepted as "a little crammed" at
   66×20 for now; see touch tiers below).
 
@@ -228,7 +232,7 @@ The kit (`cyberdeck_ui.h`, public) is what extensibility items 2/4 need.
 Contracts, not implementation:
 
 **Three layers.**
-1. *Primitives* — cells, pens, chips, boxes (today's `app_ui.h`, exported).
+1. *Primitives* — cells, pens, chips, boxes (`cyberdeck_ui.h`, in `components/ui`).
 2. *Parts* — each is a plain struct + free functions:
    `ui_<part>_draw(p, frame)`, `ui_<part>_hit(p, px, py)`,
    `ui_<part>_nav(p, key)` where applicable. No hidden globals: the
@@ -321,7 +325,8 @@ Contracts, not implementation:
   the shared drag converter (touch rule 4) as `ui_list_t`/`ui_drag_t`
   in app_widgets; the profile pickers converted to two-line scrolling
   rows. Parts model honored: caller-owned state, widget-owned
-  hit-testing, no hidden globals.
+  hit-testing, no hidden globals. (Removed 2026-11: `ui_list_t` and the
+  tile helpers went with the old look; only `ui_drag_t` remains.)
 - **2026-08-25 (compliance audit)** — round 3, checked against the code:
   RSSI source corrected to the wifi component API (shell stays
   platform-neutral); accent semantics split into state vs. identity roles

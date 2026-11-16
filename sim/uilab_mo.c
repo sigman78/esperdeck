@@ -1,0 +1,2166 @@
+/*
+ * uilab_mo.c - the lab's slate screens, drawn with the kit's parts.
+ * Each screen ports a sketch in tools/uimock/sketches-mo.js and carries
+ * the name of its MO_GATE frame. The gate compares both cell by cell.
+ */
+
+#include "uilab.h"
+#include "ui_pure.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#define NELEM(a) ((int)(sizeof(a) / sizeof((a)[0])))
+
+enum {
+    MO_HOST = 2000, MO_PILL = 2100, MO_PREV = 2200, MO_NEXT, MO_HUB = 2300,
+    MO_OPT = 2400, MO_BTN = 2600, MO_KEY = 2700, MO_FIELD = 2800, MO_ROW = 2900,
+};
+
+/* The chips of the real bar, as app_statusbar.c polls them. */
+static const uint16_t SB_STAIR[4] = { 0x2582, 0x2584, 0x2586, 0x2588 };
+
+static int sb_text(ui_sb_chip_t *c, const char *s, uint8_t st)
+{
+    int n = 0;
+    for (; *s; s++, n++)
+        c->cell[n] = (ui_sb_cell_t){ .state = st, .cp = (uint8_t)*s,
+                                     .keep = true };
+    c->cell[n++] = (ui_sb_cell_t){ .state = st, .cp = ' ', .keep = true };
+    return n;
+}
+
+static ui_sb_chip_t sb_net(uint8_t st, int level)
+{
+    ui_sb_chip_t c = { .accent = OVERLAY_COL_GREEN };
+    int n = 0;
+    for (; n < 4; n++)
+        c.cell[n] = (ui_sb_cell_t){ .state = st, .keep = n > 0,
+                                    .cp = n < level ? SB_STAIR[n] : UI_LOW_1 };
+    if (st == UI_SB_OFF) c.cell[0].cp = UI_CROSS;
+    c.n = (uint8_t)n;
+    return c;
+}
+
+static int sb_word(ui_sb_chip_t *c, int n, const char *s, uint8_t st,
+                   uint8_t accent)
+{
+    for (; *s; s++, n++)
+        c->cell[n] = (ui_sb_cell_t){ .state = st, .accent = accent,
+                                     .cp = (uint8_t)*s, .keep = true };
+    return n;
+}
+
+static ui_sb_chip_t sb_kbd(uint8_t st, bool caps, bool num)
+{
+    static const char *const WORD[2] = { "CAPS", "NUM" };
+    const bool lock[2] = { caps, num };
+    ui_sb_chip_t c = { .accent = OVERLAY_COL_CYAN };
+    int n = sb_word(&c, 0, "KBD", st, 0);
+    for (int i = 0; st == UI_SB_ON && i < 2; i++) {
+        n = sb_word(&c, n, " ", st, 0);
+        n = sb_word(&c, n, WORD[i], lock[i] ? UI_SB_ON : UI_SB_DIM,
+                    lock[i] ? OVERLAY_COL_AMBER : 0);
+    }
+    c.n = (uint8_t)n;
+    return c;
+}
+
+static ui_sb_chip_t sb_sync(int count)
+{
+    ui_sb_chip_t c = { .accent = OVERLAY_COL_AMBER };
+    int n = sb_text(&c, "SYNC", UI_SB_ALERT);
+    c.cell[n++] = (ui_sb_cell_t){ .state = UI_SB_ALERT,
+                                  .cp = (uint16_t)('0' + count), .keep = true };
+    c.n = (uint8_t)n;
+    return c;
+}
+
+/* The bar of a screen: the fixed chips and clock plus its hints. A variant
+ * name picks the data of an mo-status-* gate frame. */
+static void mo_bar(ui_rect_t r, const char *touch, const char *keys,
+                   const char *v)
+{
+    if (!v) v = "";
+    ui_sb_chip_t chips[3] = { sb_net(UI_SB_ON, 3),
+                              sb_kbd(UI_SB_ON, true, false) };
+    ui_status_t s = { .chips = chips, .nchips = 2, .clock = "14:07",
+                      .hint_touch = touch, .hint_keys = keys, .frame = 3 };
+    if (!strcmp(v, "busy") || !strcmp(v, "busy-blink")) {
+        chips[0] = sb_net(UI_SB_BUSY, 0);
+        chips[1] = sb_kbd(UI_SB_OFF, false, false);
+        if (v[4]) s.frame = 11;
+    } else if (!strcmp(v, "alert")) {
+        chips[0] = sb_net(UI_SB_ALERT, 0);
+        chips[2] = sb_sync(2);
+        s.nchips = 3;
+    } else if (!strcmp(v, "off")) {
+        chips[0] = sb_net(UI_SB_OFF, 0);
+        chips[1] = sb_kbd(UI_SB_OFF, false, false);
+    } else if (!strcmp(v, "locks-none")) {
+        chips[0] = sb_net(UI_SB_ON, 1);
+        chips[1] = sb_kbd(UI_SB_ON, false, false);
+    } else if (!strcmp(v, "locks-both")) {
+        chips[0] = sb_net(UI_SB_ON, 4);
+        chips[1] = sb_kbd(UI_SB_ON, true, true);
+    } else if (!strcmp(v, "note")) {
+        s.note = "Host saved";
+        s.tone = UI_NOTE_PLAIN;
+    } else if (!strcmp(v, "note-good")) {
+        s.note = "Connected to homelab";
+        s.tone = UI_NOTE_GOOD;
+    } else if (!strcmp(v, "note-alert")) {
+        s.note = "Could not save.";
+        s.tone = UI_NOTE_ALERT;
+    } else if (!strcmp(v, "hint")) {
+        s.hint_touch = "Tap a host to connect. Hold a host for its options "
+                       "and more.";
+    } else if (!strcmp(v, "net-up")) {
+        s.xchip = 0; s.xtext = "HomeAP 192.168.1.7"; s.xw = 19;
+    } else if (!strcmp(v, "kbd-up")) {
+        s.xchip = 1; s.xtext = "Logitech K380"; s.xw = 14;
+    } else if (!strcmp(v, "net-lost")) {
+        chips[0] = sb_net(UI_SB_BUSY, 0);
+        s.xchip = 0; s.xtext = "link lost"; s.xw = 10;
+    } else if (!strcmp(v, "collapse")) {
+        s.xchip = 0; s.xtext = "HomeAP 192.168.1.7"; s.xw = 9;
+    } else if (!strcmp(v, "up-note")) {
+        s.note = "Host saved";
+        s.tone = UI_NOTE_PLAIN;
+        s.xchip = 0; s.xtext = "Homelab-5GHz 192.168.100.200"; s.xw = 29;
+    }
+    ui_status(r, &s);
+}
+
+static const char *s_bar_variant;     /* set by the mo-status-* frames */
+
+/* Every part in its states: normal, finger down, key focus, off. */
+static void scr_parts(void)
+{
+    static const char *const HEAD[4] = { "normal", "finger down", "key focus",
+                                         "off" };
+    static const int POSE[4] = { 0, UI_POSE_DOWN, UI_POSE_FOCUS, 0 };
+    static const char *const TINT[2] = { "color", "green" };
+    const int cols = ui_cols(), rows = ui_rows();
+    const int cw = (cols - 2 - 3) / 4;
+#define COL(i, y, h) ui_rect(1 + (i) * (cw + 1), (y), cw, (h))
+
+    ui_slate();
+    ui_pen(OVERLAY_COL_DEFAULT);
+    for (int i = 0; i < 4; i++)
+        ui_text(ui_rect(1 + i * (cw + 1) + 1, 0, cw - 1, 1), HEAD[i], UI_MUTED,
+                UI_LEFT);
+    int y = 1;
+    for (int i = 0; i < 4; i++) {
+        if (POSE[i]) ui_debug_pose((ui_id_t)(1 + i), POSE[i]);
+        ui_part(COL(i, y, 4), (ui_id_t)(1 + i),
+                &(ui_part_t){ .title = "nas", .detail = "pi@nas.lan",
+                              .stripe = OVERLAY_COL_GREEN,
+                              .flags = i == 3 ? UI_PART_OFF : 0 }, NULL);
+    }
+    y += 4;
+    for (int i = 0; i < 4; i++) {
+        if (POSE[i]) ui_debug_pose((ui_id_t)(11 + i), POSE[i]);
+        ui_push(COL(i, y, 3), (ui_id_t)(11 + i), "Connect", UI_TONE_SOLID,
+                OVERLAY_COL_GREEN, i == 3 ? UI_PART_OFF : 0);
+    }
+    y += 3;
+    for (int i = 0; i < 4; i++) {
+        if (POSE[i]) ui_debug_pose((ui_id_t)(21 + i), POSE[i]);
+        ui_switch(COL(i, y, 3), (ui_id_t)(21 + i), i != 0,
+                  i == 3 ? UI_PART_OFF : 0);
+    }
+    y += 3;
+    if (rows - y >= 6) {
+        const int half = (cols - 3) / 2, cw = ui_caption_w("Tint");
+        ui_debug_pose(32, UI_POSE_FOCUS);
+        ui_debug_pose(35, UI_POSE_FOCUS);
+        ui_debug_pose(36, UI_POSE_DOWN);
+        for (int i = 0; i < 2; i++) {
+            const int x = i ? 2 + half : 1;
+            ui_caption(ui_rect(x, y, cw, 3), "Tint");
+            ui_chips(ui_rect(x + cw, y, half - cw, 3), (ui_id_t)(31 + 4 * i),
+                     TINT, 2, 0, 0);
+        }
+        y += 3;
+    }
+    if (rows - y >= 3) {
+        const ui_rect_t rest = ui_pages(ui_rect(1, y, cols - 2, 3), MO_PREV,
+                                        MO_NEXT, 1, 3);
+        const int h = (rest.w - 1) / 2;
+        ui_part(ui_rect(rest.x, y, h, 3), 41,
+                &(ui_part_t){ .title = "HomeAP", .right = "-55 dBm",
+                              .flags = UI_PART_UNITS }, NULL);
+        ui_push(ui_rect(rest.x + h + 1, y, rest.w - h - 1, 3), 42, "Delete",
+                UI_TONE_TINT, OVERLAY_COL_RED, 0);
+        y += 3;
+    }
+    if (rows - y >= 1)
+        mo_bar(ui_rect(0, rows - 1, cols, 1), "Hold a host for options", "",
+               NULL);
+#undef COL
+}
+
+/* The host form in a known state. */
+typedef struct {
+    char name[40], user[40], host[72], port[12], pass[40], keyid[40];
+    bool by_key, show;
+} form_t;
+
+typedef struct {
+    bool is_new;
+    form_t f;
+    form_t was;               /* the form as loaded: what "changed" means */
+    char orig[40];            /* the host name at entry, for the title    */
+    int edit;                 /* index of the field in typing, else -1    */
+    int caret;                /* caret of that field, -1 = after the last */
+    int nkeys;                /* stored keys: the first nkeys of LAB_KEYS */
+} edit_t;
+
+#define LONG_HOST "edge-gateway-03.eu-west-2.compute.internal.example-corp.co.uk"
+
+static const struct { const char *id, *type; } LAB_KEYS[2] = {
+    { "deck-ed25519", "ssh-ed25519" }, { "work-rsa", "ssh-rsa" },
+};
+
+static form_t base_form(void)
+{
+    return (form_t){ .name = "homelab", .user = "root", .host = "192.168.1.10",
+                     .port = "22", .pass = "hunter22" };
+}
+
+/* "user@host:port  key" in parts, as moParse does. */
+static form_t form_of(const lab_profile_t *p)
+{
+    form_t f = { 0 };
+    const char *at = strchr(p->where, '@'), *colon = strchr(p->where, ':');
+    snprintf(f.name, sizeof f.name, "%s", p->name);
+    snprintf(f.user, sizeof f.user, "%.*s", (int)(at - p->where), p->where);
+    snprintf(f.host, sizeof f.host, "%.*s", (int)(colon - at - 1), at + 1);
+    snprintf(f.pass, sizeof f.pass, "hunter22");
+    f.by_key = strstr(colon, "key") != NULL;
+    if (f.by_key) snprintf(f.keyid, sizeof f.keyid, "%s", LAB_KEYS[0].id);
+    colon++;
+    snprintf(f.port, sizeof f.port, "%.*s", (int)strspn(colon, "0123456789"),
+             colon);
+    return f;
+}
+
+static bool same_form(const form_t *a, const form_t *b)
+{
+    return !strcmp(a->name, b->name) && !strcmp(a->user, b->user) &&
+           !strcmp(a->host, b->host) && !strcmp(a->port, b->port) &&
+           !strcmp(a->pass, b->pass) && !strcmp(a->keyid, b->keyid) &&
+           a->by_key == b->by_key && a->show == b->show;
+}
+
+static bool port_ok(const char *s)
+{
+    int v = 0;
+    if (!*s) return false;
+    for (; *s; s++) {
+        if (*s < '0' || *s > '9') return false;
+        v = v * 10 + (*s - '0');
+        if (v > 65535) return false;
+    }
+    return v >= 1;
+}
+
+/* Right text of the Key part, @p cap cells at most. It holds the id, the
+ * type and the list place, as far as they fit. */
+static void key_text(char *title, char *right, size_t sz, const char *key,
+                     int nkeys, int cap)
+{
+    int at = -1;
+    for (int i = 0; i < nkeys; i++)
+        if (!strcmp(LAB_KEYS[i].id, key)) at = i;
+    right[0] = 0;
+    if (at < 0) {
+        if (key[0]) snprintf(title, sz, "%s (missing)", key);
+        else        snprintf(title, sz, "none stored");
+        return;
+    }
+    const char *id = LAB_KEYS[at].id, *type = LAB_KEYS[at].type;
+    char pos[24] = "";
+    if (nkeys > 1) snprintf(pos, sizeof pos, "%d/%d", at + 1, nkeys);
+    snprintf(title, sz, "%s", id);
+    if ((int)(strlen(id) + strlen(type) + strlen(pos)) + 4 > cap)
+        snprintf(right, sz, "%s", pos);
+    else if (pos[0])
+        snprintf(right, sz, "%s  %s", type, pos);
+    else
+        snprintf(right, sz, "%s", type);
+}
+
+static void draw_edit(const edit_t *st)
+{
+    static const char *const AUTH[2] = { "password", "key" };
+    const ui_slate_t pg = ui_slate_page();
+    const form_t *f = &st->f;
+    const ui_rect_t body = pg.body;
+
+    ui_focus_default(MO_FIELD);
+    const bool changed = !same_form(f, &st->was);
+    const bool port_bad = !port_ok(f->port);
+    const bool name_bad = !f->name[0], host_bad = !f->host[0];
+    const bool user_bad = !f->user[0], key_bad = f->by_key && !f->keyid[0];
+    /* An untouched new form shows no red yet. Save stays off until valid. */
+    const char *msg_port = port_bad ? "Port: a number from 1 to 65535." : NULL;
+    const char *msg_name = name_bad && changed ? "A host needs a name." : NULL;
+    const char *msg_host = host_bad && changed ? "A host needs an address." : NULL;
+    const char *msg_user = user_bad && changed ? "A host needs a user." : NULL;
+    const bool wrong = port_bad || name_bad || host_bad || user_bad || key_bad;
+    const char *alert = msg_port ? msg_port : msg_name ? msg_name
+                      : msg_host ? msg_host : msg_user ? msg_user
+                      : key_bad ? "No stored key. Setup, Hosts imports one."
+                                : NULL;
+
+    char title[64];
+    if (st->is_new) snprintf(title, sizeof title, "New host");
+    else            snprintf(title, sizeof title, "Edit %s", st->orig);
+    ui_rect_t head = pg.header;
+    ui_pill(&head, MO_PILL, "Save", UI_TONE_SOLID, OVERLAY_COL_GREEN,
+            wrong ? UI_PART_OFF : 0);
+    ui_title(head, "Hosts", title, NULL, true);
+
+    const ui_form_cols_t g = ui_form_cols(body, ui_caption_w("Passphrase"),
+                                          ui_caption_w("User"));
+    const struct { const char *value; bool mask; const char *bad; } fld[5] = {
+        { f->name, false, msg_name }, { f->user, false, msg_user },
+        { f->host, false, msg_host }, { f->port, false, msg_port },
+        { f->pass, !f->show, NULL },
+    };
+#define FIELD(i, r) \
+    ui_entry_at((r), (ui_id_t)(MO_FIELD + (i)), NULL, fld[i].value, 0, \
+                (uint8_t)((st->edit == (i) ? UI_ENTRY_EDIT : 0) | \
+                          (fld[i].mask ? UI_ENTRY_MASK : 0) | \
+                          (fld[i].bad ? UI_ENTRY_BAD : 0)), \
+                st->edit == (i) && st->caret >= 0 ? st->caret \
+                                                  : ui_len(fld[i].value))
+    int y = ui_form_row(body, &g, 0, "Name", "User");
+    FIELD(0, ui_rect(g.x1, y, g.a, 3));
+    FIELD(1, ui_rect(g.x2, y, g.b, 3));
+    y = ui_form_row(body, &g, 1, "Host", "Port");
+    FIELD(2, ui_rect(g.x1, y, g.a, 3));
+    FIELD(3, ui_rect(g.x2, y, 9, 3));
+    y = ui_form_row(body, &g, 2, "Sign-in", NULL);
+    ui_chips(ui_rect(g.x1, y, g.a, 3), MO_OPT, AUTH, 2, f->by_key ? 1 : 0, 0);
+    int row = 3;
+    if (f->by_key) {
+        char text[64], right[64];
+        key_text(text, right, sizeof text, f->keyid, st->nkeys, g.a - 4);
+        y = ui_form_row(body, &g, row++, "Key", NULL);
+        ui_part(ui_rect(g.x1, y, g.a, 3), MO_OPT + 5,
+                &(ui_part_t){ .title = text, .right = right,
+                              .flags = st->nkeys ? 0 : UI_PART_OFF }, NULL);
+    }
+    y = ui_form_row(body, &g, row++, f->by_key ? "Passphrase" : "Password",
+                    "Show");
+    FIELD(4, ui_rect(g.x1, y, g.a, 3));
+    ui_switch(ui_rect(g.x2, y, UI_SWITCH_W, 3), MO_OPT + 4, f->show, 0);
+#undef FIELD
+    y += 3;
+    if (alert && y < body.y + body.h) {
+        ui_pen(OVERLAY_COL_RED);
+        ui_text(ui_rect(body.x + 2, y, body.w - 4, 1), alert, UI_TEXT | UI_BOLD,
+                UI_LEFT);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
+    if (st->edit >= 0)
+        mo_bar(pg.status,"Type on the keyboard.",
+                  "type  " UI_S_ENTER " done  " UI_S_UP UI_S_DOWN " leave",
+                  NULL);
+    else
+        mo_bar(pg.status,"Tap a field to change it.",
+                  UI_S_ENTER " change  Esc cancel", NULL);
+}
+
+static edit_t edit_state(int n)
+{
+    edit_t e = { .edit = -1, .caret = -1, .nkeys = 2 };
+    e.f = e.was = form_of(&PROFILES[0]);
+    snprintf(e.orig, sizeof e.orig, "%s", PROFILES[0].name);
+    switch (n) {
+    case 1:                                    /* a new, empty form      */
+        e.is_new = true;
+        e.orig[0] = 0;
+        e.f = e.was = (form_t){ .port = "22" };
+        break;
+    case 2:                                    /* typing in the host     */
+        e.f = e.was = base_form();
+        snprintf(e.f.host, sizeof e.f.host, "192.168.1.1");
+        e.f.show = true;
+        e.edit = 2;
+        break;
+    case 3:                                    /* two bad values         */
+        e.f = e.was = base_form();
+        e.f.name[0] = 0;
+        snprintf(e.f.port, sizeof e.f.port, "70000");
+        break;
+    case 4:                                    /* key sign-in, two keys  */
+        e.f = e.was = base_form();
+        e.f.by_key = true;
+        snprintf(e.f.keyid, sizeof e.f.keyid, "%s", LAB_KEYS[0].id);
+        break;
+    case 5:                                    /* key sign-in, no key    */
+        e.f = e.was = base_form();
+        e.f.by_key = true;
+        e.nkeys = 0;
+        break;
+    case 6:                                    /* caret in a long host   */
+        e.f = e.was = base_form();
+        snprintf(e.f.host, sizeof e.f.host, "%s", LONG_HOST);
+        e.edit = 2;
+        e.caret = 24;
+        break;
+    case 7:                                    /* caret in the secret    */
+        e.f = e.was = base_form();
+        e.edit = 4;
+        e.caret = 3;
+        break;
+    case 8:                    /* key sign-in, no name, typing a long host */
+        e.f = e.was = base_form();
+        e.f.name[0] = 0;
+        snprintf(e.f.host, sizeof e.f.host, "%s", LONG_HOST);
+        e.f.by_key = true;
+        snprintf(e.f.keyid, sizeof e.f.keyid, "%s", LAB_KEYS[0].id);
+        e.edit = 2;
+        e.caret = 24;
+        break;
+    default: break;
+    }
+    return e;
+}
+
+static void draw_edit_n(int n)
+{
+    const edit_t e = edit_state(n);
+    draw_edit(&e);
+}
+
+static void scr_edit(void)        { draw_edit_n(0); }
+static void scr_edit_new(void)    { draw_edit_n(1); }
+static void scr_edit_typing(void) { draw_edit_n(2); }
+static void scr_edit_bad(void)    { draw_edit_n(3); }
+static void scr_edit_key(void)    { draw_edit_n(4); }
+static void scr_edit_nokey(void)  { draw_edit_n(5); }
+static void scr_edit_caret(void)  { draw_edit_n(6); }
+static void scr_edit_secret(void) { draw_edit_n(7); }
+static void scr_edit_worst(void)  { draw_edit_n(8); }
+
+/* The by-hand network form. edit: 0 SSID, 1 password, -1 none. */
+typedef struct {
+    char ssid[40], pass[72];
+    bool show;
+    int  edit, caret;
+} wifiadd_t;
+
+static void draw_wifiadd(const wifiadd_t *st)
+{
+    const ui_slate_t pg = ui_slate_page();
+    const ui_rect_t body = pg.body;
+    const size_t plen = strlen(st->pass);
+    const bool pass_bad = plen > 0 && plen < 8;
+    const bool wrong = !st->ssid[0] || pass_bad;
+
+    ui_focus_default(MO_FIELD);
+    ui_rect_t head = pg.header;
+    ui_pill(&head, MO_PILL, "Save", UI_TONE_SOLID, OVERLAY_COL_GREEN,
+            wrong ? UI_PART_OFF : 0);
+    ui_title(head, "Wi-Fi", "Add network", NULL, true);
+
+    ui_form_cols_t g = ui_form_cols(body, ui_caption_w("Password"),
+                                    ui_caption_w("Show"));
+    const int room = body.w - g.cap_w - g.cap2_w - UI_SWITCH_W;
+    g.a = room < 40 ? room : 40;
+    g.x2 = g.x1 + g.a + g.cap2_w;
+    int y = ui_form_row(body, &g, 0, "Network", NULL);
+    ui_entry_at(ui_rect(g.x1, y, g.a, 3), MO_FIELD, NULL, st->ssid, 0,
+                (uint8_t)(st->edit == 0 ? UI_ENTRY_EDIT : 0),
+                st->edit == 0 && st->caret >= 0 ? st->caret
+                                                : ui_len(st->ssid));
+    y = ui_form_row(body, &g, 1, "Password", "Show");
+    ui_entry_at(ui_rect(g.x1, y, g.a, 3), MO_FIELD + 1, NULL, st->pass, 0,
+                (uint8_t)((st->edit == 1 ? UI_ENTRY_EDIT : 0) |
+                          (st->show ? 0 : UI_ENTRY_MASK) |
+                          (pass_bad ? UI_ENTRY_BAD : 0)),
+                st->edit == 1 && st->caret >= 0 ? st->caret
+                                                : ui_len(st->pass));
+    ui_switch(ui_rect(g.x2, y, UI_SWITCH_W, 3), MO_OPT + 4, st->show, 0);
+    if (pass_bad && body.h > 6) {
+        ui_pen(OVERLAY_COL_RED);
+        ui_text(ui_rect(body.x + 2, body.y + 6, body.w - 4, 1),
+                "Password needs 8 to 63 characters", UI_TEXT | UI_BOLD,
+                UI_LEFT);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
+    if (st->edit >= 0)
+        mo_bar(pg.status, "Type on the keyboard.",
+               "type  " UI_S_ENTER " done  " UI_S_UP UI_S_DOWN " leave", NULL);
+    else
+        mo_bar(pg.status, "Tap a field to change it.",
+               UI_S_ENTER " change  Esc cancel", NULL);
+}
+
+static void scr_wifiadd(void)
+{
+    draw_wifiadd(&(wifiadd_t){ .edit = -1, .caret = -1 });
+}
+
+static void scr_wifiadd_typing(void)
+{
+    draw_wifiadd(&(wifiadd_t){ .ssid = "Workshop", .edit = 0, .caret = 4 });
+}
+
+static void scr_wifiadd_bad(void)
+{
+    draw_wifiadd(&(wifiadd_t){ .ssid = "Workshop", .pass = "short",
+                               .edit = -1, .caret = -1 });
+}
+
+/* "user@host:port  key" in parts, as moParse does. */
+typedef struct { char user[40], host[48], port[12]; bool key; } where_t;
+
+static where_t parse_where(const char *w)
+{
+    where_t o = { .port = "22" };
+    const char *at = strchr(w, '@');
+    const char *colon = at ? strchr(at + 1, ':') : NULL;
+    const int digits = colon ? (int)strspn(colon + 1, "0123456789") : 0;
+    if (!at || at == w || colon == at + 1 || !digits) {
+        snprintf(o.host, sizeof o.host, "%s", w);
+        return o;
+    }
+    snprintf(o.user, sizeof o.user, "%.*s", (int)(at - w), w);
+    snprintf(o.host, sizeof o.host, "%.*s", (int)(colon - at - 1), at + 1);
+    snprintf(o.port, sizeof o.port, "%.*s", digits, colon + 1);
+    const char *rest = colon + 1 + digits;
+    const int space = (int)strspn(rest, " \t");
+    o.key = space > 0 && !strncmp(rest + space, "key", 3);
+    return o;
+}
+
+/* HOME: a host per tile. A tap connects. A hold opens the host page. */
+static int  s_home_n = LAB_NPROFILES;   /* hosts listed                     */
+static int  s_home_page;                /* page shown                       */
+static bool s_home_pair;                /* the Pair pill is on              */
+static bool s_home_last_row;            /* focus the last row's first tile  */
+
+/* A git describe, as a device build reports it: the wordmark keeps "v0.9". */
+static const char *s_home_version = "v0.9-120-g336c20d-dirty";
+
+static void scr_home(void)
+{
+    ui_slate_t pg = ui_slate_page();
+
+    const ui_grid_t g = ui_grid(pg.body,
+                                ui_cols_for(pg.body.w, 30, pg.m.gutter), 4,
+                                pg.m.gutter, 0);
+    const int per = ui_grid_capacity(&g);
+    const int pages = ui_page_count(s_home_n, per);
+    const int page = ui_page_clamp(s_home_page, s_home_n, per);
+    ui_focus_default((ui_id_t)(MO_HOST + page * per));
+    ui_pill(&pg.header, MO_PILL + 2, "Lock", UI_TONE_CARD, 0, 0);
+    ui_pill(&pg.header, MO_PILL + 1, "Setup", UI_TONE_CARD, 0, 0);
+    ui_pill(&pg.header, MO_PILL, "+ New", UI_TONE_CARD, 0, 0);
+    if (s_home_pair)
+        ui_pill(&pg.header, MO_PILL + 3, "Pair", UI_TONE_TINT,
+                OVERLAY_COL_CYAN, 0);
+    const ui_rect_t rest = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_wordmark(rest, "CYBERDECK", s_home_version);
+    const int first = page * per;
+    const int shown = s_home_n - first < per ? s_home_n - first : per;
+    for (int i = 0; i < shown; i++) {
+        const int n = first + i;
+        const where_t w = parse_where(PROFILES[n].where);
+        char addr[80], num[4];
+        if (!strcmp(w.port, "22")) snprintf(addr, sizeof addr, "%s@%s", w.user, w.host);
+        else snprintf(addr, sizeof addr, "%s@%s:%s", w.user, w.host, w.port);
+        snprintf(num, sizeof num, "%d", i + 1);
+        ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + n),
+                &(ui_part_t){ .title = PROFILES[n].name, .detail = addr,
+                              .stripe = prof_accent(PROFILES[n].name),
+                              .right = i < 9 ? num : NULL }, NULL);
+    }
+    if (s_home_last_row && shown > 0)
+        ui_debug_pose((ui_id_t)(MO_HOST + first + (shown - 1) / g.ncols * g.ncols),
+                      UI_POSE_FOCUS);
+    mo_bar(pg.status, "Tap to connect. Hold for options.",
+           UI_S_ENTER " connect  Space options  1-9", s_bar_variant);
+}
+
+static void home_bar(const char *variant)
+{
+    s_bar_variant = variant;
+    scr_home();
+    s_bar_variant = NULL;
+}
+
+/* 32 hosts on page 2. The _last variant focuses a tile of the last row,
+ * where Down turns the page. The _pair variant adds the Pair pill. */
+static void home_32(int page, bool last_row, bool pair)
+{
+    s_home_n = LAB_NHOSTS;
+    s_home_page = page;
+    s_home_last_row = last_row;
+    s_home_pair = pair;
+    scr_home();
+    s_home_n = LAB_NPROFILES;
+    s_home_page = 0;
+    s_home_last_row = s_home_pair = false;
+}
+
+static void scr_home_32(void)      { home_32(1, false, false); }
+static void scr_home_32_last(void) { home_32(1, true, false); }
+static void scr_home_32_pair(void) { home_32(0, false, true); }
+
+/* An untagged build: a hash too long beside the pager at 12x24. */
+static void scr_home_32_hash(void)
+{
+    const char *was = s_home_version;
+    s_home_version = "4930f23-dirty";
+    home_32(1, false, false);
+    s_home_version = was;
+}
+
+static void scr_home_pair(void)
+{
+    s_home_pair = true;
+    scr_home();
+    s_home_pair = false;
+}
+
+static void scr_status_busy(void)       { home_bar("busy"); }
+static void scr_status_busy_blink(void) { home_bar("busy-blink"); }
+static void scr_status_alert(void)      { home_bar("alert"); }
+static void scr_status_off(void)        { home_bar("off"); }
+static void scr_status_locks_none(void) { home_bar("locks-none"); }
+static void scr_status_locks_both(void) { home_bar("locks-both"); }
+static void scr_status_note(void)       { home_bar("note"); }
+static void scr_status_note_good(void)  { home_bar("note-good"); }
+static void scr_status_note_alert(void) { home_bar("note-alert"); }
+static void scr_status_hint(void)       { home_bar("hint"); }
+static void scr_status_net_up(void)     { home_bar("net-up"); }
+static void scr_status_kbd_up(void)     { home_bar("kbd-up"); }
+static void scr_status_net_lost(void)   { home_bar("net-lost"); }
+static void scr_status_collapse(void)   { home_bar("collapse"); }
+static void scr_status_up_note(void)    { home_bar("up-note"); }
+
+/* The in-session toast over the terminal. */
+static void scr_session_toast(void)
+{
+    ui_toast(ui_rect(0, 0, ui_cols() - 1, 1), "session dropped - reconnecting",
+             UI_NOTE_PLAIN);
+}
+
+static void scr_session_toast_ok(void)
+{
+    ui_toast(ui_rect(0, 0, ui_cols() - 1, 1),
+             "homelab - F12 or long-press for menu", UI_NOTE_GOOD);
+}
+
+/* Block, box and mark glyphs the look draws with, at this font. Each
+ * shows on the slate and on a panel. */
+static void scr_glyphs(void)
+{
+    static const struct { uint16_t from, to; } RANGES[] = {
+        { 0x2580, 0x259F }, { 0x2500, 0x251F }, { 0x25A0, 0x25CF },
+        { 0x2190, 0x2195 }, { 0x2713, 0x2718 }, { 0x2039, 0x203A },
+        { 0x2026, 0x2026 },
+    };
+    const int cols = ui_cols(), rows = ui_rows();
+    int x = 1, y = 0;
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_fill(0, 0, cols, rows, UI_TEXT);
+    ui_pen(OVERLAY_COL_CYAN);
+    for (int i = 0; i < NELEM(RANGES) && y < rows; i++) {
+        for (unsigned cp = RANGES[i].from; cp <= RANGES[i].to && y < rows;
+             cp++) {
+            ui_putch(x, y, (uint16_t)cp, UI_TEXT);
+            ui_putch(x + 1, y, (uint16_t)cp, UI_PANEL);
+            x += 3;
+            if (x + 3 > cols) { x = 1; y++; }
+        }
+        if (x != 1) { x = 1; y++; }
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
+/* The host page: what a hold on a tile opens. */
+static void draw_host(int n)
+{
+    ui_slate_t pg = ui_slate_page();
+    const lab_profile_t *p = &PROFILES[n];
+    const where_t w = parse_where(p->where);
+    char addr[80];
+
+    ui_title(pg.header, "Hosts", p->name, NULL, true);
+    snprintf(addr, sizeof addr, "%s  port %s", w.host, w.port);
+    const ui_info_row_t rows[4] = {
+        { "Address", addr }, { "User", w.user },
+        { "Sign-in", w.key ? "key deck-ed25519" : "password, stored" },
+        { "Host key", "SHA256:9fK2..Qm4c", 0, 0, UI_S_CHECK " pinned",
+          OVERLAY_COL_GREEN },
+    };
+    ui_info(ui_cut_top(&pg.body, 6), rows, 4, prof_accent(p->name));
+    ui_flow_t f = ui_flow(pg.body, pg.m.gutter, 3);
+#define BTN(n, label, tone, accent) \
+    ui_push(ui_flow_next(&f, ui_push_w(label)), MO_BTN + (n), label, tone, \
+            accent, 0)
+    BTN(0, "Connect", UI_TONE_SOLID, OVERLAY_COL_GREEN);
+    BTN(1, "Edit", UI_TONE_CARD, 0);
+    BTN(2, "Delete", UI_TONE_TINT, OVERLAY_COL_RED);
+    ui_flow_break(&f);
+    BTN(3, UI_S_UP " Move earlier", UI_TONE_CARD, 0);
+    BTN(4, UI_S_DOWN " Move later", UI_TONE_CARD, 0);
+#undef BTN
+    mo_bar(pg.status,"The bar at the top goes back.",
+              UI_S_ENTER " choose  Esc back", NULL);
+}
+
+static void scr_host(void)     { draw_host(0); }
+static void scr_host_key(void) { draw_host(3); }
+
+/* A question as its own page: a text panel, then the two answers. */
+typedef struct {
+    const char *title, *verb, *line[2];
+    uint8_t accent;
+} ask_t;
+
+static void draw_confirm(const ask_t *ask)
+{
+    ui_slate_t pg = ui_slate_page();
+    ui_rect_t box = ui_center(pg.area, 46, 9);
+    const ui_rect_t card = ui_cut_top(&box, 6);
+
+    ui_panel(card, ask->accent);
+    ui_text(ui_rect(card.x + 2, card.y + 1, card.w - 4, 1), ask->title,
+            UI_PANEL | UI_BOLD, UI_LEFT);
+    for (int i = 0; i < 2; i++)
+        ui_text(ui_rect(card.x + 2, card.y + 3 + i, card.w - 4, 1),
+                ask->line[i], UI_PANEL_MUTED, UI_LEFT);
+    ui_flow_t f = ui_flow(box, pg.m.gutter, 3);
+    ui_push(ui_flow_next(&f, ui_push_w("Cancel")), MO_BTN, "Cancel",
+            UI_TONE_CARD, 0, 0);
+    ui_push(ui_flow_next(&f, ui_push_w(ask->verb)), MO_BTN + 1, ask->verb,
+            UI_TONE_SOLID, ask->accent, 0);
+    mo_bar(pg.status,"",
+              UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER " choose  Esc cancel",
+              NULL);
+}
+
+static void scr_confirm(void)
+{
+    char title[64];
+    snprintf(title, sizeof title, "Delete %s?", PROFILES[0].name);
+    draw_confirm(&(ask_t){ title, "Delete",
+                           { "The entry and its stored password go.",
+                             "The pinned host key stays." },
+                           OVERLAY_COL_RED });
+}
+
+static void scr_confirm_ask(void)
+{
+    draw_confirm(&(ask_t){ "Discard the changes?", "Discard",
+                           { "This host keeps its old values.", "" },
+                           OVERLAY_COL_AMBER });
+}
+
+/* Setup hub: a section per tile, with its present state as the detail. */
+enum { IT_ACT, IT_TOGGLE, IT_PICK };
+
+typedef struct {
+    uint8_t     type;
+    const char *label;
+    const char *unit;                 /* dim text after the control    */
+    bool        nav;                  /* opens another page            */
+    uint8_t     accent;               /* a caution action              */
+    bool        danger;               /* set apart at the page bottom  */
+    bool        off;                  /* the New rule, see s_sec_*     */
+    int         init;                /* switch state or chosen option */
+    int         nset;
+    const char *set[5];
+} item_t;
+
+typedef struct {
+    const char *name, *note;
+    int         n;
+    item_t      it[5];
+    bool        list;                 /* host tiles under the items    */
+    bool        stack;                /* actions one per row, one width */
+} cat_t;
+
+/* "+ New" is off in a live session and in a full store. */
+static const cat_t MO_SETUP[] = {
+    { "Hosts", "8 stored", 3, {
+        { IT_ACT, "+ New", .off = true },
+        { IT_ACT, "From phone", .nav = true },
+        { IT_ACT, "From PC", .nav = true } }, .list = true },
+    { "Wi-Fi", "HomeAP", 3, {
+        { IT_ACT, "Reconnect" },
+        { IT_ACT, "Add from phone", .nav = true },
+        { IT_ACT, "Add by hand", .nav = true } } },
+    { "Keyboard", "K380 connected", 2, {
+        { IT_ACT, "Pair keyboard", .nav = true },
+        { IT_ACT, "Forget all", .accent = OVERLAY_COL_RED,
+          .danger = true } } },
+    { "CRT FX", "scanlines, phosphor", 3, {
+        { IT_TOGGLE, "Scanlines", .init = 1 },
+        { IT_TOGGLE, "Bold pop", .init = 1 },
+        { IT_PICK, "Phosphor", .init = 0, .nset = 3,
+          .set = { "color", "green", "amber" } } } },
+    { "Motion FX", "wobble, wipe, static", 4, {
+        { IT_PICK, "Wobble", .init = 2, .nset = 4,
+          .set = { "off", "subtle", "medium", "deep" } },
+        { IT_PICK, "Wipe in", .init = 1, .nset = 3,
+          .set = { "off", "0.3 s", "0.6 s" } },
+        { IT_PICK, "Collapse", .init = 1, .nset = 3,
+          .set = { "off", "0.2 s", "0.5 s" } },
+        { IT_PICK, "Static", .init = 1, .nset = 3,
+          .set = { "off", "light", "heavy" } } } },
+    { "System", "saver, reset", 5, {
+        { IT_PICK, "Font size", .init = 2, .nset = 3,
+          .set = { "8x16", "10x20", "12x24" } },
+        { IT_PICK, "Saver + lock", .unit = "min", .init = 2, .nset = 5,
+          .set = { "1", "3", "5", "10", "30" } },
+        { IT_TOGGLE, "Edge scroll", .init = 0 },
+        { IT_ACT, "Clear host keys", .accent = OVERLAY_COL_RED,
+          .danger = true },
+        { IT_ACT, "Factory reset", .accent = OVERLAY_COL_RED,
+          .danger = true } } },
+    { "Keystore", "unlocked", 3, {
+        { IT_ACT, "Lock deck" }, { IT_ACT, "Change code", .nav = true },
+        { IT_ACT, "Remove code", .nav = true, .accent = OVERLAY_COL_RED,
+          .danger = true } }, .stack = true },
+};
+
+static void scr_setup(void)
+{
+    ui_slate_t pg = ui_slate_page();
+
+    ui_title(pg.header, NULL, "Setup", NULL, true);
+    const ui_grid_t g = ui_grid(pg.body,
+                                ui_cols_for(pg.body.w, 24, pg.m.gutter), 4,
+                                pg.m.gutter, 0);
+    for (int i = 0; i < NELEM(MO_SETUP); i++)
+        ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HUB + i),
+                &(ui_part_t){ .title = MO_SETUP[i].name,
+                              .detail = MO_SETUP[i].note,
+                              .right = UI_S_CHEVRON }, NULL);
+    mo_bar(pg.status,"The bar at the top goes back.",
+              UI_S_ENTER " open  Esc back", NULL);
+}
+
+typedef struct { int n; struct { int it, w; } c[5]; } sec_row_t;
+
+#define LAB_STACK_MIN_W 24   /* MENU_STACK_MIN_W in app_menu_defs.h */
+
+/* Pack the items of one class (danger or not) into rows of @p room
+ * cells. A switch or a choice takes a row; actions keep their own width. */
+static int pack_rows(const cat_t *c, int room, int gx, bool danger,
+                     sec_row_t *rows)
+{
+    int nrows = 0, used = 0;
+    bool open = false;
+    int sw = 0;   /* a stacked page: its widest action, at least the min */
+    if (c->stack) {
+        sw = LAB_STACK_MIN_W;
+        for (int n = 0; n < c->n; n++) {
+            const item_t *it = &c->it[n];
+            const int w = ui_act_w(it->label, it->nav ? UI_S_CHEVRON : "");
+            if (it->type == IT_ACT && w > sw) sw = w;
+        }
+    }
+
+    for (int n = 0; n < c->n; n++) {
+        const item_t *it = &c->it[n];
+        if (it->danger != danger) continue;
+        const int own = sw ? sw : ui_act_w(it->label, it->nav ? UI_S_CHEVRON : "");
+        const bool row = it->type != IT_ACT;
+        const int w = row ? room : own < room ? own : room;
+        if (row) {
+            rows[nrows].n = 1;
+            rows[nrows].c[0].it = n;
+            rows[nrows++].c[0].w = w;
+            open = false;
+        } else if (open && used + gx + w <= room) {
+            sec_row_t *r = &rows[nrows - 1];
+            r->c[r->n].it = n;
+            r->c[r->n++].w = w;
+            used += gx + w;
+        } else {
+            rows[nrows].n = 1;
+            rows[nrows].c[0].it = n;
+            rows[nrows++].c[0].w = w;
+            open = !sw;
+            used = w;
+        }
+    }
+    return nrows;
+}
+
+static void act_part(const item_t *it, ui_rect_t r, ui_id_t id, bool off)
+{
+    ui_part(r, id,
+            &(ui_part_t){ .title = it->label,
+                          .right = it->nav ? UI_S_CHEVRON : NULL,
+                          .tone = it->accent ? UI_TONE_TINT : UI_TONE_CARD,
+                          .accent = it->accent,
+                          .flags = (uint8_t)(UI_PART_ROOMY |
+                                             (off ? UI_PART_OFF : 0)) },
+            NULL);
+}
+
+/* A switch or a choice on the caption grid: the caption, the control at
+ * @p cap_w, then a unit in dim text. */
+static void value_row(const item_t *it, ui_rect_t r, ui_id_t id, int cap_w)
+{
+    ui_caption(ui_rect(r.x, r.y, cap_w, r.h), it->label);
+    const ui_rect_t cr = ui_rect(r.x + cap_w, r.y, r.w - cap_w, r.h);
+    int cw = UI_SWITCH_W;
+    if (it->type == IT_PICK) {
+        ui_chips(cr, id, it->set, it->nset, it->init, 0);
+        cw = ui_chips_w(it->set, it->nset);
+    } else {
+        ui_switch(cr, id, it->init != 0, 0);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+    if (it->unit)
+        ui_text(ui_rect(cr.x + cw + 1, ui_centre(r.y, r.h, 1),
+                        ui_len(it->unit), 1), it->unit, UI_MUTED, UI_LEFT);
+}
+
+/* One section. A switch or a choice takes a row on the caption grid.
+ * Actions keep their own width and pack from the left. */
+static void draw_section(int cat)
+{
+    ui_slate_t pg = ui_slate_page();
+    const cat_t *c = &MO_SETUP[cat];
+    sec_row_t rows[5];
+    const int gx0 = pg.m.gutter;
+
+    ui_focus_default(MO_OPT);
+    const int per = pg.body.h / 3 > 1 ? pg.body.h / 3 : 1;
+    int plain = 0, nd = 0, pages = 1;
+    for (int room = pg.body.w, pass = 0; pass < 2; pass++, room -= 2) {
+        plain = pack_rows(c, room, gx0, false, rows);
+        nd = pack_rows(c, room, gx0, true, rows + plain);
+        const int pp = (plain + per - 1) / per;
+        const int tail = plain - (pp ? (pp - 1) * per : 0);
+        pages = pp + (pp && nd && tail + 1 + nd > per);
+        if (pages < 1) pages = 1;
+        if (pages == 1) break;
+    }
+    const int nrows = plain + nd;
+    int cap_w = 0;
+    for (int n = 0; n < c->n; n++)
+        if (c->it[n].type != IT_ACT) {
+            const int w = ui_caption_w(c->it[n].label);
+            if (w > cap_w) cap_w = w;
+        }
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, 0, pages);
+    ui_title(head, "Setup", c->name, NULL, true);
+    if (pages > 1) {
+        ui_rail(ui_cut_right(&pg.body, 1), 0, pages);
+        ui_cut_right(&pg.body, 1);
+    }
+    const ui_rect_t body = pg.body;
+    const int gx = pg.m.gutter;
+    for (int ri = 0; ri < nrows; ri++) {
+        const bool last = pages == 1;
+        if (ri < plain ? ri >= per : !last) continue;
+        int y = body.y + ri * 3;
+        if (ri >= plain && c->stack) {
+            y += 1;
+        } else if (ri >= plain) {
+            y = body.y + body.h - (nrows - ri) * 3;
+            if (y < body.y) y = body.y;
+        }
+        int x = body.x;
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int n = rows[ri].c[ci].it;
+            const item_t *it = &c->it[n];
+            const ui_id_t id = (ui_id_t)(MO_OPT + n * 8);
+            const ui_rect_t r = ui_rect(x, y, rows[ri].c[ci].w, 3);
+            x += r.w + gx;
+            if (it->type == IT_ACT)
+                act_part(it, r, id, false);
+            else
+                value_row(it, r, id, cap_w);
+        }
+    }
+    mo_bar(pg.status,"A change applies at once.",
+              UI_S_ENTER " change  Esc back", NULL);
+}
+
+/* The Hosts section: the items, then the stored hosts as HOME tiles. The
+ * items sit on every page of tiles. A live session shuts the tiles and
+ * "+ New". A full store shuts "+ New". */
+static int  s_sec_n = LAB_NPROFILES;    /* hosts listed                     */
+static int  s_sec_max = LAB_NPROFILES;  /* hosts the store holds            */
+static int  s_sec_page;                 /* page of tiles shown              */
+static bool s_sec_live;                 /* a session is live                */
+static bool s_sec_tile;                 /* focus the first tile             */
+
+static void draw_hosts(void)
+{
+    ui_slate_t pg = ui_slate_page();
+    const cat_t *c = &MO_SETUP[0];
+    sec_row_t rows[5];
+    const int gx = pg.m.gutter, n = s_sec_n;
+    int plain = 0, tcols = 0, tper = 0, pages = 1, list_y = 0, list_h = 0;
+
+    for (int room = pg.body.w, pass = 0; pass < 2; pass++, room -= 2) {
+        plain = pack_rows(c, room, gx, false, rows);
+        list_y = plain ? plain * 3 + 1 : 0;
+        list_h = pg.body.h - list_y > 0 ? pg.body.h - list_y : 0;
+        const ui_grid_t g = ui_grid(ui_rect(0, 0, room, list_h),
+                                    ui_cols_for(room, 30, gx), 4, gx, 0);
+        tcols = g.ncols;
+        tper = ui_grid_capacity(&g);
+        pages = ui_page_count(n, tper);
+        if (pages == 1) break;
+    }
+    const int page = ui_page_clamp(s_sec_page, n, tper);
+    const bool full = s_sec_live || n >= s_sec_max;
+    ui_id_t first_id = 0;
+    for (int ri = 0; ri < plain; ri++)
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int it = rows[ri].c[ci].it;
+            if (!first_id && !(c->it[it].off && full))
+                first_id = (ui_id_t)(MO_OPT + it * 8);
+        }
+    if (!first_id)
+        first_id = n > 0 && !s_sec_live ? (ui_id_t)(MO_HOST + page * tper)
+                                        : (ui_id_t)MO_OPT;
+    ui_focus_default(first_id);
+
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_title(head, "Setup", c->name, NULL, true);
+    if (pages > 1) {
+        ui_rail(ui_cut_right(&pg.body, 1), page, pages);
+        ui_cut_right(&pg.body, 1);
+    }
+    const ui_rect_t area = ui_rect(pg.body.x, pg.body.y + list_y, pg.body.w,
+                                   list_h);
+    if (n == 0) {
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_text(ui_rect(area.x + 1, area.y, area.w - 2, 1), "No hosts yet.",
+                UI_MUTED, UI_LEFT);
+    } else {
+        const ui_grid_t g = ui_grid(area, tcols, 4, gx, 0);
+        for (int i = 0; i < tper && page * tper + i < n; i++) {
+            const int h = page * tper + i;
+            const where_t w = parse_where(PROFILES[h].where);
+            char addr[80];
+            if (!strcmp(w.port, "22"))
+                snprintf(addr, sizeof addr, "%s@%s", w.user, w.host);
+            else
+                snprintf(addr, sizeof addr, "%s@%s:%s", w.user, w.host, w.port);
+            ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + h),
+                    &(ui_part_t){ .title = PROFILES[h].name, .detail = addr,
+                                  .stripe = prof_accent(PROFILES[h].name),
+                                  .flags = s_sec_live ? UI_PART_OFF : 0 },
+                    NULL);
+        }
+        if (s_sec_tile)
+            ui_debug_pose((ui_id_t)(MO_HOST + page * tper), UI_POSE_FOCUS);
+    }
+    for (int ri = 0; ri < plain; ri++) {
+        int x = pg.body.x;
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int it = rows[ri].c[ci].it;
+            const ui_rect_t r = ui_rect(x, pg.body.y + ri * 3,
+                                        rows[ri].c[ci].w, 3);
+            x += r.w + gx;
+            act_part(&c->it[it], r, (ui_id_t)(MO_OPT + it * 8),
+                     c->it[it].off && full);
+        }
+    }
+    mo_bar(pg.status,"A change applies at once.",
+              UI_S_ENTER " change  Esc back", NULL);
+}
+
+static void hosts_frame(int n, int max, int page, bool live, bool tile)
+{
+    s_sec_n = n;
+    s_sec_max = max;
+    s_sec_page = page;
+    s_sec_live = live;
+    s_sec_tile = tile;
+    draw_hosts();
+    s_sec_n = s_sec_max = LAB_NPROFILES;
+    s_sec_page = 0;
+    s_sec_live = s_sec_tile = false;
+}
+
+static void scr_section_hosts(void)       { hosts_frame(8, 8, 0, false, false); }
+static void scr_section_hosts_few(void)   { hosts_frame(5, 8, 0, false, false); }
+static void scr_section_hosts_32(void)    { hosts_frame(32, 40, 1, false, true); }
+static void scr_section_hosts_live(void)  { hosts_frame(8, 8, 0, true, false); }
+static void scr_section_hosts_empty(void) { hosts_frame(0, 8, 0, false, false); }
+
+/* The Wi-Fi section and the saved-network page. A network's pw is 0 saved,
+ * 1 locked, 2 none. While the link is up, it joins the first network. */
+typedef struct { const char *ssid; int pw; } lab_net_t;
+typedef struct { bool up; int n; const lab_net_t *nets; } lab_wifi_t;
+
+#define WIFI_JOINED "HomeAP"
+
+static const lab_net_t NETS_UP[] = {
+    { WIFI_JOINED, 0 }, { "Workshop", 1 }, { "phone-hotspot", 2 },
+};
+static const lab_net_t NETS_FULL[] = {
+    { WIFI_JOINED, 0 }, { "Workshop", 1 }, { "phone-hotspot", 0 },
+    { "garage", 0 }, { "printer-setup", 0 }, { "cafe-guest", 0 },
+    { "Lab", 0 }, { "backup-link", 0 },
+};
+static const lab_wifi_t WIFI_UP = { true, NELEM(NETS_UP), NETS_UP };
+static const lab_wifi_t WIFI_DOWN = { false, 0, NULL };
+static const lab_wifi_t WIFI_FULL = { true, NELEM(NETS_FULL), NETS_FULL };
+
+static bool net_joined(const lab_wifi_t *w, int i)
+{
+    return w->up && !strcmp(w->nets[i].ssid, WIFI_JOINED);
+}
+
+/* The panel of link facts, the items, then a tile per saved network. */
+static void draw_wifi_section(const lab_wifi_t *w, int page, bool tile)
+{
+    ui_slate_t pg = ui_slate_page();
+    const cat_t *c = &MO_SETUP[1];
+    sec_row_t rows[5];
+    const int gx = pg.m.gutter, n = w->n;
+    int plain = 0, tcols = 0, tper = 0, pages = 1, list_y = 0, list_h = 0;
+
+    ui_rect_t pan = ui_cut_top(&pg.body, 6);
+    for (int room = pg.body.w, pass = 0; pass < 2; pass++, room -= 2) {
+        plain = pack_rows(c, room, gx, false, rows);
+        list_y = plain ? plain * 3 + 1 : 0;
+        list_h = pg.body.h - list_y > 0 ? pg.body.h - list_y : 0;
+        const ui_grid_t g = ui_grid(ui_rect(0, 0, room, list_h),
+                                    ui_cols_for(room, 24, gx), 4, gx, 0);
+        tcols = g.ncols;
+        tper = ui_grid_capacity(&g);
+        pages = ui_page_count(n, tper);
+        if (pages == 1) break;
+    }
+    page = ui_page_clamp(page, n, tper);
+    ui_focus_default(MO_OPT);
+
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_title(head, "Setup", c->name, NULL, true);
+    if (pages > 1) {
+        ui_rail(ui_cut_right(&pg.body, 1), page, pages);
+        ui_cut_right(&pg.body, 1);
+        pan.w -= 2;
+    }
+    const char *sig = "-61 dBm";
+    const ui_info_row_t lines[4] = {
+        { "Network", w->up ? WIFI_JOINED : "off" },
+        { "Address", w->up ? "192.168.1.42" : "-" },
+        { "Gateway", w->up ? "192.168.1.1" : "-" },
+        { "Signal", w->up ? sig : "-", 0, 0, w->up ? "good" : NULL,
+          OVERLAY_COL_GREEN },
+    };
+    ui_info(pan, lines, 4, w->up ? OVERLAY_COL_GREEN : 0);
+
+    const ui_rect_t area = ui_rect(pg.body.x, pg.body.y + list_y, pg.body.w,
+                                   list_h);
+    if (n == 0) {
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_text(ui_rect(area.x + 1, area.y, area.w - 2, 1),
+                "No saved networks.", UI_MUTED, UI_LEFT);
+    } else {
+        const ui_grid_t g = ui_grid(area, tcols, 4, gx, 0);
+        for (int i = 0; i < tper && page * tper + i < n; i++) {
+            const int h = page * tper + i;
+            const bool joined = net_joined(w, h);
+            char num[8];
+            snprintf(num, sizeof num, "%d", h + 1);
+            ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + h),
+                    &(ui_part_t){
+                        .title = w->nets[h].ssid, .right = num,
+                        .detail = joined ? UI_S_CHECK " joined"
+                                : w->nets[h].pw == 1 ? "locked" : "saved",
+                        .stripe = joined ? OVERLAY_COL_GREEN : 0,
+                        .detail_pen = joined ? OVERLAY_COL_GREEN : 0 },
+                    NULL);
+        }
+        if (tile)
+            ui_debug_pose((ui_id_t)(MO_HOST + page * tper), UI_POSE_FOCUS);
+    }
+    for (int ri = 0; ri < plain; ri++) {
+        int x = pg.body.x;
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int it = rows[ri].c[ci].it;
+            const ui_rect_t r = ui_rect(x, pg.body.y + ri * 3,
+                                        rows[ri].c[ci].w, 3);
+            x += r.w + gx;
+            act_part(&c->it[it], r, (ui_id_t)(MO_OPT + it * 8), false);
+        }
+    }
+    mo_bar(pg.status,"A change applies at once.",
+              UI_S_ENTER " change  Esc back", NULL);
+}
+
+static void scr_section_wifi(void)      { draw_wifi_section(&WIFI_UP, 0, false); }
+static void scr_section_wifi_down(void) { draw_wifi_section(&WIFI_DOWN, 0, false); }
+static void scr_section_wifi_full(void) { draw_wifi_section(&WIFI_FULL, 1, true); }
+
+/* The page of the saved network at position @p at. */
+static void draw_net(int at)
+{
+    ui_slate_t pg = ui_slate_page();
+    const lab_wifi_t *w = &WIFI_UP;
+    const lab_net_t *nt = &w->nets[at];
+    const bool joined = net_joined(w, at);
+    const bool off[4] = { joined || nt->pw == 1, at <= 0, at >= w->n - 1 };
+    char pos[24];
+
+    ui_title(pg.header, "Wi-Fi", nt->ssid, NULL, true);
+    snprintf(pos, sizeof pos, "%d of %d", at + 1, w->n);
+    const ui_info_row_t rows[3] = {
+        joined ? (ui_info_row_t){ "Network", nt->ssid, 0, 0,
+                                  UI_S_CHECK " joined", OVERLAY_COL_GREEN }
+               : (ui_info_row_t){ "Network", nt->ssid },
+        { "Position", pos },
+        { "Password", nt->pw == 1 ? "locked" : nt->pw == 2 ? "none" : "saved" },
+    };
+    ui_focus_default(MO_BTN + (!off[0] ? 0 : !off[1] ? 1 : !off[2] ? 2 : 3));
+    ui_info(ui_cut_top(&pg.body, 5), rows, 3, joined ? OVERLAY_COL_GREEN : 0);
+    ui_flow_t f = ui_flow(pg.body, pg.m.gutter, 3);
+#define BTN(n, label, tone, accent) \
+    ui_push(ui_flow_next(&f, ui_push_w(label)), MO_BTN + (n), label, tone, \
+            accent, off[n] ? UI_PART_OFF : 0)
+    BTN(0, "Join now", UI_TONE_SOLID, OVERLAY_COL_GREEN);
+    ui_flow_break(&f);
+    BTN(1, UI_S_UP " Move earlier", UI_TONE_CARD, 0);
+    BTN(2, UI_S_DOWN " Move later", UI_TONE_CARD, 0);
+#undef BTN
+    ui_push(ui_rect(pg.body.x, pg.body.y + pg.body.h - 3, ui_push_w("Forget"),
+                    3),
+            MO_BTN + 3, "Forget", UI_TONE_TINT, OVERLAY_COL_RED, 0);
+    mo_bar(pg.status,"The bar at the top goes back.",
+              UI_S_ENTER " choose  Esc back", NULL);
+}
+
+static void scr_net(void)        { draw_net(0); }
+static void scr_net_locked(void) { draw_net(1); }
+static void scr_net_last(void)   { draw_net(2); }
+
+static void scr_confirm_forget_net(void)
+{
+    draw_confirm(&(ask_t){ "Forget HomeAP?", "Forget",
+                           { "The deck leaves this network.", "" },
+                           OVERLAY_COL_RED });
+}
+
+/* The Keyboard section and the paired-keyboard page. Bond 0 is the
+ * connected one while the link is up; an empty name shows the address. */
+typedef struct { const char *name, *addr; } lab_kbd_t;
+typedef struct { bool up; int n; const lab_kbd_t *k; } lab_kbds_t;
+
+static const lab_kbd_t KBDS_UP[] = {
+    { "Keychron K2", "A0:00:00:00:00:00" },
+    { "Logitech K380", "A1:00:00:00:00:00" },
+};
+static const lab_kbd_t KBDS_FULL[] = {
+    { "Keychron K2", "A0:11:22:33:44:55" },
+    { "Logitech K380", "A1:11:22:33:44:55" },
+    { "MX Keys Mini", "A2:11:22:33:44:55" },
+    { "", "A3:11:22:33:44:55" },
+    { "Kinesis Adv360", "A4:11:22:33:44:55" },
+    { "ZSA Moonlander", "A5:11:22:33:44:55" },
+    { "Apple Magic Keyboard", "A6:11:22:33:44:55" },
+    { "Nuphy Air75", "A7:11:22:33:44:55" },
+};
+static const lab_kbds_t KBD_UP = { true, NELEM(KBDS_UP), KBDS_UP };
+static const lab_kbds_t KBD_NONE = { false, 0, NULL };
+static const lab_kbds_t KBD_FULL = { true, NELEM(KBDS_FULL), KBDS_FULL };
+
+static const char *kbd_label(const lab_kbd_t *k)
+{
+    return k->name[0] ? k->name : k->addr;
+}
+
+/* The panel, the items, a tile per bond, then the danger row at the foot. */
+static void draw_kbd_section(const lab_kbds_t *w, int page, bool tile)
+{
+    ui_slate_t pg = ui_slate_page();
+    const cat_t *c = &MO_SETUP[2];
+    sec_row_t rows[5];
+    const int gx = pg.m.gutter, n = w->n;
+    int plain = 0, nd = 0, tcols = 0, tper = 0, pages = 1, list_y = 0, list_h = 0;
+
+    ui_rect_t pan = ui_cut_top(&pg.body, 4);
+    for (int room = pg.body.w, pass = 0; pass < 2; pass++, room -= 2) {
+        plain = pack_rows(c, room, gx, false, rows);
+        nd = pack_rows(c, room, gx, true, rows + plain);
+        list_y = plain ? plain * 3 + 1 : 0;
+        list_h = pg.body.h - list_y - (nd ? nd * 3 + 1 : 0);
+        if (list_h < 0) list_h = 0;
+        const ui_grid_t g = ui_grid(ui_rect(0, 0, room, list_h),
+                                    ui_cols_for(room, 24, gx), 4, gx, 0);
+        tcols = g.ncols;
+        tper = ui_grid_capacity(&g);
+        pages = ui_page_count(n, tper);
+        if (pages == 1) break;
+    }
+    page = ui_page_clamp(page, n, tper);
+    ui_focus_default(MO_OPT);
+
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_title(head, "Setup", c->name, NULL, true);
+    if (pages > 1) {
+        ui_rail(ui_cut_right(&pg.body, 1), page, pages);
+        ui_cut_right(&pg.body, 1);
+        pan.w -= 2;
+    }
+    const ui_info_row_t lines[2] = {
+        { "Keyboard", w->up ? w->k[0].name : "idle" },
+        { "Address", w->up ? w->k[0].addr : "-" },
+    };
+    ui_info(pan, lines, 2, w->up ? OVERLAY_COL_GREEN : 0);
+
+    const ui_rect_t area = ui_rect(pg.body.x, pg.body.y + list_y, pg.body.w,
+                                   list_h);
+    if (n == 0) {
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_text(ui_rect(area.x + 1, area.y, area.w - 2, 1),
+                "No paired keyboards.", UI_MUTED, UI_LEFT);
+    } else {
+        const ui_grid_t g = ui_grid(area, tcols, 4, gx, 0);
+        for (int i = 0; i < tper && page * tper + i < n; i++) {
+            const int h = page * tper + i;
+            const bool conn = w->up && h == 0;
+            ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + h),
+                    &(ui_part_t){
+                        .title = kbd_label(&w->k[h]),
+                        .detail = conn ? UI_S_CHECK " connected" : "paired",
+                        .stripe = conn ? OVERLAY_COL_GREEN : 0,
+                        .detail_pen = conn ? OVERLAY_COL_GREEN : 0 },
+                    NULL);
+        }
+        if (tile)
+            ui_debug_pose((ui_id_t)(MO_HOST + page * tper), UI_POSE_FOCUS);
+    }
+    for (int ri = 0; ri < plain + nd; ri++) {
+        int y = pg.body.y + ri * 3;
+        if (ri >= plain) {
+            if (page != pages - 1) continue;
+            y = pg.body.y + pg.body.h - (plain + nd - ri) * 3;
+        }
+        int x = pg.body.x;
+        for (int ci = 0; ci < rows[ri].n; ci++) {
+            const int it = rows[ri].c[ci].it;
+            const ui_rect_t r = ui_rect(x, y, rows[ri].c[ci].w, 3);
+            x += r.w + gx;
+            act_part(&c->it[it], r, (ui_id_t)(MO_OPT + it * 8), false);
+        }
+    }
+    mo_bar(pg.status,"A change applies at once.",
+              UI_S_ENTER " change  Esc back", NULL);
+}
+
+static void scr_section_kbd(void)      { draw_kbd_section(&KBD_UP, 0, false); }
+static void scr_section_kbd_none(void) { draw_kbd_section(&KBD_NONE, 0, false); }
+static void scr_section_kbd_full(void) { draw_kbd_section(&KBD_FULL, 1, true); }
+
+/* The page of the bond at position @p at of KBD_UP. */
+static void draw_kbd(int at)
+{
+    ui_slate_t pg = ui_slate_page();
+    const lab_kbd_t *k = &KBD_UP.k[at];
+    const bool conn = KBD_UP.up && at == 0;
+
+    ui_title(pg.header, "Keyboard", kbd_label(k), NULL, true);
+    const ui_info_row_t rows[3] = {
+        { "Name", k->name[0] ? k->name : "-" },
+        { "Address", k->addr },
+        conn ? (ui_info_row_t){ "State", "connected", 0, 0, UI_S_CHECK,
+                                OVERLAY_COL_GREEN }
+             : (ui_info_row_t){ "State", "paired" },
+    };
+    ui_focus_default(MO_BTN);
+    ui_info(ui_cut_top(&pg.body, 5), rows, 3, conn ? OVERLAY_COL_GREEN : 0);
+    ui_push(ui_rect(pg.body.x, pg.body.y + pg.body.h - 3, ui_push_w("Forget"),
+                    3),
+            MO_BTN, "Forget", UI_TONE_TINT, OVERLAY_COL_RED, 0);
+    mo_bar(pg.status,"The bar at the top goes back.",
+              UI_S_ENTER " choose  Esc back", NULL);
+}
+
+static void scr_kbd(void)        { draw_kbd(0); }
+static void scr_kbd_paired(void) { draw_kbd(1); }
+
+static void scr_confirm_forget_kbd(void)
+{
+    draw_confirm(&(ask_t){ "Forget Keychron K2?", "Forget",
+                           { "Pair it again to use it.",
+                             "It disconnects now." },
+                           OVERLAY_COL_RED });
+}
+
+static void scr_section_fx(void)     { draw_section(3); }
+static void scr_section_motion(void) { draw_section(4); }
+static void scr_section_system(void) { draw_section(5); }
+static void scr_section_danger(void) { draw_section(5); }
+static void scr_section_keystore(void) { draw_section(6); }
+
+/* A long list in pages. The header carries the page and its controls,
+ * the rail at the side shows where the page sits. */
+typedef struct { const char *ssid; int bars; const char *tag; } net_t;
+
+static const net_t MO_NETS[] = {
+    { "HomeAP", 3, "saved" }, { "HomeAP-5G", 3, "saved" }, { "garage", 2, "" },
+    { "Workshop", 2, "saved" }, { "printer-setup", 2, "open" },
+    { "Neighbour 2.4", 1, "" }, { "cafe-guest", 1, "open" }, { "IoT", 3, "" },
+    { "vodafone-4F2A", 1, "" }, { "Lab", 2, "" }, { "phone-hotspot", 3, "saved" },
+    { "TP-Link_9C10", 1, "" }, { "backup-link", 2, "" },
+};
+
+static void draw_list(int lpage, int joined)
+{
+    static const unsigned STAIR[3] = { 0x2582, 0x2584, 0x2586 };
+    ui_slate_t pg = ui_slate_page();
+    char note[24];
+
+    ui_focus_default(MO_ROW);
+    const ui_rect_t rail = ui_cut_right(&pg.body, 1);
+    ui_cut_right(&pg.body, 1);
+    const ui_grid_t g = ui_grid(pg.body, pg.m.cls == UI_WIDE ? 3 : 2, 3,
+                                pg.m.gutter, 0);
+    const int per = ui_grid_capacity(&g);
+    const int pages = ui_page_count(NELEM(MO_NETS), per);
+    lpage = ui_page_clamp(lpage, NELEM(MO_NETS), per);
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, lpage, pages);
+    snprintf(note, sizeof note, "%d found", NELEM(MO_NETS));
+    ui_title(head, "Wi-Fi", "Networks", note, true);
+    ui_rail(rail, lpage, pages);
+    for (int i = 0; i < per && lpage * per + i < NELEM(MO_NETS); i++) {
+        const int n = lpage * per + i;
+        const net_t *w = &MO_NETS[n];
+        const bool on = n == joined;
+        char ladder[16] = "", right[48];
+        for (int b = 0; b < 3; b++)
+            ui_utf8_put(ladder + strlen(ladder), b < w->bars ? STAIR[b] : 0x2581);
+        const char *tag = on ? UI_S_CHECK " joined" : w->tag;
+        if (*tag) snprintf(right, sizeof right, "%s %s", tag, ladder);
+        else      snprintf(right, sizeof right, "%s", ladder);
+        ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_ROW + n),
+                &(ui_part_t){ .title = w->ssid, .right = right,
+                              .tone = on ? UI_TONE_TINT : UI_TONE_CARD,
+                              .accent = on ? OVERLAY_COL_GREEN : 0,
+                              .flags = on ? UI_PART_RIGHT_BOLD : 0 }, NULL);
+    }
+    mo_bar(pg.status,"Tap a network to join it.",
+              UI_S_ENTER " join  PgUp PgDn page  Esc back", NULL);
+}
+
+static void scr_list(void)   { draw_list(0, 0); }
+static void scr_list_2(void) { draw_list(1, 12); }
+
+/* The pad in a known state. A flow has a back target; the device gate
+ * has none. */
+enum { UP_UNLOCK, UP_OLD, UP_NEW, UP_CONFIRM, UP_REMOVE };
+
+typedef struct {
+    const char *code;         /* the typed characters                      */
+    int         expected;     /* known code length, 0 when unknown         */
+    int         phase;        /* UP_*                                      */
+    bool        creating, flow, resume, deriving;
+    const char *note;         /* a red line, or NULL                       */
+    int         wait;         /* seconds left of a backoff                 */
+    char        reveal;       /* the newest character echoed, 0 for none  */
+} unlock_t;
+
+static void unlock_head(const unlock_t *u, const char **title,
+                        const char **note)
+{
+    switch (u->phase) {
+    case UP_OLD:
+        *title = "Change code";
+        *note  = "Enter the current code";
+        break;
+    case UP_NEW:
+    case UP_CONFIRM:
+        *title = u->creating ? "Create keystore" : "Change code";
+        *note  = u->phase == UP_NEW ? "Choose a new code, 4 or more"
+                                    : "Enter the new code again";
+        break;
+    case UP_REMOVE:
+        *title = "Remove code";
+        *note  = "Enter the code to remove it";
+        break;
+    default:
+        *title = u->flow ? "Keystore locked" : "Deck locked";
+        *note  = u->resume ? "Enter the access code to connect"
+                           : "Enter the access code";
+        break;
+    }
+}
+
+/* Bullets for the taken characters, muted dots for those still to come. */
+static void draw_code_row(ui_rect_t line, const unlock_t *u, int len)
+{
+    const ui_code_t c = ui_code_plan(len, u->expected, line.w);
+    const int step = c.spaced ? 2 : 1;
+    int x = line.x + (line.w - c.width) / 2;
+
+    ui_pen(OVERLAY_COL_DEFAULT);
+    for (int i = 0; i < c.bullets + c.dots; i++, x += step) {
+        if (i >= c.bullets)
+            ui_putch(x, line.y, 0xB7, UI_PANEL_MUTED);
+        else if (i == c.bullets - 1 && u->reveal)
+            ui_putch(x, line.y, (uint16_t)(uint8_t)u->reveal,
+                     UI_PANEL | UI_BOLD);
+        else
+            ui_putch(x, line.y, 0x2022, UI_PANEL | UI_BOLD);
+    }
+}
+
+static void draw_entry_panel(ui_rect_t entry, const unlock_t *u, int len)
+{
+    const ui_rect_t line = ui_rect(entry.x + 2, entry.y + 1, entry.w - 4, 1);
+    char msg[64];
+
+    ui_panel(entry, u->note && !u->deriving ? OVERLAY_COL_RED : 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    if (u->deriving) {
+        char glyph[8];
+        ui_utf8_put(glyph, spinner_glyph(lab_frame));
+        snprintf(msg, sizeof msg, "%s Checking", glyph);
+        ui_text(line, msg, UI_PANEL | UI_BOLD, UI_CENTER);
+    } else if (u->note) {
+        if (u->wait > 0 && !len)
+            snprintf(msg, sizeof msg, "%s, wait %d s", u->note, u->wait);
+        else
+            snprintf(msg, sizeof msg, "%s", u->note);
+        ui_pen(OVERLAY_COL_RED);
+        ui_text(line, msg, UI_PANEL | UI_BOLD, UI_CENTER);
+    } else if (u->wait > 0 && !len) {
+        snprintf(msg, sizeof msg, "Wait %d s", u->wait);
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_text(line, msg, UI_PANEL | UI_BOLD, UI_CENTER);
+    } else if (!len) {
+        ui_text(line, u->phase == UP_NEW || u->phase == UP_CONFIRM
+                          ? "new code" : "access code",
+                UI_PANEL_MUTED, UI_CENTER);
+    } else {
+        draw_code_row(line, u, len);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+}
+
+/* Access code pad. Keys are three rows high, so a digit sits centered. */
+static void draw_unlock(const unlock_t *u)
+{
+    static const char *const KEYS[12] = { "1", "2", "3", "4", "5", "6", "7",
+                                          "8", "9", UI_S_LEFT, "0", "OK" };
+    ui_slate_t pg = ui_slate_page();
+    const int len = (int)strlen(u->code);
+    const char *title, *note;
+
+    unlock_head(u, &title, &note);
+    ui_title(pg.header, NULL, title, note, u->flow);
+    const int kw = 9;
+    const int kh = pg.body.h >= 3 + 4 * 5 ? 5 : 3;
+    ui_rect_t pad = ui_center(pg.body, 3 * kw + 2, 3 + 4 * kh);
+    draw_entry_panel(ui_cut_top(&pad, 3), u, len);
+    for (int i = 0; i < 12; i++) {
+        const ui_rect_t r = ui_rect(pad.x + (i % 3) * (kw + 1),
+                                    pad.y + (i / 3) * kh, kw, kh);
+        const uint8_t off = len ? 0 : UI_PART_OFF;
+        if (i == 9)
+            ui_push(r, (ui_id_t)(MO_KEY + i), KEYS[i], UI_TONE_CARD, 0, off);
+        else if (i == 11)
+            ui_push(r, (ui_id_t)(MO_KEY + i), KEYS[i], UI_TONE_SOLID,
+                    OVERLAY_COL_GREEN, off);
+        else
+            ui_push(r, (ui_id_t)(MO_KEY + i), KEYS[i], UI_TONE_CARD, 0, 0);
+    }
+    mo_bar(pg.status,"Tap digits, or type the code.",
+              "0-9 type  " UI_S_ENTER " unlock", NULL);
+}
+
+static void scr_unlock(void)       { draw_unlock(&(unlock_t){ "" }); }
+static void scr_unlock_code(void)  { draw_unlock(&(unlock_t){ "12" }); }
+static void scr_unlock_known(void)
+{
+    draw_unlock(&(unlock_t){ "12", .expected = 6 });
+}
+static void scr_unlock_wrong(void)
+{
+    draw_unlock(&(unlock_t){ "", .note = UI_S_CROSS " wrong code", .wait = 12 });
+}
+static void scr_unlock_wait(void)  { draw_unlock(&(unlock_t){ "", .wait = 12 }); }
+static void scr_unlock_check(void)
+{
+    draw_unlock(&(unlock_t){ "", .deriving = true });
+}
+static void scr_unlock_new(void)
+{
+    draw_unlock(&(unlock_t){ "ab7", .phase = UP_NEW, .creating = true,
+                             .flow = true, .reveal = '7' });
+}
+static void scr_unlock_mismatch(void)
+{
+    draw_unlock(&(unlock_t){ "", .phase = UP_NEW, .flow = true,
+                             .note = "The codes do not match" });
+}
+static void scr_unlock_resume(void)
+{
+    draw_unlock(&(unlock_t){ "1", .expected = 4, .flow = true,
+                             .resume = true });
+}
+
+/* Connecting: what the shell knows, and a way out. @p retry shows the
+ * wait before the next try. The failed form is a red panel after a
+ * refused sign-in; @p lng gives it a reason that wraps. */
+static void draw_connect(bool fail, bool retry, bool lng)
+{
+    ui_slate_t pg = ui_slate_page();
+    const lab_profile_t *p = &PROFILES[0];
+    const where_t w = parse_where(p->where);
+    char head[64], addr[96];
+
+    snprintf(addr, sizeof addr, "%s@%s port %s", w.user, w.host, w.port);
+    if (fail) {
+        const char *reason = lng ? "the server offered no method the deck supports"
+                                 : "wrong password";
+        char refused[128], l1[128], l2[128];
+        snprintf(refused, sizeof refused, "Sign in refused: %s", reason);
+        /* The value column: the panel less 4, less the label column and its gap. */
+        const int nl = ui_wrap2(refused, 46 - 4 - 3, l1, l2, sizeof l1);
+        snprintf(head, sizeof head, "No session on %s", p->name);
+        ui_info_row_t rows[5] = {
+            { UI_S_CROSS, head, OVERLAY_COL_WHITE, OVERLAY_COL_RED },
+            { "", "" },
+            { "", l1 },
+        };
+        int n = 3;
+        if (nl == 2) rows[n++] = (ui_info_row_t){ "", l2 };
+        rows[n++] = (ui_info_row_t){ "", addr };
+        ui_rect_t box = ui_center(pg.area, 46, n + 5);
+        const ui_rect_t card = ui_cut_top(&box, n + 2);
+        ui_info(card, rows, n, OVERLAY_COL_RED);
+        ui_focus_default(MO_BTN + 1);
+        ui_flow_t f = ui_flow(box, pg.m.gutter, 3);
+        ui_push(ui_flow_next(&f, ui_push_w("Back")), MO_BTN, "Back",
+                UI_TONE_CARD, 0, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Try again")), MO_BTN + 1,
+                "Try again", UI_TONE_CARD, 0, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Edit host")), MO_BTN + 2,
+                "Edit host", UI_TONE_SOLID, OVERLAY_COL_BLUE, 0);
+        mo_bar(pg.status,"", UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER
+                  " choose", NULL);
+        return;
+    }
+    ui_rect_t box = ui_center(pg.area, 46, 10);
+    const ui_rect_t card = ui_cut_top(&box, 7);
+    char spin[8];
+    ui_utf8_put(spin, spinner_glyph(lab_frame + 2));
+    snprintf(head, sizeof head, "%s %s", retry ? "Retrying" : "Connecting to",
+             p->name);
+    const ui_info_row_t rows[5] = {
+        { spin, head, OVERLAY_COL_WHITE, OVERLAY_COL_AMBER },
+        { "", "" },
+        { UI_S_CHECK, "Wi-Fi  HomeAP", 0, OVERLAY_COL_GREEN },
+        { "", addr },
+        { "", retry ? "Next try in 3 s" : "Try 2, 14 s" },
+    };
+    ui_info(card, rows, 5, prof_accent(p->name));
+    ui_push(ui_rect(box.x, box.y, ui_push_w("Cancel"), 3), MO_BTN, "Cancel",
+            UI_TONE_CARD, 0, 0);
+    ui_hot(card, MO_ROW);
+    mo_bar(pg.status,"Mock: tap the panel to finish.",
+              UI_S_ENTER " cancel", NULL);
+}
+
+static void scr_connect(void)       { draw_connect(false, false, false); }
+static void scr_connect_retry(void) { draw_connect(false, true, false); }
+static void scr_fail(void)          { draw_connect(true, false, false); }
+static void scr_fail_long(void)     { draw_connect(true, false, true); }
+
+/* The host-key pages: a text panel, the fingerprint panel and one row of
+ * buttons under a back header. A changed key has a red stripe, and
+ * Cancel holds the first focus. */
+#define HK_FP "3f9a1c7e5b02d84a6c19e7f30b5d28a41e6c7f902ab3d5c8e1f4067a9b2d3c58"
+
+static void draw_hostkey(bool changed)
+{
+    ui_slate_t pg = ui_slate_page();
+    const lab_profile_t *p = &PROFILES[0];
+    const where_t w = parse_where(p->where);
+    char l[3][96];
+    int n;
+
+    ui_title(pg.header, NULL, changed ? "Host key changed" : "New host key",
+             NULL, true);
+    if (changed) {
+        snprintf(l[0], sizeof l[0], "The key of %s differs from the pinned one.",
+                 w.host);
+        snprintf(l[1], sizeof l[1],
+                 "Replace it only if you know the server got a new key.");
+        n = 2;
+    } else {
+        snprintf(l[0], sizeof l[0], "First connection to %s,", p->name);
+        snprintf(l[1], sizeof l[1], "%s port %s.", w.host, w.port);
+        snprintf(l[2], sizeof l[2], "Compare the fingerprint before you trust it.");
+        n = 3;
+    }
+    const ui_rect_t card = ui_cut_top(&pg.body, n + 2);
+    ui_panel(card, changed ? OVERLAY_COL_RED : 0);
+    ui_pen(OVERLAY_COL_DEFAULT);
+    for (int i = 0; i < n; i++)
+        ui_text(ui_rect(card.x + 2, card.y + 1 + i, card.w - 4, 1), l[i],
+                i == n - 1 ? UI_PANEL_MUTED : UI_PANEL, UI_LEFT);
+    const ui_rect_t fp = ui_cut_top(&pg.body, 5);
+    ui_panel(fp, 0);
+    ui_pen(OVERLAY_COL_CYAN);
+    ui_text(ui_rect(fp.x + 2, fp.y + 1, fp.w - 4, 1), "SHA256", UI_PANEL_MUTED,
+            UI_LEFT);
+    ui_pen(OVERLAY_COL_WHITE);
+    for (int row = 0; row < 2; row++) {
+        char groups[40] = "";
+        for (int g = 0; g < 8; g++)
+            snprintf(groups + strlen(groups), sizeof groups - strlen(groups),
+                     "%s%.4s", g ? " " : "", HK_FP + row * 32 + g * 4);
+        ui_text(ui_rect(fp.x + 2, fp.y + 2 + row, fp.w - 4, 1), groups,
+                UI_PANEL | UI_BOLD, UI_LEFT);
+    }
+    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_flow_t f = ui_flow(pg.body, pg.m.gutter, 3);
+    if (changed) {
+        ui_push(ui_flow_next(&f, ui_push_w("Cancel")), MO_BTN, "Cancel",
+                UI_TONE_CARD, 0, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Replace key")), MO_BTN + 1,
+                "Replace key", UI_TONE_TINT, OVERLAY_COL_RED, 0);
+    } else {
+        ui_push(ui_flow_next(&f, ui_push_w("Trust and connect")), MO_BTN,
+                "Trust and connect", UI_TONE_SOLID, OVERLAY_COL_GREEN, 0);
+        ui_push(ui_flow_next(&f, ui_push_w("Cancel")), MO_BTN + 1, "Cancel",
+                UI_TONE_CARD, 0, 0);
+    }
+    mo_bar(pg.status,"The bar at the top goes back.",
+              UI_S_LEFT UI_S_RIGHT " move  " UI_S_ENTER " choose  Esc cancel",
+              NULL);
+}
+
+static void scr_hostkey(void)         { draw_hostkey(false); }
+static void scr_hostkey_changed(void) { draw_hostkey(true); }
+
+static void scr_confirm_replace(void)
+{
+    draw_confirm(&(ask_t){ "Replace the pinned key?", "Replace",
+                           { "A changed key can mean an attack.",
+                             "The old pin is lost." },
+                           OVERLAY_COL_RED });
+}
+
+/* Pair a keyboard: @p n found, @p left seconds before the scan closes
+ * (0: no countdown). Forget bonds sits at the bottom, so it stays put
+ * while the list changes. */
+static const struct { const char *name; int random; } MO_KBDS[8] = {
+    { "Keychron K2", 0 }, { "Logitech K380", 1 }, { "MX Keys Mini", 1 },
+    { "Apple Magic Keyboard", 0 }, { "Kinesis Adv360", 1 },
+    { "ZSA Moonlander", 0 }, { "HHKB Hybrid", 1 }, { "Ducky One 3", 0 },
+};
+
+static void draw_pair(int n, int left, int page)
+{
+    ui_slate_t pg = ui_slate_page();
+    const ui_rect_t body = pg.body;
+    char spin[8];
+
+    ui_grid_t g = ui_grid(ui_rect(body.x, body.y + 1, body.w, body.h - 5),
+                          ui_cols_for(body.w, 30, pg.m.gutter), 4,
+                          pg.m.gutter, 0);
+    const int per = ui_grid_capacity(&g);
+    const int pages = ui_page_count(n, per);
+    page = ui_page_clamp(page, n, per);
+    const ui_rect_t head = ui_pages(pg.header, MO_PREV, MO_NEXT, page, pages);
+    ui_title(head, "Keyboard", "Pair keyboard", NULL, true);
+    const int first = page * per;
+    const int shown = n - first < per ? n - first : per;
+    ui_focus_default(shown > 0 ? (ui_id_t)(MO_HOST + first) : MO_BTN);
+    char text[32];
+    snprintf(text, sizeof text, "%d found. Tap yours.", n);
+    ui_utf8_put(spin, spinner_glyph(lab_frame + 2));
+    ui_state(ui_rect(body.x, body.y, body.w, 1), n ? UI_S_CHECK : spin,
+             n ? OVERLAY_COL_GREEN : OVERLAY_COL_AMBER,
+             n ? text : "Scanning for keyboards");
+    if (left) {
+        char t[24];
+        snprintf(t, sizeof t, "closes in %d s", left);
+        ui_pen(OVERLAY_COL_AMBER);
+        ui_text(ui_rect(body.x, body.y, body.w - 2, 1), t, UI_TEXT, UI_RIGHT);
+        ui_pen(OVERLAY_COL_DEFAULT);
+    }
+    for (int i = 0; i < shown; i++)
+        ui_part(ui_grid_cell(&g, i), (ui_id_t)(MO_HOST + first + i),
+                &(ui_part_t){ .title = MO_KBDS[first + i].name,
+                              .detail = MO_KBDS[first + i].random
+                                            ? "random address"
+                                            : "public address",
+                              .stripe = OVERLAY_COL_GREEN }, NULL);
+    ui_text(ui_rect(body.x + 2, body.y + body.h - 4, body.w - 2, 1),
+            "Put the keyboard in pairing mode.", UI_MUTED, UI_LEFT);
+    ui_push(ui_rect(body.x, body.y + body.h - 3, ui_push_w("Forget bonds"), 3),
+            MO_BTN, "Forget bonds", UI_TONE_TINT, OVERLAY_COL_RED, 0);
+    mo_bar(pg.status,"", "", NULL);
+}
+
+static void scr_pair_scan(void)    { draw_pair(0, 0, 0); }
+static void scr_pair(void)         { draw_pair(2, 0, 0); }
+static void scr_pair_closing(void) { draw_pair(1, 9, 0); }
+static void scr_pair_many(void)    { draw_pair(8, 0, 0); }
+static void scr_pair_many_2(void)  { draw_pair(8, 0, 1); }
+
+static void scr_confirm_forget(void)
+{
+    draw_confirm(&(ask_t){ "Forget every paired keyboard?", "Forget",
+                           { "Every bond is deleted from the deck.",
+                             "Pair again from this page." },
+                           OVERLAY_COL_RED });
+}
+
+/* Fake codes for the pages below: finder squares, timing lines and
+ * hashed modules, as the sim's stubs draw them. Not scannable. */
+static bool qr_fake(int x, int y, int size, uint32_t seed)
+{
+    if (x < 0 || y < 0 || x >= size || y >= size) return false;
+    if ((x < 8 && y < 8) || (x >= size - 8 && y < 8) ||
+        (x < 8 && y >= size - 8)) {
+        for (int c = 0; c < 3; c++) {
+            const int dx = x - (c == 1 ? size - 7 : 0);
+            const int dy = y - (c == 2 ? size - 7 : 0);
+            if (dx < 0 || dx > 6 || dy < 0 || dy > 6) continue;
+            return dx == 0 || dx == 6 || dy == 0 || dy == 6 ||
+                   (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
+        }
+        return false;
+    }
+    if (x == 6 || y == 6) return ((x + y) & 1) == 0;
+    uint32_t h = (((uint32_t)x * 31u + (uint32_t)y) ^ seed) * 2654435761u;
+    h ^= h >> 15;
+    return (h >> 3) & 1;
+}
+
+static bool qr_wifi(int x, int y) { return qr_fake(x, y, 33, 0x5EED0001u); }
+static bool qr_host(int x, int y) { return qr_fake(x, y, 25, 0x5EED0002u); }
+
+/* Add a network from the phone, in one of four phases. */
+enum { PH_WAIT, PH_TEST, PH_FAIL, PH_OK };
+
+static void draw_wifi(int phase)
+{
+    ui_slate_t pg = ui_slate_page();
+    const ui_step_t steps[4] = {
+        { .mark = '1', .text = "Get the \"ESP SoftAP Provisioning\" app" },
+        { .mark = '2', .text = "Join this Wi-Fi:", .value = "CYBERDECK-SIM",
+          .pen = OVERLAY_COL_GREEN },
+        { .mark = '3', .text = "Proof code:", .value = "1A2B3C4D",
+          .pen = OVERLAY_COL_AMBER },
+        { .mark = '4', .text = "Pick your Wi-Fi and password in the app." },
+    };
+    char spin[8];
+    ui_utf8_put(spin, spinner_glyph(lab_frame + 2));
+    ui_onboard_t o = { .steps = steps, .nsteps = 4, .qr_size = 33,
+                       .qr_mod = qr_wifi, .qr_caption = "scan with the app" };
+
+    ui_title(pg.header, "Wi-Fi", "Add network (phone)", NULL, true);
+    switch (phase) {
+    case PH_WAIT:
+        o.mark = spin; o.pen = OVERLAY_COL_GREEN;
+        o.state = "Waiting for the phone";
+        break;
+    case PH_TEST:
+        o.mark = spin; o.pen = OVERLAY_COL_AMBER;
+        o.state = "Testing the network";
+        break;
+    case PH_FAIL:
+        o.mark = UI_S_CROSS; o.pen = OVERLAY_COL_RED;
+        o.state = "Wrong password, or the network was not found.";
+        o.state2 = "Try again from the app. Back cancels.";
+        break;
+    default:
+        o.nsteps = 0; o.qr_size = 0; o.mark = UI_S_CHECK;
+        o.pen = OVERLAY_COL_GREEN;
+        o.state = "Joined HomeAP. Saved.";
+        o.state2 = "Back to HOME in 2 s";
+        break;
+    }
+    ui_onboard(pg.body, &o);
+    mo_bar(pg.status,"", "", NULL);
+}
+
+static void scr_wifi(void)      { draw_wifi(PH_WAIT); }
+static void scr_wifi_test(void) { draw_wifi(PH_TEST); }
+static void scr_wifi_fail(void) { draw_wifi(PH_FAIL); }
+static void scr_wifi_ok(void)   { draw_wifi(PH_OK); }
+
+/* Import hosts from the phone (the deck's own Wi-Fi) or from a PC. */
+typedef struct {
+    bool        pc, pop_off;
+    int         saved, removed;
+    const char *name, *err;
+} import_t;
+
+static void draw_import(const import_t *im)
+{
+    ui_slate_t pg = ui_slate_page();
+    const ui_step_t pc_steps[4] = {
+        { .mark = '1', .text = "Open on your PC:",
+          .value = "http://192.168.1.158", .pen = OVERLAY_COL_WHITE },
+        im->pop_off
+            ? (ui_step_t){ .mark = '2', .pen = OVERLAY_COL_AMBER,
+                           .text = "Proof code is off in this build. "
+                                   "The page is open." }
+            : (ui_step_t){ .mark = '2', .text = "Proof code:",
+                           .value = "1A2B3C4D", .pen = OVERLAY_COL_AMBER },
+        { .mark = '3', .text = "Fill the form and save." },
+        { .mark = '!', .text = "Plain HTTP. Use it on a network you trust.",
+          .pen = OVERLAY_COL_AMBER },
+    };
+    const ui_step_t phone_steps[4] = {
+        { .mark = '1', .text = "Join this Wi-Fi:", .value = "DECK-SETUP-SIM",
+          .pen = OVERLAY_COL_GREEN },
+        { .mark = '2', .text = "Wi-Fi password:", .value = "1A2B3C4D",
+          .pen = OVERLAY_COL_AMBER },
+        { .mark = '3', .text = "Open in a browser:",
+          .value = "http://192.168.4.1", .pen = OVERLAY_COL_WHITE },
+        { .mark = '4', .text = "Fill the form and save. Repeat for more." },
+    };
+    char spin[8], state[96];
+    ui_utf8_put(spin, spinner_glyph(lab_frame + 2));
+    ui_onboard_t o = { .steps = im->pc ? pc_steps : phone_steps, .nsteps = 4,
+                       .qr_size = 25, .qr_mod = qr_host,
+                       .qr_caption = im->pc ? "scan to open" : "scan to join",
+                       .state = state };
+
+    ui_title(pg.header, "Hosts",
+             im->pc ? "Import from PC" : "Import from phone", NULL, true);
+    o.mark = UI_S_CHECK;
+    o.pen = OVERLAY_COL_GREEN;
+    if (im->err) {
+        o.mark = UI_S_CROSS;
+        o.pen = OVERLAY_COL_RED;
+        snprintf(state, sizeof state, "Rejected: %s", im->err);
+    } else if (im->saved && im->removed) {
+        snprintf(state, sizeof state, "Last: %s (%d saved, %d removed)",
+                 im->name, im->saved, im->removed);
+    } else if (im->removed) {
+        snprintf(state, sizeof state, "Removed %s (%d removed)", im->name,
+                 im->removed);
+    } else if (im->saved) {
+        snprintf(state, sizeof state, "Imported %s (%d saved)", im->name,
+                 im->saved);
+    } else {
+        o.mark = spin;
+        snprintf(state, sizeof state, "Waiting for a browser");
+    }
+    ui_onboard(pg.body, &o);
+    mo_bar(pg.status,"", "", NULL);
+}
+
+static void scr_import_phone(void)  { draw_import(&(import_t){ 0 }); }
+static void scr_import_pc(void)     { draw_import(&(import_t){ .pc = true }); }
+static void scr_import_pc_off(void)
+{
+    draw_import(&(import_t){ .pc = true, .pop_off = true });
+}
+static void scr_import_saved(void)
+{
+    draw_import(&(import_t){ .pc = true, .saved = 2, .name = "nas" });
+}
+static void scr_import_both(void)
+{
+    draw_import(&(import_t){ .saved = 2, .removed = 1, .name = "homelab" });
+}
+static void scr_import_removed(void)
+{
+    draw_import(&(import_t){ .removed = 1, .name = "old-box" });
+}
+static void scr_import_rejected(void)
+{
+    draw_import(&(import_t){ .pc = true, .err = "a host needs an address" });
+}
+
+/* Session menu: a slate sheet centred over the dimmed terminal. */
+static void scr_menu(void)
+{
+    const int cols = ui_cols(), rows = ui_rows();
+
+    ui_dim();
+    const ui_rect_t area = ui_rect(0, 0, cols, rows > 1 ? rows - 1 : rows);
+    const bool info = area.h >= 18, gaps = area.h >= 15;
+    const int g = gaps ? 1 : 0;
+    const ui_rect_t sheet = ui_center(area, cols >= 32 ? 30 : cols,
+                                      info ? 18 : gaps ? 15 : 11);
+    ui_fill(sheet.x, sheet.y, sheet.w, sheet.h, UI_TEXT);
+    ui_rect_t inn = ui_inset(sheet, 1, 1);
+    ui_title(ui_cut_top(&inn, 3), "Session", PROFILES[0].name, NULL, true);
+    ui_part(ui_cut_top(&inn, 3), MO_BTN,
+            &(ui_part_t){ .title = "Reset terminal" }, NULL);
+    ui_part(ui_cut_top(&inn, 3), MO_BTN + 1,
+            &(ui_part_t){ .title = "Setup", .right = UI_S_CHEVRON }, NULL);
+    ui_cut_top(&inn, g);
+    ui_push(ui_cut_top(&inn, 3), MO_BTN + 2, "Disconnect", UI_TONE_TINT,
+            OVERLAY_COL_RED, 0);
+    if (!info) return;
+
+    ui_cut_top(&inn, g);
+    const char *lab[2] = { "Uptime", "Session" };
+    const char *val[2] = { "2 h 14 min", "14 min" };
+    const ui_rect_t txt = ui_inset(inn, 1, 0);
+    for (int i = 0; i < 2; i++) {
+        ui_pen(OVERLAY_COL_CYAN);
+        ui_text(ui_rect(txt.x, inn.y + i, 9, 1), lab[i], UI_TEXT, UI_LEFT);
+        ui_pen(OVERLAY_COL_DEFAULT);
+        ui_units(ui_rect(txt.x + 9, inn.y + i, txt.w - 9, 1), val[i], UI_TEXT,
+                 UI_MUTED, UI_LEFT);
+    }
+}
+
+static const lab_screen_t MO_SCREENS[] = {
+    { "mo-parts",       scr_parts,       .slate = true },
+    { "mo-home",        scr_home,        .slate = true },
+    { "mo-home-keys",   scr_home,        .slate = true,
+      .focus = MO_HOST + 1 },
+    { "mo-home-down",   scr_home,        .slate = true,
+      .down = MO_HOST + 2 },
+    { "mo-home-pair",   scr_home_pair,   .slate = true },
+    { "mo-home-32",     scr_home_32,     .slate = true },
+    { "mo-home-32-last", scr_home_32_last, .slate = true },
+    { "mo-home-32-pair", scr_home_32_pair, .slate = true },
+    { "mo-home-32-hash", scr_home_32_hash, .slate = true },
+    { "mo-host",      scr_host,        .slate = true },
+    { "mo-host-key",    scr_host_key,    .slate = true,
+      .focus = MO_BTN + 2 },
+    { "mo-confirm",     scr_confirm,     .slate = true },
+    { "mo-confirm-ask", scr_confirm_ask, .slate = true,
+      .focus = MO_BTN + 1 },
+    { "mo-confirm-replace", scr_confirm_replace, .slate = true,
+      .focus = MO_BTN },
+    { "mo-edit",        scr_edit,        .slate = true },
+    { "mo-edit-new",    scr_edit_new,    .slate = true },
+    { "mo-edit-typing", scr_edit_typing, .slate = true },
+    { "mo-edit-bad",    scr_edit_bad,    .slate = true },
+    { "mo-edit-key",    scr_edit_key,    .slate = true,
+      .focus = MO_OPT + 5 },
+    { "mo-edit-nokey",  scr_edit_nokey,  .slate = true },
+    { "mo-edit-caret",  scr_edit_caret,  .slate = true },
+    { "mo-edit-secret", scr_edit_secret, .slate = true },
+    { "mo-edit-worst",  scr_edit_worst,  .slate = true },
+    { "mo-status-busy", scr_status_busy, .slate = true },
+    { "mo-status-busy-blink", scr_status_busy_blink, .slate = true },
+    { "mo-status-alert", scr_status_alert, .slate = true },
+    { "mo-status-off",  scr_status_off,  .slate = true },
+    { "mo-status-locks-none", scr_status_locks_none, .slate = true },
+    { "mo-status-locks-both", scr_status_locks_both, .slate = true },
+    { "mo-status-note", scr_status_note, .slate = true },
+    { "mo-status-note-good", scr_status_note_good, .slate = true },
+    { "mo-status-note-alert", scr_status_note_alert, .slate = true },
+    { "mo-status-hint", scr_status_hint, .slate = true },
+    { "mo-status-net-up", scr_status_net_up, .slate = true },
+    { "mo-status-kbd-up", scr_status_kbd_up, .slate = true },
+    { "mo-status-net-lost", scr_status_net_lost, .slate = true },
+    { "mo-status-collapse", scr_status_collapse, .slate = true },
+    { "mo-status-up-note", scr_status_up_note, .slate = true },
+    { "mo-session-toast", scr_session_toast, .slate = true, .term = true },
+    { "mo-session-toast-ok", scr_session_toast_ok, .slate = true,
+      .term = true },
+    { "mo-glyphs",      scr_glyphs,      .slate = true },
+    { "mo-setup",       scr_setup,       .slate = true,
+      .focus = MO_HUB + 3 },
+    { "mo-section-wifi",   scr_section_wifi,   .slate = true },
+    { "mo-section-wifi-down", scr_section_wifi_down, .slate = true },
+    { "mo-section-wifi-full", scr_section_wifi_full, .slate = true },
+    { "mo-net",         scr_net,         .slate = true },
+    { "mo-net-locked",  scr_net_locked,  .slate = true,
+      .focus = MO_BTN + 2 },
+    { "mo-net-last",    scr_net_last,    .slate = true,
+      .focus = MO_BTN },
+    { "mo-confirm-forget-net", scr_confirm_forget_net, .slate = true,
+      .focus = MO_BTN },
+    { "mo-section-kbd",    scr_section_kbd,    .slate = true },
+    { "mo-section-kbd-none", scr_section_kbd_none, .slate = true },
+    { "mo-section-kbd-full", scr_section_kbd_full, .slate = true },
+    { "mo-kbd",         scr_kbd,         .slate = true },
+    { "mo-kbd-paired",  scr_kbd_paired,  .slate = true },
+    { "mo-confirm-forget-kbd", scr_confirm_forget_kbd, .slate = true,
+      .focus = MO_BTN },
+    { "mo-section-fx",     scr_section_fx,     .slate = true,
+      .focus = MO_OPT + 16 },
+    { "mo-section-motion", scr_section_motion, .slate = true,
+      .down = MO_OPT + 9 },
+    { "mo-section-system", scr_section_system, .slate = true,
+      .focus = MO_OPT + 16 },
+    { "mo-section-danger", scr_section_danger, .slate = true,
+      .focus = MO_OPT + 32 },
+    { "mo-section-keystore", scr_section_keystore, .slate = true,
+      .focus = MO_OPT + 16 },
+    { "mo-section-hosts", scr_section_hosts, .slate = true },
+    { "mo-section-hosts-few", scr_section_hosts_few, .slate = true },
+    { "mo-section-hosts-32", scr_section_hosts_32, .slate = true },
+    { "mo-section-hosts-live", scr_section_hosts_live, .slate = true },
+    { "mo-section-hosts-empty", scr_section_hosts_empty, .slate = true },
+    { "mo-list",        scr_list,        .slate = true },
+    { "mo-list-2",      scr_list_2,      .slate = true,
+      .focus = MO_ROW + 12 },
+    { "mo-unlock",      scr_unlock,      .slate = true },
+    { "mo-unlock-code", scr_unlock_code, .slate = true,
+      .down = MO_KEY + 4 },
+    { "mo-unlock-known", scr_unlock_known, .slate = true },
+    { "mo-unlock-wrong", scr_unlock_wrong, .slate = true },
+    { "mo-unlock-wait", scr_unlock_wait, .slate = true },
+    { "mo-unlock-check", scr_unlock_check, .slate = true },
+    { "mo-unlock-new",  scr_unlock_new,  .slate = true },
+    { "mo-unlock-mismatch", scr_unlock_mismatch, .slate = true },
+    { "mo-unlock-resume", scr_unlock_resume, .slate = true },
+    { "mo-connect",     scr_connect,     .slate = true },
+    { "mo-connect-retry", scr_connect_retry, .slate = true },
+    { "mo-fail",        scr_fail,        .slate = true,
+      .focus = MO_BTN + 1 },
+    { "mo-fail-long",   scr_fail_long,   .slate = true,
+      .focus = MO_BTN + 1 },
+    { "mo-hostkey",     scr_hostkey,     .slate = true,
+      .focus = MO_BTN },
+    { "mo-hostkey-changed", scr_hostkey_changed, .slate = true,
+      .focus = MO_BTN },
+    { "mo-menu",        scr_menu,        .slate = true, .term = true,
+      .focus = MO_BTN },
+    { "mo-pair-scan",   scr_pair_scan,   .slate = true },
+    { "mo-pair",        scr_pair,        .slate = true,
+      .focus = MO_HOST },
+    { "mo-pair-closing", scr_pair_closing, .slate = true,
+      .focus = MO_BTN },
+    { "mo-pair-many",   scr_pair_many,   .slate = true,
+      .down = MO_HOST + 1 },
+    { "mo-pair-many-2", scr_pair_many_2, .slate = true,
+      .focus = MO_HOST + 6 },
+    { "mo-confirm-forget", scr_confirm_forget, .slate = true,
+      .focus = MO_BTN },
+    { "mo-wifiprov",    scr_wifi,        .slate = true },
+    { "mo-wifiprov-test", scr_wifi_test, .slate = true },
+    { "mo-wifiprov-fail", scr_wifi_fail, .slate = true },
+    { "mo-wifiprov-ok", scr_wifi_ok,     .slate = true },
+    { "mo-wifiadd",     scr_wifiadd,     .slate = true },
+    { "mo-wifiadd-typing", scr_wifiadd_typing, .slate = true },
+    { "mo-wifiadd-bad", scr_wifiadd_bad, .slate = true },
+    { "mo-import-phone", scr_import_phone, .slate = true },
+    { "mo-import-pc",   scr_import_pc,   .slate = true },
+    { "mo-import-pc-off", scr_import_pc_off, .slate = true },
+    { "mo-import-saved", scr_import_saved, .slate = true },
+    { "mo-import-both", scr_import_both, .slate = true },
+    { "mo-import-removed", scr_import_removed, .slate = true },
+    { "mo-import-rejected", scr_import_rejected, .slate = true },
+};
+
+const lab_screen_t *lab_mo_screens(int *n)
+{
+    *n = NELEM(MO_SCREENS);
+    return MO_SCREENS;
+}

@@ -18,7 +18,8 @@
 typedef enum {
     SCR_BOOT, SCR_HOME, SCR_POWEROFF, SCR_PAIRING, SCR_HOSTKEY,
     SCR_CONNECTING, SCR_SESSION, SCR_MENU, SCR_WIFIPROV,
-    SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK, SCR_SAVER,
+    SCR_PROFILE, SCR_SSHIMPORT, SCR_UNLOCK, SCR_SAVER, SCR_HOST, SCR_ASK,
+    SCR_WIFINET, SCR_WIFIADD, SCR_KBDDEV,
     SCR_COUNT
 } scr_id_t;
 
@@ -29,6 +30,64 @@ extern const nav_screen_t home_screen, poweroff_screen;
 void enter_home(uint64_t now);
 /** Session teardown entry: CRT collapse over the dead frame, then HOME. */
 void enter_home_after_collapse(uint64_t now);
+/** Connect to profile @p idx, or toast when wifi is down. HOME and the
+ *  host page share it. */
+void connect_checked(int idx, uint64_t now);
+
+/* ---- host page (app_host.c) ---- */
+extern const nav_screen_t host_screen;
+/** Open the page of profile @p idx (stored or the built-in fallback). */
+void enter_host(uint64_t now, int idx);
+/** Delete stored profile @p idx with its key files; the host pin goes
+ *  too unless @p keep_pin. Reloads the profile list. A failed save
+ *  deletes nothing and returns the error. */
+esp_err_t profile_delete_at(int idx, bool keep_pin);
+/** True when stored profile @p idx signs in with a key that no other
+ *  stored profile uses. Deleting the profile deletes that key's files. */
+bool profile_key_unshared(int idx);
+
+/* ---- saved-network page (app_wifinet.c) ---- */
+extern const nav_screen_t wifinet_screen;
+/** Open the page of the saved network at position @p idx. */
+void enter_wifinet(uint64_t now, int idx);
+
+/* ---- paired-keyboard page and bond helpers (app_kbddev.c) ---- */
+#define KBD_BOND_MAX 8
+extern const nav_screen_t kbddev_screen;
+/** Open the page of the bond at position @p idx of kbd_bonds(). */
+void enter_kbddev(uint64_t now, int idx);
+/** The bonds, or 0 when the BLE ops have none to give. */
+int  kbd_bonds(cyberdeck_ble_bond_t *out, int max);
+/** The connected keyboard's address; false when none or no BLE ops. */
+bool kbd_connected_addr(uint8_t addr[6]);
+bool kbd_is_connected(const cyberdeck_ble_bond_t *b);
+/** "A0:B1:C2:D3:E4:F5" (18 bytes), and the bond's name or that address. */
+void kbd_addr_str(const uint8_t a[6], char *buf, size_t sz);
+void kbd_label(const cyberdeck_ble_bond_t *b, char *buf, size_t sz);
+
+/* ---- by-hand network form (app_wifiadd.c) ---- */
+extern const nav_screen_t wifiadd_screen;
+void enter_wifiadd(uint64_t now);
+/** Wipe the draft SSID and password (app_creds_wipe companion). */
+void wifiadd_creds_wipe(void);
+
+/* ---- question page (app_ask.c) ---- */
+typedef struct {
+    const char *title;            /* "Delete nas?"; copied                 */
+    const char *line1, *line2;    /* what happens; copied; may be NULL     */
+    const char *verb;             /* the confirming button: "Delete"       */
+    uint8_t     accent;           /* OVERLAY_COL_*; 0 = red                */
+    void      (*yes)(intptr_t arg, uint64_t now);
+    intptr_t    arg;
+    /* Optional second answer, a button between Cancel and the verb.
+     * Cancel and Esc still only go back. */
+    const char *no_verb;
+    void      (*no)(intptr_t arg, uint64_t now);
+} ask_t;
+extern const nav_screen_t ask_screen;
+/** Push the question page. The verb pops it, then calls yes(arg, now);
+ *  the second answer calls no(arg, now) the same way when set. */
+void ask_open(const ask_t *q, uint64_t now);
 
 /* ---- screensaver (app_saver.c, plugin) ---- */
 /** The rain screen; the saver plugin pushes it when session_guard says
@@ -91,8 +150,6 @@ void menu_open(uint64_t now);
 void menu_open_config(uint64_t now);
 /** Switch to menu screen @p sc (menu_screen_t), resetting selection/arm. */
 void menu_goto(int sc);
-/** Discard a grabbed-but-not-dropped reorder (session drop safety). */
-void menu_abort_reorder(void);
 /** Post an action-feedback line under the menu tiles (0 ms = sticky). */
 void menu_note(uint64_t now, uint32_t ms, bool live_wifi, const char *text);
 

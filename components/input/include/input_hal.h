@@ -18,6 +18,11 @@
 #define INPUT_EVENT_LONG_PRESS 2   /* touch long-press: x and y are valid */
 #define INPUT_EVENT_SCROLL     3   /* edge drag: dy is valid (x,y = current) */
 #define INPUT_EVENT_HIDKEY     4   /* special key: key + mods are valid */
+/* Finger down at x,y. Exactly one of TAP, LONG_PRESS or RELEASE follows. */
+#define INPUT_EVENT_PRESS      5
+/* The press ended as no gesture: a slow lift, or a drag that became a
+ * scroll. */
+#define INPUT_EVENT_RELEASE    6
 
 #define INPUT_EVENT_MAX_LEN  8
 

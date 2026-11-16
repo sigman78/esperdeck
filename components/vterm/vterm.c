@@ -171,14 +171,6 @@ static inline void refresh_display(void)
     tsm_clear_dirty(s_tsm);
 }
 
-void vterm_cursor_refresh(void)
-{
-    if (!s_initialized) return;
-    vt_lock();
-    cursor_refresh();
-    vt_unlock();
-}
-
 /* Public API */
 
 esp_err_t vterm_init(int cols, int rows)

@@ -1,5 +1,5 @@
 /*
- * app_theme.h — overlay style-table builder (shell-internal). Pure
+ * ui_theme.h — overlay style-table builder (kit-internal). Pure
  * function of the screen theme colors, so the host test can assert
  * invariants over every entry (docs/overlay-style.md).
  */

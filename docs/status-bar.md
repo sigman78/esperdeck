@@ -37,7 +37,7 @@ Applied to today's inventory:
 | WiFi link state | HOME LED line + bar patch | `NET` chip (gains BUSY/ALERT states) |
 | RSSI (received signal strength, dBm) | HOME text `-52dBm` + 4-step glyph | the stair glyph **is** the NET icon — height carries quality; the number moves to STATUS page |
 | IP address / SSID | HOME LED line | NET chip expansion on connect + STATUS page |
-| Keyboard link (BLE HID — Bluetooth Low Energy Human Interface Device) | HOME LED line + bar patch | `KBD` chip (gains BUSY state for pairing/reconnect) |
+| Keyboard link (BLE HID — Bluetooth Low Energy Human Interface Device) | HOME LED line + bar patch | `KBD` chip (OFF while it pairs or reconnects; see the grammar note) |
 | Keyboard name | HOME LED line | KBD chip expansion on pair + STATUS page |
 | Caps lock | amber chip fused to KBD | unchanged (the fused-segment pattern generalizes it) |
 | Num / scroll lock | unrendered (no referent) | unchanged; segments make them a one-liner the day a keymap honors them |
@@ -54,6 +54,22 @@ page holds the numbers.** Nothing long-form is ever resident.
 ---
 
 ## The chip grammar
+
+> **Revised after the status-bar mock rounds.** Cells carry state one by
+> one. A `│` divider (`UI_PANEL`, default pen) fills the one-cell gap
+> between chips; there is none before the clock.
+>
+> - **Wi-Fi** has no label: a four-rung signal ladder. An unlit rung is
+>   `▁`, so the empty gauge shows. The first rung also carries the
+>   spinner (BUSY, amber blink), `✘` (ALERT, red) or `✘` (OFF, grey well).
+> - **KBD**, keyboard connected: `KBD CAPS NUM`. The name and the spaces
+>   use the chip's ON look. A lit lock word takes the amber wash
+>   (`UI_FOCUS`, bold). An unlit one keeps the chip's wash with dim text
+>   (`UI_FOCUS_MUTED`). Both pads take the name's look.
+> - **KBD**, keyboard down: the bare name in the grey well, no lock words.
+>   It has no BUSY look: pairing and reconnecting show OFF.
+>
+> The icon-only paragraph that follows records the earlier decision.
 
 A **chip** is 1–2 segments drawn adjacent on the bar, no gaps between
 chips (the shipped patch look). **A chip's body is an icon, not a
@@ -133,14 +149,14 @@ side so the wash reads as a chip); fused segments add 2 cells each.
   at render rate). OFF = dim `▂` in the well (shape says "signal",
   luminance says "down"); BUSY = spinner (connecting, lost); ALERT =
   `✘` (failed). The dBm number lives on the STATUS page.
-- **KBD** — sprite keyboard icon, fallback `K`. OFF (idle) / BUSY
-  (pairing scan, reconnect search) / ON (cyan) + a fused amber `C`
+- **KBD** — sprite keyboard icon, fallback `K`. OFF (idle, pairing
+  scan, reconnect search; shipped as a still grey chip) / ON (cyan) + a fused amber `C`
   segment while caps lock is on (num/scroll join as segments the day
   they gain a referent).
-- **SYNC** (temporary, soak diagnostic 2026-09) — ABSENT until the vterm
+- **SYNC** (soak diagnostic, dev builds only: `CONFIG_CYBERDECK_DIAG_CHIPS`,
+  default off; sim option `-DCYBERDECK_DIAG_CHIPS=ON`) — ABSENT until the vterm
   `?2026` watchdog has force-closed a hold; then red `✘` + amber count.
-  Its purpose is human confirmation of the frozen-frame diagnosis; remove
-  with the `poll_sync` chip once we know what drops the ESU.
+  It lets a person confirm the frozen-frame diagnosis.
 - **PHN** — sprite phone icon, fallback `P`. ABSENT until enrolled;
   the existing distance colors are already this grammar: BUSY amber
   while enroll-advertising, ON green near, ON blue in-range-but-far,
@@ -203,7 +219,47 @@ Expansions replace rev-1's transition toasts. The toast survives for
 messages that belong to no chip (menu notes, hints, errors), and its
 span is now rarely contended.
 
+**Shipped (2026-11, step 4a).** NET and KBD announce. The queue and
+timing live in `ui_pure.c` (`ui_ann_*`, unit tested). The shell's
+status tick (`status_tick`, `app_statusbar.c`) runs them in
+milliseconds from `cyberdeck_app_tick`, so a page that never redraws
+still shows them. The render only reads the state.
+
+- Edges: into ON (NET: SSID and address; KBD: the keyboard name, or
+  "connected"), into ALERT (NET: "join failed"), ON to anything else
+  (NET: "link lost"; KBD: "disconnected"). Into BUSY from OFF and
+  pairing-scan churn stay silent. The first poll on a screen with a bar
+  counts as an edge when the chip is ON.
+- Hold 3 s, or 1.5 s while another edge waits. Collapse one cell per
+  100 ms. First in, first out; at most 4 wait; a newer edge replaces
+  the waiting one of the same chip; a full queue drops the oldest.
+- The expansion takes the chip's wash, without the blink. The kit part
+  clips it (`ui_sb_room`): a live note keeps 16 cells, otherwise two
+  cells stay free before the clock.
+- No bar, no expansion: a session or the saver on top plays none, and
+  edges there are not replayed. In a session a Wi-Fi failure, a Wi-Fi
+  loss and a keyboard loss show as toasts. So do Wi-Fi and the keyboard
+  coming back, with the network or keyboard name. Two facts the bar
+  shows also get a session toast: a Caps or Num Lock change, and a
+  signal at the weakest rung (once, until it is fair again).
+- The same tick expires the toast for every screen.
+- The tick also redraws the page when a chip changes (state, a lock,
+  a signal rung), not only on an announcement.
+- Where the facts are: SSID and address on the NET expansion and the
+  Setup Wi-Fi tile (SSID, address, signal); signal on the NET ladder
+  and the session sheet; the keyboard name on the KBD expansion and
+  the Setup Keyboard tile.
+
+Still open: the STATUS page, the memory chip, the phone chip and the
+plugin seam. "wifi connecting..." and "keyboard connecting..." no
+longer announce; the BUSY blink on the network chip carries Wi-Fi.
+The keyboard chip stays OFF until the keyboard is up.
+
 ### Layout
+
+**Look (2026-11).** The bar is a panel-tone row, not a blue strip. The
+kit part `ui_status` draws it from the polled chips. A toast is a plain
+note in the gap, with no taper. The cell rules below are unchanged.
 
 Left cluster = identity chips in priority order; right cluster = MEM +
 clock; the toast lives in the gap **without hiding the chips**
@@ -306,7 +362,7 @@ typedef struct {
 - Overflow: hard cap (6 left-anchored chips), lowest priority dropped
   first, logged once — same posture as HOME tile overflow.
 - Implementation moves `ui_statusbar` + the chip engine into its own
-  `app_statusbar.c`; `app_widgets.c` keeps the generic kit.
+  `app_statusbar.c`; `components/ui` keeps the generic kit.
 
 ---
 
@@ -324,7 +380,8 @@ typedef struct {
    WiFi-provisioning) and HOME's RAM line.
 4. **Expansion + STATUS page** — the engine's edge-diff + hold/decay
    machine, `detail()` on NET/KBD/MEM; after this, IP/SSID/name leave
-   the HOME header with no information loss.
+   the HOME header with no information loss. (Expansion on NET and KBD
+   is shipped; the STATUS page and MEM remain.)
 5. **Plugin seam** — `status_chips` on the descriptor, dogfooded by
    whichever chip moves out of core last.
 

@@ -33,6 +33,7 @@ static int            s_profile_idx   = 0;
 static int            s_cycle_fails   = 0;
 
 static char s_ip[16]   = "";
+static char s_gw[16]   = "";
 static char s_ssid[33] = "";
 
 static esp_timer_handle_t s_retry_timer = NULL;
@@ -171,6 +172,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     } else if (event_base == WIFI_EVENT &&
                event_id == WIFI_EVENT_STA_DISCONNECTED) {
         s_ip[0] = '\0';
+        s_gw[0] = '\0';
         if (s_intentional) {
             s_state = WIFI_MGR_IDLE;
             return;
@@ -187,6 +189,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)event_data;
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&event->ip_info.ip));
+        snprintf(s_gw, sizeof(s_gw), IPSTR, IP2STR(&event->ip_info.gw));
         s_cycle_fails = 0;
         s_state = WIFI_MGR_CONNECTED;   /* publish after strings are ready */
         ESP_LOGI(TAG, "Connected to '%s', IP %s", s_ssid, s_ip);
@@ -285,6 +288,7 @@ esp_err_t wifi_manager_disconnect(void)
     esp_timer_stop(s_retry_timer);
     s_state = WIFI_MGR_IDLE;
     s_ip[0] = '\0';
+    s_gw[0] = '\0';
     return esp_wifi_disconnect();
 }
 
@@ -335,6 +339,7 @@ void wifi_manager_clear_nvs_cred(void)
 wifi_mgr_state_t wifi_manager_get_state(void) { return s_state; }
 bool wifi_manager_is_connected(void) { return s_state == WIFI_MGR_CONNECTED; }
 const char *wifi_manager_get_ip(void)   { return s_ip; }
+const char *wifi_manager_get_gateway(void) { return s_gw; }
 const char *wifi_manager_get_ssid(void) { return s_ssid; }
 
 int wifi_manager_get_rssi(void)

@@ -1,55 +1,71 @@
 /*
  * app_statusbar.c — the StatusBar chip engine (docs/status-bar.md).
  *
- * A chip is 1-2 adjacent segments whose state (ABSENT/OFF/ON/BUSY/ALERT)
- * picks the style+pen pair; the walk polls a static table every frame.
- * The chip types stay file-internal until the plugin seam (step 5).
+ * A chip is a label plus a value field, drawn as a run of cells. Each
+ * cell's state (ABSENT/OFF/ON/BUSY/ALERT) picks its look, so a lit lock
+ * sits inside an otherwise plain chip. This file polls a static table
+ * every frame. The kit's ui_status draws the row. The chip types stay
+ * file-internal until the plugin seam (step 5).
  */
 
 #include "app_widgets.h"
+#include "app_screens.h"
 #include "wifi_manager.h"
 #include "vterm.h"
 
+#include <stdio.h>
 #include <string.h>
 
-#define SB_LEFT_COL       1    /* first cell of the left cluster        */
-#define SB_MAX_SEGS       2    /* icon segment + one fused sub-state    */
-#define SB_BLINK_FRAMES   8    /* BUSY blink half-period, ~1 Hz at 10 fps */
+#define SB_LADDER         4    /* NET signal ladder, cells              */
 #define SB_RSSI_FRAMES    10   /* RSSI snapshot cadence, ~1 s at 10 fps  */
-#define SB_TOAST_MIN_GAP  16   /* under this the toast takes the span    */
+#define SB_MAX_CHIPS      3
 
 /* HOME's link-quality buckets, dBm. */
 #define SB_RSSI_GOOD   (-55)
 #define SB_RSSI_FAIR   (-67)
 #define SB_RSSI_WEAK   (-78)
 
-/* Lower-eighth block ramp: the NET stair is one cell, height = quality. */
+/* Lower-eighth block ramp, one rung per ladder cell: the lit run reads
+ * as a rising staircase. */
 #define SB_STAIR_1     0x2582u
 #define SB_STAIR_2     0x2584u
 #define SB_STAIR_3     0x2586u
 #define SB_STAIR_4     0x2588u
-#define SB_ALERT_ICON  0x2718u   /* heavy ballot X */
-
-typedef enum {
-    CHIP_ABSENT = 0, CHIP_OFF, CHIP_ON, CHIP_BUSY, CHIP_ALERT
-} chip_state_t;
-
-typedef struct {
-    chip_state_t state;
-    uint16_t     icon;     /* codepoint for the single icon cell        */
-    uint8_t      accent;   /* ON accent override; 0 = descriptor's own  */
-} chip_seg_t;
 
 typedef struct {
     const char *id;        /* stable key for the plugin seam            */
     uint8_t     accent;    /* default ON accent                         */
-    int       (*poll)(chip_seg_t seg[SB_MAX_SEGS]);   /* fill, return count */
+    int       (*poll)(ui_sb_cell_t cell[UI_SB_CELLS]);  /* fill, return count */
+    /* Both NULL for a chip that never announces. state returns a UI_SB_*
+     * value. It sets @p quiet when a loss is only a scan. detail writes
+     * the text of an UI_ANN_* edge. */
+    uint8_t   (*state)(bool *quiet);
+    void      (*detail)(int kind, char *buf, size_t sz);
 } chip_desc_t;
 
-static int poll_net(chip_seg_t seg[SB_MAX_SEGS])
+/* Appends @p s from cell @p n, one cell a character. Text cells take the
+ * state's look, never its glyph. Returns the next free cell. */
+static int sb_put(ui_sb_cell_t cell[UI_SB_CELLS], int n, const char *s,
+                  uint8_t st, uint8_t accent)
+{
+    for (; *s && n < UI_SB_CELLS; s++, n++)
+        cell[n] = (ui_sb_cell_t){ .state = st, .accent = accent, .keep = true,
+                                  .cp = (uint16_t)(unsigned char)*s };
+    return n;
+}
+
+#if CONFIG_CYBERDECK_DIAG_CHIPS
+/* The chip's name plus the separator cell that opens its value field. */
+static int sb_label(ui_sb_cell_t cell[UI_SB_CELLS], const char *s, uint8_t st)
+{
+    return sb_put(cell, sb_put(cell, 0, s, st, 0), " ", st, 0);
+}
+#endif
+
+int net_rssi(void)
 {
     /* RSSI moves over seconds; taking the WiFi driver's lock at the render
-     * cadence is the thing this cache exists to avoid (as on HOME). */
+     * cadence is what this cache avoids. The setup hub reads it too. */
     static bool     fresh = false;
     static uint32_t frame = 0;
     static int      rssi  = 0;
@@ -58,157 +74,326 @@ static int poll_net(chip_seg_t seg[SB_MAX_SEGS])
         frame = app.anim_frame;
         rssi  = wifi_manager_get_rssi();
     }
-
-    seg[0].icon = rssi > SB_RSSI_GOOD ? SB_STAIR_4
-                : rssi > SB_RSSI_FAIR ? SB_STAIR_3
-                : rssi > SB_RSSI_WEAK ? SB_STAIR_2 : SB_STAIR_1;
-    switch (wifi_manager_get_state()) {
-    case WIFI_MGR_CONNECTED:  seg[0].state = CHIP_ON;    break;
-    case WIFI_MGR_CONNECTING:
-    case WIFI_MGR_LOST:       seg[0].state = CHIP_BUSY;  break;
-    case WIFI_MGR_FAILED:     seg[0].state = CHIP_ALERT; break;
-    default:
-        /* get_rssi reads 0 while down, which would round up to a full
-         * stair; the shape says "signal", the well says "down". */
-        seg[0].state = CHIP_OFF;
-        seg[0].icon  = SB_STAIR_1;
-        break;
-    }
-    return 1;
+    return rssi;
 }
 
-static int poll_kbd(chip_seg_t seg[SB_MAX_SEGS])
+const char *rssi_word(int rssi, uint8_t *pen)
+{
+    const bool good = rssi > SB_RSSI_FAIR, fair = rssi > SB_RSSI_WEAK;
+    *pen = good ? OVERLAY_COL_GREEN : fair ? OVERLAY_COL_AMBER : OVERLAY_COL_RED;
+    return good ? "good" : fair ? "fair" : "weak";
+}
+
+static uint8_t net_state(bool *quiet)
+{
+    if (quiet) *quiet = false;
+    switch (wifi_manager_get_state()) {
+    case WIFI_MGR_CONNECTED:  return UI_SB_ON;
+    case WIFI_MGR_CONNECTING:
+    case WIFI_MGR_LOST:       return UI_SB_BUSY;
+    case WIFI_MGR_FAILED:     return UI_SB_ALERT;
+    default:                  return UI_SB_OFF;
+    }
+}
+
+static void net_detail(int kind, char *buf, size_t sz)
+{
+    if (kind == UI_ANN_UP) {
+        const char *ssid = wifi_manager_get_ssid();
+        const char *ip   = wifi_manager_get_ip();
+        if (!ip) ip = "";
+        if (ssid && ssid[0]) snprintf(buf, sz, "%.32s %.15s", ssid, ip);
+        else                 snprintf(buf, sz, "%.15s", ip);
+    } else {
+        snprintf(buf, sz, "%s", kind == UI_ANN_FAIL ? "join failed"
+                                                    : "link lost");
+    }
+}
+
+static int poll_net(ui_sb_cell_t cell[UI_SB_CELLS])
+{
+    const int rssi = net_rssi();
+
+    const uint8_t st = net_state(NULL);
+
+    /* Rung i is lit once quality reaches level i+1; an unlit rung is a low
+     * line, so the empty gauge shows. get_rssi reads 0 while the link is
+     * down, which would light every rung. The first rung also carries the
+     * spinner (BUSY), the alert mark (ALERT) or the off mark. */
+    static const uint16_t STAIR[SB_LADDER] = {
+        SB_STAIR_1, SB_STAIR_2, SB_STAIR_3, SB_STAIR_4,
+    };
+    const int level = st != UI_SB_ON      ? 0
+                    : rssi > SB_RSSI_GOOD ? 4
+                    : rssi > SB_RSSI_FAIR ? 3
+                    : rssi > SB_RSSI_WEAK ? 2 : 1;
+    int n = 0;
+    for (; n < SB_LADDER; n++) {
+        cell[n] = (ui_sb_cell_t){ .state = st, .keep = n > 0,
+                                  .cp = n < level ? STAIR[n] : UI_LOW_1 };
+    }
+    if (st == UI_SB_OFF) cell[0].cp = UI_CROSS;
+    return n;
+}
+
+/* Lock words. The backend reports exactly these two; a _Static_assert in
+ * main.c pins them to the BLE bits. The chip holds "KBD CAPS NUM". */
+static const struct { const char *word; uint8_t bit; } KBD_LOCKS[] = {
+    { "CAPS", CYBERDECK_KBD_LOCK_CAPS },
+    { "NUM",  CYBERDECK_KBD_LOCK_NUM  },
+};
+
+/* A scan is no loss: the pairing page narrates it. A keyboard on its way
+ * up shows as down: a still grey chip, no spinner. */
+static uint8_t kbd_state(bool *quiet)
+{
+    if (quiet) *quiet = false;
+    if (!app.ble || !app.ble->get_state) return UI_SB_ABSENT;
+    const cyberdeck_ble_state_t b = app.ble->get_state();
+    if (quiet) *quiet = b == CYBERDECK_BLE_PAIRING_SCAN;
+    switch (b) {
+    case CYBERDECK_BLE_CONNECTED:    return UI_SB_ON;
+    default:                         return UI_SB_OFF;
+    }
+}
+
+static void kbd_detail(int kind, char *buf, size_t sz)
+{
+    if (kind == UI_ANN_UP) {
+        const char *name = app.ble && app.ble->get_name ? app.ble->get_name()
+                                                        : NULL;
+        snprintf(buf, sz, "%.54s", name && name[0] ? name : "connected");
+    } else {
+        snprintf(buf, sz, "disconnected");
+    }
+}
+
+static int poll_kbd(ui_sb_cell_t cell[UI_SB_CELLS])
 {
     if (!app.ble || !app.ble->get_state) return 0;
 
-    seg[0].icon = 'K';   /* letter stands in until the sprite set lands */
-    const cyberdeck_ble_state_t st = app.ble->get_state();
-    switch (st) {
-    case CYBERDECK_BLE_CONNECTED:    seg[0].state = CHIP_ON;   break;
-    case CYBERDECK_BLE_CONNECTING:
-    case CYBERDECK_BLE_PAIRING_SCAN:
-    case CYBERDECK_BLE_RECONNECT:    seg[0].state = CHIP_BUSY; break;
-    default:                         seg[0].state = CHIP_OFF;  break;
-    }
+    const uint8_t st = kbd_state(NULL);
+    int n = sb_put(cell, 0, "KBD", st, 0);
 
-    /* Num lock never renders — the keymap ignores it, so an indicator
-     * would have no referent (get_locks still reports the bit). */
-    if (st == CYBERDECK_BLE_CONNECTED && app.ble->get_locks &&
-        (app.ble->get_locks() & CYBERDECK_KBD_LOCK_CAPS)) {
-        seg[1].state  = CHIP_ON;
-        seg[1].icon   = 'C';
-        seg[1].accent = OVERLAY_COL_AMBER;
-        return 2;
+    /* A lock has no referent while the keyboard is down: the chip is the
+     * bare name. Up, every lock word shows: lit on an amber wash, unlit
+     * dim on the chip's own wash. */
+    if (st != UI_SB_ON) return n;
+    const uint8_t locks = app.ble->get_locks ? app.ble->get_locks() : 0;
+    for (int i = 0; i < NELEM(KBD_LOCKS); i++) {
+        const bool lit = (locks & KBD_LOCKS[i].bit) != 0;
+        n = sb_put(cell, n, " ", st, 0);
+        n = sb_put(cell, n, KBD_LOCKS[i].word, lit ? UI_SB_ON : UI_SB_DIM,
+                   lit ? OVERLAY_COL_AMBER : 0);
     }
-    return 1;
+    return n;
 }
 
-/* TEMPORARY soak diagnostic (2026-09): the vterm ?2026 watchdog fired.
- * Absent until the first incident; then a red X plus the count (9+).
- * Remove once we know what drops the ESU. */
-static int poll_sync(chip_seg_t seg[SB_MAX_SEGS])
+#if CONFIG_CYBERDECK_DIAG_CHIPS
+/* Soak diagnostic: the vterm ?2026 watchdog fired. Absent until the
+ * first incident; then a red chip with the count (9+). Dev builds only. */
+static int poll_sync(ui_sb_cell_t cell[UI_SB_CELLS])
 {
     const uint32_t n = vterm_sync_timeouts();
     if (n == 0) return 0;
-    seg[0].state  = CHIP_ALERT;
-    seg[0].icon   = SB_ALERT_ICON;
-    seg[1].state  = CHIP_ON;
-    seg[1].icon   = (uint16_t)(n > 9 ? '9' : '0' + n);
-    seg[1].accent = OVERLAY_COL_AMBER;
-    return 2;
+    const int k = sb_label(cell, "SYNC", UI_SB_ALERT);
+    cell[k].state = UI_SB_ALERT;
+    cell[k].cp    = (uint16_t)(n > 9 ? '9' : '0' + n);
+    cell[k].keep  = true;
+    return k + 1;
 }
+#endif
 
 static const chip_desc_t CHIPS[] = {
-    { "net",  OVERLAY_COL_GREEN, poll_net  },
-    { "kbd",  OVERLAY_COL_CYAN,  poll_kbd  },
-    { "sync", OVERLAY_COL_AMBER, poll_sync },
+    { .id = "net",  .accent = OVERLAY_COL_GREEN, .poll = poll_net,
+      .state = net_state, .detail = net_detail },
+    { .id = "kbd",  .accent = OVERLAY_COL_CYAN,  .poll = poll_kbd,
+      .state = kbd_state, .detail = kbd_detail },
+#if CONFIG_CYBERDECK_DIAG_CHIPS
+    { .id = "sync", .accent = OVERLAY_COL_AMBER, .poll = poll_sync },
+#endif
 };
 
-/* One segment: a padding cell, the icon, and — for the chip's primary
- * segment — a closing padding cell. Blink alternates whole styles; OR-ing
- * two would alias to a third (docs/overlay-style.md). */
-static int sb_seg(int x, int row, const chip_seg_t *s, uint8_t accent,
-                  bool primary)
+_Static_assert(sizeof(CHIPS) / sizeof(CHIPS[0]) <= SB_MAX_CHIPS,
+               "the status row holds SB_MAX_CHIPS chips");
+
+/* Polls the table into the chips the kit draws; returns how many. A
+ * table entry that draws nothing gets slot -1 in @p slot. */
+static int sb_poll(ui_sb_chip_t chips[SB_MAX_CHIPS], int slot[SB_MAX_CHIPS])
 {
-    uint16_t icon = s->icon;
-    uint8_t  style, pen;
-    switch (s->state) {
-    case CHIP_ON:
-        style = UI_FOCUS;
-        pen   = s->accent ? s->accent : accent;
-        break;
-    case CHIP_BUSY:
-        icon  = spinner_glyph(app.anim_frame);
-        style = (app.anim_frame / SB_BLINK_FRAMES) & 1 ? UI_WELL : UI_FOCUS;
-        pen   = OVERLAY_COL_AMBER;
-        break;
-    case CHIP_ALERT:
-        icon  = SB_ALERT_ICON;
-        style = UI_FOCUS;
-        pen   = OVERLAY_COL_RED;
-        break;
-    default:
-        style = UI_WELL;
-        pen   = OVERLAY_COL_BLUE;
-        break;
+    int count = 0;
+    for (int i = 0; i < NELEM(CHIPS); i++) {
+        ui_sb_chip_t *c = &chips[count];
+        memset(c, 0, sizeof(*c));
+        slot[i] = -1;
+        const int n = CHIPS[i].poll(c->cell);
+        if (n <= 0 || c->cell[0].state == UI_SB_ABSENT) continue;
+        c->accent = CHIPS[i].accent;
+        c->n      = (uint8_t)n;
+        slot[i]   = count++;
     }
-    ui_pen(pen);
-    ui_putch(x++, row, ' ', style | UI_BOLD);
-    ui_putch(x++, row, icon, style | UI_BOLD);
-    if (primary) ui_putch(x++, row, ' ', style | UI_BOLD);
-    return x;
+    return count;
 }
 
-/* Walks the table left to right, no gaps; returns the first free cell. */
-static int sb_cluster(int row)
+/* The chip announcements. A chip that moves queues a detail text. The
+ * tick below times it. The render only reads it. */
+static ui_ann_t s_ann;
+static bool     s_primed;               /* a screen with a bar has been up   */
+static uint8_t  s_prev[SB_MAX_CHIPS];   /* last UI_SB_* state per table entry */
+static uint32_t s_sig;                  /* what the last tick saw drawn      */
+static uint32_t s_blink;                /* last frame drawn for a busy chip  */
+
+/* What the row draws apart from the note: the chips and the clock. */
+static uint32_t chips_sig(const ui_sb_chip_t *chips, int n, const char *clk)
 {
-    int x = SB_LEFT_COL;
-    for (int i = 0; i < NELEM(CHIPS); i++) {
-        chip_seg_t seg[SB_MAX_SEGS] = { { 0 } };
-        const int n = CHIPS[i].poll(seg);
-        for (int s = 0; s < n && s < SB_MAX_SEGS; s++)
-            if (seg[s].state != CHIP_ABSENT)
-                x = sb_seg(x, row, &seg[s], CHIPS[i].accent, s == 0);
+    uint32_t h = 2166136261u;
+#define MIX(v) (h = (h ^ (uint32_t)(v)) * 16777619u)
+    for (; *clk; clk++) MIX(*clk);
+    for (int i = 0; i < n; i++) {
+        MIX(chips[i].n);
+        for (int k = 0; k < chips[i].n; k++) {
+            MIX(chips[i].cell[k].state);
+            MIX(chips[i].cell[k].cp);
+            MIX(chips[i].cell[k].accent);
+        }
     }
-    return x;
+#undef MIX
+    return h;
+}
+
+static bool chips_busy(const ui_sb_chip_t *chips, int n)
+{
+    for (int i = 0; i < n; i++)
+        for (int k = 0; k < chips[i].n; k++)
+            if (chips[i].cell[k].state == UI_SB_BUSY) return true;
+    return false;
+}
+
+/* A session hides the bar. Its chip edges go to a toast. */
+static void session_news(uint64_t now, int chip, int kind)
+{
+    if (kind == UI_ANN_NONE) return;
+    if (kind == UI_ANN_UP) {
+        char text[UI_ANN_TEXT];
+        CHIPS[chip].detail(kind, text, sizeof(text));
+        const char *what = chip == 0 ? "wifi" : "keyboard";
+        if (strcmp(text, "connected") == 0) toast(now, "%s connected", what);
+        else toast(now, "%s connected - %s", what, text);
+        app.toast_ok = true;
+        return;
+    }
+    if (chip == 0 && kind == UI_ANN_FAIL)
+        toast_for(now, ERR_TOAST_MS, "wifi connect failed (retrying)");
+    else if (chip == 0)
+        toast(now, "wifi disconnected");
+    else
+        toast(now, "keyboard disconnected");
+}
+
+/* Two more facts the hidden bar would show in a session: a lock key
+ * changed, and the link got weak. The state tracks on every screen. A
+ * toast goes out only in a session. A weak link speaks once, then waits
+ * until the signal is fair again. */
+static void session_facts(uint64_t now, bool session)
+{
+    static const char *const LOCK_NAME[NELEM(KBD_LOCKS)] = { "caps", "num" };
+    static bool    s_kbd_up, s_weak;
+    static uint8_t s_locks;
+
+    const bool    up    = kbd_state(NULL) == UI_SB_ON;
+    const uint8_t locks = (up && app.ble->get_locks) ? app.ble->get_locks() : 0;
+    if (session && up && s_kbd_up) {
+        for (int i = 0; i < NELEM(KBD_LOCKS); i++)
+            if ((locks ^ s_locks) & KBD_LOCKS[i].bit)
+                toast(now, "%s lock %s", LOCK_NAME[i],
+                      locks & KBD_LOCKS[i].bit ? "on" : "off");
+    }
+    s_kbd_up = up;
+    s_locks  = locks;
+
+    const int rssi = net_state(NULL) == UI_SB_ON ? net_rssi() : 0;
+    if (rssi == 0 || rssi > SB_RSSI_FAIR) {
+        s_weak = false;
+    } else if (rssi <= SB_RSSI_WEAK && !s_weak) {
+        s_weak = true;
+        if (session) toast(now, "wifi signal weak (%d dBm)", rssi);
+    }
+}
+
+void status_tick(uint64_t now)
+{
+    if (app.toast[0] && now >= app.toast_until) {
+        app.toast[0]   = '\0';
+        app.toast_wifi = false;
+        nav_invalidate();
+    }
+
+    const bool bar = nav_has_bar();
+    if (!s_primed && !bar) return;
+    const bool first = !s_primed;
+    s_primed = true;
+
+    for (int i = 0; i < NELEM(CHIPS); i++) {
+        if (!CHIPS[i].state) continue;
+        bool quiet = false;
+        const uint8_t cur = CHIPS[i].state(&quiet);
+        const int kind = ui_ann_edge(s_prev[i], cur, first, quiet);
+        s_prev[i] = cur;
+        if (kind == UI_ANN_NONE) continue;
+        if (bar) {
+            char text[UI_ANN_TEXT];
+            CHIPS[i].detail(kind, text, sizeof(text));
+            ui_ann_post(&s_ann, i, text, now);
+        } else if (nav_current() == SCR_SESSION) {
+            session_news(now, i, kind);
+        }
+    }
+    session_facts(now, !bar && nav_current() == SCR_SESSION);
+
+    ui_sb_chip_t chips[SB_MAX_CHIPS];
+    int          slot[SB_MAX_CHIPS];
+    char         clk[10] = "";
+    const int nchips = sb_poll(chips, slot);
+    if (bar && !clock_str(clk, sizeof(clk))) clk[0] = '\0';
+    const uint32_t sig = chips_sig(chips, nchips, clk);
+    const bool moved = ui_ann_step(&s_ann, now);
+    if ((moved || sig != s_sig) && bar) nav_invalidate();
+    s_sig = sig;
+
+    /* A busy chip blinks and spins. A still page gets a frame for it. */
+    if (bar && app.anim_frame != s_blink && chips_busy(chips, nchips)) {
+        s_blink = app.anim_frame;
+        nav_invalidate();
+    }
+}
+
+bool status_idle(void)
+{
+    return s_primed ? !ui_ann_busy(&s_ann) : !nav_has_bar();
 }
 
 void ui_statusbar(uint64_t now)
 {
-    const int sr = ui_rows() - 1;
-    ui_pen(OVERLAY_COL_BLUE);
-    for (int c = 0; c < ui_cols(); c++)
-        ui_putch(c, sr, ' ', UI_BAR);
+    ui_sb_chip_t chips[SB_MAX_CHIPS];
+    int          slot[SB_MAX_CHIPS];
+    char         clk[10];
+    ui_status_t  s = { .chips = chips, .frame = app.anim_frame };
 
-    int  clk_x = ui_cols();
-    char clk[10];
-    if (clock_str(clk + 1, sizeof(clk) - 2)) {
-        clk[0] = ' ';
-        size_t n = strlen(clk);
-        clk[n]     = ' ';
-        clk[n + 1] = '\0';
-        clk_x = ui_cols() - (int)strlen(clk) - 1;
-        ui_puts(clk_x, sr, clk, UI_FOCUS | UI_BOLD);
+    s.nchips = sb_poll(chips, slot);
+    if (clock_str(clk, sizeof(clk))) s.clock = clk;
+
+    const int live = ui_ann_chip(&s_ann);
+    if (live >= 0 && slot[live] >= 0 && ui_ann_width(&s_ann) > 0) {
+        s.xchip = slot[live];
+        s.xtext = ui_ann_text(&s_ann);
+        s.xw    = ui_ann_width(&s_ann);
     }
 
     /* No keystore-lock chip, by user call 2026-08-27. A locked deck shows
      * the PIN pad, so the state is self-evident. */
-    int x = sb_cluster(sr);
-
     if (app.toast[0] && now < app.toast_until) {
-        /* Chips carry the very state a toast announces, so the toast clips
-         * into the free gap; taking the whole span is the fallback for a
-         * cluster too wide to leave one (docs/status-bar.md). */
-        ui_pen(OVERLAY_COL_BLUE);        /* the cluster left its accent set */
-        int gap = clk_x - x;
-        if (gap < SB_TOAST_MIN_GAP) {
-            for (int c = SB_LEFT_COL; c < clk_x; c++)
-                ui_putch(c, sr, ' ', UI_BAR);
-            x   = SB_LEFT_COL;
-            gap = clk_x - x;
-        }
-        if (gap > 2)
-            ui_printf(x, sr, UI_FOCUS | UI_BOLD, " %.*s ", gap - 2, app.toast);
+        s.note = app.toast;
+        s.tone = app.toast_ok ? UI_NOTE_GOOD : UI_NOTE_PLAIN;
     }
-    ui_pen(OVERLAY_COL_DEFAULT);
+    ui_status(ui_rect(0, ui_rows() - 1, ui_cols(), 1), &s);
 }

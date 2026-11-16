@@ -33,10 +33,15 @@ typedef struct { bool scroll; } app_touch_cfg_t;
 extern const char app_touch_section[];
 extern const storage_kv_field_t app_touch_fields[];
 
+/* [wifi] — seeded: true after the Kconfig fallback seed ran. */
+typedef struct { bool seeded; } app_wifi_cfg_t;
+extern const char app_wifi_section[];
+extern const storage_kv_field_t app_wifi_fields[];
+
 /* Register settings.ini for factory reset; call once at init. */
 void app_settings_register_reset(void);
 
-/* Value cycling and deferred persistence for the menu's tunable tiles
+/* Value choice and deferred persistence for the menu's tunable items
  * (extensibility item 3). The owning page defers writes while it stays
  * open. A flash write pauses the render ISR for the cache-off window,
  * landing a visible hiccup on the keypress. The app tick flushes the
@@ -54,19 +59,21 @@ typedef enum {
  * keeps byte-granular control; index() snaps hand-edited values to the
  * nearest preset). set() applies live and previews the event effects;
  * the flash write stays deferred. count/index/set is the Slider/Stepper
- * contract (ui-spec); cycle is the tap-to-step sugar over it. */
+ * contract (ui-spec). */
 int         app_settings_fx_count(app_fx_tunable_t t);
 int         app_settings_fx_index(app_fx_tunable_t t);
 const char *app_settings_fx_label(app_fx_tunable_t t, int idx);
 void        app_settings_fx_set(app_fx_tunable_t t, int idx);
-void        app_settings_fx_cycle(app_fx_tunable_t t);
 
-void app_settings_saver_cycle(void);        /* 1/3/5/10/30 min steps */
-void app_settings_saver_format(char *buf, size_t sz);
+/* Saver and lock timeout: the steps 1/3/5/10/30 min. The index is -1 for
+ * a hand-edited value that is no step. */
+int         app_settings_saver_count(void);
+int         app_settings_saver_index(void);
+const char *app_settings_saver_label(int idx);
+void        app_settings_saver_set(int idx);
 
 #if CONFIG_INPUT_TOUCH_SCROLL
 void        app_settings_touch_toggle(void);
-const char *app_settings_touch_str(void);
 #endif
 
 enum { APP_SETTINGS_HOLD_FX = 1 << 0, APP_SETTINGS_HOLD_SYS = 1 << 1 };

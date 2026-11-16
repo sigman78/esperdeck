@@ -1,17 +1,20 @@
 /*
- * app_menu_defs.c — the menu tree as data: page tables whose items carry
- * their own action/confirm/dim/value behavior. See app_menu_defs.h;
- * rendering and the dynamic pickers live in app_menu.c.
+ * app_menu_defs.c - the setup tree as data: section tables whose items
+ * carry their own action, state and options. See app_menu_defs.h.
+ * Drawing and input live in app_menu.c.
  */
 
 #include "app_menu_defs.h"
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_settings.h"
+#include "app_widgets.h"
+#include "app_wifi.h"
 #include "font.h"
 #include "keystore.h"
 #include "ssh_client.h"
-#include "vterm.h"         /* vterm_reset() — in-session terminal reset */
+#include "vterm.h"         /* vterm_reset(): in-session terminal reset */
+#include "wifi_manager.h"
 
 #ifdef ESP_PLATFORM
 #include "sdkconfig.h"       /* provides CONFIG_CYBERDECK_KEYSTORE (sim: -D flag) */
@@ -23,42 +26,23 @@
 #ifndef BUILD_SIMULATOR
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_system.h"     /* esp_restart() — applying a new font size */
+#include "esp_system.h"     /* esp_restart(): applying a new font size */
 #endif
 
-/* Color marks the KIND of item, not the item itself; a page of many
- * colors reads as motley. CYAN marks a normal action or navigation.
- * GREEN marks go or primary. RED marks destructive. AMBER marks caution.
- * BLUE marks Back or Cancel, the safe exit. MAGENTA stays reserved for
- * the title lozenge. */
+#define NOT_BUILT "not in this build"
 
-static void act_back(intptr_t a, uint64_t now)
+void menu_act_disconnect(uint64_t now)
 {
-    (void)a;
-    menu_back(now);
-}
-
-static void act_goto(intptr_t sc, uint64_t now)
-{
-    (void)now;
-    menu_goto((int)sc);
-}
-
-static void act_disconnect(intptr_t a, uint64_t now)
-{
-    (void)a;
     ssh_client_disconnect();
     enter_home_after_collapse(now);   /* deliberate CRT power-off */
 }
 
 /* Escape hatch for a wedged client state on a live link (stuck ?2026
- * hold, garbage after a dropped byte). The remote still believes its
- * picture is on screen, so it gets a SIGWINCH nudge to repaint. Modes the
- * remote switched on (DECCKM and friends) are gone until it re-sends
- * them — the same trade every terminal's "full reset" makes. */
-static void act_reset_terminal(intptr_t a, uint64_t now)
+ * hold, garbage after a dropped byte). The remote gets a SIGWINCH nudge
+ * to repaint. Modes it switched on (DECCKM and friends) stay gone until
+ * it re-sends them, as in every terminal's "full reset". */
+void menu_act_reset_terminal(uint64_t now)
 {
-    (void)a;
     vterm_reset();
     int rc = ssh_client_request_redraw();
     menu_back(now);
@@ -66,106 +50,62 @@ static void act_reset_terminal(intptr_t a, uint64_t now)
                        : "terminal reset - remote NOT nudged");
 }
 
-static const menu_item_t main_items[] = {
-    { .label = "Resume session", .color = OVERLAY_COL_GREEN, .action = act_back },
-    { .label = "Reset terminal", .color = OVERLAY_COL_AMBER, .action = act_reset_terminal },
-    { .label = "Disconnect",     .color = OVERLAY_COL_AMBER, .action = act_disconnect },
-    { .label = "Configuration",  .color = OVERLAY_COL_CYAN,  .action = act_goto,
-      .arg = MS_CONFIG },
-};
-
-static bool dim_no_ble(intptr_t a)
-{
-    (void)a;
-    return !app.ble;
-}
-
-static bool dim_no_keystore(intptr_t a)
-{
-    (void)a;
-#if CONFIG_CYBERDECK_KEYSTORE
-    return false;
-#else
-    return true;   /* entry stays (stable page), visibly unavailable */
-#endif
-}
-
-/* Hub tiles carry the section name alone, centered. Content hints will
- * move to the StatusBar/toast once that lands (user call, 2026-08-27).
- * A 3-row tile with a two-line top-anchored body creates the even-line
- * asymmetry the odd-height rule exists to prevent. */
-static const menu_item_t config_items[] = {
-    { .label = "PROFILES",  .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_PROFILES },
-    { .label = "WIFI",      .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_WIFI },
-    { .label = "KEYBOARD",  .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_KEYBOARD,
-      .dim = dim_no_ble, .dim_note = "no BLE keyboard support" },
-    { .label = "CRT FX",    .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_FX_CRT },
-    { .label = "MOTION FX", .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_FX_MOTION },
-    { .label = "FONT",      .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_FONT },
-    { .label = "SYSTEM",    .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_SYSTEM },
-    { .label = "KEYSTORE",  .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_KEYSTORE,
-      .dim = dim_no_keystore, .dim_note = "not in this build" },
-};
-
-static void act_prof_add(intptr_t a, uint64_t now)
-{
-    (void)a;
-    if (app.stored_count >= MAX_PROFILES - 1) {
-        menu_note(now, MENU_MSG_MS, false, "profile list full");
-        return;
-    }
-    enter_profile(now, -1);
-}
-
-static void act_prof_edit(intptr_t a, uint64_t now)
-{
-    (void)a;
-    if (app.stored_count == 0) {
-        menu_note(now, MENU_MSG_MS, false, "no stored profiles");
-        return;
-    }
-    menu_goto(MS_EDITPROFILE);
-}
-
-static void act_prof_reorder(intptr_t a, uint64_t now)
-{
-    (void)a;
-    if (app.stored_count < 2) {
-        menu_note(now, MENU_MSG_MS, false, "nothing to reorder");
-        return;
-    }
-    menu_goto(MS_REORDER);   /* entering the picker resets the grab */
-}
-
-static const menu_item_t profiles_items[] = {
-    { .label = "Add (type here)", .color = OVERLAY_COL_CYAN, .action = act_prof_add },
-    { .label = "Edit",            .color = OVERLAY_COL_CYAN, .action = act_prof_edit },
-    { .label = "Reorder",         .color = OVERLAY_COL_CYAN, .action = act_prof_reorder },
-    { .label = "Delete",          .color = OVERLAY_COL_RED,  .action = act_goto,
-      .arg = MS_DELPROFILE },
-    { .label = "Import",          .color = OVERLAY_COL_CYAN, .action = act_goto,
-      .arg = MS_IMPORT },
-};
-
 static void act_import(intptr_t mode, uint64_t now)
 {
     enter_sshimport(now, (ssh_import_mode_t)mode);
 }
 
-static const menu_item_t import_items[] = {
-    { .label = "SoftAP (phone)", .color = OVERLAY_COL_CYAN, .action = act_import,
+/* A live session shuts the list: the host page could change its hosts. */
+static bool hosts_shut(void)
+{
+    return nav_on_stack(SCR_SESSION);
+}
+
+static bool off_new_host(intptr_t a)
+{
+    (void)a;
+    return hosts_shut() || app.stored_count >= STORAGE_MAX_PROFILES;
+}
+
+static void act_new_host(intptr_t a, uint64_t now)
+{
+    (void)a;
+    enter_profile(now, -1);
+}
+
+static const menu_item_t hosts_items[] = {
+    { .label = "+ New", .action = act_new_host, .off = off_new_host },
+    { .label = "From phone", .nav = true, .action = act_import,
       .arg = SSH_IMPORT_SOFTAP },
-    { .label = "Web (PC)",       .color = OVERLAY_COL_CYAN, .action = act_import,
+    { .label = "From PC",    .nav = true, .action = act_import,
       .arg = SSH_IMPORT_WEB },
 };
+
+static int hosts_count(void)
+{
+    return app.stored_count;
+}
+
+static void hosts_row(int i, ui_part_t *out, char *buf, size_t sz)
+{
+    host_tile(&app.profiles[i], out, buf, sz);
+}
+
+static void hosts_open(int i, uint64_t now)
+{
+    if (i >= 0 && i < app.stored_count) enter_host(now, i);
+}
+
+static const menu_list_t hosts_list = {
+    .count = hosts_count, .row = hosts_row, .open = hosts_open,
+    .off = hosts_shut, .empty = "No hosts yet.", .min_w = 30,
+};
+
+static const char *note_hosts(char *buf, size_t sz)
+{
+    snprintf(buf, sz, "%d stored", app.stored_count);
+    return buf;
+}
 
 static void act_wifi_kick(intptr_t a, uint64_t now)
 {
@@ -180,10 +120,99 @@ static void act_wifiprov(intptr_t a, uint64_t now)
     enter_wifiprov(now);
 }
 
+static void act_wifiadd(intptr_t a, uint64_t now)
+{
+    (void)a;
+    enter_wifiadd(now);
+}
+
 static const menu_item_t wifi_items[] = {
-    { .label = "Reconnect",           .color = OVERLAY_COL_CYAN, .action = act_wifi_kick },
-    { .label = "Add network (phone)", .color = OVERLAY_COL_CYAN, .action = act_wifiprov },
+    { .label = "Reconnect",      .action = act_wifi_kick },
+    { .label = "Add from phone", .nav = true, .action = act_wifiprov },
+    { .label = "Add by hand",    .nav = true, .action = act_wifiadd },
 };
+
+/* The link facts. A down link shows its state word and "-" elsewhere. */
+static uint8_t wifi_panel_fill(ui_info_row_t *r, char (*txt)[MENU_PANEL_TXT])
+{
+    const wifi_mgr_state_t st = wifi_manager_get_state();
+    const bool up = st == WIFI_MGR_CONNECTED;
+    const char *ip = up ? wifi_manager_get_ip() : "";
+    const char *gw = up ? wifi_manager_get_gateway() : "";
+    const int rssi = up ? net_rssi() : 0;
+    uint8_t pen = 0;
+    const char *word = NULL;
+
+    snprintf(txt[0], MENU_PANEL_TXT, "%s", up ? wifi_manager_get_ssid()
+                                              : wifi_status_str());
+    snprintf(txt[1], MENU_PANEL_TXT, "%s", ip[0] ? ip : "-");
+    snprintf(txt[2], MENU_PANEL_TXT, "%s", gw[0] ? gw : "-");
+    if (rssi) {
+        snprintf(txt[3], MENU_PANEL_TXT, "%d dBm", rssi);
+        word = rssi_word(rssi, &pen);
+    } else {
+        snprintf(txt[3], MENU_PANEL_TXT, "-");
+    }
+    r[0] = (ui_info_row_t){ .label = "Network", .value = txt[0] };
+    r[1] = (ui_info_row_t){ .label = "Address", .value = txt[1] };
+    r[2] = (ui_info_row_t){ .label = "Gateway", .value = txt[2] };
+    r[3] = (ui_info_row_t){ .label = "Signal", .value = txt[3], .tail = word,
+                            .tail_pen = pen };
+    return up ? OVERLAY_COL_GREEN
+         : st == WIFI_MGR_FAILED ? OVERLAY_COL_RED
+         : st == WIFI_MGR_IDLE ? 0 : OVERLAY_COL_AMBER;
+}
+
+static const menu_panel_t wifi_panel = { .rows = 4, .fill = wifi_panel_fill };
+
+/* The saved networks, read when the page opens: the list is a file. */
+static struct {
+    char ssid[STORAGE_WIFI_MAX][33];
+    bool locked[STORAGE_WIFI_MAX];
+    int  n;
+} s_nets;
+
+static void wifi_snap(void)
+{
+    s_nets.n = app_wifi_list(s_nets.ssid, s_nets.locked, NULL,
+                             STORAGE_WIFI_MAX);
+}
+
+static int wifi_count(void)
+{
+    return s_nets.n;
+}
+
+static void wifi_row(int i, ui_part_t *out, char *buf, size_t sz)
+{
+    const bool joined = wifi_manager_get_state() == WIFI_MGR_CONNECTED &&
+                        strcmp(wifi_manager_get_ssid(), s_nets.ssid[i]) == 0;
+    snprintf(buf, sz, "%d", i + 1);
+    *out = (ui_part_t){
+        .title = s_nets.ssid[i], .right = buf,
+        .detail = joined ? UI_S_CHECK " joined"
+                : s_nets.locked[i] ? "locked" : "saved",
+        .stripe = joined ? OVERLAY_COL_GREEN : 0,
+        .detail_pen = joined ? OVERLAY_COL_GREEN : 0,
+    };
+}
+
+static void wifi_open(int i, uint64_t now)
+{
+    if (i >= 0 && i < s_nets.n) enter_wifinet(now, i);
+}
+
+static const menu_list_t wifi_list = {
+    .count = wifi_count, .row = wifi_row, .open = wifi_open,
+    .empty = "No saved networks.", .min_w = 24,
+};
+
+static const char *note_wifi(char *buf, size_t sz)
+{
+    if (wifi_manager_get_state() != WIFI_MGR_CONNECTED) return wifi_status_str();
+    snprintf(buf, sz, "%s", wifi_manager_get_ssid());
+    return buf;
+}
 
 static void act_pair(intptr_t a, uint64_t now)
 {
@@ -191,51 +220,302 @@ static void act_pair(intptr_t a, uint64_t now)
     enter_pairing(now);
 }
 
-static bool dim_no_forget(intptr_t a)
+static bool off_no_forget(intptr_t a)
 {
     (void)a;
     return !app.ble || !app.ble->forget;
 }
 
+/* The paired keyboards, read when the page opens or comes back. */
+static struct {
+    cyberdeck_ble_bond_t b[KBD_BOND_MAX];
+    char                 label[KBD_BOND_MAX][40];
+    int                  n;
+} s_kbds;
+
+static void kbd_snap(void)
+{
+    s_kbds.n = kbd_bonds(s_kbds.b, KBD_BOND_MAX);
+    for (int i = 0; i < s_kbds.n; i++)
+        kbd_label(&s_kbds.b[i], s_kbds.label[i], sizeof s_kbds.label[i]);
+}
+
 static void act_forget_bonds(intptr_t a, uint64_t now)
 {
     (void)a;
-    app.ble->forget();   /* dim gate guarantees the op exists */
+    if (off_no_forget(0)) return;
+    app.ble->forget();
+    kbd_snap();
     menu_note(now, MENU_MSG_MS, false, "keyboard bonds cleared");
 }
 
 static const menu_item_t kbd_items[] = {
-    { .label = "Pair keyboard", .color = OVERLAY_COL_CYAN, .action = act_pair,
-      .dim = dim_no_ble, .dim_note = "no BLE keyboard support" },
-    { .label = "Forget bonds",  .color = OVERLAY_COL_RED,  .action = act_forget_bonds,
-      .confirm = "CONFIRM forget bonds?", .arm_note = "activate again to forget",
-      .dim = dim_no_forget, .dim_note = "forget unavailable" },
+    { .label = "Pair keyboard", .nav = true, .action = act_pair },
+    { .label = "Forget all", .accent = OVERLAY_COL_RED, .danger = true,
+      .action = act_forget_bonds, .off = off_no_forget,
+      .ask = "Forget every paired keyboard?" },
 };
 
-static void act_saver(intptr_t a, uint64_t now)
+/* The link facts: the connected keyboard, or the state word. */
+static uint8_t kbd_panel_fill(ui_info_row_t *r, char (*txt)[MENU_PANEL_TXT])
 {
-    (void)a; (void)now;
-    app_settings_saver_cycle();
+    uint8_t a[6];
+    const bool up = kbd_connected_addr(a);
+    const char *name = up && app.ble->get_name ? app.ble->get_name() : "";
+
+    snprintf(txt[0], MENU_PANEL_TXT, "%s", name[0] ? name : ble_status_str());
+    if (up) kbd_addr_str(a, txt[1], MENU_PANEL_TXT);
+    else snprintf(txt[1], MENU_PANEL_TXT, "-");
+    r[0] = (ui_info_row_t){ .label = "Keyboard", .value = txt[0] };
+    r[1] = (ui_info_row_t){ .label = "Address", .value = txt[1] };
+    if (up) return OVERLAY_COL_GREEN;
+    if (!app.ble || !app.ble->get_state) return 0;
+    const cyberdeck_ble_state_t st = app.ble->get_state();
+    return st == CYBERDECK_BLE_IDLE ? 0 : OVERLAY_COL_AMBER;
 }
 
-static const char *val_saver(intptr_t a, char *buf, size_t sz)
+static const menu_panel_t kbd_panel = { .rows = 2, .fill = kbd_panel_fill };
+
+static int kbd_count(void)
+{
+    return s_kbds.n;
+}
+
+static void kbd_row(int i, ui_part_t *out, char *buf, size_t sz)
+{
+    (void)buf; (void)sz;
+    const bool conn = kbd_is_connected(&s_kbds.b[i]);
+    *out = (ui_part_t){
+        .title = s_kbds.label[i],
+        .detail = conn ? UI_S_CHECK " connected" : "paired",
+        .stripe = conn ? OVERLAY_COL_GREEN : 0,
+        .detail_pen = conn ? OVERLAY_COL_GREEN : 0,
+    };
+}
+
+static void kbd_open(int i, uint64_t now)
+{
+    if (i >= 0 && i < s_kbds.n) enter_kbddev(now, i);
+}
+
+static const menu_list_t kbd_list = {
+    .count = kbd_count, .row = kbd_row, .open = kbd_open,
+    .empty = "No paired keyboards.", .min_w = 24,
+};
+
+static const char *note_keyboard(char *buf, size_t sz)
+{
+    if (app.ble && app.ble->get_state && app.ble->get_name &&
+        app.ble->get_state() == CYBERDECK_BLE_CONNECTED &&
+        app.ble->get_name()[0]) {
+        snprintf(buf, sz, "%s connected", app.ble->get_name());
+        return buf;
+    }
+    return ble_status_str();
+}
+
+static const char *unavail_ble(void)
+{
+    return app.ble ? NULL : NOT_BUILT;
+}
+
+static bool fx_is_on(intptr_t t)
+{
+    return app_settings_fx_index((app_fx_tunable_t)t) == 1;
+}
+
+static void fx_flip(intptr_t t, uint64_t now)
+{
+    (void)now;
+    app_settings_fx_set((app_fx_tunable_t)t, fx_is_on(t) ? 0 : 1);
+}
+
+static int fx_n(intptr_t t)
+{
+    return app_settings_fx_count((app_fx_tunable_t)t);
+}
+
+static int fx_ix(intptr_t t)
+{
+    return app_settings_fx_index((app_fx_tunable_t)t);
+}
+
+static const char *fx_opt(intptr_t t, int i)
+{
+    return app_settings_fx_label((app_fx_tunable_t)t, i);
+}
+
+static void fx_pick(intptr_t t, int i, uint64_t now)
+{
+    (void)now;
+    app_settings_fx_set((app_fx_tunable_t)t, i);
+}
+
+/* A tunable with two presets is a switch; more make a choice. */
+#define FX_SWITCH(name, t) \
+    { .kind = MENU_SWITCH, .label = name, .arg = t, .action = fx_flip, \
+      .on = fx_is_on }
+#define FX_PICK(name, t) \
+    { .kind = MENU_PICK, .label = name, .arg = t, .count = fx_n, \
+      .index = fx_ix, .option = fx_opt, .set = fx_pick }
+
+static const menu_item_t fx_crt_items[] = {
+    FX_SWITCH("Scanlines", APP_FX_SCAN),
+    FX_SWITCH("Bold pop",  APP_FX_BOLD),
+    FX_PICK("Phosphor",    APP_FX_MONO),
+#if DISPLAY_FX_ROW_GLOW
+    FX_PICK("Row glow",    APP_FX_GLOW),
+    FX_PICK("Glow decay",  APP_FX_DECAY),
+#endif
+};
+
+static const menu_item_t fx_motion_items[] = {
+    FX_PICK("Wobble",  APP_FX_WOBBLE),
+    FX_PICK("Wipe in", APP_FX_WIPE),
+    FX_PICK("Collapse", APP_FX_COLLAPSE),
+    FX_PICK("Static",  APP_FX_STATIC),
+};
+
+/* The tunables that are not at preset 0: "scanlines, phosphor". */
+static const char *fx_note(const menu_item_t *items, int n, char *buf,
+                           size_t sz)
+{
+    size_t len = 0;
+    buf[0] = '\0';
+    for (int i = 0; i < n; i++) {
+        if (fx_ix(items[i].arg) == 0) continue;
+        if (len && len + 2 < sz) {
+            buf[len++] = ',';
+            buf[len++] = ' ';
+        }
+        for (const char *s = items[i].label; *s && len + 1 < sz; s++)
+            buf[len++] = (*s >= 'A' && *s <= 'Z') ? (char)(*s + 32) : *s;
+        buf[len] = '\0';
+    }
+    return len ? buf : "all off";
+}
+
+static const char *note_fx_crt(char *buf, size_t sz)
+{
+    return fx_note(fx_crt_items, NELEM(fx_crt_items), buf, sz);
+}
+
+static const char *note_fx_motion(char *buf, size_t sz)
+{
+    return fx_note(fx_motion_items, NELEM(fx_motion_items), buf, sz);
+}
+
+/* The i-th size this build has, or FONT_SIZE_COUNT. */
+static font_size_t font_nth(int i)
+{
+    for (int s = 0; s < FONT_SIZE_COUNT; s++)
+        if (font_size_available((font_size_t)s) && i-- == 0)
+            return (font_size_t)s;
+    return FONT_SIZE_COUNT;
+}
+
+static int font_n(intptr_t a)
 {
     (void)a;
-    app_settings_saver_format(buf, sz);
-    return buf;
+    int n = 0;
+    while (font_nth(n) != FONT_SIZE_COUNT) n++;
+    return n;
+}
+
+static int font_ix(intptr_t a)
+{
+    (void)a;
+    for (int i = 0; font_nth(i) != FONT_SIZE_COUNT; i++)
+        if (font_nth(i) == font_active_size()) return i;
+    return -1;
+}
+
+static const char *font_opt(intptr_t a, int i)
+{
+    (void)a;
+    return font_size_name(font_nth(i));
+}
+
+/* Init fixes the grid, the DMA bounce geometry and the DRAM glyph copy, so
+ * a size change restarts the deck. The setting goes to disk first. */
+static void act_font_apply(intptr_t s, uint64_t now)
+{
+    const font_size_t want = (font_size_t)s;
+    char note[40];
+
+    cyberdeck_font_cfg_t fc;
+    snprintf(fc.size, sizeof(fc.size), "%s", font_size_name(want));
+    if (storage_kv_save(cyberdeck_settings_ini, cyberdeck_font_section,
+                        cyberdeck_font_fields, &fc) != ESP_OK) {
+        menu_note(now, MENU_MSG_MS, false, "could not save font");
+        return;
+    }
+#ifndef BUILD_SIMULATOR
+    snprintf(note, sizeof(note), "%s set - rebooting", font_size_name(want));
+    menu_note(now, MENU_MSG_MS, false, note);
+    menu_present_now(now);   /* the blocking delay below means no next tick */
+    vTaskDelay(pdMS_TO_TICKS(1200));
+    esp_restart();
+#else
+    /* The simulator is single-size and cannot restart into another one.
+     * It saves the setting anyway, so the device picks it up. */
+    snprintf(note, sizeof(note), "%s saved (reboot)", font_size_name(want));
+    menu_note(now, MENU_MSG_MS, false, note);
+#endif
+}
+
+static void font_set(intptr_t a, int i, uint64_t now)
+{
+    (void)a;
+    const font_size_t want = font_nth(i);
+    if (want == FONT_SIZE_COUNT || want == font_active_size()) return;
+    char title[48];
+    snprintf(title, sizeof title, "Restart with the %s font?",
+             font_size_name(want));
+    ask_open(&(ask_t){
+        .title = title,
+        .line1 = "The deck restarts to change the font.",
+        .line2 = "An open session ends.",
+        .verb = "Restart", .accent = OVERLAY_COL_AMBER,
+        .yes = act_font_apply, .arg = (intptr_t)want,
+    }, now);
+}
+
+static int saver_n(intptr_t a)
+{
+    (void)a;
+    return app_settings_saver_count();
+}
+
+static int saver_ix(intptr_t a)
+{
+    (void)a;
+    return app_settings_saver_index();
+}
+
+static const char *saver_opt(intptr_t a, int i)
+{
+    (void)a;
+    return app_settings_saver_label(i);
+}
+
+static void saver_set(intptr_t a, int i, uint64_t now)
+{
+    (void)a; (void)now;
+    app_settings_saver_set(i);
 }
 
 #if CONFIG_INPUT_TOUCH_SCROLL
+static bool touch_on(intptr_t a)
+{
+    (void)a;
+    return app.touch_scroll;
+}
+
 static void act_touch(intptr_t a, uint64_t now)
 {
     (void)a; (void)now;
     app_settings_touch_toggle();
-}
-
-static const char *val_touch(intptr_t a, char *buf, size_t sz)
-{
-    (void)a; (void)buf; (void)sz;
-    return app_settings_touch_str();
 }
 #endif
 
@@ -257,173 +537,35 @@ static void act_factory(intptr_t a, uint64_t now)
     menu_note(now, MENU_MSG_MS, false, "wiped - reboot advised");
 }
 
+/* Danger items sit at the bottom of the page, apart from the rest. */
 static const menu_item_t system_items[] = {
-    { .label = "Saver + lock after",  .color = OVERLAY_COL_CYAN,
-      .action = act_saver, .value = val_saver },
+    { .kind = MENU_PICK, .label = "Font size", .count = font_n,
+      .index = font_ix, .option = font_opt, .set = font_set },
+    { .kind = MENU_PICK, .label = "Saver + lock", .unit = "min",
+      .count = saver_n,
+      .index = saver_ix, .option = saver_opt, .set = saver_set },
 #if CONFIG_INPUT_TOUCH_SCROLL
-    { .label = "Edge scroll gesture", .color = OVERLAY_COL_CYAN,
-      .action = act_touch, .value = val_touch },
+    { .kind = MENU_SWITCH, .label = "Edge scroll", .action = act_touch,
+      .on = touch_on },
 #endif
-    { .label = "Clear host keys",     .color = OVERLAY_COL_RED,
-      .action = act_clearhosts, .confirm = "CONFIRM clear host keys?",
-      .arm_note = "activate again to clear" },
-    { .label = "Factory reset",       .color = OVERLAY_COL_RED,
-      .action = act_factory, .confirm = "CONFIRM FACTORY RESET?",
-      .arm_note = "activate again to WIPE ALL" },
+    { .label = "Clear host keys", .accent = OVERLAY_COL_RED, .danger = true,
+      .action = act_clearhosts, .ask = "Clear every pinned host key?" },
+    { .label = "Factory reset", .accent = OVERLAY_COL_RED, .danger = true,
+      .action = act_factory, .ask = "Erase every host and setting?" },
 };
 
-/* Every runtime render-fx tunable is a value-cycling tile. Cycling and
- * persistence live in the settings model (app_settings.c). */
-
-static void act_fx(intptr_t t, uint64_t now)
+static const char *note_system(char *buf, size_t sz)
 {
-    (void)now;
-    app_settings_fx_cycle((app_fx_tunable_t)t);
+    if (!app.cfg.version || !app.cfg.version[0]) return "saver, reset";
+    snprintf(buf, sz, "version %s", app.cfg.version);
+    return buf;
 }
 
-static const char *val_fx(intptr_t t, char *buf, size_t sz)
-{
-    (void)buf; (void)sz;
-    const app_fx_tunable_t fx = (app_fx_tunable_t)t;
-    return app_settings_fx_label(fx, app_settings_fx_index(fx));
-}
-
-/* EFFECTS split into two fit-one-screen sections — stable across glow
- * builds (the 9-tunable glow build would overflow a single page). */
-static const menu_item_t fx_crt_items[] = {
-    { .label = "Scanlines",  .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_SCAN,     .value = val_fx },
-    { .label = "Phosphor",   .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_MONO,     .value = val_fx },
-    { .label = "Bold pop",   .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_BOLD,     .value = val_fx },
-#if DISPLAY_FX_ROW_GLOW
-    { .label = "Row glow",   .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_GLOW,     .value = val_fx },
-    { .label = "Glow decay", .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_DECAY,    .value = val_fx },
-#endif
-};
-
-static const menu_item_t fx_motion_items[] = {
-    { .label = "Wobble",     .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_WOBBLE,   .value = val_fx },
-    { .label = "Wipe in",    .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_WIPE,     .value = val_fx },
-    { .label = "Collapse",   .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_COLLAPSE, .value = val_fx },
-    { .label = "Static",     .color = OVERLAY_COL_CYAN, .action = act_fx,
-      .arg = APP_FX_STATIC,   .value = val_fx },
-};
-
-/* What the next boot will use — the active size unless a tile tapped this
- * session already wrote [font]. Resolved when the page OPENS, not per
- * render: the menu renders ~10 Hz and settings.ini lives on littlefs. */
-static font_size_t s_font_pending = FONT_SIZE_COUNT;   /* flags unresolved */
-
-static void font_on_open(void)
-{
-    s_font_pending = FONT_SIZE_COUNT;
-}
-
-static void font_refresh_pending(void)
-{
-    s_font_pending = font_active_size();
-    cyberdeck_font_cfg_t fc = { .size = "" };
-    if (storage_kv_load(cyberdeck_settings_ini, cyberdeck_font_section,
-                        cyberdeck_font_fields, &fc) == ESP_OK &&
-        fc.size[0]) {
-        for (int i = 0; i < FONT_SIZE_COUNT; i++)
-            if (strcmp(fc.size, font_size_name((font_size_t)i)) == 0) {
-                s_font_pending = (font_size_t)i;
-                break;
-            }
-    }
-}
-
-static const char *label_font(intptr_t s)
-{
-    return font_size_name((font_size_t)s);
-}
-
-static uint8_t color_font(intptr_t s)
-{
-    return (font_size_t)s == font_active_size() ? OVERLAY_COL_GREEN
-                                                : OVERLAY_COL_CYAN;
-}
-
-static const char *val_font(intptr_t s, char *buf, size_t sz)
-{
-    (void)buf; (void)sz;
-    if (s_font_pending >= FONT_SIZE_COUNT) font_refresh_pending();
-    const font_size_t fs = (font_size_t)s;
-    return !font_size_available(fs) ? "not in this build"
-         : fs == font_active_size() ? "in use"
-         : fs == s_font_pending     ? "reboot to apply"
-                                    : "";
-}
-
-static void act_font(intptr_t s, uint64_t now)
-{
-    const font_size_t want = (font_size_t)s;
-    char note[40];
-
-    if (!font_size_available(want)) {
-        snprintf(note, sizeof(note), "%s not in this build",
-                 font_size_name(want));
-        menu_note(now, MENU_MSG_MS, false, note);
-        return;
-    }
-    if (want == font_active_size()) {
-        snprintf(note, sizeof(note), "%s already in use",
-                 font_size_name(want));
-        menu_note(now, MENU_MSG_MS, false, note);
-        return;
-    }
-    cyberdeck_font_cfg_t fc;
-    snprintf(fc.size, sizeof(fc.size), "%s", font_size_name(want));
-    if (storage_kv_save(cyberdeck_settings_ini, cyberdeck_font_section,
-                        cyberdeck_font_fields, &fc) != ESP_OK) {
-        menu_note(now, MENU_MSG_MS, false, "could not save font");
-        return;
-    }
-    /* Init fixes the grid, DMA bounce geometry, and DRAM glyph copy. A
-     * size change therefore needs a restart. The setting is already on
-     * disk: paint the note, hold it readable, then reboot. */
-#ifndef BUILD_SIMULATOR
-    snprintf(note, sizeof(note), "%s set - rebooting", font_size_name(want));
-    menu_note(now, MENU_MSG_MS, false, note);
-    menu_present_now(now);   /* the blocking delay below means no next tick */
-    vTaskDelay(pdMS_TO_TICKS(1200));
-    esp_restart();
-#else
-    /* The simulator is single-size and cannot restart into another one.
-     * It saves the setting anyway, so the device picks it up. */
-    snprintf(note, sizeof(note), "%s saved (reboot)", font_size_name(want));
-    menu_note(now, MENU_MSG_MS, false, note);
-#endif
-}
-
-static const menu_item_t font_items[] = {
-    { .label_fn = label_font, .color_fn = color_font, .action = act_font,
-      .arg = FONT_SIZE_8X16,  .value = val_font },
-    { .label_fn = label_font, .color_fn = color_font, .action = act_font,
-      .arg = FONT_SIZE_10X20, .value = val_font },
-    { .label_fn = label_font, .color_fn = color_font, .action = act_font,
-      .arg = FONT_SIZE_12X24, .value = val_font },
-};
-
-/* The page is CONTEXTUAL: it hides impossible actions instead of making
- * them no-ops. It shows no "Lock deck" or "Remove code" without a
- * store. In the two-gates model, a store on the deck locks the deck at
- * boot or wake. */
-
-/* ks_on_open resolves store state once, when the page OPENS, not on
- * every render. The menu renders at ~10 Hz; an ABSENT store would
- * otherwise stat the filesystem every frame. */
+/* The page reads the store state once, when it opens. An absent store
+ * would stat the filesystem ten times a second. */
 static keystore_state_t s_ks_snap;
 
-static void ks_on_open(void)
+static void ks_snap(void)
 {
     s_ks_snap = keystore_state();
 }
@@ -438,24 +580,6 @@ static const char *label_ks_setpin(intptr_t a)
 {
     (void)a;
     return s_ks_snap == KEYSTORE_ABSENT ? "Create keystore" : "Change code";
-}
-
-static const char *val_ks_lock(intptr_t a, char *buf, size_t sz)
-{
-    (void)a; (void)buf; (void)sz;
-    return s_ks_snap == KEYSTORE_UNLOCKED ? "unlocked" : "locked";
-}
-
-static const char *val_ks_setpin(intptr_t a, char *buf, size_t sz)
-{
-    (void)a; (void)buf; (void)sz;
-    return s_ks_snap == KEYSTORE_ABSENT ? "locks the deck" : "";
-}
-
-static const char *val_ks_remove(intptr_t a, char *buf, size_t sz)
-{
-    (void)a; (void)buf; (void)sz;
-    return "keys to plain";
 }
 
 static void act_ks_lock(intptr_t a, uint64_t now)
@@ -475,65 +599,86 @@ static void act_ks_setpin(intptr_t a, uint64_t now)
 static void act_ks_remove(intptr_t a, uint64_t now)
 {
     (void)a;
-    unlock_open_remove(now);          /* proves the code first */
+    unlock_open_remove(now);          /* the code pad asks and proves */
 }
 
 static const menu_item_t ks_items[] = {
-    { .label = "Lock deck",   .color = OVERLAY_COL_CYAN, .action = act_ks_lock,
-      .hidden = hidden_ks_absent, .value = val_ks_lock },
-    { .label_fn = label_ks_setpin, .color = OVERLAY_COL_CYAN,
-      .action = act_ks_setpin, .value = val_ks_setpin },
-    { .label = "Remove code", .color = OVERLAY_COL_CYAN, .action = act_ks_remove,
-      .hidden = hidden_ks_absent, .value = val_ks_remove },
+    { .label = "Lock deck", .action = act_ks_lock,
+      .hidden = hidden_ks_absent },
+    { .label_fn = label_ks_setpin, .nav = true, .action = act_ks_setpin },
+    { .label = "Remove code", .nav = true, .accent = OVERLAY_COL_RED,
+      .danger = true, .action = act_ks_remove, .hidden = hidden_ks_absent },
 };
 
+static const char *note_keystore(char *buf, size_t sz)
+{
+    (void)buf; (void)sz;
+    return s_ks_snap == KEYSTORE_UNLOCKED ? "unlocked"
+         : s_ks_snap == KEYSTORE_ABSENT   ? "no access code" : "locked";
+}
+
+static const char *unavail_keystore(void)
+{
+#if CONFIG_CYBERDECK_KEYSTORE
+    return NULL;
+#else
+    return NOT_BUILT;
+#endif
+}
+
 #define ASSERT_FITS(t) \
-    _Static_assert(NELEM(t) <= MENU_PAGE_MAX, "section exceeds one screen")
-ASSERT_FITS(main_items);     ASSERT_FITS(config_items);
-ASSERT_FITS(profiles_items); ASSERT_FITS(import_items);
-ASSERT_FITS(wifi_items);     ASSERT_FITS(kbd_items);
-ASSERT_FITS(system_items);   ASSERT_FITS(fx_crt_items);
-ASSERT_FITS(fx_motion_items); ASSERT_FITS(font_items);
+    _Static_assert(NELEM(t) <= MENU_ITEM_MAX, "section has too many items")
+ASSERT_FITS(hosts_items);     ASSERT_FITS(wifi_items);
+ASSERT_FITS(kbd_items);       ASSERT_FITS(fx_crt_items);
+ASSERT_FITS(fx_motion_items); ASSERT_FITS(system_items);
 ASSERT_FITS(ks_items);
 
-static const menu_page_t PAGES[] = {
-    [MS_MAIN]      = { .title = "MENU", .items = main_items,
-                       .count = NELEM(main_items), .back_to = MENU_BACK_LEAVE },
-    [MS_CONFIG]    = { .title = "CONFIGURATION", .items = config_items,
-                       .count = NELEM(config_items), .back_to = MS_MAIN },
-    [MS_PROFILES]  = { .title = "PROFILES", .items = profiles_items,
-                       .count = NELEM(profiles_items), .back_to = MS_CONFIG },
-    [MS_IMPORT]    = { .title = "IMPORT", .items = import_items,
-                       .count = NELEM(import_items), .back_to = MS_PROFILES },
-    [MS_WIFI]      = { .title = "WIFI", .items = wifi_items,
-                       .count = NELEM(wifi_items), .back_to = MS_CONFIG },
-    [MS_KEYBOARD]  = { .title = "KEYBOARD", .items = kbd_items,
-                       .count = NELEM(kbd_items), .back_to = MS_CONFIG },
-    [MS_SYSTEM]    = { .title = "SYSTEM", .items = system_items,
-                       .count = NELEM(system_items), .back_to = MS_CONFIG,
-                       .hold = APP_SETTINGS_HOLD_SYS },
+static const menu_page_t PAGES[MS_COUNT] = {
+    [MS_MAIN]      = { .title = "Session", .back_to = MENU_BACK_LEAVE },
+    [MS_CONFIG]    = { .title = "Setup", .back_to = MS_MAIN,
+                       .on_open = ks_snap },
+    [MS_HOSTS]     = { .title = "Hosts", .items = hosts_items,
+                       .list = &hosts_list,
+                       .count = NELEM(hosts_items), .back_to = MS_CONFIG,
+                       .note = note_hosts },
+    [MS_WIFI]      = { .title = "Wi-Fi", .items = wifi_items,
+                       .panel = &wifi_panel, .list = &wifi_list,
+                       .count = NELEM(wifi_items), .back_to = MS_CONFIG,
+                       .on_open = wifi_snap, .note = note_wifi },
+    [MS_KEYBOARD]  = { .title = "Keyboard", .items = kbd_items,
+                       .panel = &kbd_panel, .list = &kbd_list,
+                       .count = NELEM(kbd_items), .back_to = MS_CONFIG,
+                       .on_open = kbd_snap, .note = note_keyboard,
+                       .unavail = unavail_ble },
     [MS_FX_CRT]    = { .title = "CRT FX", .items = fx_crt_items,
                        .count = NELEM(fx_crt_items), .back_to = MS_CONFIG,
-                       .hold = APP_SETTINGS_HOLD_FX },
-    [MS_FX_MOTION] = { .title = "MOTION FX", .items = fx_motion_items,
+                       .hold = APP_SETTINGS_HOLD_FX, .note = note_fx_crt },
+    [MS_FX_MOTION] = { .title = "Motion FX", .items = fx_motion_items,
                        .count = NELEM(fx_motion_items), .back_to = MS_CONFIG,
-                       .hold = APP_SETTINGS_HOLD_FX },
-    [MS_FONT]      = { .title = "FONT", .items = font_items,
-                       .count = NELEM(font_items), .back_to = MS_CONFIG,
-                       .on_open = font_on_open },
-    [MS_KEYSTORE]  = { .title = "KEYSTORE", .items = ks_items,
-                       .count = NELEM(ks_items), .back_to = MS_CONFIG,
-                       .on_open = ks_on_open },
-    /* MS_DELPROFILE / MS_EDITPROFILE / MS_REORDER: dynamic pickers. */
+                       .hold = APP_SETTINGS_HOLD_FX, .note = note_fx_motion },
+    [MS_SYSTEM]    = { .title = "System", .items = system_items,
+                       .count = NELEM(system_items), .back_to = MS_CONFIG,
+                       .hold = APP_SETTINGS_HOLD_SYS, .note = note_system },
+    [MS_KEYSTORE]  = { .title = "Keystore", .items = ks_items,
+                       .count = NELEM(ks_items), .stack = true,
+                       .back_to = MS_CONFIG,
+                       .on_open = ks_snap, .note = note_keystore,
+                       .unavail = unavail_keystore },
+};
+
+static const uint8_t HUB[] = {
+    MS_HOSTS, MS_WIFI, MS_KEYBOARD, MS_FX_CRT, MS_FX_MOTION,
+    MS_SYSTEM, MS_KEYSTORE,
 };
 
 const menu_page_t *menu_page(int sc)
 {
-    if (sc < 0 || sc >= (int)NELEM(PAGES) || !PAGES[sc].items) return NULL;
+    if (sc < 0 || sc >= MS_COUNT) return NULL;
     return &PAGES[sc];
 }
 
-bool menu_is_picker(int sc)
+const uint8_t *menu_hub(int *n)
 {
-    return sc == MS_DELPROFILE || sc == MS_EDITPROFILE || sc == MS_REORDER;
+    *n = NELEM(HUB);
+    return HUB;
 }

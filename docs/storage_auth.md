@@ -400,6 +400,11 @@ the littlefs image never needs plaintext:
   - The saver only runs on an idle HOME or over the gate pad, so a
     live session is never interrupted. An open session holds the deck
     open — accepted for v1; in-session idle lock is a future feature.
+  - Any other page without a live session (host page, editor, Setup,
+    host-key page, failed connect, Wi-Fi setup, host import) locks the
+    store when idle and gives way to the gate pad. A connect attempt
+    in flight is cancelled first. Without an unlocked store the idle
+    lock does nothing, so a deck with no keystore keeps its passwords.
   - The lazy **CONNECT pad** (`// CONNECT`; Esc or 60 s idle cancels
     to HOME) survives only as a safety net for a key connect that
     finds the store locked (races). In normal use it never appears,
@@ -431,8 +436,8 @@ the littlefs image never needs plaintext:
   shows a live "LOCKED · RETRY IN n s" countdown and refuses to burn a
   derivation meanwhile. Success clears the counter. There is no
   auto-wipe.
-- **Saver timeout / auto-lock interval** — SYSTEM menu "Saver + lock
-  after": 1 / 3 / 5 / 10 / 30 min (`settings.ini` `[saver]`, default
+- **Saver timeout / auto-lock interval** — SYSTEM menu "Saver + lock":
+  1 / 3 / 5 / 10 / 30 min (`settings.ini` `[saver]`, default
   3). One knob
   on purpose: the saver engaging IS the auto-lock (it wipes the MK),
   so the rain delay and the lock delay cannot drift apart.

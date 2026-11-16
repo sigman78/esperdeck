@@ -9,6 +9,7 @@
 #include "unity.h"
 #include "keystore.h"
 #include "storage.h"
+#include "app_wifi.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -601,6 +602,95 @@ static void test_wifi_divert_and_hydrate(void)
     TEST_ASSERT_EQUAL_STRING(STORAGE_PW_BUNDLED, got[0].password);
 }
 
+static void test_wifi_list_edits(void)
+{
+    wifi_profile_t nets[STORAGE_WIFI_MAX];
+    int n = 0;
+    memset(nets, 0, sizeof(nets));
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "A", "pa", false));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "B", "pb", false));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "A", "pa2", false));
+    TEST_ASSERT_EQUAL_INT(2, n);
+    TEST_ASSERT_EQUAL_STRING("pa2", nets[0].password);
+
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "", "x", false));
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "C", STORAGE_PW_BUNDLED, false));
+    /* wifi.ini drops a trailing space on load: never store one. */
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "Cafe ", "pc", false));
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "Cafe", "pc ", false));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, " Cafe", "p c", false));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, app_wifi_list_forget(nets, &n, 2));
+    TEST_ASSERT_EQUAL_INT(2, n);
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, app_wifi_list_move(nets, n, 0, 1));
+    TEST_ASSERT_EQUAL_STRING("B", nets[0].ssid);
+    TEST_ASSERT_EQUAL_STRING("A", nets[1].ssid);
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, app_wifi_list_move(nets, n, 1, 1));
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, app_wifi_list_move(nets, n, 0, -1));
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, app_wifi_list_forget(nets, &n, 0));
+    TEST_ASSERT_EQUAL_INT(1, n);
+    TEST_ASSERT_EQUAL_STRING("A", nets[0].ssid);
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_ARG, app_wifi_list_forget(nets, &n, 1));
+
+    n = 2;
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_NO_MEM,
+        app_wifi_list_add(nets, &n, 2, "Z", "pz", false));
+}
+
+static void test_wifi_locked_edits_keep_markers(void)
+{
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_create("1234"));
+    wifi_profile_t w[2];
+    memset(w, 0, sizeof(w));
+    snprintf(w[0].ssid, sizeof(w[0].ssid), "HomeAP");
+    snprintf(w[0].password, sizeof(w[0].password), "secretpsk");
+    snprintf(w[1].ssid, sizeof(w[1].ssid), "Cafe");
+    snprintf(w[1].password, sizeof(w[1].password), "cafepsk");
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_wifi_save(w, 2));
+
+    keystore_lock();
+    wifi_profile_t nets[STORAGE_WIFI_MAX];
+    int n = 0;
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_wifi_load(nets, &n, STORAGE_WIFI_MAX));
+    TEST_ASSERT_EQUAL_INT(2, n);
+    TEST_ASSERT_EQUAL_STRING(STORAGE_PW_BUNDLED, nets[0].password);
+
+    /* Locked: the add refuses a password or a change to a marker row */
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_STATE,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "New", "pw", true));
+    TEST_ASSERT_EQUAL_INT(ESP_ERR_INVALID_STATE,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "Cafe", "", true));
+    TEST_ASSERT_EQUAL_INT(ESP_OK,
+        app_wifi_list_add(nets, &n, STORAGE_WIFI_MAX, "Open", "", true));
+
+    /* Reorder and forget while locked: the save keeps every marker */
+    TEST_ASSERT_EQUAL_INT(ESP_OK, app_wifi_list_move(nets, n, 0, 1));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_wifi_save(nets, n));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, app_wifi_list_forget(nets, &n, 2));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_wifi_save(nets, n));
+
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_wifi_load(nets, &n, STORAGE_WIFI_MAX));
+    TEST_ASSERT_EQUAL_INT(2, n);
+    TEST_ASSERT_EQUAL_STRING("Cafe", nets[0].ssid);
+    TEST_ASSERT_EQUAL_STRING(STORAGE_PW_BUNDLED, nets[0].password);
+
+    /* The bundle survived: unlock hydrates the original PSKs */
+    TEST_ASSERT_EQUAL_INT(ESP_OK, keystore_unlock("1234"));
+    TEST_ASSERT_EQUAL_INT(ESP_OK, storage_wifi_load(nets, &n, STORAGE_WIFI_MAX));
+    TEST_ASSERT_EQUAL_STRING("cafepsk", nets[0].password);
+    TEST_ASSERT_EQUAL_STRING("secretpsk", nets[1].password);
+}
+
 static void test_secrets_adoption_from_plaintext_ini(void)
 {
     /* Plaintext-era inis (written store-less) adopt at store creation */
@@ -862,6 +952,8 @@ int main(void)
     RUN_TEST(test_profiles_divert_and_hydrate);
     RUN_TEST(test_wifi_plaintext_without_store);
     RUN_TEST(test_wifi_divert_and_hydrate);
+    RUN_TEST(test_wifi_list_edits);
+    RUN_TEST(test_wifi_locked_edits_keep_markers);
     RUN_TEST(test_secrets_adoption_from_plaintext_ini);
     RUN_TEST(test_remove_restores_secret_plaintext);
     RUN_TEST(test_secrets_prune_and_list_exclusion);

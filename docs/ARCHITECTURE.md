@@ -66,8 +66,11 @@ sim/                 host composition root (SDL event loop)
 components/
   board/             header-only panel constants (DISPLAY_WIDTH/HEIGHT)
   cyberdeck_app/     THE SHELL — boot→picker→session FSM (finite-state
-                     machine) + overlay TUI (text UI), one module per
-                     screen (app_home/menu/connect/unlock/saver/...)
+                     machine), one module per screen
+                     (app_home/menu/connect/unlock/saver/...)
+  ui/                the UI kit — overlay TUI (text UI) primitives, the
+                     baked style table, touch-first parts; display + font
+                     only, so host tools and tests link it without the shell
   display/ + font/   bounce-buffer render core, CRT effects (display_fx),
                      Terminus font in 8x16 / 10x20 / 12x24 with a bold face;
                      glyph tables are compressed (crop + PackBits row-RLE +
@@ -176,8 +179,26 @@ published with the buffer, dims the live session behind a modal. Overlay
 cells carry a palette
 index into an app-registered style table, not colors or style bits — the
 rationale and vocabulary live in [`overlay-style.md`](overlay-style.md).
+The kit's layout, interaction model and widgets are recorded in
+[`ui-kit.md`](ui-kit.md).
 Because chrome lives in the overlay, it never corrupts the `vterm` cell
 buffer: a full-screen remote app (vim, htop) stays intact behind a menu.
+
+**Terminal cursor.** Two parties touch the cursor. The session task
+reports its position and shape on every flush (`display_set_cursor`),
+even while a menu covers the session. The shell owns a separate gate
+(`display_cursor_gate`). Each screen declares a cursor policy:
+`NAV_CURSOR_HIDE` (the default), `NAV_CURSOR_SHOW` (SESSION) or
+`NAV_CURSOR_UNDER` (the menu). The nav layer walks the stack down from
+the top until a screen shows or hides, on every screen change and every
+frame. So the F12 menu over a session shows the live cursor through its
+scrim, blinking at its own rate, and the same menu over HOME hides it.
+The terminal cannot reopen the gate. An earlier scheme parked
+the cursor off-screen from each modal's render. The session task
+re-armed it on the next flush, and the block blinked under the
+in-session menu. Under an open gate, an opaque overlay cell (a toast)
+still hides the cursor, as it hides the text
+(`render_cache_overlay_covers`).
 
 ### Glyph tables & the row cache — compressed tables, decode once per row
 
@@ -443,7 +464,7 @@ back to critical-section library calls of comparable cost.
 ## The shell (`cyberdeck_app`) — a platform-neutral state machine
 
 The shell is a platform-neutral state machine plus an overlay TUI
-(`app_ui.c`). The root calls three entry points:
+(`components/ui`). The root calls three entry points:
 
 ```c
 cyberdeck_app_init(cfg, now_ms);      // load profiles, start WiFi, show boot
@@ -453,7 +474,8 @@ cyberdeck_app_handle_input(ev, now);  // one key or touch event
 
 Flow: **BOOT** → (**UNLOCK**, when a keystore exists) → **HOME** (profile
 picker) → **CONNECTING** → **SESSION**, with MENU, PROFILE, PAIRING,
-HOSTKEY, WIFIPROV, SSHIMPORT and POWEROFF as modal screens along the way.
+HOSTKEY, WIFIPROV, SSHIMPORT, POWEROFF, HOST (per-host page from a HOME
+hold) and ASK (a question page) as modal screens along the way.
 
 Screens are **registered, not enumerated** (`app_nav.h`): each module
 exports a hook table — `enter(arg)`, `resume`, `exit`, `tick`, `input`,
@@ -471,9 +493,9 @@ published overlay contents, as well as clean exits.
 
 Design choices inside the shell:
 
-- **Tile-based UI.** `app_ui` builds a `tilegrid_t` and does two-axis
-  hit-testing, so touch and arrow-key navigation share one layout
-  (two-tap to connect).
+- **Region-based UI.** Each part registers a hit region while it draws
+  (`ui_hot`), so touch and arrow-key navigation resolve against the
+  same layout (one tap connects). See `docs/ui-kit.md`.
 - **Asynchronous SSH connect** (`ssh_client_connect_start`). The UI stays
   live and cancellable during DNS, TCP, handshake, and auth.
 - **Capability services.** The shell reaches optional platform
@@ -509,7 +531,8 @@ header, or a stale table entry. No debt edges remain as of item 7
 | `display → board`, `font → board` | panel constants; render geometry and font-cache bounds derive from them | sound — header-only board definition |
 | `ssh → vterm` | the session controller (`ssh_session.c`) wires the terminal; the transport is sink-only | sound |
 | `ssh → storage` | the controller resolves keys, secrets, and known hosts | sound |
-| `cyberdeck_app → storage ssh wifi display vterm font` | full consumer of every service API | sound |
+| `cyberdeck_app → storage ssh wifi display vterm font ui` | full consumer of every service API; draws through the kit | sound |
+| `ui → display`, `ui → font` | overlay cells + style table; cell size for touch pixel→cell mapping | sound |
 | `wifi → storage` | profile types + wifi.ini persistence | sound |
 | `input → storage` | the BLE bond registry (`storage_ble_*`) | sound |
 | `input → display` | the `DISPLAY_WIDTH` constant (touch edge strip) | tolerable |

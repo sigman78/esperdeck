@@ -34,6 +34,9 @@ uint8_t ble_keyboard_get_locks(void);
 /** Name of the currently connected device ("" if none). */
 const char *ble_keyboard_get_connected_name(void);
 
+/** Copy the connected device's address into @p addr; false when not connected. */
+bool ble_keyboard_get_connected_addr(uint8_t addr[6]);
+
 /**
  * Switch to BLE_PAIRING_SCAN mode.
  * Call this from any state; it disconnects an active connection first

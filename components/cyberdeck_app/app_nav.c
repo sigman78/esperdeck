@@ -8,6 +8,7 @@
 #include "app_widgets.h"   /* ui_statusbar — the composited chrome */
 
 #include "esp_log.h"
+#include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "nav";
@@ -53,11 +54,37 @@ int nav_current(void)
     return s_depth > 0 ? s_stack[s_depth - 1].id : -1;
 }
 
+bool nav_on_stack(int id)
+{
+    for (int i = 0; i < s_depth; i++)
+        if (s_stack[i].id == id) return true;
+    return false;
+}
+
+bool nav_has_bar(void)
+{
+    const nav_screen_t *d = s_depth > 0 ? screen(nav_current()) : NULL;
+    return d && d->chrome == NAV_CHROME_FULL;
+}
+
 #ifdef BUILD_SIMULATOR
 const char *nav_current_name(void)
 {
     const nav_screen_t *d = screen(nav_current());
     return d && d->name ? d->name : "";
+}
+
+void nav_debug_stack(char *buf, size_t sz)
+{
+    size_t at = 0;
+    if (sz) buf[0] = '\0';
+    for (int i = 0; i < s_depth && at < sz; i++) {
+        const nav_screen_t *d = screen(s_stack[i].id);
+        int w = snprintf(buf + at, sz - at, "%s%s", i ? "," : "",
+                         d && d->name ? d->name : "?");
+        if (w < 0) break;
+        at += (size_t)w;
+    }
 }
 #endif
 
@@ -72,15 +99,28 @@ static void leave_top(uint64_t now)
     if (d && d->exit) d->exit(now);
 }
 
+/* Walk down from the top: the first SHOW or HIDE decides. */
+static bool cursor_open(void)
+{
+    for (int i = s_depth - 1; i >= 0; i--) {
+        const nav_screen_t *d = screen(s_stack[i].id);
+        if (!d || d->cursor == NAV_CURSOR_HIDE) return false;
+        if (d->cursor == NAV_CURSOR_SHOW) return true;
+    }
+    return false;
+}
+
 static void enter_top(bool via_pop, uint64_t now)
 {
     const nav_entry_t  *e = &s_stack[s_depth - 1];
     const nav_screen_t *d = screen(e->id);
     if (!d) return;
+    ui_term_cursor(cursor_open());       /* nav_frame re-asserts it */
     /* Theme is an entry-time decision: default first, then the screen's
      * enter/resume may override (hostkey hazard). Never per render —
-     * the style table is ISR-live (app_ui.c). */
+     * the style table is ISR-live (ui.c). */
     ui_colors(UI_FG, UI_BG);
+    ui_hot_reset();
     if (via_pop && d->resume) d->resume(e->arg, now);
     else if (d->enter)        d->enter(e->arg, now);
     s_dirty = true;
@@ -152,17 +192,19 @@ void nav_frame(uint64_t now)
     if (!d) return;
     if (d->tick) d->tick(now);
 
-    /* A tick may have navigated — render whoever is on top now. */
+    /* A tick may have navigated: the stack as it is now sets the cursor
+     * gate, and the top screen renders. Each frame sets the gate again,
+     * so no screen has to remember to hide the cursor. */
+    d = screen(nav_current());
+    ui_term_cursor(cursor_open());
     if (!s_dirty) return;
     s_dirty = false;
-    d = screen(nav_current());
     if (!d || !d->render) return;        /* SESSION renders itself */
 
     ui_clear();
     d->render(now);
     if (d->chrome == NAV_CHROME_FULL)
         ui_statusbar(now);
-    ui_no_cursor();
     ui_present();
 }
 

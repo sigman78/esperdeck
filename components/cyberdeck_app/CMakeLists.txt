@@ -13,12 +13,13 @@ else()
 endif()
 
 cyberdeck_component_register(
-    SRCS         cyberdeck_app.c app_nav.c app_ui.c app_theme.c app_widgets.c
+    SRCS         cyberdeck_app.c app_nav.c app_widgets.c
                  app_statusbar.c session_guard.c
                  app_menu_defs.c app_settings.c plugin_table.c
-                 app_boot.c app_home.c app_pacman.c app_saver.c app_pairing.c
-                 app_hostkey.c app_connect.c app_profile.c app_menu.c
-                 app_wifiprov.c app_sshimport.c ${UNLOCK_SRC}
+                 app_boot.c app_home.c app_host.c app_ask.c app_pacman.c app_saver.c app_pairing.c
+                 app_hostkey.c app_connect.c app_form.c app_profile.c app_menu.c
+                 app_wifiprov.c app_wifinet.c app_kbddev.c app_wifiadd.c app_wifi.c app_wifi_list.c
+                 app_sshimport.c ${UNLOCK_SRC}
     INCLUDE_DIRS include
-    REQUIRES     storage ssh wifi display vterm font
+    REQUIRES     storage ssh wifi display vterm font ui
 )

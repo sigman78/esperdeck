@@ -47,6 +47,7 @@ add_subdirectory(${ROOT}/idfsim                    idfsim)
 add_subdirectory(${ROOT}/components/board          board)
 add_subdirectory(${ROOT}/components/font           font)
 add_subdirectory(${ROOT}/components/display        display)
+add_subdirectory(${ROOT}/components/ui             ui)
 add_subdirectory(${ROOT}/components/tsm            tsm)
 add_subdirectory(${ROOT}/components/vterm          vterm)
 add_subdirectory(${ROOT}/components/monocypher     monocypher)
@@ -60,6 +61,11 @@ add_subdirectory(${ROOT}/components/cyberdeck_app  cyberdeck_app)
 add_executable(cyberdeck_sim main.c ${KEYSTORE_CLI_SRC})
 # SDL2main provides WinMain on Windows (SDL.h renames main -> SDL_main)
 target_link_libraries(cyberdeck_sim PRIVATE SDL2::SDL2main cyberdeck_app ssh wifi storage)
+
+# UI kit gallery: mock screens composed from kit calls only, rendered
+# to BMP or shown in a window (docs/ui-kit.md).
+add_executable(cyberdeck_uilab uilab.c uilab_mo.c)
+target_link_libraries(cyberdeck_uilab PRIVATE SDL2::SDL2main ui display font)
 
 # Component-edge guard — same check the device build runs post-link.
 find_package(Python3 COMPONENTS Interpreter REQUIRED)

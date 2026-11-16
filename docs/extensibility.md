@@ -504,11 +504,12 @@ in-tree features. Tick items as they merge.
   set can no longer drop off the grid (the silent-clip debt);
   REORDER's arrow-swap adapts to the vertical list; Shift-PgUp/PgDn
   page it. sim_regress gained `profile-picker`; 6/6 on both keystore
-  configs, device build + check_iram OK.
+  configs, device build + check_iram OK. (Removed 2026-11: `ui_list_t`
+  went with the old look; see `docs/ui-kit.md`.)
 - **2026-08-26 (item 4, part 2)** — **action-button bar**: the two-up
   Save/Cancel and Trust/Cancel bars (app_profile, app_hostkey) were
   hand-built tilegrids with identical shape; now `ui_button_bar()` +
-  `ui_button()` in app_widgets — the action-row half of the ui-spec
+  `ui_button()` in app_widgets (removed 2026-11 with the old look) — the action-row half of the ui-spec
   Modal. The full Modal panel (dim + title/body) waits for a simple
   yes/no consumer; today's two are full screens with rich bodies, and
   a panel with no consumer would be speculation. Slider/Stepper is
@@ -563,7 +564,8 @@ in-tree features. Tick items as they merge.
 - **2026-08-27 (item 4 COMPLETE: public `cyberdeck_ui.h`)** — the kit
   header caps the item: glyph palette, `ui_key_t`, primitives,
   `tilegrid_t` + hit/nav, `ui_drag_t`, `ui_list_t`, the button bar and
-  the chrome helpers move to `include/cyberdeck_ui.h`; `app_ui.h`
+  the chrome helpers (all but `ui_drag_t` removed 2026-11) move to
+  `include/cyberdeck_ui.h`; `app_ui.h`
   shrinks to frame composition (init/clear/present/colors — the
   shell's alone) and `app_widgets.h` to shell-state widgets
   (StatusBar, pacman, ram_stats, status strings). The header honors

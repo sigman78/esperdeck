@@ -1,6 +1,6 @@
 /*
  * app_settings.c — the shell's settings tables + the settings model
- * (value cycling, deferred persistence). See app_settings.h.
+ * (preset choice, deferred persistence). See app_settings.h.
  */
 
 #include "app_internal.h"    /* app.touch_scroll + the fx snapshot   */
@@ -16,6 +16,7 @@ const char cyberdeck_font_section[] = "font";
 const char app_fx_section[]         = "fx";
 const char app_saver_section[]      = "saver";
 const char app_touch_section[]      = "touch";
+const char app_wifi_section[]       = "wifi";
 
 const storage_kv_field_t app_fx_fields[] = {
     { "scanlines",       offsetof(display_fx_cfg_t, scanlines),       STORAGE_KV_U8, 0, 0, 0 },
@@ -42,6 +43,11 @@ const storage_kv_field_t app_saver_fields[] = {
 
 const storage_kv_field_t app_touch_fields[] = {
     { "scroll", offsetof(app_touch_cfg_t, scroll), STORAGE_KV_BOOL, 0, 0, 0 },
+    { NULL, 0, 0, 0, 0, 0 },
+};
+
+const storage_kv_field_t app_wifi_fields[] = {
+    { "seeded", offsetof(app_wifi_cfg_t, seeded), STORAGE_KV_BOOL, 0, 0, 0 },
     { NULL, 0, 0, 0, 0, 0 },
 };
 
@@ -76,11 +82,11 @@ static const char *const MONO_L[]  = { "color", "green", "amber" };
 static const char *const WOB_L[]   = { "off", "subtle", "medium", "deep" };
 #if DISPLAY_FX_ROW_GLOW
 static const char *const GLOW_L[]  = { "off", "subtle", "strong" };
-static const char *const DECAY_L[] = { "0.3s", "0.5s", "1.0s", "2.0s" };
+static const char *const DECAY_L[] = { "0.3 s", "0.5 s", "1.0 s", "2.0 s" };
 static const uint8_t     DECAY_F[] = { 12, 20, 39, 78 };
 #endif
-static const char *const WIPE_L[]  = { "off", "0.3s", "0.6s" };
-static const char *const COLL_L[]  = { "off", "0.2s", "0.5s" };
+static const char *const WIPE_L[]  = { "off", "0.3 s", "0.6 s" };
+static const char *const COLL_L[]  = { "off", "0.2 s", "0.5 s" };
 static const char *const STAT_L[]  = { "off", "light", "heavy" };
 
 static int  ix_scan(const display_fx_cfg_t *c) { return c->scanlines ? 1 : 0; }
@@ -198,32 +204,35 @@ void app_settings_fx_set(app_fx_tunable_t t, int idx)
     }
 }
 
-void app_settings_fx_cycle(app_fx_tunable_t t)
+/* Saver timeout steps in minutes. The saver also wipes the master key,
+ * so the step doubles as the auto-lock interval. */
+static const uint8_t SAVER_STEPS[] = { 1, 3, 5, 10, 30 };
+static const char *const SAVER_L[] = { "1", "3", "5", "10", "30" };
+
+int app_settings_saver_count(void)
 {
-    const int n = app_settings_fx_count(t);
-    if (n) app_settings_fx_set(t, (app_settings_fx_index(t) + 1) % n);
+    return NELEM(SAVER_STEPS);
 }
 
-/* Saver timeout steps (minutes) — the saver engage also wipes the MK
- * (master key), so this doubles as the auto-lock interval. */
-static const uint8_t SAVER_STEPS[] = { 1, 3, 5, 10, 30 };
-
-void app_settings_saver_cycle(void)
+/* Index -1: a hand-edited value that is no step. No chip lights. */
+int app_settings_saver_index(void)
 {
     const uint32_t cur = session_guard_idle_min();
-    int next = 0;                        /* unknown (hand-edited): snap */
     for (int k = 0; k < NELEM(SAVER_STEPS); k++)
-        if (SAVER_STEPS[k] == cur) {
-            next = (k + 1) % NELEM(SAVER_STEPS);
-            break;
-        }
-    session_guard_set_idle_min(SAVER_STEPS[next]);
-    s_dirty |= DIRTY_SAVER;
+        if (SAVER_STEPS[k] == cur) return k;
+    return -1;
 }
 
-void app_settings_saver_format(char *buf, size_t sz)
+const char *app_settings_saver_label(int idx)
 {
-    snprintf(buf, sz, "%u min", (unsigned)session_guard_idle_min());
+    return (idx >= 0 && idx < NELEM(SAVER_L)) ? SAVER_L[idx] : "";
+}
+
+void app_settings_saver_set(int idx)
+{
+    if (idx < 0 || idx >= NELEM(SAVER_STEPS)) return;
+    session_guard_set_idle_min(SAVER_STEPS[idx]);
+    s_dirty |= DIRTY_SAVER;
 }
 
 #if CONFIG_INPUT_TOUCH_SCROLL
@@ -232,11 +241,6 @@ void app_settings_touch_toggle(void)
     app.touch_scroll = !app.touch_scroll;
     app_touch_scroll_apply();
     s_dirty |= DIRTY_TOUCH;
-}
-
-const char *app_settings_touch_str(void)
-{
-    return app.touch_scroll ? "on" : "off";
 }
 #endif
 

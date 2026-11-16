@@ -27,7 +27,9 @@ ALLOWED = {
     "font":          {"board"},
     "ssh":           {"vterm",             # session controller drives the terminal
                       "storage"},          # controller resolves keys/known hosts
-    "cyberdeck_app": {"storage", "ssh", "wifi", "display", "vterm", "font"},
+    "ui":            {"display", "font"},
+    "cyberdeck_app": {"storage", "ssh", "wifi", "display", "vterm", "font",
+                      "ui"},
     "wifi":          {"storage"},
     "input":         {"storage", "esp_hid",
                       "esp_lcd",           # vendored SDK driver (touch I2C panel IO)

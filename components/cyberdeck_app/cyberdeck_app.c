@@ -11,6 +11,8 @@
 #include "app_internal.h"
 #include "app_screens.h"
 #include "app_settings.h"
+#include "app_widgets.h"
+#include "app_wifi.h"
 #include "cyberdeck_plugin.h"
 #include "session_guard.h"
 
@@ -114,6 +116,7 @@ void app_creds_wipe(void)
                       sizeof(app.profiles[i].password));
     conn_creds_wipe();      /* the active-connect snapshot */
     profile_creds_wipe();   /* the editor draft            */
+    wifiadd_creds_wipe();   /* the by-hand network draft   */
 }
 
 const void *cyberdeck_service(const char *name)
@@ -166,35 +169,36 @@ void wifi_migrate_nvs_cred(void)
 
 /* One-time seed: a Kconfig fallback credential with a real PSK moves
  * into storage, so a later rebuild can blank sdkconfig. A firmware
- * image must not carry a usable pre-shared key in .rodata. Idempotent:
- * a known SSID (plaintext or @bundle marker row) is never re-seeded. */
+ * image must not carry a usable pre-shared key in .rodata. Runs once:
+ * settings.ini [wifi] seeded stops a forgotten network coming back. */
 static void wifi_seed_fallback(void)
 {
     if (!app.cfg.fallback_wifi_ssid || !app.cfg.fallback_wifi_ssid[0] ||
-        !app.cfg.fallback_wifi_password || !app.cfg.fallback_wifi_password[0])
+        !app.cfg.fallback_wifi_password || !app.cfg.fallback_wifi_password[0] ||
+        app_wifi_seeded())
         return;
 
     wifi_profile_t *nets = storage_cred_scratch()->u.nets;
     int n = 0;
     storage_wifi_load(nets, &n, STORAGE_WIFI_MAX);
-    for (int i = 0; i < n; i++)
-        if (strcmp(nets[i].ssid, app.cfg.fallback_wifi_ssid) == 0) {
-            keystore_wipe(nets, sizeof(*nets) * STORAGE_WIFI_MAX);
-            return;
-        }
-    if (n < STORAGE_WIFI_MAX) {
+    bool done = false;
+    for (int i = 0; i < n && !done; i++)
+        done = strcmp(nets[i].ssid, app.cfg.fallback_wifi_ssid) == 0;
+    if (!done && n < STORAGE_WIFI_MAX) {
         memset(&nets[n], 0, sizeof(nets[n]));
         snprintf(nets[n].ssid, sizeof(nets[n].ssid), "%s",
                  app.cfg.fallback_wifi_ssid);
         snprintf(nets[n].password, sizeof(nets[n].password), "%s",
                  app.cfg.fallback_wifi_password);
         n++;
-        if (storage_wifi_save(nets, n) == ESP_OK)
+        done = storage_wifi_save(nets, n) == ESP_OK;
+        if (done)
             ESP_LOGW(TAG, "Seeded fallback WiFi '%s' into storage — blank "
                           "CONFIG_WIFI_PASSWORD now",
                      app.cfg.fallback_wifi_ssid);
     }
     keystore_wipe(nets, sizeof(*nets) * STORAGE_WIFI_MAX);
+    if (done) app_wifi_set_seeded();
 }
 
 void kick_wifi(void)
@@ -227,7 +231,8 @@ void kick_wifi(void)
     if (gated) ESP_LOGI(TAG, "%d WiFi network(s) await unlock", gated);
     n = usable;
 
-    if (n == 0 && app.cfg.fallback_wifi_ssid && app.cfg.fallback_wifi_ssid[0]) {
+    if (n == 0 && app.cfg.fallback_wifi_ssid && app.cfg.fallback_wifi_ssid[0] &&
+        !app_wifi_seeded()) {
         memset(&nets[0], 0, sizeof(nets[0]));
         snprintf(nets[0].ssid, sizeof(nets[0].ssid), "%s",
                  app.cfg.fallback_wifi_ssid);
@@ -252,42 +257,7 @@ void toast_for(uint64_t now, uint32_t ms, const char *fmt, ...)
     va_end(ap);
     app.toast_until = now + ms;
     app.toast_ok    = false;   /* only enter_session() garnishes with a checkmark */
-}
-
-/* Watch the wifi + BLE keyboard links and toast every transition the user
- * cares about. Pairing-scan churn is deliberately silent — the pairing
- * screen narrates itself, and leaving it for a scan is not a "disconnect". */
-static void status_toasts(uint64_t now)
-{
-    uint8_t w = (uint8_t)wifi_manager_get_state();
-    if (w != app.prev_wifi) {
-        if (w == WIFI_MGR_CONNECTED)
-            toast(now, "wifi connected %s", wifi_manager_get_ip());
-        else if (w == WIFI_MGR_CONNECTING)
-            toast(now, "wifi connecting...");
-        else if (w == WIFI_MGR_FAILED)
-            toast_for(now, ERR_TOAST_MS, "wifi connect failed (retrying)");
-        else if (app.prev_wifi == WIFI_MGR_CONNECTED)   /* -> LOST / IDLE */
-            toast(now, "wifi disconnected");
-        app.prev_wifi = w;
-    }
-
-    if (app.ble && app.ble->get_state) {
-        cyberdeck_ble_state_t b = app.ble->get_state();
-        if ((uint8_t)b != app.prev_ble) {
-            if (b == CYBERDECK_BLE_CONNECTED) {
-                const char *n = app.ble->get_name
-                              ? app.ble->get_name() : "";
-                toast(now, "keyboard connected %s", n);
-            } else if (b == CYBERDECK_BLE_CONNECTING) {
-                toast(now, "keyboard connecting...");
-            } else if (app.prev_ble == CYBERDECK_BLE_CONNECTED &&
-                       b != CYBERDECK_BLE_PAIRING_SCAN) {
-                toast(now, "keyboard disconnected");
-            }
-            app.prev_ble = (uint8_t)b;
-        }
-    }
+    app.toast_wifi  = false;   /* menu_note() sets it after this call */
 }
 
 /* The whole surface at a glance, scr_id_t-indexed (designated, so array
@@ -308,6 +278,11 @@ static const nav_screen_t *const SCREENS[SCR_COUNT] = {
     [SCR_SSHIMPORT]  = &sshimport_screen,
     [SCR_UNLOCK]     = &unlock_screen,
     [SCR_SAVER]      = &saver_screen,
+    [SCR_HOST]       = &host_screen,
+    [SCR_ASK]        = &ask_screen,
+    [SCR_WIFINET]    = &wifinet_screen,
+    [SCR_WIFIADD]    = &wifiadd_screen,
+    [SCR_KBDDEV]     = &kbddev_screen,
 };
 
 esp_err_t cyberdeck_app_init(const cyberdeck_app_config_t *cfg, uint64_t now_ms)
@@ -369,18 +344,32 @@ const char *cyberdeck_app_debug_screen(void)
     return nav_current_name();
 }
 
+void cyberdeck_app_debug_stack(char *buf, size_t sz)
+{
+    nav_debug_stack(buf, sz);
+}
+
 bool cyberdeck_app_debug_overlay_contains(const char *text)
 {
     return ui_debug_contains(text);
+}
+
+bool cyberdeck_app_debug_status_idle(void)
+{
+    return status_idle();
 }
 #endif
 
 void cyberdeck_app_tick(uint64_t now)
 {
-    app.anim_frame = (uint32_t)(now / ANIM_PERIOD_MS);
-    ui_frame(app.anim_frame);   /* marquee clock for ui_tile */
+    const uint32_t frame = (uint32_t)(now / ANIM_PERIOD_MS);
+    const bool next = frame != app.anim_frame;
+    app.anim_frame = frame;
+    ui_frame(frame);            /* clock for hot-region animation */
+    /* A pressed flash ends on its own. A still page draws that frame too. */
+    if (next && ui_hot_animating()) nav_invalidate();
 
-    status_toasts(now);
+    status_tick(now);            /* toast expiry + chip announcements */
     app_settings_idle_flush();   /* deferred settings saves, once held pages close */
     session_guard_tick(now);     /* idle + walk-away lock, saver or not */
 
@@ -393,11 +382,46 @@ void cyberdeck_app_tick(uint64_t now)
     nav_frame(now);
 }
 
+static uint64_t s_quiet_until;   /* the shell drops touch before this time */
+static bool     s_quiet_touch;   /* drop the touch now down to its end */
+static bool     s_finger_down;   /* a PRESS came and its end did not yet */
+
+void touch_quiet(uint64_t now, uint32_t ms)
+{
+    s_quiet_until = now + ms;
+    if (s_finger_down) s_quiet_touch = true;
+}
+
+/* A dropped PRESS also drops the TAP, LONG_PRESS or RELEASE that ends it. */
+static bool touch_dropped(const cyberdeck_input_t *ev, uint64_t now)
+{
+    const bool quiet = now < s_quiet_until;
+    switch (ev->type) {
+    case CYBERDECK_INPUT_PRESS:
+        s_finger_down = true;
+        s_quiet_touch = quiet;
+        return quiet;
+    case CYBERDECK_INPUT_TAP:
+    case CYBERDECK_INPUT_LONG_PRESS:
+    case CYBERDECK_INPUT_RELEASE: {
+        const bool drop = quiet || s_quiet_touch;
+        s_finger_down = false;
+        s_quiet_touch = false;
+        return drop;
+    }
+    case CYBERDECK_INPUT_SCROLL:
+        return quiet || s_quiet_touch;
+    default:
+        return false;
+    }
+}
+
 void cyberdeck_app_handle_input(const cyberdeck_input_t *ev, uint64_t now)
 {
     if (!ev) return;
 
     session_guard_activity(now);   /* every input feeds the idle timer */
+    if (touch_dropped(ev, now)) return;
 
     char ch = 0;
     ui_key_t k = (ev->type == CYBERDECK_INPUT_KEY ||
