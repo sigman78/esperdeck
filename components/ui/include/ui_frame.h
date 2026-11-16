@@ -19,7 +19,7 @@ void ui_hide(void);
 bool ui_visible(void);
 
 /** Open or close the terminal cursor gate (display_cursor_gate). The nav
- *  layer alone calls it, from the top screen's descriptor. */
+ *  layer alone calls it, from the screens' cursor policies. */
 void ui_term_cursor(bool shown);
 
 /** Set the screen theme colors: rebakes the overlay style table

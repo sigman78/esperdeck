@@ -20,6 +20,11 @@
  * recorded per screen now so the descriptor is stable). */
 enum { NAV_CHROME_NONE = 0, NAV_CHROME_FULL };
 
+/* Terminal cursor policy. HIDE closes the gate. SHOW opens it (SESSION).
+ * UNDER copies the entry below. The menu over a session shows the cursor
+ * through its scrim. The menu over HOME hides it. */
+enum { NAV_CURSOR_HIDE = 0, NAV_CURSOR_SHOW, NAV_CURSOR_UNDER };
+
 typedef struct {
     const char *name;                    /* debug/logging id            */
     /* Becoming current via push/replace/reset. @p arg is the intent:
@@ -35,9 +40,7 @@ typedef struct {
      * (SESSION: overlay hidden except its transient chrome pass). */
     void (*render)(uint64_t now);
     uint8_t chrome;                      /* NAV_CHROME_*                */
-    /* The terminal cursor may show while this screen is on top. Only
-     * SESSION sets it. The gate follows the top screen every frame. */
-    bool term_cursor;
+    uint8_t cursor;                      /* NAV_CURSOR_*                */
 } nav_screen_t;
 
 /* Adopt the screen table (ids index into it) and reset the stack. Call

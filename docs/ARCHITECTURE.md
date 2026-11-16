@@ -187,10 +187,13 @@ buffer: a full-screen remote app (vim, htop) stays intact behind a menu.
 **Terminal cursor.** Two parties touch the cursor. The session task
 reports its position and shape on every flush (`display_set_cursor`),
 even while a menu covers the session. The shell owns a separate gate
-(`display_cursor_gate`). The nav layer sets the gate from the top
-screen's `term_cursor` flag on every screen change and every frame.
-Only SESSION sets the flag, so the cursor never shows through a menu's
-scrim. The terminal cannot reopen the gate. An earlier scheme parked
+(`display_cursor_gate`). Each screen declares a cursor policy:
+`NAV_CURSOR_HIDE` (the default), `NAV_CURSOR_SHOW` (SESSION) or
+`NAV_CURSOR_UNDER` (the menu). The nav layer walks the stack down from
+the top until a screen shows or hides, on every screen change and every
+frame. So the F12 menu over a session shows the live cursor through its
+scrim, blinking at its own rate, and the same menu over HOME hides it.
+The terminal cannot reopen the gate. An earlier scheme parked
 the cursor off-screen from each modal's render. The session task
 re-armed it on the next flush, and the block blinked under the
 in-session menu. Under an open gate, an opaque overlay cell (a toast)

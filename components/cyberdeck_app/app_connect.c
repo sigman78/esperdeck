@@ -572,5 +572,5 @@ const nav_screen_t connecting_screen = {
 const nav_screen_t session_screen = {
     .name = "session", .enter = session_enter, .resume = session_resume,
     .tick = session_tick, .input = session_input,
-    .chrome = NAV_CHROME_NONE, .term_cursor = true,
+    .chrome = NAV_CHROME_NONE, .cursor = NAV_CURSOR_SHOW,
 };

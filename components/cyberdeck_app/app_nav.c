@@ -99,12 +99,23 @@ static void leave_top(uint64_t now)
     if (d && d->exit) d->exit(now);
 }
 
+/* Walk down from the top: the first SHOW or HIDE decides. */
+static bool cursor_open(void)
+{
+    for (int i = s_depth - 1; i >= 0; i--) {
+        const nav_screen_t *d = screen(s_stack[i].id);
+        if (!d || d->cursor == NAV_CURSOR_HIDE) return false;
+        if (d->cursor == NAV_CURSOR_SHOW) return true;
+    }
+    return false;
+}
+
 static void enter_top(bool via_pop, uint64_t now)
 {
     const nav_entry_t  *e = &s_stack[s_depth - 1];
     const nav_screen_t *d = screen(e->id);
     if (!d) return;
-    ui_term_cursor(d->term_cursor);      /* nav_frame re-asserts it */
+    ui_term_cursor(cursor_open());       /* nav_frame re-asserts it */
     /* Theme is an entry-time decision: default first, then the screen's
      * enter/resume may override (hostkey hazard). Never per render —
      * the style table is ISR-live (ui.c). */
@@ -181,11 +192,11 @@ void nav_frame(uint64_t now)
     if (!d) return;
     if (d->tick) d->tick(now);
 
-    /* A tick may have navigated: whoever is on top now owns the cursor
-     * gate and the render. Each frame sets the gate again, so no screen
-     * has to remember to hide the cursor. */
+    /* A tick may have navigated: the stack as it is now sets the cursor
+     * gate, and the top screen renders. Each frame sets the gate again,
+     * so no screen has to remember to hide the cursor. */
     d = screen(nav_current());
-    ui_term_cursor(d && d->term_cursor);
+    ui_term_cursor(cursor_open());
     if (!s_dirty) return;
     s_dirty = false;
     if (!d || !d->render) return;        /* SESSION renders itself */

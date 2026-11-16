@@ -724,4 +724,5 @@ const nav_screen_t menu_screen = {
     .name = "menu", .enter = menu_enter, .resume = menu_resume,
     .exit = menu_exit, .tick = menu_tick, .input = menu_input,
     .render = render_menu, .chrome = NAV_CHROME_FULL,
+    .cursor = NAV_CURSOR_UNDER,
 };
